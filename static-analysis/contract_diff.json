@@ -1,0 +1,350 @@
+{
+  "meta": {
+    "client_endpoints": 28,
+    "spec_endpoints": 27,
+    "common": 27,
+    "only_in_client": [
+      "telegramRaw.call"
+    ],
+    "only_in_spec": [],
+    "all_common_fields_match": true
+  },
+  "field_diffs": [
+    {
+      "key": "contacts.create",
+      "differences": [],
+      "spec_parameters_count": 1,
+      "spec_has_requestBody": true,
+      "spec_response_codes": [
+        "200",
+        "400",
+        "401",
+        "403",
+        "404"
+      ]
+    },
+    {
+      "key": "contacts.delete",
+      "differences": [],
+      "spec_parameters_count": 2,
+      "spec_has_requestBody": true,
+      "spec_response_codes": [
+        "200",
+        "401",
+        "403",
+        "404"
+      ]
+    },
+    {
+      "key": "contacts.get",
+      "differences": [],
+      "spec_parameters_count": 2,
+      "spec_has_requestBody": false,
+      "spec_response_codes": [
+        "200",
+        "401",
+        "403",
+        "404"
+      ]
+    },
+    {
+      "key": "contacts.list",
+      "differences": [],
+      "spec_parameters_count": 5,
+      "spec_has_requestBody": false,
+      "spec_response_codes": [
+        "200",
+        "401",
+        "403",
+        "404"
+      ]
+    },
+    {
+      "key": "contacts.patch",
+      "differences": [],
+      "spec_parameters_count": 2,
+      "spec_has_requestBody": true,
+      "spec_response_codes": [
+        "200",
+        "400",
+        "401",
+        "403",
+        "404"
+      ]
+    },
+    {
+      "key": "organizations.get",
+      "differences": [],
+      "spec_parameters_count": 1,
+      "spec_has_requestBody": false,
+      "spec_response_codes": [
+        "200",
+        "401",
+        "403",
+        "404"
+      ]
+    },
+    {
+      "key": "organizations.list",
+      "differences": [],
+      "spec_parameters_count": 3,
+      "spec_has_requestBody": false,
+      "spec_response_codes": [
+        "200",
+        "401"
+      ]
+    },
+    {
+      "key": "organizations.patch",
+      "differences": [],
+      "spec_parameters_count": 1,
+      "spec_has_requestBody": true,
+      "spec_response_codes": [
+        "200",
+        "400",
+        "401",
+        "403",
+        "404"
+      ]
+    },
+    {
+      "key": "outreach.lists.createCrmList",
+      "differences": [],
+      "spec_parameters_count": 1,
+      "spec_has_requestBody": true,
+      "spec_response_codes": [
+        "200",
+        "400",
+        "401",
+        "403",
+        "404"
+      ]
+    },
+    {
+      "key": "outreach.lists.uploadCsvList",
+      "differences": [],
+      "spec_parameters_count": 1,
+      "spec_has_requestBody": true,
+      "spec_response_codes": [
+        "200",
+        "400",
+        "401",
+        "403"
+      ]
+    },
+    {
+      "key": "outreach.sequences.create",
+      "differences": [],
+      "spec_parameters_count": 1,
+      "spec_has_requestBody": true,
+      "spec_response_codes": [
+        "200",
+        "400",
+        "401",
+        "403",
+        "404"
+      ]
+    },
+    {
+      "key": "outreach.sequences.delete",
+      "differences": [],
+      "spec_parameters_count": 2,
+      "spec_has_requestBody": true,
+      "spec_response_codes": [
+        "200",
+        "401",
+        "403",
+        "404",
+        "409"
+      ]
+    },
+    {
+      "key": "outreach.sequences.get",
+      "differences": [],
+      "spec_parameters_count": 2,
+      "spec_has_requestBody": false,
+      "spec_response_codes": [
+        "200",
+        "401",
+        "403",
+        "404"
+      ]
+    },
+    {
+      "key": "outreach.sequences.list",
+      "differences": [],
+      "spec_parameters_count": 4,
+      "spec_has_requestBody": false,
+      "spec_response_codes": [
+        "200",
+        "401",
+        "403"
+      ]
+    },
+    {
+      "key": "outreach.sequences.patch",
+      "differences": [],
+      "spec_parameters_count": 2,
+      "spec_has_requestBody": true,
+      "spec_response_codes": [
+        "200",
+        "400",
+        "401",
+        "403",
+        "404"
+      ]
+    },
+    {
+      "key": "properties.create",
+      "differences": [],
+      "spec_parameters_count": 2,
+      "spec_has_requestBody": true,
+      "spec_response_codes": [
+        "200",
+        "400",
+        "401",
+        "403",
+        "404",
+        "409"
+      ]
+    },
+    {
+      "key": "properties.delete",
+      "differences": [],
+      "spec_parameters_count": 3,
+      "spec_has_requestBody": true,
+      "spec_response_codes": [
+        "200",
+        "400",
+        "401",
+        "403",
+        "404"
+      ]
+    },
+    {
+      "key": "properties.get",
+      "differences": [],
+      "spec_parameters_count": 3,
+      "spec_has_requestBody": false,
+      "spec_response_codes": [
+        "200",
+        "401",
+        "403",
+        "404"
+      ]
+    },
+    {
+      "key": "properties.list",
+      "differences": [],
+      "spec_parameters_count": 2,
+      "spec_has_requestBody": false,
+      "spec_response_codes": [
+        "200",
+        "401",
+        "403",
+        "404"
+      ]
+    },
+    {
+      "key": "properties.patch",
+      "differences": [],
+      "spec_parameters_count": 3,
+      "spec_has_requestBody": true,
+      "spec_response_codes": [
+        "200",
+        "400",
+        "401",
+        "403",
+        "404"
+      ]
+    },
+    {
+      "key": "telegramAccounts.get",
+      "differences": [],
+      "spec_parameters_count": 2,
+      "spec_has_requestBody": false,
+      "spec_response_codes": [
+        "200",
+        "401",
+        "403",
+        "404"
+      ]
+    },
+    {
+      "key": "telegramAccounts.list",
+      "differences": [],
+      "spec_parameters_count": 4,
+      "spec_has_requestBody": false,
+      "spec_response_codes": [
+        "200",
+        "401",
+        "403"
+      ]
+    },
+    {
+      "key": "telegramAccounts.patch",
+      "differences": [],
+      "spec_parameters_count": 2,
+      "spec_has_requestBody": true,
+      "spec_response_codes": [
+        "200",
+        "400",
+        "401",
+        "403",
+        "404"
+      ]
+    },
+    {
+      "key": "workspaces.get",
+      "differences": [],
+      "spec_parameters_count": 1,
+      "spec_has_requestBody": false,
+      "spec_response_codes": [
+        "200",
+        "401",
+        "403",
+        "404"
+      ]
+    },
+    {
+      "key": "workspaces.getMembers",
+      "differences": [],
+      "spec_parameters_count": 1,
+      "spec_has_requestBody": false,
+      "spec_response_codes": [
+        "200",
+        "401",
+        "403"
+      ]
+    },
+    {
+      "key": "workspaces.list",
+      "differences": [],
+      "spec_parameters_count": 4,
+      "spec_has_requestBody": false,
+      "spec_response_codes": [
+        "200",
+        "401",
+        "403"
+      ]
+    },
+    {
+      "key": "workspaces.patch",
+      "differences": [],
+      "spec_parameters_count": 1,
+      "spec_has_requestBody": true,
+      "spec_response_codes": [
+        "200",
+        "400",
+        "401",
+        "403",
+        "404"
+      ]
+    }
+  ],
+  "webhooks": [
+    "contact.created",
+    "contact.deleted",
+    "contact.updated"
+  ]
+}
