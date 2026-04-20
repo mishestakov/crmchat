@@ -1,0 +1,13 @@
+{
+  "name": "crmchat-extract",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "run": "tsx src/extract.ts",
+    "derive": "tsx src/derive.ts"
+  },
+  "dependencies": {
+    "ts-morph": "^24.0.0",
+    "tsx": "^4.19.2"
+  }
+}

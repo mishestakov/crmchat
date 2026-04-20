@@ -1,0 +1,4176 @@
+{
+  "meta": {
+    "generated_from": "static_inventory.json",
+    "source_inventory_sha": {
+      "routes": "3d938fc8cb5d50b7c8edb575cd5cfb428f22f424d538121141a962bf9e6ed39b",
+      "openapi_endpoints": "402463a2ec077785d7932d43e77d2d5e5cc1ca66ae6e3e70aedf5ee09c9a62c0",
+      "trpc_calls": "c70b8360592deed39b29a76756dbf84f8401a552aefb945ee3ea1bbab47b40de",
+      "orpc_calls": "9faf34d63e0fdf09c59d79ccc1c2203d06c9b453d5b06f42fa22df2df63515f0",
+      "firestore_refs": "0a2301081f6f9fc71d20e73c8ed864d9df2a4d487f24a97f136c638ecaf0cd11",
+      "firebase_auth": "0a938402d7bac05f2a5d1f7ab141d8c7d894ffee236fe7840cf2db6056d609f1",
+      "zod_schemas": "e91d205ef3ea4496da5af3d877a1aaa52f8504e421326c82c7013bc2429f61dc",
+      "fetch_urls": "ee31aab6b921c02efecc77b4ac09f0e18384f586040552873616b2bf00dd4abf",
+      "posthog_events": "d0ab4e0a6e21539a93ade1008dd066330c748887e758abad2fd4c12655ea4397",
+      "feature_flags": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "i18n_keys": "b3e676d6d573e07c7df4e53d15556890aea54815e07f4c1474a43ce98a209924",
+      "env_vars": "ddc807c2d86e80511655520ef149e8d1798acb6a9518fae9bc7c8ed7522e6641",
+      "dynamic_call_sites": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "route_count": 66
+  },
+  "routes": {
+    "CelloRouteImport": {
+      "id": "CelloRouteImport",
+      "file": "src/routes/cello.tsx",
+      "seedFiles": [
+        "src/routes/cello.split-component.tsx",
+        "src/routes/cello.tsx",
+        "src/routes/cello.tsx"
+      ],
+      "reachableFiles": 5,
+      "trpc_procedures": [],
+      "orpc_procedures": [],
+      "firestore_ops": [],
+      "firebase_auth_fns": [],
+      "zod_schemas": [],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 0,
+      "env_vars": [
+        "VITE_BOT_USERNAME"
+      ]
+    },
+    "CustomTokenAuthRouteImport": {
+      "id": "CustomTokenAuthRouteImport",
+      "file": "src/routes/custom-token-auth.tsx",
+      "seedFiles": [
+        "src/routes/custom-token-auth.split-component.tsx",
+        "src/routes/custom-token-auth.tsx",
+        "src/routes/custom-token-auth.tsx"
+      ],
+      "reachableFiles": 16,
+      "trpc_procedures": [],
+      "orpc_procedures": [],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged",
+        "signInWithCustomToken",
+        "signOut"
+      ],
+      "zod_schemas": [
+        "Route"
+      ],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 0,
+      "env_vars": [
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "GoogleCalendarCallbackRouteImport": {
+      "id": "GoogleCalendarCallbackRouteImport",
+      "file": "src/routes/google-calendar-callback.tsx",
+      "seedFiles": [
+        "src/routes/google-calendar-callback.split-component.tsx",
+        "src/routes/google-calendar-callback.tsx",
+        "src/routes/google-calendar-callback.tsx"
+      ],
+      "reachableFiles": 5,
+      "trpc_procedures": [],
+      "orpc_procedures": [],
+      "firestore_ops": [],
+      "firebase_auth_fns": [],
+      "zod_schemas": [],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 14,
+      "env_vars": [
+        "VITE_BOT_USERNAME"
+      ]
+    },
+    "LocalRedirectRouteRouteImport": {
+      "id": "LocalRedirectRouteRouteImport",
+      "file": "src/routes/local-redirect.route.tsx",
+      "seedFiles": [
+        "src/routes/local-redirect.route.tsx",
+        "src/routes/local-redirect.route.tsx"
+      ],
+      "reachableFiles": 1,
+      "trpc_procedures": [],
+      "orpc_procedures": [],
+      "firestore_ops": [],
+      "firebase_auth_fns": [],
+      "zod_schemas": [],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 0,
+      "env_vars": []
+    },
+    "PaymentCallbackRouteImport": {
+      "id": "PaymentCallbackRouteImport",
+      "file": "src/routes/payment-callback.tsx",
+      "seedFiles": [
+        "src/routes/payment-callback.split-component.tsx",
+        "src/routes/payment-callback.tsx",
+        "src/routes/payment-callback.tsx"
+      ],
+      "reachableFiles": 5,
+      "trpc_procedures": [],
+      "orpc_procedures": [],
+      "firestore_ops": [],
+      "firebase_auth_fns": [],
+      "zod_schemas": [
+        "Route"
+      ],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 12,
+      "env_vars": [
+        "VITE_BOT_USERNAME"
+      ]
+    },
+    "ProtectedAcceptInviteWorkspaceIdInviteCodeRouteImport": {
+      "id": "ProtectedAcceptInviteWorkspaceIdInviteCodeRouteImport",
+      "file": "src/routes/_protected/accept-invite.$workspaceId.$inviteCode.tsx",
+      "seedFiles": [
+        "src/routes/_protected/accept-invite.$workspaceId.$inviteCode.split-component.tsx",
+        "src/routes/_protected/accept-invite.$workspaceId.$inviteCode.tsx",
+        "src/routes/_protected/accept-invite.$workspaceId.$inviteCode.tsx"
+      ],
+      "reachableFiles": 10,
+      "trpc_procedures": [
+        "workspace.acceptWorkspaceInvite",
+        "workspace.getWorkspaceInvite"
+      ],
+      "orpc_procedures": [],
+      "firestore_ops": [],
+      "firebase_auth_fns": [],
+      "zod_schemas": [],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 12,
+      "env_vars": [
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedIndexRouteImport": {
+      "id": "ProtectedIndexRouteImport",
+      "file": "src/routes/_protected/index.tsx",
+      "seedFiles": [
+        "src/routes/_protected/index.split-component.tsx",
+        "src/routes/_protected/index.tsx",
+        "src/routes/_protected/index.tsx"
+      ],
+      "reachableFiles": 86,
+      "trpc_procedures": [
+        "cello.getInitOptions",
+        "workspace.createWorkspace"
+      ],
+      "orpc_procedures": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged",
+        "signOut"
+      ],
+      "zod_schemas": [
+        "FormSchema",
+        "Route"
+      ],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [
+        "$groupidentify",
+        "workspace_created"
+      ],
+      "feature_flags": [],
+      "i18n_keys_count": 64,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedMiniAppSplatRouteImport": {
+      "id": "ProtectedMiniAppSplatRouteImport",
+      "file": "src/routes/_protected/mini-app.$.tsx",
+      "seedFiles": [
+        "src/routes/_protected/mini-app.$.split-component.tsx",
+        "src/routes/_protected/mini-app.$.tsx",
+        "src/routes/_protected/mini-app.$.tsx"
+      ],
+      "reachableFiles": 86,
+      "trpc_procedures": [
+        "cello.getInitOptions",
+        "workspace.createWorkspace"
+      ],
+      "orpc_procedures": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged",
+        "signOut"
+      ],
+      "zod_schemas": [
+        "FormSchema",
+        "Route"
+      ],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [
+        "$groupidentify",
+        "workspace_created"
+      ],
+      "feature_flags": [],
+      "i18n_keys_count": 64,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedRouteRouteImport": {
+      "id": "ProtectedRouteRouteImport",
+      "file": "src/routes/_protected/route.tsx",
+      "seedFiles": [
+        "src/routes/_protected/route.split-component.tsx",
+        "src/routes/_protected/route.tsx",
+        "src/routes/_protected/route.tsx"
+      ],
+      "reachableFiles": 24,
+      "trpc_procedures": [
+        "telegram.authenticateByInitData"
+      ],
+      "orpc_procedures": [],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged",
+        "signInWithCustomToken",
+        "signOut"
+      ],
+      "zod_schemas": [],
+      "fetch_urls": [],
+      "posthog_events": [
+        "web_auth_completed",
+        "web_auth_started"
+      ],
+      "feature_flags": [],
+      "i18n_keys_count": 0,
+      "env_vars": [
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdAddPendingActivityIdRouteImport": {
+      "id": "ProtectedWWorkspaceIdAddPendingActivityIdRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/add-pending-activity.$id.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/add-pending-activity.$id.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/add-pending-activity.$id.tsx",
+        "src/routes/_protected/w.$workspaceId/add-pending-activity.$id.tsx"
+      ],
+      "reachableFiles": 57,
+      "trpc_procedures": [
+        "cello.getInitOptions",
+        "pendingContact.addPendingActivity",
+        "pendingContact.getPendingActivity"
+      ],
+      "orpc_procedures": [],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "Route"
+      ],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 57,
+      "env_vars": [
+        "DEV",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdContactsContactIdActivitiesActivityIdEditRouteImport": {
+      "id": "ProtectedWWorkspaceIdContactsContactIdActivitiesActivityIdEditRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/contacts/$contactId/activities/$activityId.edit.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/contacts/$contactId/activities/$activityId.edit.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/contacts/$contactId/activities/$activityId.edit.tsx",
+        "src/routes/_protected/w.$workspaceId/contacts/$contactId/activities/$activityId.edit.tsx"
+      ],
+      "reachableFiles": 88,
+      "trpc_procedures": [
+        "activity.scheduleCalendarEventIfPossible",
+        "cello.getInitOptions"
+      ],
+      "orpc_procedures": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "NoteFormSchema",
+        "TaskFormSchema"
+      ],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [
+        "activity_created"
+      ],
+      "feature_flags": [],
+      "i18n_keys_count": 73,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdContactsContactIdActivitiesNewRouteImport": {
+      "id": "ProtectedWWorkspaceIdContactsContactIdActivitiesNewRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/contacts/$contactId/activities/new.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/contacts/$contactId/activities/new.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/contacts/$contactId/activities/new.tsx",
+        "src/routes/_protected/w.$workspaceId/contacts/$contactId/activities/new.tsx"
+      ],
+      "reachableFiles": 89,
+      "trpc_procedures": [
+        "activity.scheduleCalendarEventIfPossible",
+        "cello.getInitOptions"
+      ],
+      "orpc_procedures": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "NoteFormSchema",
+        "Route",
+        "TaskFormSchema"
+      ],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [
+        "activity_created"
+      ],
+      "feature_flags": [],
+      "i18n_keys_count": 73,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdContactsContactIdEditRouteImport": {
+      "id": "ProtectedWWorkspaceIdContactsContactIdEditRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/contacts/$contactId/edit.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/contacts/$contactId/edit.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/contacts/$contactId/edit.tsx",
+        "src/routes/_protected/w.$workspaceId/contacts/$contactId/edit.tsx"
+      ],
+      "reachableFiles": 100,
+      "trpc_procedures": [
+        "cello.getInitOptions"
+      ],
+      "orpc_procedures": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "StaleSchema",
+        "mergedSchema",
+        "schema"
+      ],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [
+        "contact_updated"
+      ],
+      "feature_flags": [],
+      "i18n_keys_count": 113,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdContactsContactIdIndexRouteImport": {
+      "id": "ProtectedWWorkspaceIdContactsContactIdIndexRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/contacts/$contactId/index.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/contacts/$contactId/index.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/contacts/$contactId/index.tsx",
+        "src/routes/_protected/w.$workspaceId/contacts/$contactId/index.tsx"
+      ],
+      "reachableFiles": 117,
+      "trpc_procedures": [
+        "activity.scheduleCalendarEventIfPossible",
+        "cello.getInitOptions",
+        "contact.deleteContacts",
+        "contact.updateContactAvatar",
+        "proxy.getProxyStatus",
+        "telegram.account.getAccountConnectionData",
+        "telegram.account.reauthenticateWebClient",
+        "telegram.account.submitReauthPassword"
+      ],
+      "orpc_procedures": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "NoteFormSchema",
+        "Route",
+        "StaleSchema",
+        "TaskFormSchema",
+        "mergedSchema",
+        "schema"
+      ],
+      "fetch_urls": [
+        "HEALTH_CHECK_URL",
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [
+        "activity_created",
+        "chat_opened"
+      ],
+      "feature_flags": [],
+      "i18n_keys_count": 168,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID",
+        "VITE_TELEGRAM_CLIENT_URL"
+      ]
+    },
+    "ProtectedWWorkspaceIdContactsIndexRouteImport": {
+      "id": "ProtectedWWorkspaceIdContactsIndexRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/contacts/index.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/contacts/index.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/contacts/index.tsx",
+        "src/routes/_protected/w.$workspaceId/contacts/index.tsx"
+      ],
+      "reachableFiles": 135,
+      "trpc_procedures": [
+        "cello.getInitOptions",
+        "contact.bulkUpdate",
+        "contact.createContactFromQr",
+        "contact.deleteContacts"
+      ],
+      "orpc_procedures": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "SearchParamsSchema",
+        "StaleSchema",
+        "form",
+        "mergedSchema"
+      ],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [
+        "pipeline_created"
+      ],
+      "feature_flags": [],
+      "i18n_keys_count": 201,
+      "env_vars": [
+        "DEV",
+        "VITE_APP_URL",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdContactsNewRouteImport": {
+      "id": "ProtectedWWorkspaceIdContactsNewRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/contacts/new.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/contacts/new.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/contacts/new.tsx",
+        "src/routes/_protected/w.$workspaceId/contacts/new.tsx"
+      ],
+      "reachableFiles": 98,
+      "trpc_procedures": [
+        "cello.getInitOptions"
+      ],
+      "orpc_procedures": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "Route",
+        "StaleSchema",
+        "mergedSchema",
+        "schema"
+      ],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [
+        "$groupidentify",
+        "contact_created"
+      ],
+      "feature_flags": [],
+      "i18n_keys_count": 113,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdIndexRouteImport": {
+      "id": "ProtectedWWorkspaceIdIndexRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/index.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/index.tsx",
+        "src/routes/_protected/w.$workspaceId/index.tsx"
+      ],
+      "reachableFiles": 1,
+      "trpc_procedures": [],
+      "orpc_procedures": [],
+      "firestore_ops": [],
+      "firebase_auth_fns": [],
+      "zod_schemas": [],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 0,
+      "env_vars": []
+    },
+    "ProtectedWWorkspaceIdOnboardingIndexRouteImport": {
+      "id": "ProtectedWWorkspaceIdOnboardingIndexRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/onboarding/index.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/onboarding/index.tsx",
+        "src/routes/_protected/w.$workspaceId/onboarding/index.tsx"
+      ],
+      "reachableFiles": 1,
+      "trpc_procedures": [],
+      "orpc_procedures": [],
+      "firestore_ops": [],
+      "firebase_auth_fns": [],
+      "zod_schemas": [],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 0,
+      "env_vars": []
+    },
+    "ProtectedWWorkspaceIdOnboardingStepIdRouteImport": {
+      "id": "ProtectedWWorkspaceIdOnboardingStepIdRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/onboarding/$stepId.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/onboarding/$stepId.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/onboarding/$stepId.tsx",
+        "src/routes/_protected/w.$workspaceId/onboarding/$stepId.tsx"
+      ],
+      "reachableFiles": 28,
+      "trpc_procedures": [],
+      "orpc_procedures": [],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "Route",
+        "mergedSchema"
+      ],
+      "fetch_urls": [],
+      "posthog_events": [
+        "onboarding_closed",
+        "onboarding_screen_viewed"
+      ],
+      "feature_flags": [],
+      "i18n_keys_count": 69,
+      "env_vars": [
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdOutreachAiBotRouteImport": {
+      "id": "ProtectedWWorkspaceIdOutreachAiBotRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/outreach/ai-bot.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/outreach/ai-bot.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/ai-bot.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/ai-bot.tsx"
+      ],
+      "reachableFiles": 51,
+      "trpc_procedures": [
+        "cello.getInitOptions"
+      ],
+      "orpc_procedures": [],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 63,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdOutreachIndexRouteImport": {
+      "id": "ProtectedWWorkspaceIdOutreachIndexRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/outreach/index.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/outreach/index.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/index.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/index.tsx"
+      ],
+      "reachableFiles": 49,
+      "trpc_procedures": [
+        "cello.getInitOptions"
+      ],
+      "orpc_procedures": [],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 61,
+      "env_vars": [
+        "DEV",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdOutreachScheduleRouteImport": {
+      "id": "ProtectedWWorkspaceIdOutreachScheduleRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/outreach/schedule.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/outreach/schedule.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/schedule.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/schedule.tsx"
+      ],
+      "reachableFiles": 79,
+      "trpc_procedures": [
+        "cello.getInitOptions",
+        "outreach.rescheduleSequences"
+      ],
+      "orpc_procedures": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 80,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdOutreachSequencesIdAccountsRouteImport": {
+      "id": "ProtectedWWorkspaceIdOutreachSequencesIdAccountsRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.accounts.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.accounts.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.accounts.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.accounts.tsx"
+      ],
+      "reachableFiles": 54,
+      "trpc_procedures": [
+        "cello.getInitOptions"
+      ],
+      "orpc_procedures": [
+        "outreach.sequences.patch"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 57,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdOutreachSequencesIdContactSettingsIndexRouteImport": {
+      "id": "ProtectedWWorkspaceIdOutreachSequencesIdContactSettingsIndexRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.contact-settings.index.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.contact-settings.index.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.contact-settings.index.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.contact-settings.index.tsx"
+      ],
+      "reachableFiles": 95,
+      "trpc_procedures": [
+        "cello.getInitOptions"
+      ],
+      "orpc_procedures": [
+        "outreach.sequences.patch",
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "StaleSchema",
+        "mergedSchema"
+      ],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 120,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdOutreachSequencesIdContactSettingsOwnersRouteImport": {
+      "id": "ProtectedWWorkspaceIdOutreachSequencesIdContactSettingsOwnersRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.contact-settings.owners.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.contact-settings.owners.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.contact-settings.owners.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.contact-settings.owners.tsx"
+      ],
+      "reachableFiles": 52,
+      "trpc_procedures": [
+        "cello.getInitOptions"
+      ],
+      "orpc_procedures": [
+        "outreach.sequences.patch",
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 65,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdOutreachSequencesIdIndexRouteImport": {
+      "id": "ProtectedWWorkspaceIdOutreachSequencesIdIndexRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.index.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.index.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.index.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.index.tsx"
+      ],
+      "reachableFiles": 116,
+      "trpc_procedures": [
+        "cello.getInitOptions",
+        "outreach.generateUploadSignedUrl",
+        "outreach.getLeads",
+        "outreach.getSequenceAnalytics",
+        "outreach.getSequenceStats",
+        "outreach.updateSequenceStatus",
+        "outreach.validateTextVariables"
+      ],
+      "orpc_procedures": [
+        "outreach.sequences.delete",
+        "outreach.sequences.patch",
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "AnalyticsSearchSchema",
+        "Route",
+        "mergedSchema",
+        "schema"
+      ],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 203,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdOutreachSequencesIdLeadsRouteImport": {
+      "id": "ProtectedWWorkspaceIdOutreachSequencesIdLeadsRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.leads.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.leads.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.leads.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.leads.tsx"
+      ],
+      "reachableFiles": 89,
+      "trpc_procedures": [
+        "cello.getInitOptions",
+        "outreach.getLeads",
+        "outreach.removeLeadFromSequence",
+        "outreach.resolveDuplicates",
+        "outreach.sendOutreachMessageNow",
+        "outreach.updateLeadProperties"
+      ],
+      "orpc_procedures": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 125,
+      "env_vars": [
+        "DEV",
+        "NODE_ENV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdOutreachSequencesNewCrmRouteImport": {
+      "id": "ProtectedWWorkspaceIdOutreachSequencesNewCrmRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/outreach/sequences/new.crm.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/outreach/sequences/new.crm.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/sequences/new.crm.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/sequences/new.crm.tsx"
+      ],
+      "reachableFiles": 104,
+      "trpc_procedures": [
+        "cello.getInitOptions"
+      ],
+      "orpc_procedures": [
+        "outreach.lists.createCrmList",
+        "outreach.sequences.create",
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "Route",
+        "form",
+        "mergedSchema"
+      ],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 124,
+      "env_vars": [
+        "DEV",
+        "VITE_APP_URL",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdOutreachSequencesNewCsvRouteImport": {
+      "id": "ProtectedWWorkspaceIdOutreachSequencesNewCsvRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/outreach/sequences/new.csv.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/outreach/sequences/new.csv.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/sequences/new.csv.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/sequences/new.csv.tsx"
+      ],
+      "reachableFiles": 65,
+      "trpc_procedures": [
+        "cello.getInitOptions"
+      ],
+      "orpc_procedures": [
+        "outreach.lists.uploadCsvList",
+        "outreach.sequences.create"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 81,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdOutreachSequencesNewIndexRouteImport": {
+      "id": "ProtectedWWorkspaceIdOutreachSequencesNewIndexRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/outreach/sequences/new.index.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/outreach/sequences/new.index.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/sequences/new.index.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/sequences/new.index.tsx"
+      ],
+      "reachableFiles": 49,
+      "trpc_procedures": [
+        "cello.getInitOptions"
+      ],
+      "orpc_procedures": [],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 65,
+      "env_vars": [
+        "DEV",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdOutreachTelegramAccountsAccountIdRouteImport": {
+      "id": "ProtectedWWorkspaceIdOutreachTelegramAccountsAccountIdRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/outreach/telegram-accounts/$accountId.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/outreach/telegram-accounts/$accountId.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/telegram-accounts/$accountId.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/telegram-accounts/$accountId.tsx"
+      ],
+      "reachableFiles": 92,
+      "trpc_procedures": [
+        "cello.getInitOptions",
+        "outreach.rescheduleSequences",
+        "proxy.getProxyStatus",
+        "telegram.account.toggleWarmup",
+        "telegram.account.triggerWarmupSession",
+        "telegram.account.updateAccount"
+      ],
+      "orpc_procedures": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "schema"
+      ],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 103,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdOutreachTelegramAccountsBuyRouteImport": {
+      "id": "ProtectedWWorkspaceIdOutreachTelegramAccountsBuyRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/outreach/telegram-accounts/buy.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/outreach/telegram-accounts/buy.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/telegram-accounts/buy.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/telegram-accounts/buy.tsx"
+      ],
+      "reachableFiles": 82,
+      "trpc_procedures": [
+        "cello.getInitOptions"
+      ],
+      "orpc_procedures": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "FormSchema"
+      ],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 74,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdOutreachTelegramAccountsIndexRouteImport": {
+      "id": "ProtectedWWorkspaceIdOutreachTelegramAccountsIndexRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/outreach/telegram-accounts/index.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/outreach/telegram-accounts/index.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/telegram-accounts/index.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/telegram-accounts/index.tsx"
+      ],
+      "reachableFiles": 54,
+      "trpc_procedures": [
+        "cello.getInitOptions",
+        "telegram.account.moveAccounts"
+      ],
+      "orpc_procedures": [],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 79,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdOutreachTelegramAccountsNewRouteImport": {
+      "id": "ProtectedWWorkspaceIdOutreachTelegramAccountsNewRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/outreach/telegram-accounts/new.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/outreach/telegram-accounts/new.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/telegram-accounts/new.tsx",
+        "src/routes/_protected/w.$workspaceId/outreach/telegram-accounts/new.tsx"
+      ],
+      "reachableFiles": 61,
+      "trpc_procedures": [
+        "cello.getInitOptions",
+        "proxy.getCountries",
+        "telegram.account.auth",
+        "telegram.account.authState"
+      ],
+      "orpc_procedures": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:id",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`",
+        "https://api.country.is/"
+      ],
+      "posthog_events": [
+        "telegram_account_connected"
+      ],
+      "feature_flags": [],
+      "i18n_keys_count": 101,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdRouteRouteImport": {
+      "id": "ProtectedWWorkspaceIdRouteRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/route.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/route.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/route.tsx",
+        "src/routes/_protected/w.$workspaceId/route.tsx"
+      ],
+      "reachableFiles": 87,
+      "trpc_procedures": [
+        "cello.getInitOptions",
+        "workspace.createWorkspace"
+      ],
+      "orpc_procedures": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged",
+        "signOut"
+      ],
+      "zod_schemas": [
+        "FormSchema",
+        "Route"
+      ],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [
+        "$groupidentify",
+        "workspace_created"
+      ],
+      "feature_flags": [],
+      "i18n_keys_count": 64,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_DISABLE_FLOWS",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdSettingsAffiliateRouteImport": {
+      "id": "ProtectedWWorkspaceIdSettingsAffiliateRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/settings/affiliate.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/settings/affiliate.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/affiliate.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/affiliate.tsx"
+      ],
+      "reachableFiles": 47,
+      "trpc_procedures": [
+        "account.getAffiliateInfo",
+        "cello.getInitOptions"
+      ],
+      "orpc_procedures": [],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 65,
+      "env_vars": [
+        "DEV",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdSettingsApiKeysIndexRouteImport": {
+      "id": "ProtectedWWorkspaceIdSettingsApiKeysIndexRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/settings/api-keys/index.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/settings/api-keys/index.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/api-keys/index.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/api-keys/index.tsx"
+      ],
+      "reachableFiles": 50,
+      "trpc_procedures": [
+        "apiKey.create",
+        "apiKey.list",
+        "cello.getInitOptions"
+      ],
+      "orpc_procedures": [],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 77,
+      "env_vars": [
+        "DEV",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdSettingsApiKeysKeyIdRouteImport": {
+      "id": "ProtectedWWorkspaceIdSettingsApiKeysKeyIdRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/settings/api-keys/$keyId.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/settings/api-keys/$keyId.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/api-keys/$keyId.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/api-keys/$keyId.tsx"
+      ],
+      "reachableFiles": 87,
+      "trpc_procedures": [
+        "apiKey.list",
+        "apiKey.rename",
+        "apiKey.revoke",
+        "cello.getInitOptions"
+      ],
+      "orpc_procedures": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "schema"
+      ],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 83,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdSettingsApiKeysWebhooksIndexRouteImport": {
+      "id": "ProtectedWWorkspaceIdSettingsApiKeysWebhooksIndexRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/settings/api-keys/webhooks.index.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/settings/api-keys/webhooks.index.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/api-keys/webhooks.index.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/api-keys/webhooks.index.tsx"
+      ],
+      "reachableFiles": 80,
+      "trpc_procedures": [
+        "cello.getInitOptions",
+        "webhook.create",
+        "webhook.list"
+      ],
+      "orpc_procedures": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "createWebhookSchema"
+      ],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 96,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdSettingsApiKeysWebhooksWebhookIdRouteImport": {
+      "id": "ProtectedWWorkspaceIdSettingsApiKeysWebhooksWebhookIdRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/settings/api-keys/webhooks.$webhookId.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/settings/api-keys/webhooks.$webhookId.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/api-keys/webhooks.$webhookId.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/api-keys/webhooks.$webhookId.tsx"
+      ],
+      "reachableFiles": 88,
+      "trpc_procedures": [
+        "cello.getInitOptions",
+        "webhook.delete",
+        "webhook.disable",
+        "webhook.enable",
+        "webhook.list",
+        "webhook.rotateSecret",
+        "webhook.update"
+      ],
+      "orpc_procedures": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "schema"
+      ],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 117,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdSettingsConnectCrmRouteImport": {
+      "id": "ProtectedWWorkspaceIdSettingsConnectCrmRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/settings/connect-crm.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/settings/connect-crm.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/connect-crm.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/connect-crm.tsx"
+      ],
+      "reachableFiles": 48,
+      "trpc_procedures": [
+        "cello.getInitOptions",
+        "zapier.status"
+      ],
+      "orpc_procedures": [],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 63,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdSettingsExportRouteImport": {
+      "id": "ProtectedWWorkspaceIdSettingsExportRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/settings/export.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/settings/export.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/export.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/export.tsx"
+      ],
+      "reachableFiles": 46,
+      "trpc_procedures": [
+        "cello.getInitOptions"
+      ],
+      "orpc_procedures": [],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 55,
+      "env_vars": [
+        "DEV",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdSettingsFeatureFlagsRouteImport": {
+      "id": "ProtectedWWorkspaceIdSettingsFeatureFlagsRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/settings/feature-flags.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/settings/feature-flags.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/feature-flags.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/feature-flags.tsx"
+      ],
+      "reachableFiles": 48,
+      "trpc_procedures": [
+        "cello.getInitOptions"
+      ],
+      "orpc_procedures": [],
+      "firestore_ops": [
+        "addDoc",
+        "arrayRemove",
+        "arrayUnion",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 49,
+      "env_vars": [
+        "DEV",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdSettingsGoogleCalendarRouteImport": {
+      "id": "ProtectedWWorkspaceIdSettingsGoogleCalendarRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/settings/google-calendar.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/settings/google-calendar.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/google-calendar.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/google-calendar.tsx"
+      ],
+      "reachableFiles": 46,
+      "trpc_procedures": [
+        "cello.getInitOptions",
+        "googleCalendar.createConnectionUrl",
+        "googleCalendar.disconnect",
+        "googleCalendar.getAccount"
+      ],
+      "orpc_procedures": [],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 59,
+      "env_vars": [
+        "DEV",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdSettingsHelpRouteImport": {
+      "id": "ProtectedWWorkspaceIdSettingsHelpRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/settings/help.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/settings/help.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/help.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/help.tsx"
+      ],
+      "reachableFiles": 47,
+      "trpc_procedures": [
+        "cello.getInitOptions"
+      ],
+      "orpc_procedures": [],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 69,
+      "env_vars": [
+        "DEV",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdSettingsIndexRouteImport": {
+      "id": "ProtectedWWorkspaceIdSettingsIndexRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/settings/index.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/settings/index.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/index.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/index.tsx"
+      ],
+      "reachableFiles": 48,
+      "trpc_procedures": [
+        "account.deleteAccount",
+        "cello.getInitOptions",
+        "googleCalendar.getAccount"
+      ],
+      "orpc_procedures": [],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged",
+        "signOut"
+      ],
+      "zod_schemas": [],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 121,
+      "env_vars": [
+        "DEV",
+        "VITE_APP_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdSettingsLocaleRouteImport": {
+      "id": "ProtectedWWorkspaceIdSettingsLocaleRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/settings/locale.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/settings/locale.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/locale.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/locale.tsx"
+      ],
+      "reachableFiles": 47,
+      "trpc_procedures": [
+        "cello.getInitOptions"
+      ],
+      "orpc_procedures": [],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 55,
+      "env_vars": [
+        "DEV",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdSettingsMembersAcceptInviteWIdInviteCodeRouteImport": {
+      "id": "ProtectedWWorkspaceIdSettingsMembersAcceptInviteWIdInviteCodeRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/settings/members.accept-invite.$wId.$inviteCode.ts",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/settings/members.accept-invite.$wId.$inviteCode.ts",
+        "src/routes/_protected/w.$workspaceId/settings/members.accept-invite.$wId.$inviteCode.ts"
+      ],
+      "reachableFiles": 1,
+      "trpc_procedures": [],
+      "orpc_procedures": [],
+      "firestore_ops": [],
+      "firebase_auth_fns": [],
+      "zod_schemas": [],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 0,
+      "env_vars": []
+    },
+    "ProtectedWWorkspaceIdSettingsNotificationsRouteImport": {
+      "id": "ProtectedWWorkspaceIdSettingsNotificationsRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/settings/notifications.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/settings/notifications.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/notifications.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/notifications.tsx"
+      ],
+      "reachableFiles": 48,
+      "trpc_procedures": [
+        "cello.getInitOptions"
+      ],
+      "orpc_procedures": [],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 57,
+      "env_vars": [
+        "DEV",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdSettingsOrganizationOrganizationIdRouteImport": {
+      "id": "ProtectedWWorkspaceIdSettingsOrganizationOrganizationIdRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/settings/organization/$organizationId.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/settings/organization/$organizationId.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/organization/$organizationId.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/organization/$organizationId.tsx"
+      ],
+      "reachableFiles": 83,
+      "trpc_procedures": [
+        "cello.getInitOptions"
+      ],
+      "orpc_procedures": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "formSchema"
+      ],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 64,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdSettingsPropertiesObjectTypeIndexRouteImport": {
+      "id": "ProtectedWWorkspaceIdSettingsPropertiesObjectTypeIndexRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/settings/properties.$objectType/index.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/settings/properties.$objectType/index.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/properties.$objectType/index.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/properties.$objectType/index.tsx"
+      ],
+      "reachableFiles": 52,
+      "trpc_procedures": [
+        "cello.getInitOptions"
+      ],
+      "orpc_procedures": [],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "Route",
+        "mergedSchema"
+      ],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 80,
+      "env_vars": [
+        "DEV",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdSettingsPropertiesObjectTypeKeyEditRouteImport": {
+      "id": "ProtectedWWorkspaceIdSettingsPropertiesObjectTypeKeyEditRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/settings/properties.$objectType/$key.edit.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/settings/properties.$objectType/$key.edit.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/properties.$objectType/$key.edit.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/properties.$objectType/$key.edit.tsx"
+      ],
+      "reachableFiles": 93,
+      "trpc_procedures": [
+        "cello.getInitOptions"
+      ],
+      "orpc_procedures": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "StaleSchema",
+        "mergedSchema"
+      ],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 105,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdSettingsPropertiesObjectTypeNewTypeRouteImport": {
+      "id": "ProtectedWWorkspaceIdSettingsPropertiesObjectTypeNewTypeRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/settings/properties.$objectType/new.$type.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/settings/properties.$objectType/new.$type.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/properties.$objectType/new.$type.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/properties.$objectType/new.$type.tsx"
+      ],
+      "reachableFiles": 91,
+      "trpc_procedures": [
+        "cello.getInitOptions"
+      ],
+      "orpc_procedures": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "Route",
+        "StaleSchema",
+        "mergedSchema"
+      ],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 93,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdSettingsSubscriptionRouteImport": {
+      "id": "ProtectedWWorkspaceIdSettingsSubscriptionRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/settings/subscription.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/settings/subscription.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/subscription.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/subscription.tsx"
+      ],
+      "reachableFiles": 53,
+      "trpc_procedures": [
+        "cello.getInitOptions",
+        "workspace.subscription.getPrices",
+        "workspace.subscription.switchPlan"
+      ],
+      "orpc_procedures": [],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "Route"
+      ],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 127,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdSettingsTelegramSyncRouteImport": {
+      "id": "ProtectedWWorkspaceIdSettingsTelegramSyncRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/settings/telegram-sync.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/settings/telegram-sync.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/telegram-sync.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/telegram-sync.tsx"
+      ],
+      "reachableFiles": 59,
+      "trpc_procedures": [
+        "cello.getInitOptions",
+        "telegram.client.getFolders",
+        "telegram.client.getQrState",
+        "telegram.client.sendCode",
+        "telegram.client.signIn",
+        "telegram.client.signInWithPassword",
+        "telegram.client.signOut",
+        "telegram.client.status",
+        "telegram.client.triggerSync"
+      ],
+      "orpc_procedures": [],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged",
+        "signOut"
+      ],
+      "zod_schemas": [],
+      "fetch_urls": [
+        "https://api.country.is/"
+      ],
+      "posthog_events": [
+        "telegram_sync_auth_complete"
+      ],
+      "feature_flags": [],
+      "i18n_keys_count": 145,
+      "env_vars": [
+        "DEV",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdSettingsWorkspaceAcceptInviteWIdInviteCodeRouteImport": {
+      "id": "ProtectedWWorkspaceIdSettingsWorkspaceAcceptInviteWIdInviteCodeRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/settings/workspace/accept-invite.$wId.$inviteCode.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/settings/workspace/accept-invite.$wId.$inviteCode.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/workspace/accept-invite.$wId.$inviteCode.tsx"
+      ],
+      "reachableFiles": 1,
+      "trpc_procedures": [],
+      "orpc_procedures": [],
+      "firestore_ops": [],
+      "firebase_auth_fns": [],
+      "zod_schemas": [],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 0,
+      "env_vars": []
+    },
+    "ProtectedWWorkspaceIdSettingsWorkspaceIndexRouteImport": {
+      "id": "ProtectedWWorkspaceIdSettingsWorkspaceIndexRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/settings/workspace/index.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/settings/workspace/index.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/workspace/index.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/workspace/index.tsx"
+      ],
+      "reachableFiles": 85,
+      "trpc_procedures": [
+        "cello.getInitOptions",
+        "workspace.getPendingInvites"
+      ],
+      "orpc_procedures": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "schema"
+      ],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [
+        "$groupidentify"
+      ],
+      "feature_flags": [],
+      "i18n_keys_count": 75,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdSettingsWorkspaceInviteRouteImport": {
+      "id": "ProtectedWWorkspaceIdSettingsWorkspaceInviteRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/settings/workspace/invite.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/settings/workspace/invite.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/workspace/invite.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/workspace/invite.tsx"
+      ],
+      "reachableFiles": 84,
+      "trpc_procedures": [
+        "cello.getInitOptions",
+        "workspace.inviteWorkspaceMember"
+      ],
+      "orpc_procedures": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "FormSchema"
+      ],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 76,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdSettingsWorkspaceNewRouteImport": {
+      "id": "ProtectedWWorkspaceIdSettingsWorkspaceNewRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/settings/workspace/new.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/settings/workspace/new.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/workspace/new.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/workspace/new.tsx"
+      ],
+      "reachableFiles": 83,
+      "trpc_procedures": [
+        "cello.getInitOptions",
+        "workspace.createWorkspace"
+      ],
+      "orpc_procedures": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "FormSchema",
+        "Route"
+      ],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [
+        "$groupidentify",
+        "workspace_created"
+      ],
+      "feature_flags": [],
+      "i18n_keys_count": 68,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdSettingsWorkspaceUserUserIdRouteImport": {
+      "id": "ProtectedWWorkspaceIdSettingsWorkspaceUserUserIdRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/settings/workspace/user.$userId.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/settings/workspace/user.$userId.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/workspace/user.$userId.tsx",
+        "src/routes/_protected/w.$workspaceId/settings/workspace/user.$userId.tsx"
+      ],
+      "reachableFiles": 87,
+      "trpc_procedures": [
+        "cello.getInitOptions",
+        "workspace.changeWorkspaceMemberRole",
+        "workspace.removeWorkspaceMember"
+      ],
+      "orpc_procedures": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "schema"
+      ],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 89,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdTelegramRouteImport": {
+      "id": "ProtectedWWorkspaceIdTelegramRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/telegram.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/telegram.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/telegram.tsx",
+        "src/routes/_protected/w.$workspaceId/telegram.tsx"
+      ],
+      "reachableFiles": 121,
+      "trpc_procedures": [
+        "activity.scheduleCalendarEventIfPossible",
+        "cello.getInitOptions",
+        "contact.deleteContacts",
+        "contact.updateContactAvatar",
+        "proxy.getProxyStatus",
+        "telegram.account.getAccountConnectionData",
+        "telegram.account.reauthenticateWebClient",
+        "telegram.account.submitReauthPassword"
+      ],
+      "orpc_procedures": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "NoteFormSchema",
+        "Route",
+        "StaleSchema",
+        "TaskFormSchema",
+        "mergedSchema",
+        "schema"
+      ],
+      "fetch_urls": [
+        "HEALTH_CHECK_URL",
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [
+        "activity_created",
+        "chat_opened"
+      ],
+      "feature_flags": [],
+      "i18n_keys_count": 156,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID",
+        "VITE_TELEGRAM_CLIENT_URL"
+      ]
+    },
+    "ProtectedWWorkspaceIdToolsGroupParserRouteImport": {
+      "id": "ProtectedWWorkspaceIdToolsGroupParserRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/tools/group-parser.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/tools/group-parser.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/tools/group-parser.tsx",
+        "src/routes/_protected/w.$workspaceId/tools/group-parser.tsx"
+      ],
+      "reachableFiles": 50,
+      "trpc_procedures": [
+        "cello.getInitOptions",
+        "outreach.tools.createGroupParseRequest"
+      ],
+      "orpc_procedures": [],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 68,
+      "env_vars": [
+        "DEV",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdToolsLookalikeAudienceRouteImport": {
+      "id": "ProtectedWWorkspaceIdToolsLookalikeAudienceRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/tools/lookalike-audience.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/tools/lookalike-audience.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/tools/lookalike-audience.tsx",
+        "src/routes/_protected/w.$workspaceId/tools/lookalike-audience.tsx"
+      ],
+      "reachableFiles": 55,
+      "trpc_procedures": [
+        "cello.getInitOptions",
+        "outreach.tools.lookalikeAudienceRequest"
+      ],
+      "orpc_procedures": [],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 82,
+      "env_vars": [
+        "DEV",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdToolsPhoneNumbersConverterRouteImport": {
+      "id": "ProtectedWWorkspaceIdToolsPhoneNumbersConverterRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/tools/phone-numbers-converter.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/tools/phone-numbers-converter.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/tools/phone-numbers-converter.tsx",
+        "src/routes/_protected/w.$workspaceId/tools/phone-numbers-converter.tsx"
+      ],
+      "reachableFiles": 54,
+      "trpc_procedures": [
+        "cello.getInitOptions",
+        "outreach.tools.convertPhoneNumbersRequest"
+      ],
+      "orpc_procedures": [],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [],
+      "fetch_urls": [],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 76,
+      "env_vars": [
+        "DEV",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "ProtectedWWorkspaceIdWalletTopUpRouteImport": {
+      "id": "ProtectedWWorkspaceIdWalletTopUpRouteImport",
+      "file": "src/routes/_protected/w.$workspaceId/wallet/top-up.tsx",
+      "seedFiles": [
+        "src/routes/_protected/w.$workspaceId/wallet/top-up.split-component.tsx",
+        "src/routes/_protected/w.$workspaceId/wallet/top-up.tsx",
+        "src/routes/_protected/w.$workspaceId/wallet/top-up.tsx"
+      ],
+      "reachableFiles": 51,
+      "trpc_procedures": [
+        "cello.getInitOptions",
+        "organization.wallet.getTopUpOptions"
+      ],
+      "orpc_procedures": [],
+      "firestore_ops": [
+        "addDoc",
+        "collection",
+        "collection:organizations",
+        "collection:workspaces",
+        "deleteDoc",
+        "deleteField",
+        "doc",
+        "doc:auth-sessions",
+        "doc:organizations",
+        "doc:users",
+        "doc:workspaces",
+        "getDoc",
+        "getDocs",
+        "limit",
+        "onSnapshot",
+        "orderBy",
+        "orderBy:asc",
+        "orderBy:createdAt",
+        "orderBy:executionDate",
+        "query",
+        "serverTimestamp",
+        "setDoc",
+        "updateDoc",
+        "where:accountId",
+        "where:array-contains",
+        "where:contactId",
+        "where:executionDate",
+        "where:in",
+        "where:peerId",
+        "where:status",
+        "where:unread",
+        "where:usernamesNormalized",
+        "writeBatch"
+      ],
+      "firebase_auth_fns": [
+        "onAuthStateChanged"
+      ],
+      "zod_schemas": [
+        "Route"
+      ],
+      "fetch_urls": [
+        "`${import.meta.env.DEV ? \"/config.local.json\" : \"/config.json\"}`"
+      ],
+      "posthog_events": [],
+      "feature_flags": [],
+      "i18n_keys_count": 60,
+      "env_vars": [
+        "DEV",
+        "VITE_BACKEND_URL",
+        "VITE_BOT_USERNAME",
+        "VITE_DEV_HOST",
+        "VITE_FIREBASE_PROJECT_ID"
+      ]
+    },
+    "rootRouteImport": {
+      "id": "rootRouteImport",
+      "file": "src/routes/__root.tsx",
+      "seedFiles": [
+        "src/routes/__root.tsx",
+        "src/routes/__root.tsx"
+      ],
+      "reachableFiles": 10,
+      "trpc_procedures": [],
+      "orpc_procedures": [],
+      "firestore_ops": [],
+      "firebase_auth_fns": [],
+      "zod_schemas": [],
+      "fetch_urls": [],
+      "posthog_events": [
+        "$pageview"
+      ],
+      "feature_flags": [],
+      "i18n_keys_count": 0,
+      "env_vars": []
+    }
+  }
+}

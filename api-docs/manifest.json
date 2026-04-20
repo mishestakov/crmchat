@@ -1,0 +1,265 @@
+[
+  {
+    "route": "https://developers.crmchat.ai/docs",
+    "file": "index.mdx",
+    "mdxUrl": "https://developers.crmchat.ai/docs.mdx",
+    "discoveredLinks": 9
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/authentication",
+    "file": "authentication.mdx",
+    "mdxUrl": "https://developers.crmchat.ai/docs/authentication.mdx",
+    "discoveredLinks": 10
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/pagination",
+    "file": "pagination.mdx",
+    "mdxUrl": "https://developers.crmchat.ai/docs/pagination.mdx",
+    "discoveredLinks": 10
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/patching-resources",
+    "file": "patching-resources.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 10,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/webhooks",
+    "file": "webhooks.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 11,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/custom-properties",
+    "file": "api/custom-properties.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 16,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/contacts",
+    "file": "api/contacts.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 19,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/telegram-accounts",
+    "file": "api/telegram-accounts.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 14,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/base-ui-disable-scrollbar",
+    "file": "base-ui-disable-scrollbar.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 0,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/organizations/organizations.list",
+    "file": "api/organizations/organizations.list.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 13,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/base-ui-disable-scrollbar",
+    "file": "api/base-ui-disable-scrollbar.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 0,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/custom-properties/properties.list",
+    "file": "api/custom-properties/properties.list.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 15,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/custom-properties/properties.get",
+    "file": "api/custom-properties/properties.get.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 15,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/custom-properties/properties.create",
+    "file": "api/custom-properties/properties.create.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 15,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/custom-properties/properties.patch",
+    "file": "api/custom-properties/properties.patch.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 15,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/custom-properties/properties.delete",
+    "file": "api/custom-properties/properties.delete.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 15,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/workspaces/workspaces.getMembers",
+    "file": "api/workspaces/workspaces.getMembers.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 14,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/contacts/contacts.list",
+    "file": "api/contacts/contacts.list.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 18,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/contacts/contacts.get",
+    "file": "api/contacts/contacts.get.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 18,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/contacts/contacts.create",
+    "file": "api/contacts/contacts.create.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 18,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/contacts/contacts.patch",
+    "file": "api/contacts/contacts.patch.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 18,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/contacts/contacts.delete",
+    "file": "api/contacts/contacts.delete.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 18,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/contacts/contact.created",
+    "file": "api/contacts/contact.created.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 18,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/contacts/contact.updated",
+    "file": "api/contacts/contact.updated.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 18,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/contacts/contact.deleted",
+    "file": "api/contacts/contact.deleted.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 18,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/telegram-accounts/telegramAccounts.list",
+    "file": "api/telegram-accounts/telegramAccounts.list.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 13,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/telegram-accounts/telegramAccounts.get",
+    "file": "api/telegram-accounts/telegramAccounts.get.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 13,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/telegram-accounts/telegramAccounts.patch",
+    "file": "api/telegram-accounts/telegramAccounts.patch.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 13,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/organizations/base-ui-disable-scrollbar",
+    "file": "api/organizations/base-ui-disable-scrollbar.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 0,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/organizations/organizations.get",
+    "file": "api/organizations/organizations.get.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 13,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/organizations/organizations.patch",
+    "file": "api/organizations/organizations.patch.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 14,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/custom-properties/base-ui-disable-scrollbar",
+    "file": "api/custom-properties/base-ui-disable-scrollbar.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 0,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/workspaces/base-ui-disable-scrollbar",
+    "file": "api/workspaces/base-ui-disable-scrollbar.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 0,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/workspaces/workspaces.list",
+    "file": "api/workspaces/workspaces.list.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 15,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/workspaces/workspaces.get",
+    "file": "api/workspaces/workspaces.get.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 14,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/workspaces/workspaces.patch",
+    "file": "api/workspaces/workspaces.patch.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 14,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/contacts/base-ui-disable-scrollbar",
+    "file": "api/contacts/base-ui-disable-scrollbar.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 0,
+    "skipped": true
+  },
+  {
+    "route": "https://developers.crmchat.ai/docs/api/telegram-accounts/base-ui-disable-scrollbar",
+    "file": "api/telegram-accounts/base-ui-disable-scrollbar.mdx",
+    "mdxUrl": null,
+    "discoveredLinks": 0,
+    "skipped": true
+  }
+]

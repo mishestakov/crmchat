@@ -1,0 +1,129 @@
+# Agent Guide (/docs/telegram-api/agent-guide)
+
+
+
+Optimized for AI agent consumption. For full documentation with examples, see the [Telegram Raw API reference](/docs/telegram-api).
+
+Bootstrap [#bootstrap]
+
+You need a `workspaceId` and `accountId` before calling any Telegram method. Obtain them in order:
+
+1. `GET /v1/organizations` → pick an `id` from the response
+2. `GET /v1/workspaces?organizationId={orgId}` → pick a workspace `id`
+3. `GET /v1/workspaces/{workspaceId}/telegram-accounts` → pick an account with `status: "active"`
+4. Now call: `POST /v1/workspaces/{workspaceId}/telegram-accounts/{accountId}/call/{method}` with `{"params": {...}}`
+
+See [Authentication](/docs/authentication) for API key usage. See [Pagination](/docs/pagination) for list responses.
+
+Core Concepts [#core-concepts]
+
+Peers and accessHash [#peers-and-accesshash]
+
+Every method targeting a user, chat, or channel requires an **InputPeer** object — not a bare numeric ID. InputPeer has constructors: `inputPeerUser` (needs `userId` + `accessHash`), `inputPeerChat` (needs `chatId`), `inputPeerChannel` (needs `channelId` + `accessHash`), and `inputPeerSelf` (no params).
+
+The **accessHash** is a security token Telegram assigns per user-to-peer relationship. You cannot guess it. Obtain one by:
+
+* `contacts.resolveUsername` — when you know the @username
+* `contacts.search` — when you know the display name
+* `messages.getDialogs` — from existing conversations (users/chats arrays contain accessHash)
+
+Cache the accessHash for your session — it doesn't change.
+
+Some channel-specific methods (`joinChannel`, `leaveChannel`, `getFullChannel`) require **InputChannel** (`inputChannel` constructor) instead of InputPeer — same fields (`channelId` + `accessHash`), different type name.
+
+randomId [#randomid]
+
+Methods that create messages (`sendMessage`, `sendMedia`, etc.) require a `randomId` — a unique numeric string used for deduplication. Reusing one silently drops the message.
+
+Response Joins [#response-joins]
+
+Methods like `getDialogs` and `search` return **separate arrays** (`dialogs`, `messages`, `users`, `chats`) that must be joined client-side by ID. For example, a dialog's `peer.userId` matches a user's `id` in the `users` array, and a dialog's `topMessage` matches a message's `id` in the `messages` array. Extract accessHash from the matched user/chat object.
+
+Type Conventions [#type-conventions]
+
+See the [type conversion table](/docs/telegram-api) for how TL types map to JSON (long → string, bytes → base64, constructors → `{"_": "constructorName", ...}`).
+
+Workflows [#workflows]
+
+Send a message by username [#send-a-message-by-username]
+
+Resolve the username first: `contacts.resolveUsername` → extract `userId` and `accessHash` from `users[0]` in the response → `messages.sendMessage` with `inputPeerUser` peer + `message` + `randomId`.
+
+Send a message by display name [#send-a-message-by-display-name]
+
+`contacts.search` with query → find the target in `users` array (check `myResults` for contacts, `results` for global) → `messages.sendMessage` with the resolved peer.
+
+Send a message to an existing conversation [#send-a-message-to-an-existing-conversation]
+
+`messages.getDialogs` → find the target dialog → extract peer info from `users`/`chats` arrays by matching IDs → `messages.sendMessage`.
+
+Get unread conversations [#get-unread-conversations]
+
+`messages.getDialogs` → filter dialogs where `unreadCount > 0` → join with `users`/`chats` arrays for names and `messages` array for last message text.
+
+Read chat history [#read-chat-history]
+
+`messages.getHistory` with the `inputPeerUser`/`inputPeerChannel` and a `limit`.
+
+Mark messages as read [#mark-messages-as-read]
+
+`messages.readHistory` with the peer and `maxId` (the ID of the last message to mark as read).
+
+Edit a sent message [#edit-a-sent-message]
+
+`messages.editMessage` with the peer, message `id`, and new `message` text.
+
+Delete messages [#delete-messages]
+
+In private chats / basic groups: `messages.deleteMessages` with `id` array and `revoke: true`. In channels / supergroups: `channels.deleteMessages` with `inputChannel` and `id` array.
+
+Search users or channels [#search-users-or-channels]
+
+`contacts.search` with query and `limit`. Response separates `myResults` (your contacts) from `results` (global). Actual user/chat objects are in separate `users[]` and `chats[]` arrays.
+
+Search messages globally [#search-messages-globally]
+
+`messages.searchGlobal` with query `q`, `limit`, and a `filter` (use `inputMessagesFilterEmpty` for all types).
+
+Join or leave a channel [#join-or-leave-a-channel]
+
+`channels.joinChannel` / `channels.leaveChannel` with `inputChannel` (not inputPeerChannel). You need the channel's accessHash — obtain it via `contacts.resolveUsername` or `contacts.search`.
+
+Update own profile [#update-own-profile]
+
+`account.updateProfile` with any combination of `firstName`, `lastName`, `about`. To change username: `account.updateUsername`.
+
+Get chat folder contents [#get-chat-folder-contents]
+
+`messages.getDialogFilters` → find the target folder by title → extract `includePeers` from that folder.
+
+Essential Methods [#essential-methods]
+
+**Messages:** `sendMessage`, `editMessage`, `deleteMessages`, `getHistory`, `getDialogs`, `readHistory`, `searchGlobal`, `sendMedia`
+
+**Contacts:** `resolveUsername`, `search`, `getContacts`
+
+**Channels:** `joinChannel`, `leaveChannel`, `getFullChannel`, `deleteMessages`
+
+**Account:** `updateProfile`, `updateUsername`
+
+**Users:** `getFullUser`, `getMe`
+
+For parameter details on any method, fetch its OpenAPI spec: `/v1/tl-spec/{namespace}/{method}.json` (e.g. `/v1/tl-spec/messages/sendMessage.json`). Per-namespace: `/v1/tl-spec/{namespace}.json`. Full spec: `/v1/tl-spec/all.json`.
+
+Blocked Methods [#blocked-methods]
+
+Entire namespaces `auth.*`, `updates.*`, `mtcute.*`, and `smsjobs.*` are blocked. Individual dangerous methods (`account.deleteAccount`, `account.resetAuthorization`, `account.changePhone`) are blocked. All methods requiring `InputFile` (file uploads) are blocked.
+
+Pitfalls [#pitfalls]
+
+* **accessHash is always required** for users and channels — bare IDs won't work
+* **randomId must be unique per message** — reuse causes silent dedup
+* **Dialog/search responses need client-side joins** — data is split across parallel arrays
+* **Channels use InputChannel, not InputPeer** — `joinChannel`, `leaveChannel`, `getFullChannel` take `inputChannel` constructor
+* **Account must be active** — check `status` field from the bootstrap step 3 response
+
+External References [#external-references]
+
+* [Telegram TL Schema Reference](https://corefork.telegram.org/) — deep dives into constructors and types
+* [CRMchat API Docs](/docs) — REST API endpoints, authentication, pagination

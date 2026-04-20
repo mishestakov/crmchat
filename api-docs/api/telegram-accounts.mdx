@@ -1,0 +1,33 @@
+# Telegram Accounts (/docs/api/telegram-accounts)
+
+
+
+Telegram accounts represent Telegram user sessions connected to your workspace. Each account can participate in outreach campaigns.
+
+Account Status [#account-status]
+
+An account can be in one of the following statuses:
+
+| Status         | Description                                 |
+| -------------- | ------------------------------------------- |
+| `active`       | Connected and operational                   |
+| `offline`      | Temporarily disconnected, will reconnect    |
+| `unauthorized` | Session expired, re-authentication required |
+| `banned`       | Account banned by Telegram                  |
+| `frozen`       | Account frozen by Telegram                  |
+
+Endpoints [#endpoints]
+
+<Cards>
+  <Card href="/docs/api/telegram-accounts/telegramAccounts.list">
+    Retrieve a paginated list of Telegram accounts in a workspace
+  </Card>
+
+  <Card href="/docs/api/telegram-accounts/telegramAccounts.get">
+    Retrieve a single Telegram account by ID
+  </Card>
+
+  <Card href="/docs/api/telegram-accounts/telegramAccounts.patch">
+    Update account settings
+  </Card>
+</Cards>

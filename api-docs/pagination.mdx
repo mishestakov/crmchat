@@ -1,0 +1,114 @@
+# Pagination (/docs/pagination)
+
+
+
+All list endpoints return paginated results using cursor-based pagination. This approach provides stable results even when data changes between requests.
+
+Response Shape [#response-shape]
+
+Every paginated endpoint returns the same structure:
+
+```json
+{
+  "data": [
+    /* items */
+  ],
+  "hasMore": true,
+  "cursors": {
+    "next": "eyJzIjoiMjAyNi0wMy...",
+    "previous": null
+  }
+}
+```
+
+| Field              | Type           | Description                                                |
+| ------------------ | -------------- | ---------------------------------------------------------- |
+| `data`             | array          | The page of results                                        |
+| `hasMore`          | boolean        | Whether more results exist beyond this page                |
+| `cursors.next`     | string \| null | Cursor to fetch the next page (pass as `startingAfter`)    |
+| `cursors.previous` | string \| null | Cursor to fetch the previous page (pass as `endingBefore`) |
+
+Query Parameters [#query-parameters]
+
+| Parameter       | Type   | Default | Description                                          |
+| --------------- | ------ | ------- | ---------------------------------------------------- |
+| `limit`         | number | 20      | Items per page (1â€“100)                               |
+| `startingAfter` | string | â€”       | Cursor from `cursors.next` for the next page         |
+| `endingBefore`  | string | â€”       | Cursor from `cursors.previous` for the previous page |
+
+<Callout type="warn">
+  You cannot use `startingAfter` and `endingBefore` in the same request.
+</Callout>
+
+Example: Paginating Forward [#example-paginating-forward]
+
+**First page** â€” no cursor needed:
+
+```bash
+curl -H "Authorization: Bearer sk_your_api_key" \
+  "https://api.crmchat.ai/v1/organizations?limit=2"
+```
+
+```json title="Response"
+{
+  "data": [
+    { "id": "org_1", "name": "Acme Corp", "...": "..." },
+    { "id": "org_2", "name": "Globex", "...": "..." }
+  ],
+  "hasMore": true,
+  "cursors": {
+    "next": "eyJzIjoiMjAyNi0wMy0xMlQxMDowMDowMC4wMDBaIiwiaSI6Im9yZ18yIiwidCI6ImYifQ",
+    "previous": null
+  }
+}
+```
+
+**Next page** â€” pass `startingAfter`:
+
+```bash
+curl -H "Authorization: Bearer sk_your_api_key" \
+  "https://api.crmchat.ai/v1/organizations?limit=2&startingAfter=eyJzIjoiMjAyNi0wMy0xMlQxMDowMDowMC4wMDBaIiwiaSI6Im9yZ18yIiwidCI6ImYifQ"
+```
+
+**Last page** â€” `hasMore` is `false`, `cursors.next` is `null`:
+
+```json title="Response"
+{
+  "data": [{ "id": "org_3", "name": "Initech", "...": "..." }],
+  "hasMore": false,
+  "cursors": {
+    "next": null,
+    "previous": "eyJzIjoiMjAyNi0wMy0xMlQwOTowMDowMC4wMDBaIiwiaSI6Im9yZ18zIiwidCI6ImYifQ"
+  }
+}
+```
+
+Iterating All Pages [#iterating-all-pages]
+
+To fetch every item, loop until `hasMore` is `false`:
+
+```javascript
+let cursor = undefined;
+const allItems = [];
+
+do {
+  const url = new URL("https://api.crmchat.ai/v1/organizations");
+  url.searchParams.set("limit", "100");
+  if (cursor) url.searchParams.set("startingAfter", cursor);
+
+  const res = await fetch(url, {
+    headers: { Authorization: "Bearer sk_your_api_key" },
+  });
+  const page = await res.json();
+
+  allItems.push(...page.data);
+  cursor = page.cursors.next;
+} while (cursor);
+```
+
+Cursors [#cursors]
+
+Cursors are opaque strings â€” do not parse or construct them. They encode the position of the last item on the current page so the server can efficiently resume from the right spot.
+
+* Cursors are tied to a specific sort order. Do not reuse cursors across different queries.
+* Cursors do not expire, but they may become invalid if the underlying data is deleted.

@@ -1,0 +1,89 @@
+# Telegram Raw API (/docs/telegram-api)
+
+
+
+Access raw Telegram TL methods through REST endpoints. Each connected Telegram account can execute any of the 700+ available methods.
+
+<Callout type="warn" title="Account safety">
+  Incorrect or abusive usage of the Telegram API can result in your account
+  being temporarily or permanently banned by Telegram. Avoid bulk operations,
+  rapid-fire requests, and unsolicited messaging. CRMchat is not responsible for
+  account restrictions caused by API misuse.
+</Callout>
+
+Rate limits [#rate-limits]
+
+Rate limits are enforced by Telegram, not by CRMchat. When you exceed Telegram's limits, the API returns a `FLOOD_WAIT_X` error with the number of seconds to wait:
+
+```json
+{
+  "code": "BAD_REQUEST",
+  "message": "FLOOD_WAIT_42",
+  "data": {
+    "code": "TELEGRAM_RPC_ERROR",
+    "tlErrorCode": 420,
+    "tlErrorMessage": "FLOOD_WAIT_42"
+  }
+}
+```
+
+Your application should parse the wait duration from the error message and retry after that period. Different methods have different limits — there are no published numbers, but generally:
+
+* **Messaging**: \~30 messages per second to different chats, slower for the same chat
+* **Bulk reads** (e.g., `messages.getHistory`): a few requests per second
+* **Resolve/search**: stricter limits, cache results when possible
+* **Account-wide**: Telegram tracks overall activity per account, not per API key
+
+Endpoint [#endpoint]
+
+All methods are called via:
+
+```
+POST /v1/workspaces/{workspaceId}/telegram-accounts/{accountId}/call/{method}
+```
+
+Authentication [#authentication]
+
+Use your API key as a Bearer token in the `Authorization` header.
+
+Request format [#request-format]
+
+```json
+{
+  "params": {
+    // Method-specific parameters
+  }
+}
+```
+
+Response format [#response-format]
+
+```json
+{
+  "result": {
+    // TL object response
+  }
+}
+```
+
+Type conventions [#type-conventions]
+
+| TL Type     | JSON Format                             |
+| ----------- | --------------------------------------- |
+| `long`      | String (numeric, 64-bit safe)           |
+| `bytes`     | Base64 string                           |
+| `int128`    | Hex string (32 chars)                   |
+| `int256`    | Hex string (64 chars)                   |
+| `Bool`      | Boolean                                 |
+| `Vector<T>` | Array                                   |
+| Constructor | `{ "_": "constructorName", ...fields }` |
+
+Available schemas [#available-schemas]
+
+Available schemas [#available-schemas-1]
+
+OpenAPI specs are available at three granularity levels for AI agent consumption:
+
+* **Full spec**: `/v1/tl-spec/all.json` — All methods (\~700+)
+* **Per namespace**: `/v1/tl-spec/{namespace}.json` — Methods grouped by namespace (e.g., `messages`, `channels`)
+* **Per method**: `/v1/tl-spec/{namespace}/{method}.json` — Single method spec

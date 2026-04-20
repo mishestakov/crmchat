@@ -1,0 +1,107 @@
+# Webhooks (/docs/webhooks)
+
+
+
+Receive real-time HTTP notifications when events occur in your CRM workspace.
+
+Supported Events [#supported-events]
+
+| Event             | Description               |
+| ----------------- | ------------------------- |
+| `contact.created` | A new contact was created |
+| `contact.updated` | A contact was updated     |
+| `contact.deleted` | A contact was deleted     |
+
+Managing Webhooks [#managing-webhooks]
+
+Webhooks are managed through the Settings → API Keys page in the CRM app. Each webhook requires:
+
+* A name
+* An HTTPS endpoint URL
+* One or more event types to subscribe to
+* One or more workspaces to receive events from
+
+When you create a webhook, a signing secret is generated and shown once. Save it securely — you'll need it to verify webhook signatures.
+
+Payload Format [#payload-format]
+
+All webhook payloads are sent as HTTP POST requests with `Content-Type: application/json`.
+
+Headers [#headers]
+
+| Header                | Description                                |
+| --------------------- | ------------------------------------------ |
+| `X-Webhook-Signature` | HMAC-SHA256 hex digest of the request body |
+| `X-Webhook-Event`     | The event type (e.g. `contact.created`)    |
+| `X-Webhook-Id`        | Unique event ID for idempotency            |
+| `User-Agent`          | `CRMChat-Webhooks/1.0`                     |
+
+Event payload [#event-payload]
+
+For `contact.created` and `contact.deleted`:
+
+```json
+{
+  "eventId": "evt_abc123_wh456",
+  "eventType": "contact.created",
+  "eventDate": "2026-03-24T12:00:00.000Z",
+  "workspaceId": "workspace-id",
+  "data": {
+    "id": "contact-id",
+    "fullName": "John Doe",
+    "email": "john@example.com",
+    "createdAt": "2026-03-24T12:00:00.000Z",
+    "updatedAt": "2026-03-24T12:00:00.000Z"
+  }
+}
+```
+
+For `contact.updated`, both current and previous state are included:
+
+```json
+{
+  "eventId": "evt_abc123_wh456",
+  "eventType": "contact.updated",
+  "eventDate": "2026-03-24T12:00:00.000Z",
+  "workspaceId": "workspace-id",
+  "data": {
+    "id": "contact-id",
+    "fullName": "Jane Doe"
+  },
+  "previousData": {
+    "id": "contact-id",
+    "fullName": "John Doe"
+  }
+}
+```
+
+For `contact.deleted`, `data` contains the full contact snapshot before deletion.
+
+Verifying Signatures [#verifying-signatures]
+
+Every webhook request includes an `X-Webhook-Signature` header containing an HMAC-SHA256 hex digest of the request body, signed with your webhook's signing secret.
+
+```javascript
+import { createHmac } from "crypto";
+
+const signature = createHmac("sha256", signingSecret)
+  .update(rawBody)
+  .digest("hex");
+
+const isValid = signature === req.headers["x-webhook-signature"];
+```
+
+Always verify signatures before processing webhook payloads to ensure they originate from CRM Chat.
+
+Failure Policy [#failure-policy]
+
+If your webhook endpoint is unavailable or returns a non-2xx status code:
+
+* Each delivery is attempted up to 10 times with exponential backoff (starting at 5 minutes, doubling each time) over approximately 24 hours
+* If no successful delivery occurs within 3 days, the webhook is automatically disabled
+* You'll receive a Telegram notification when a webhook is disabled
+* You can re-enable disabled webhooks from Settings → API Keys
+
+Timeout [#timeout]
+
+Webhook deliveries have a 30-second timeout. Ensure your endpoint responds within this window.

@@ -1,0 +1,103 @@
+# Updating Resources (/docs/patching-resources)
+
+
+
+The CRMchat API uses [JSON Merge Patch (RFC 7396)](https://datatracker.ietf.org/doc/html/rfc7396) for partial updates via `PATCH` endpoints.
+
+TL;DR [#tldr]
+
+* Send a <code><span className="font-mono font-medium text-orange-600 dark:text-orange-400 ms-auto text-xs text-nowrap">PATCH</span></code> request with `Content-Type: application/merge-patch+json`.
+* Include only the fields you want to change.
+* Send `null` to remove a field.
+
+| Input                               | Effect                                |
+| ----------------------------------- | ------------------------------------- |
+| Field omitted                       | No change                             |
+| `{ "name": "New" }`                 | Sets `name` to `"New"`                |
+| `{ "name": null }`                  | Removes `name` (optional fields only) |
+| `{ "telegram": { "id": 123456 } }`  | Updates only `telegram.id`            |
+| `{ "telegram": { "id": null } }`    | Removes `telegram.id`                 |
+| `{ "telegram": null }`              | Removes all fields inside `telegram`  |
+| `{ "tags": ["vip", "enterprise"] }` | Replaces the entire `tags` array      |
+| `{ "tags": [] }`                    | Clears the `tags` array               |
+
+Content Type [#content-type]
+
+Per [RFC 7396](https://datatracker.ietf.org/doc/html/rfc7396), `PATCH` requests should use:
+
+```
+Content-Type: application/merge-patch+json
+```
+
+For convenience, `application/json` is also accepted with the same merge-patch semantics. Requests with any other `Content-Type` receive a `415 Unsupported Media Type` response.
+
+Example [#example]
+
+```bash
+curl -X PATCH https://api.crmchat.ai/v1/organizations/abc123 \
+  -H "Authorization: Bearer sk_your_api_key" \
+  -H "Content-Type: application/merge-patch+json" \
+  -d '{ "name": "New Name" }'
+```
+
+```json title="Response (200)"
+{
+  "data": {
+    "id": "abc123",
+    "name": "New Name",
+    "createdAt": "2026-03-12T10:00:00.000Z",
+    "updatedAt": "2026-03-12T10:05:00.000Z"
+  }
+}
+```
+
+Removing Fields [#removing-fields]
+
+Per RFC 7396, sending `null` for a key means "remove this field". Only optional fields can be set to `null` — required fields reject `null` values with a `400` error.
+
+For nested objects, sending `null` for the parent removes all fields inside it. You can also target individual subfields:
+
+```json title="Remove a single subfield"
+{ "telegram": { "id": null } }
+```
+
+```json title="Remove all fields inside telegram"
+{ "telegram": null }
+```
+
+Updating Arrays [#updating-arrays]
+
+JSON Merge Patch does not support partial array updates — there is no way to add, remove, or reorder individual items. When a field is an array, you must always send the **complete replacement array**.
+
+```json title="Replace the full array"
+{ "tags": ["vip", "enterprise"] }
+```
+
+Sending a partial array does not merge — it overwrites. If you send `["vip"]` when the current value is `["vip", "enterprise"]`, the result is `["vip"]`.
+
+To remove all items, send an empty array:
+
+```json title="Clear the array"
+{ "tags": [] }
+```
+
+<Callout type="warn">
+  Sending `null` for an array field removes the field entirely (if it is
+  optional). To keep the field but empty it, send `[]` instead.
+</Callout>
+
+Unknown Fields [#unknown-fields]
+
+Unknown or non-writable fields in the request body are silently ignored, consistent with the merge-patch philosophy of "ignore what you don't understand".
+
+Error Responses [#error-responses]
+
+| Status | Code                     | When                                   |
+| ------ | ------------------------ | -------------------------------------- |
+| 400    | `BAD_REQUEST`            | Malformed JSON or validation failure   |
+| 415    | `UNSUPPORTED_MEDIA_TYPE` | Missing or wrong `Content-Type` header |
+
+<Callout type="info">
+  Authorization errors (`401`, `403`, `404`) are the same as for other
+  endpoints. See [Authentication](/docs/authentication) for details.
+</Callout>

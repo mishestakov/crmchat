@@ -1,0 +1,49 @@
+# Authentication (/docs/authentication)
+
+
+
+API Keys [#api-keys]
+
+All API requests require authentication via API keys. Keys are scoped to your user account and grant access to all workspaces you belong to.
+
+Creating an API Key [#creating-an-api-key]
+
+Generate API keys from the [CRM settings page](https://app.crmchat.ai/mini-app/settings/api-keys). Each key has a name for identification and a prefix (`sk_...`) shown after creation.
+
+<Callout type="warn">
+  The full API key is <span className="text-fd-primary">only shown once</span>{" "}
+  at creation time. Store it securely.
+</Callout>
+
+Using Your API Key [#using-your-api-key]
+
+Include the API key as a Bearer token in the `Authorization` header:
+
+```bash
+curl -H "Authorization: Bearer sk_your_api_key" \
+  https://api.crmchat.ai/v1/workspaces
+```
+
+Error Responses [#error-responses]
+
+If authentication fails, the API returns a `401 Unauthorized` response:
+
+```json
+{
+  "defined": true,
+  "code": "UNAUTHORIZED",
+  "status": 401,
+  "message": "Invalid or missing API key"
+}
+```
+
+Rate Limiting [#rate-limiting]
+
+The API enforces a rate limit of 100 requests per minute per user. When exceeded, requests return `429 Too Many Requests`.
+
+Security Best Practices [#security-best-practices]
+
+* Never commit API keys to version control
+* Use environment variables to store keys
+* Rotate keys periodically
+* Revoke keys that are no longer needed

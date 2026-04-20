@@ -1,0 +1,107 @@
+# Custom Properties (/docs/api/custom-properties)
+
+
+
+Custom properties let you extend contacts with fields tailored to your business. Each property defines a field type, display name, and validation rules. Property values are then stored on individual contacts using the property's key.
+
+How It Works [#how-it-works]
+
+Properties are defined at the workspace level and scoped to an object type (currently `contacts`). Once a property is created, any contact in that workspace can store a value for it.
+
+A property definition looks like this:
+
+```json
+{
+  "key": "custom.lead_status",
+  "type": "single-select",
+  "name": "Lead Status",
+  "options": [
+    { "label": "New", "value": "new", "color": "blue" },
+    { "label": "Contacted", "value": "contacted", "color": "yellow" },
+    { "label": "Qualified", "value": "qualified", "color": "green" }
+  ]
+}
+```
+
+Keys [#keys]
+
+Every custom property key must start with `custom.` followed by a descriptive identifier. Keys are dot-separated paths and must be unique within the object type.
+
+| Key                      | Description                  |
+| ------------------------ | ---------------------------- |
+| `custom.lead_status`     | A lead qualification status  |
+| `custom.company_name`    | The contact's company        |
+| `custom.deal_value`      | The monetary value of a deal |
+| `custom.referral_source` | How the contact found you    |
+
+Keys are immutable after creation — you cannot rename a property key, only delete and recreate.
+
+<Callout type="info">
+  Properties created from the UI have an auto-generated key (e.g.,
+  `custom.wRhEVPXBZiIEx2RImfmfG`). When creating properties via the API, you
+  choose your own key — use something descriptive like `custom.lead_status`.
+</Callout>
+
+Property Types [#property-types]
+
+| Type            | Description                  | Extra fields              |
+| --------------- | ---------------------------- | ------------------------- |
+| `text`          | Short text input             | —                         |
+| `textarea`      | Multiline text               | —                         |
+| `single-select` | One option from a list       | `options`, `defaultValue` |
+| `multi-select`  | Multiple options from a list | `options`                 |
+| `user-select`   | Workspace member picker      | —                         |
+| `url`           | URL input                    | —                         |
+| `email`         | Email address                | —                         |
+| `tel`           | Phone number                 | —                         |
+| `amount`        | Monetary value               | —                         |
+
+Select Options [#select-options]
+
+`single-select` and `multi-select` properties require an `options` array. Each option has:
+
+| Field   | Type    | Description                                                                           |
+| ------- | ------- | ------------------------------------------------------------------------------------- |
+| `label` | string  | Display label                                                                         |
+| `value` | string  | Stored value (immutable)                                                              |
+| `color` | string? | One of: `gray`, `brown`, `orange`, `yellow`, `green`, `blue`, `purple`, `pink`, `red` |
+
+Common Fields [#common-fields]
+
+Every property supports these fields:
+
+| Field         | Type    | Description                                      |
+| ------------- | ------- | ------------------------------------------------ |
+| `key`         | string  | Unique identifier (must start with `custom.`)    |
+| `type`        | string  | Property type (see above)                        |
+| `name`        | string  | Display name shown in the UI                     |
+| `description` | string? | Help text for the field                          |
+| `placeholder` | string? | Input placeholder text                           |
+| `required`    | boolean | Whether the field is required (default: `false`) |
+
+Managing Properties [#managing-properties]
+
+Use the endpoints below to create, update, list, and delete property definitions for a workspace.
+
+<Cards>
+  <Card href="/docs/api/custom-properties/properties.create" title="Create property">
+    Add a new custom property to a workspace
+  </Card>
+
+  <Card href="/docs/api/custom-properties/properties.list" title="List properties">
+    Retrieve all custom property definitions
+  </Card>
+
+  <Card href="/docs/api/custom-properties/properties.patch" title="Update property">
+    Modify a property's name, options, or settings
+  </Card>
+
+  <Card href="/docs/api/custom-properties/properties.delete" title="Delete property">
+    Remove a custom property definition
+  </Card>
+</Cards>
+
+<Callout type="warn">
+  Deleting a property removes only the definition — existing values on contacts
+  are not cleaned up.
+</Callout>

@@ -1,0 +1,44 @@
+# Outreach Campaigns (/docs/api/campaigns)
+
+
+
+Campaigns (outreach sequences) let you send automated message sequences to a list of leads. Each campaign belongs to a workspace and progresses through a defined set of steps.
+
+Campaign Status [#campaign-status]
+
+A campaign moves through the following statuses:
+
+| Status      | Description                                     |
+| ----------- | ----------------------------------------------- |
+| `draft`     | Not yet started; steps and leads can be edited  |
+| `active`    | Currently sending messages to leads             |
+| `paused`    | Sending is suspended; can be resumed or deleted |
+| `completed` | All messages have been sent                     |
+
+Deleting a Campaign [#deleting-a-campaign]
+
+Only campaigns in `draft`, `paused`, or `completed` status can be deleted. Attempting to delete an `active` campaign returns a `409 Conflict` error. Pause or complete the campaign first.
+
+Endpoints [#endpoints]
+
+<Cards>
+  <Card href="/docs/api/campaigns/outreach.sequences.list">
+    Retrieve a paginated list of campaigns in a workspace
+  </Card>
+
+  <Card href="/docs/api/campaigns/outreach.sequences.get">
+    Retrieve a single campaign by ID
+  </Card>
+
+  <Card href="/docs/api/campaigns/outreach.sequences.create">
+    Create a new outreach campaign
+  </Card>
+
+  <Card href="/docs/api/campaigns/outreach.sequences.patch">
+    Update an existing campaign
+  </Card>
+
+  <Card href="/docs/api/campaigns/outreach.sequences.delete">
+    Delete a draft, paused, or completed campaign
+  </Card>
+</Cards>
