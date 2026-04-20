@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# raw network dump — 45 MiB, fully reproducible via download_complete.py
+crmchat_dump_full/
