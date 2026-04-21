@@ -1,0 +1,402 @@
+[
+  {
+    "h": "60aaf90093b6756cddbb35822616caf0d8ad51fa",
+    "t": 1775608522,
+    "s": "12.0.22",
+    "match": 312,
+    "mismatch": 30,
+    "missing": 1
+  },
+  {
+    "h": "e755a77317031171800a5fab3773fdd8541d1c7b",
+    "t": 1774949562,
+    "s": "[Build]",
+    "match": 312,
+    "mismatch": 30,
+    "missing": 1
+  },
+  {
+    "h": "8322be991788f327e23a8b048684855f83882d81",
+    "t": 1774949510,
+    "s": "Pinned Messages: Fix text alignment, if pinned message has media (#6824)",
+    "match": 312,
+    "mismatch": 30,
+    "missing": 1
+  },
+  {
+    "h": "6b384c8da5a611035922404a7df4f290eed43e99",
+    "t": 1774949510,
+    "s": "Support Emoji 17 (#6823)",
+    "match": 312,
+    "mismatch": 30,
+    "missing": 1
+  },
+  {
+    "h": "0f18a00e0cddecfb348343e03ce7ff1aa89c50d8",
+    "t": 1774949505,
+    "s": "Chat List: Show mention badge as accent (#6822)",
+    "match": 310,
+    "mismatch": 32,
+    "missing": 1
+  },
+  {
+    "h": "4f5bfe684d73080a3d95a2e99e9394a8ab101a3f",
+    "t": 1774949483,
+    "s": "Group Badge: Fix margin between Boost icoon and badge (#6821)",
+    "match": 310,
+    "mismatch": 32,
+    "missing": 1
+  },
+  {
+    "h": "992d8d6b2f6f43a9112b9989cc7a24e245c441d7",
+    "t": 1774949482,
+    "s": "Unpin Button: Fix blending text on hovering Unpin All button (#6820)",
+    "match": 310,
+    "mismatch": 32,
+    "missing": 1
+  },
+  {
+    "h": "473f0dd8e3842d9e413331b29cad85a7913f9e94",
+    "t": 1774949482,
+    "s": "Avatar: Increase mini text size (#6807)",
+    "match": 310,
+    "mismatch": 32,
+    "missing": 1
+  },
+  {
+    "h": "a06fabd4f319a59a407121fb370faf2d7f9b3d29",
+    "t": 1774949482,
+    "s": "Browser History: Fix early reset closing chats on reload (#6808)",
+    "match": 309,
+    "mismatch": 33,
+    "missing": 1
+  },
+  {
+    "h": "d101cdf0d3f1f500e7f008b9d3764077074f47b4",
+    "t": 1774949482,
+    "s": "Support updated OAuth (#6798)",
+    "match": 308,
+    "mismatch": 34,
+    "missing": 1
+  },
+  {
+    "h": "85c6df27b8fd748fafad95df64bf5739984592e5",
+    "t": 1776170851,
+    "s": "Layer: Support layer 224 (#6801)",
+    "match": 306,
+    "mismatch": 36,
+    "missing": 1
+  },
+  {
+    "h": "507123f600b2dd34db3a711e64e4a31d1e517b7a",
+    "t": 1776170848,
+    "s": "12.0.23",
+    "match": 306,
+    "mismatch": 36,
+    "missing": 1
+  },
+  {
+    "h": "c02c68d44b65e7733be756667518366e0b9a380f",
+    "t": 1775608580,
+    "s": "[Build]",
+    "match": 306,
+    "mismatch": 36,
+    "missing": 1
+  },
+  {
+    "h": "da590cf02a9abb66bbf0c1ac27f31e99241e41df",
+    "t": 1775608525,
+    "s": "Message: Add text streaming animation (#6834)",
+    "match": 306,
+    "mismatch": 36,
+    "missing": 1
+  },
+  {
+    "h": "6770fff85767a8df41d7fc9aff9e32536788c82a",
+    "t": 1774949482,
+    "s": "Attachment Modal: Redesign (#6777)",
+    "match": 305,
+    "mismatch": 37,
+    "missing": 1
+  },
+  {
+    "h": "0d9d4bbebfa3795c365d2dcf270280aa8299d705",
+    "t": 1776170851,
+    "s": "Update layer (#6827)",
+    "match": 304,
+    "mismatch": 38,
+    "missing": 1
+  },
+  {
+    "h": "aafb84c5e13d3f52a2c350e4e0d715db80f14450",
+    "t": 1776170851,
+    "s": "Dialog: Migrate messages to new lang API (#6800)",
+    "match": 304,
+    "mismatch": 38,
+    "missing": 1
+  },
+  {
+    "h": "a44ecb01131a45a9ef6ce7807ee153c7b6414e3e",
+    "t": 1774949482,
+    "s": "Thread Message: Add comments button for document group (#6779)",
+    "match": 304,
+    "mismatch": 38,
+    "missing": 1
+  },
+  {
+    "h": "6f29b81ae745003a6a07a8d713d118fa41475531",
+    "t": 1774949482,
+    "s": "Context Menu: Migrate reaction and seen count labels to new lang API (#6804)",
+    "match": 303,
+    "mismatch": 39,
+    "missing": 1
+  },
+  {
+    "h": "305cbf5665e0bbd7b83b82c44969ed8debc628b5",
+    "t": 1774949482,
+    "s": "Paid Messages: Remove payment in owned groups (#6805)",
+    "match": 303,
+    "mismatch": 39,
+    "missing": 1
+  },
+  {
+    "h": "cbedc34bf0e42726ec6998351d4883486243fc7f",
+    "t": 1774949482,
+    "s": "Bot Command: Fix always sending command in main thread (#6799)",
+    "match": 303,
+    "mismatch": 39,
+    "missing": 1
+  },
+  {
+    "h": "b98f79030869ae79bf5f9ea0ec71797ebeb95bc5",
+    "t": 1774949482,
+    "s": "Message: Display formatted dates (#6795)",
+    "match": 302,
+    "mismatch": 40,
+    "missing": 1
+  },
+  {
+    "h": "bc7468265ddedb8b4acb3daa26907c432ab3fcf0",
+    "t": 1774949482,
+    "s": "Saved Messages: Remove Open Chat button from My Notes (#6803)",
+    "match": 298,
+    "mismatch": 43,
+    "missing": 2
+  },
+  {
+    "h": "9cd17b4921ade67727e0ee067c683e67342f7a14",
+    "t": 1774949482,
+    "s": "Privacy: Support chat no forwards (#6775)",
+    "match": 298,
+    "mismatch": 43,
+    "missing": 2
+  },
+  {
+    "h": "cbce577daba911481b3b4448da702a6063cd06b2",
+    "t": 1774949482,
+    "s": "Support member tags (#6749)",
+    "match": 293,
+    "mismatch": 48,
+    "missing": 2
+  },
+  {
+    "h": "cdebd3b479994611d4bd79d4b81f11f131692549",
+    "t": 1774949476,
+    "s": "Localization: New date formatting (#6780)",
+    "match": 290,
+    "mismatch": 51,
+    "missing": 2
+  },
+  {
+    "h": "e9955fa8796cfb0e33989ec12e106e5648dbfe76",
+    "t": 1776170851,
+    "s": "Pull translations from platform (#6832)",
+    "match": 283,
+    "mismatch": 59,
+    "missing": 1
+  },
+  {
+    "h": "29b82893baddbf1ddc5b37f204842b087ee3fbf3",
+    "t": 1776170851,
+    "s": "[dev] GH Actions: Bump version (#6830)",
+    "match": 283,
+    "mismatch": 59,
+    "missing": 1
+  },
+  {
+    "h": "ee3faa9df8abb65c54b2ee488ead9f19539f421a",
+    "t": 1776170851,
+    "s": "Reactions: Allow in chat with Telegram (#6831)",
+    "match": 283,
+    "mismatch": 59,
+    "missing": 1
+  },
+  {
+    "h": "54d5b79d263959bb45528ba37eaf4b89d5d18be4",
+    "t": 1776170851,
+    "s": "Tauri: Fix build on Mac (#6829)",
+    "match": 283,
+    "mismatch": 59,
+    "missing": 1
+  },
+  {
+    "h": "2bf27f3f44f0da103277689e5bdca99712c0e64a",
+    "t": 1776170851,
+    "s": "Calendar: Jump by year while holding Shift (#6828)",
+    "match": 283,
+    "mismatch": 59,
+    "missing": 1
+  },
+  {
+    "h": "319c0396a4ee18db808bedf6f36816707cb92259",
+    "t": 1776170851,
+    "s": "Bump dependencies (#6714)",
+    "match": 283,
+    "mismatch": 59,
+    "missing": 1
+  },
+  {
+    "h": "ac07a2242b18e870cde05a89d722bed3c268754b",
+    "t": 1776170851,
+    "s": "Message: Fix appearance order (#6835)",
+    "match": 280,
+    "mismatch": 62,
+    "missing": 1
+  },
+  {
+    "h": "43b6ddd426b662bf7dece477747ca1f369ba0668",
+    "t": 1776170851,
+    "s": "Forward Modal: Make items wider (#6833)",
+    "match": 280,
+    "mismatch": 62,
+    "missing": 1
+  },
+  {
+    "h": "a2a601f56c145140b3e5a3585f97471652a3a690",
+    "t": 1776170851,
+    "s": "Dates: Support composer input (#6796)",
+    "match": 280,
+    "mismatch": 62,
+    "missing": 1
+  },
+  {
+    "h": "88b6d3a6d7985f0b71bc9c25d7458cecf92a311f",
+    "t": 1774949332,
+    "s": "Similar Channels: Fix animation (#6778)",
+    "match": 280,
+    "mismatch": 59,
+    "missing": 4
+  },
+  {
+    "h": "214e8a3c75f17d8a6ce84d359bab4dda65e91fcb",
+    "t": 1774949329,
+    "s": "Message List: Save viewport position between reloads (#6754)",
+    "match": 280,
+    "mismatch": 59,
+    "missing": 4
+  },
+  {
+    "h": "ac06cb6e8061f2c4d4e9d5ed2a2cf695913619b3",
+    "t": 1774949326,
+    "s": "Poll: Support date in vote (#6760)",
+    "match": 280,
+    "mismatch": 59,
+    "missing": 4
+  },
+  {
+    "h": "aa44302ed43edd53b893cd750eda6dfa4ff1a4aa",
+    "t": 1774949323,
+    "s": "Delete Chat Modal: Support safe leave basic group (#6759)",
+    "match": 280,
+    "mismatch": 59,
+    "missing": 4
+  },
+  {
+    "h": "ed638330d445eb8cb1e0371bcd87bf605ef6cc36",
+    "t": 1774949319,
+    "s": "Profile Photo: Fix upload bot photo (#6776)",
+    "match": 280,
+    "mismatch": 59,
+    "missing": 4
+  },
+  {
+    "h": "b5fed8276a167e0c5fc4c8a77afdba76531dd6d8",
+    "t": 1774949316,
+    "s": "GIF: Support sending with caption (#6755)",
+    "match": 280,
+    "mismatch": 59,
+    "missing": 4
+  },
+  {
+    "h": "07d24e2d433191bfc87ded2e1b5ca69e1cad117d",
+    "t": 1774949313,
+    "s": "Table Info: Fix layout for full width (#6757)",
+    "match": 280,
+    "mismatch": 59,
+    "missing": 4
+  },
+  {
+    "h": "eb5b0dead11bebdb57519d422406b98eb553ecdd",
+    "t": 1774949310,
+    "s": "Layer 223 (#6748)",
+    "match": 280,
+    "mismatch": 59,
+    "missing": 4
+  },
+  {
+    "h": "20410c03c979ef1f2f78474b78cdd099c0fe2512",
+    "t": 1774949307,
+    "s": "12.0.21",
+    "match": 280,
+    "mismatch": 59,
+    "missing": 4
+  },
+  {
+    "h": "47f4e8ce1a23e7ba3d17fb33e2588d7a9f88efdd",
+    "t": 1772711071,
+    "s": "[Build]",
+    "match": 280,
+    "mismatch": 59,
+    "missing": 4
+  },
+  {
+    "h": "d94e492584c4d914f4f61f92801cfe49d5f56817",
+    "t": 1772711013,
+    "s": "Left Main: Hide tab shadow when no scroll (#6743)",
+    "match": 280,
+    "mismatch": 59,
+    "missing": 4
+  },
+  {
+    "h": "c01f4264ab69fa44d3579227e5af2aeff069e122",
+    "t": 1772711012,
+    "s": "Gift Preview: Follow-up (#6753)",
+    "match": 280,
+    "mismatch": 59,
+    "missing": 4
+  },
+  {
+    "h": "767d88c81d8ea58220c430bb4b683c74b3eb9149",
+    "t": 1772711010,
+    "s": "Gift Price Decrease Info Modal: Fix scroll (#6756)",
+    "match": 280,
+    "mismatch": 59,
+    "missing": 4
+  },
+  {
+    "h": "02a5a2a44f65d1400b9ecad696ac70b1406aa8ab",
+    "t": 1772711009,
+    "s": "Implement Media Editor (#6658)",
+    "match": 280,
+    "mismatch": 59,
+    "missing": 4
+  },
+  {
+    "h": "d7e3456550334fde5570b2b83c53940a5245a076",
+    "t": 1776170851,
+    "s": "Forward: Fix forward to forum topics (#6842)",
+    "match": 279,
+    "mismatch": 63,
+    "missing": 1
+  }
+]

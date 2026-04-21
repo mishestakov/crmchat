@@ -1,0 +1,38 @@
+{
+  "base": "60aaf90093b6756cddbb35822616caf0d8ad51fa",
+  "modified": [
+    "src/components/App.module.scss",
+    "src/components/App.tsx",
+    "src/components/common/AnimatedCounter.module.scss",
+    "src/components/common/Blockquote.module.scss",
+    "src/components/common/CustomEmoji.module.scss",
+    "src/components/common/PeerColorWrapper.module.scss",
+    "src/components/common/Sparkles.module.scss",
+    "src/components/common/StickerView.module.scss",
+    "src/components/common/TopicDefaultIcon.module.scss",
+    "src/components/common/UiLoader.module.scss",
+    "src/components/common/code/CodeOverlay.module.scss",
+    "src/components/common/embedded/EmojiIconBackground.module.scss",
+    "src/components/common/icons/StarIcon.module.scss",
+    "src/components/middle/message/ActionMessage.module.scss",
+    "src/components/ui/Link.module.scss",
+    "src/components/ui/RoundTimer.module.scss",
+    "src/components/ui/Spinner.module.scss",
+    "src/config.ts",
+    "src/global/actions/api/initial.ts",
+    "src/global/actions/ui/initial.ts",
+    "src/global/actions/ui/settings.ts",
+    "src/global/selectors/messages.ts",
+    "src/util/browser/globalEnvironment.ts",
+    "src/util/browser/windowEnvironment.ts",
+    "src/util/cacheApi.ts",
+    "src/util/multiaccount.ts",
+    "src/util/notifications.tsx",
+    "src/util/sessions.ts",
+    "src/util/setupServiceWorker.ts",
+    "src/util/websync.ts"
+  ],
+  "added": [
+    "src/util/crmchat.ts"
+  ]
+}

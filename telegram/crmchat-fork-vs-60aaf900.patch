@@ -1,0 +1,649 @@
+--- a/src/components/App.tsx
++++ b/src/components/App.tsx
+@@ -242,6 +242,26 @@
+     }, document.body);
+   }, [getIsInBackgroundLocal]);
+ 
++  /* [CRMchat] Redirect user to CRMchat.ai if they try to open this client directly */
++  useEffect(() => {
++    if (window.parent.location === window.location) {
++      setTimeout(() => {
++        window.location.href = 'https://crmchat.ai';
++      }, 3000);
++    }
++  }, []);
++  if (window.parent.location === window.location) {
++    return (
++      <div className={styles.crmchat}>
++        Go to
++        {' '}
++        <a href="https://crmchat.ai">CRMchat.ai</a>
++        {' '}
++        to use CRM
++      </div>
++    );
++  }
++
+   return (
+     <UiLoader page={page} isMobile={isMobile}>
+       <Transition
+--- a/src/config.ts
++++ b/src/config.ts
+@@ -6,11 +6,14 @@
+   ResaleGiftsFilterOptions,
+ } from './types';
+ 
++// eslint-disable-next-line no-restricted-globals, max-len
++export const CRM_CHAT_ACCOUNT_ID = typeof location !== 'undefined' ? (new URLSearchParams(location?.search ?? '').get('accountId') ?? '') : '';
++
+ export const APP_CODE_NAME = 'A';
+ export const APP_NAME = process.env.APP_NAME || `Telegram Web ${APP_CODE_NAME}`;
+ 
+-export const PRODUCTION_HOSTNAME = 'web.telegram.org';
+-export const PRODUCTION_URL = 'https://web.telegram.org/a';
++export const PRODUCTION_HOSTNAME = 'tg-client.crmchat.ai';
++export const PRODUCTION_URL = 'https://tg-client.crmchat.ai/';
+ export const WEB_VERSION_BASE = 'https://web.telegram.org/'; // Used to redirect to other versions
+ export const BASE_URL = process.env.BASE_URL;
+ export const ACCOUNT_QUERY = 'account';
+@@ -81,7 +84,7 @@
+ export const MESSAGE_LIST_VIEWPORT_LIMIT = MESSAGE_LIST_SLICE * 2;
+ 
+ export const ARCHIVE_MINIMIZED_HEIGHT = 36;
+-export const CHAT_HEIGHT_PX = 72;
++export const CHAT_HEIGHT_PX = 80;
+ export const TOPIC_HEIGHT_PX = 65;
+ export const PEER_PICKER_ITEM_HEIGHT_PX = 56;
+ export const CHAT_LIST_SLICE = isBigScreen ? 30 : 25;
+--- a/src/global/actions/api/initial.ts
++++ b/src/global/actions/api/initial.ts
+@@ -43,7 +43,7 @@
+ import { selectSharedSettings } from '../../selectors/sharedState';
+ import { destroySharedStatePort } from '../../shared/sharedStateConnector';
+ 
+-addActionHandler('initApi', (global, actions): ActionReturnType => {
++addActionHandler('initApi', async (global, actions): Promise<void> => {
+   const initialLocationHash = parseInitialLocationHash();
+   const {
+     shouldAllowHttpTransport,
+@@ -65,7 +65,7 @@
+   void initApi(actions.apiUpdate, {
+     userAgent: navigator.userAgent,
+     platform: PLATFORM_ENV,
+-    sessionData: loadStoredSession(),
++    sessionData: await loadStoredSession(),
+     isWebmSupported: IS_WEBM_SUPPORTED,
+     maxBufferSize: MAX_BUFFER_SIZE,
+     webAuthToken: initialLocationHash?.tgWebAuthToken,
+@@ -298,7 +298,7 @@
+ });
+ 
+ addActionHandler('lockScreen', async (global): Promise<void> => {
+-  const sessionJson = JSON.stringify({ ...loadStoredSession(), userId: global.currentUserId });
++  const sessionJson = JSON.stringify({ ...(await loadStoredSession()), userId: global.currentUserId });
+   const globalJson = serializeGlobal(global);
+ 
+   await encryptSession(sessionJson, globalJson);
+--- a/src/global/actions/ui/initial.ts
++++ b/src/global/actions/ui/initial.ts
+@@ -144,9 +144,10 @@
+     messageTextSize, language, shouldUseSystemTheme, timeFormat,
+   } = selectSharedSettings(global);
+ 
++  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   const globalTheme = selectTheme(global);
+   const systemTheme = getSystemTheme();
+-  const theme = shouldUseSystemTheme ? systemTheme : globalTheme;
++  const theme = new URLSearchParams(window.location.search).get('theme') as typeof globalTheme ?? systemTheme;
+ 
+   const performanceType = selectPerformanceSettings(global);
+ 
+--- a/src/global/actions/ui/settings.ts
++++ b/src/global/actions/ui/settings.ts
+@@ -5,6 +5,7 @@
+ 
+ import { requestMutation } from '../../../lib/fasterdom/fasterdom';
+ import { IS_IOS } from '../../../util/browser/windowEnvironment';
++import { CAN_ACCESS_SETTINGS } from '../../../util/crmchat';
+ import { disableDebugConsole, initDebugConsole } from '../../../util/debugConsole';
+ import { getCurrentTabId } from '../../../util/establishMultitabRole';
+ import { setTimeFormat as setLocalizedTimeFormat } from '../../../util/localization';
+@@ -167,6 +168,11 @@
+   const { screen, tabId = getCurrentTabId() } = payload;
+   const tabState = selectTabState(global, tabId);
+ 
++  if (!CAN_ACCESS_SETTINGS) {
++    actions.openLeftColumnContent({ contentKey: LeftColumnContent.ChatList, tabId });
++    return;
++  }
++
+   actions.loadPrivacySettings({ skipIfCached: true });
+   // Force settings only if new screen is passed, do not on resets
+   if (payload.screen !== undefined) actions.openLeftColumnContent({ contentKey: LeftColumnContent.Settings, tabId });
+--- a/src/global/selectors/messages.ts
++++ b/src/global/selectors/messages.ts
+@@ -27,6 +27,7 @@
+   WEB_APP_PLATFORM,
+ } from '../../config';
+ import { IS_TRANSLATION_SUPPORTED } from '../../util/browser/windowEnvironment';
++import { CAN_DELETE_MESSAGES } from '../../util/crmchat';
+ import { isUserId } from '../../util/entities/ids';
+ import { getCurrentTabId } from '../../util/establishMultitabRole';
+ import { findLast } from '../../util/iteratees';
+@@ -613,7 +614,7 @@
+   const canNotDeleteBoostMessage = isBoostMessage && isOwn
+     && !chat.isCreator && !getHasAdminRight(chat, 'deleteMessages');
+ 
+-  const canDelete = (!isLocal || isFailed) && !isServiceNotification && !canNotDeleteBoostMessage && (
++  const canDelete = CAN_DELETE_MESSAGES && (!isLocal || isFailed) && !isServiceNotification && !canNotDeleteBoostMessage && (
+     isPrivate
+     || isOwn
+     || isBasicGroup
+--- a/src/util/browser/globalEnvironment.ts
++++ b/src/util/browser/globalEnvironment.ts
+@@ -2,7 +2,7 @@
+ 
+ declare const globalThis: ServiceWorkerGlobalScope & WorkerGlobalScope & SharedWorkerGlobalScope & Window;
+ 
+-export const IS_MULTIACCOUNT_SUPPORTED = 'SharedWorker' in globalThis;
++export const IS_MULTIACCOUNT_SUPPORTED = false && 'SharedWorker' in globalThis;
+ export const IS_INTL_LIST_FORMAT_SUPPORTED = 'ListFormat' in Intl;
+ export const IS_BAD_URL_PARSER = new URL('tg://host').host !== 'host';
+ 
+--- a/src/util/browser/windowEnvironment.ts
++++ b/src/util/browser/windowEnvironment.ts
+@@ -105,7 +105,7 @@
+ export const IS_BACKDROP_BLUR_SUPPORTED = CSS.supports('backdrop-filter: blur()')
+   || CSS.supports('-webkit-backdrop-filter: blur()');
+ export const IS_INSTALL_PROMPT_SUPPORTED = 'onbeforeinstallprompt' in window;
+-export const IS_OPEN_IN_NEW_TAB_SUPPORTED = !(IS_PWA && IS_MOBILE);
++export const IS_OPEN_IN_NEW_TAB_SUPPORTED = false && !(IS_PWA && IS_MOBILE);
+ export const IS_TRANSLATION_SUPPORTED = !IS_TEST;
+ export const IS_TRANSLATION_DETECTOR_SUPPORTED = 'LanguageDetector' in window;
+ export const IS_VIEW_TRANSITION_SUPPORTED = CSS.supports('view-transition-class: test')
+--- a/src/util/cacheApi.ts
++++ b/src/util/cacheApi.ts
+@@ -1,4 +1,4 @@
+-import { LANG_CACHE_NAME, MEDIA_CACHE_NAME, MEDIA_CACHE_NAME_AVATARS, MEDIA_PROGRESSIVE_CACHE_NAME } from '../config';
++import { CRM_CHAT_ACCOUNT_ID, LANG_CACHE_NAME, MEDIA_CACHE_NAME, MEDIA_CACHE_NAME_AVATARS, MEDIA_PROGRESSIVE_CACHE_NAME } from '../config';
+ import { yieldToMain } from './browser/scheduler';
+ import { ACCOUNT_SLOT } from './multiaccount';
+ 
+@@ -35,7 +35,7 @@
+ function getCacheName(cacheName: string) {
+   if (cacheName === LANG_CACHE_NAME) return cacheName;
+ 
+-  const suffix = ACCOUNT_SLOT ? `_${ACCOUNT_SLOT}` : '';
++  const suffix = `_${CRM_CHAT_ACCOUNT_ID}` + (ACCOUNT_SLOT ? `_${ACCOUNT_SLOT}` : '');
+   return `${cacheName}${suffix}`;
+ }
+ 
+--- a/src/util/multiaccount.ts
++++ b/src/util/multiaccount.ts
+@@ -2,6 +2,7 @@
+ 
+ import {
+   ACCOUNT_QUERY,
++  CRM_CHAT_ACCOUNT_ID,
+   DATA_BROADCAST_CHANNEL_PREFIX,
+   ESTABLISH_BROADCAST_CHANNEL_PREFIX,
+   GLOBAL_STATE_CACHE_PREFIX,
+@@ -18,11 +19,11 @@
+   IS_MULTIACCOUNT_SUPPORTED ? getAccountSlot(globalThis.location.href) : undefined
+ );
+ 
+-export const DATA_BROADCAST_CHANNEL_NAME = `${DATA_BROADCAST_CHANNEL_PREFIX}_${ACCOUNT_SLOT || 1}`;
+-export const ESTABLISH_BROADCAST_CHANNEL_NAME = `${ESTABLISH_BROADCAST_CHANNEL_PREFIX}_${ACCOUNT_SLOT || 1}`;
+-export const MULTITAB_STORAGE_KEY = `${MULTITAB_LOCALSTORAGE_KEY_PREFIX}_${ACCOUNT_SLOT || 1}`;
++export const DATA_BROADCAST_CHANNEL_NAME = `${DATA_BROADCAST_CHANNEL_PREFIX}_${CRM_CHAT_ACCOUNT_ID}_${ACCOUNT_SLOT || 1}`;
++export const ESTABLISH_BROADCAST_CHANNEL_NAME = `${ESTABLISH_BROADCAST_CHANNEL_PREFIX}_${CRM_CHAT_ACCOUNT_ID}_${ACCOUNT_SLOT || 1}`;
++export const MULTITAB_STORAGE_KEY = `${MULTITAB_LOCALSTORAGE_KEY_PREFIX}_${CRM_CHAT_ACCOUNT_ID}_${ACCOUNT_SLOT || 1}`;
+ export const GLOBAL_STATE_CACHE_KEY = ACCOUNT_SLOT
+-  ? `${GLOBAL_STATE_CACHE_PREFIX}_${ACCOUNT_SLOT}` : GLOBAL_STATE_CACHE_PREFIX;
++  ? `${GLOBAL_STATE_CACHE_PREFIX}_${CRM_CHAT_ACCOUNT_ID}_${ACCOUNT_SLOT}` : `${GLOBAL_STATE_CACHE_PREFIX}_${CRM_CHAT_ACCOUNT_ID}`;
+ 
+ export function getAccountSlot(url: string) {
+   const params = new URL(url).searchParams;
+@@ -70,7 +71,7 @@
+ 
+ export function loadSlotSession(slot: number | undefined): SharedSessionData | undefined {
+   try {
+-    const data = JSON.parse(localStorage.getItem(`${SESSION_ACCOUNT_PREFIX}${slot || 1}`) || '{}') as SharedSessionData;
++    const data = JSON.parse(localStorage.getItem(`${CRM_CHAT_ACCOUNT_ID}_${SESSION_ACCOUNT_PREFIX}${slot || 1}`) || '{}') as SharedSessionData;
+     if (!data.dcId) return undefined;
+     return data;
+   } catch (e) {
+@@ -94,7 +95,7 @@
+ }
+ 
+ export function writeSlotSession(slot: number | undefined, data: SharedSessionData) {
+-  localStorage.setItem(`${SESSION_ACCOUNT_PREFIX}${slot || 1}`, JSON.stringify(data));
++  localStorage.setItem(`${CRM_CHAT_ACCOUNT_ID}_${SESSION_ACCOUNT_PREFIX}${slot || 1}`, JSON.stringify(data));
+ }
+ 
+ export function getAccountSlotUrl(slot: number, forLogin?: boolean, isTest?: boolean) {
+--- a/src/util/notifications.tsx
++++ b/src/util/notifications.tsx
+@@ -6,7 +6,7 @@
+ } from '../api/types';
+ import { ApiMediaFormat } from '../api/types';
+ 
+-import { APP_NAME, DEBUG, IS_TEST } from '../config';
++import { APP_NAME, DEBUG, IS_TEST, SERVICE_NOTIFICATIONS_USER_ID } from '../config';
+ import {
+   getChatAvatarHash,
+   getChatTitle,
+@@ -30,6 +30,7 @@
+ import { IS_TAURI } from './browser/globalEnvironment';
+ import { IS_SERVICE_WORKER_SUPPORTED, IS_TOUCH_ENV } from './browser/windowEnvironment';
+ import jsxToHtml from './element/jsxToHtml';
++import { CAN_ACCESS_SERVICE_NOTIFICATIONS } from './crmchat';
+ import { buildCollectionByKey } from './iteratees';
+ import { getTranslationFn } from './localization';
+ import * as mediaLoader from './mediaLoader';
+@@ -410,6 +411,8 @@
+   message,
+   isReaction = false,
+ }: { chat: ApiChat; message: Partial<ApiMessage>; isReaction?: boolean }) {
++  if (chat.id === SERVICE_NOTIFICATIONS_USER_ID && !CAN_ACCESS_SERVICE_NOTIFICATIONS) return;
++
+   const global = getGlobal();
+   const { hasWebNotifications } = selectSettingsKeys(global);
+   if (!checkIfShouldNotify(chat, message)) return;
+--- a/src/util/sessions.ts
++++ b/src/util/sessions.ts
+@@ -1,3 +1,4 @@
++/* eslint-disable @typescript-eslint/no-unused-vars */
+ import type { ApiSessionData } from '../api/types';
+ import type { DcId, SharedSessionData } from '../types';
+ 
+@@ -7,9 +8,12 @@
+   SESSION_ACCOUNT_PREFIX,
+   SESSION_LEGACY_USER_KEY,
+ } from '../config';
++import { requestSessionFromCrmChat } from './crmchat';
+ import { ACCOUNT_SLOT, storeAccountData, writeSlotSession } from './multiaccount';
+ 
+ export function hasStoredSession() {
++  return true;
++  /*
+   if (checkSessionLocked()) {
+     return true;
+   }
+@@ -31,9 +35,11 @@
+   }
+ 
+   return false;
++  */
+ }
+ 
+ export function storeSession(sessionData: ApiSessionData) {
++  /*
+   const {
+     mainDcId, keys, isTest,
+   } = sessionData;
+@@ -54,9 +60,11 @@
+   }
+ 
+   writeSlotSession(ACCOUNT_SLOT, newSlotData);
++  */
+ }
+ 
+ function storeLegacySession(sessionData: ApiSessionData, currentUserId?: string) {
++  /*
+   const {
+     mainDcId, keys, isTest,
+   } = sessionData;
+@@ -70,17 +78,25 @@
+   Object.keys(keys).map(Number).forEach((dcId) => {
+     localStorage.setItem(`dc${dcId}_auth_key`, JSON.stringify(keys[dcId]));
+   });
++  */
+ }
+ 
+ export function clearStoredSession(slot?: number) {
++  // [CRMchat] clearing is unsupported
++  return;
++  /*
+   if (!slot) {
+     clearStoredLegacySession();
+   }
+ 
+   localStorage.removeItem(`${SESSION_ACCOUNT_PREFIX}${slot || 1}`);
++  */
+ }
+ 
+ function clearStoredLegacySession() {
++  // [CRMchat] clearing is unsupported
++  return;
++  /*
+   [
+     SESSION_LEGACY_USER_KEY,
+     'dc',
+@@ -90,9 +106,12 @@
+   ].forEach((key) => {
+     localStorage.removeItem(key);
+   });
++  */
+ }
+ 
+-export function loadStoredSession(): ApiSessionData | undefined {
++export function loadStoredSession(): Promise<ApiSessionData | undefined> {
++  return requestSessionFromCrmChat();
++  /*
+   if (!hasStoredSession()) {
+     return undefined;
+   }
+@@ -117,9 +136,12 @@
+   };
+ 
+   return sessionData;
++  */
+ }
+ 
+-function loadStoredLegacySession(): ApiSessionData | undefined {
++function loadStoredLegacySession(): Promise<ApiSessionData | undefined> {
++  return requestSessionFromCrmChat();
++  /*
+   if (!hasStoredSession()) {
+     return undefined;
+   }
+@@ -154,6 +176,7 @@
+     keys,
+     isTest,
+   };
++  */
+ }
+ 
+ export function loadSlotSession(slot: number | undefined): SharedSessionData | undefined {
+--- a/src/util/setupServiceWorker.ts
++++ b/src/util/setupServiceWorker.ts
+@@ -86,7 +86,7 @@
+         }
+ 
+         if (!IS_IOS && !IS_ANDROID && !IS_TEST) {
+-          getActions().showDialog?.({ data: { message: 'SERVICE_WORKER_DISABLED', hasErrorKey: true } });
++          // getActions().showDialog?.({ data: { message: 'SERVICE_WORKER_DISABLED', hasErrorKey: true } });
+         }
+       }
+     } catch (err) {
+--- a/src/util/websync.ts
++++ b/src/util/websync.ts
+@@ -30,7 +30,8 @@
+ let lastTimeout: NodeJS.Timeout | undefined;
+ 
+ export const forceWebsync = (authed: boolean) => {
+-  if (IS_MOCKED_CLIENT || IS_TAURI) return undefined;
++  // eslint-disable-next-line no-constant-condition, no-constant-binary-expression
++  if (true || IS_MOCKED_CLIENT || IS_TAURI) return undefined;
+   const currentTs = getTs();
+ 
+   const { canRedirect, ts } = JSON.parse(localStorage.getItem(WEBSYNC_KEY) || '{}');
+--- /dev/null
++++ b/src/util/crmchat.ts
++/* eslint-disable no-console */
++import { addCallback } from '../lib/teact/teactn';
++import {
++  addActionHandler, getActions, getGlobal, setGlobal,
++} from '../global';
++
++import type { WorkerMessageEvent } from '../api/gramjs/worker/types';
++import type { ApiChatFullInfo, ApiSessionData, ApiUserFullInfo } from '../api/types';
++import type { ActionPayloads, GlobalState } from '../global/types';
++import { MAIN_THREAD_ID } from '../api/types';
++
++import { getChatAvatarHash } from '../global/helpers';
++import { selectThreadReadState } from '../global/selectors/threads';
++import { getCurrentTabId } from './establishMultitabRole';
++import * as mediaLoader from './mediaLoader';
++
++const INFINITE_LOOP_MARKER = 100;
++
++export type DisplayedProperty = {
++  name: string;
++  type?: string;
++  values: Array<{
++    text: string;
++    color?: string;
++  }>;
++};
++
++export function crmChatLog(...args: any[]) {
++  console.info('\x1b[44m\x1b[37m[ TGWEB ]\x1b[0m ', ...args);
++}
++
++let dcAuthParams: string | undefined;
++
++let resolveSession: (session: ApiSessionData) => void;
++const sessionPromise = new Promise<ApiSessionData>(
++  (resolve) => {
++    resolveSession = resolve;
++  },
++);
++
++type CurrentState = {
++  authState: GlobalState['auth']['state'];
++  currentChatId?: string;
++  currentChatUnreadCount?: number;
++};
++const current: CurrentState = {
++  authState: undefined,
++  currentChatId: undefined,
++  currentChatUnreadCount: undefined,
++};
++
++addCallback(async () => {
++  const global = getGlobal();
++
++  if (global.auth.state !== current.authState) {
++    current.authState = global.auth.state;
++    sendMessage({
++      type: 'authStateLegacy',
++      state: current.authState,
++    });
++  }
++
++  const messageLists = global.byTabId[getCurrentTabId()]?.messageLists;
++  const chatId = messageLists?.[messageLists.length - 1]?.chatId;
++  const chat = chatId ? global.chats.byId[chatId] : undefined;
++
++  const unreadCount = chat
++    ? selectThreadReadState(global, chat.id, MAIN_THREAD_ID)?.unreadCount
++    : undefined;
++
++  if (unreadCount !== current.currentChatUnreadCount) {
++    current.currentChatUnreadCount = unreadCount;
++    sendMessage({
++      type: 'chatUnreadState',
++      peerId: chat?.id,
++      username: chat?.usernames?.[0]?.username,
++      unreadCount,
++      synced: global.isSynced,
++    });
++  }
++
++  // handle opened chat change
++  if (chat?.id !== current.currentChatId) {
++    current.currentChatId = chat?.id;
++    const fullInfo: ApiUserFullInfo | ApiChatFullInfo | undefined = chat
++      ? global.users.fullInfoById[chat.id] ?? global.chats.fullInfoById[chat.id]
++      : undefined;
++
++    let type: 'user' | 'group' | 'other' = 'other';
++    switch (chat?.type) {
++      case 'chatTypePrivate':
++        type = 'user';
++        break;
++      case 'chatTypeBasicGroup':
++      case 'chatTypeSuperGroup':
++        type = 'group';
++        break;
++    }
++
++    const avatarHash = chat ? getChatAvatarHash(chat) : undefined;
++    const avatarUrl = avatarHash ? mediaLoader.getFromMemory(avatarHash) : undefined;
++    const avatarDataUri = avatarUrl ? await blobUrlToDataURI(avatarUrl) : undefined;
++
++    const info = chat ? {
++      type,
++      peerId: chat.id,
++      username: chat.usernames?.[0]?.username,
++      avatar: avatarDataUri,
++      fullName: chat.title,
++      description: fullInfo && 'bio' in fullInfo
++        ? fullInfo.bio
++        : (fullInfo && 'about' in fullInfo
++          ? fullInfo.about
++          : undefined
++        ),
++    } : undefined;
++
++    sendMessage({
++      type: 'chatOpened',
++      chat,
++      info,
++      userId: chat?.id,
++      username: chat?.usernames?.[0]?.username,
++    });
++  }
++});
++
++async function callActionWhenAvailable<Action extends keyof ActionPayloads>(
++  action: Action,
++  data: ActionPayloads[Action],
++) {
++  let i = 0;
++  while (typeof getActions()[action] !== 'function') {
++    await new Promise((resolve) => {
++      setTimeout(resolve, 100);
++    });
++    if (i++ >= INFINITE_LOOP_MARKER) {
++      return;
++    }
++  }
++  getActions()[action](data as any);
++}
++
++window.addEventListener('message', (event) => {
++  const isLocalOrigin = process.env.NODE_ENV === 'development'
++    && (
++      event.origin.startsWith('http://localhost')
++      || event.origin.startsWith('http://127.0.0.1')
++      || event.origin.startsWith('http://192.168.')
++    );
++
++  if (![
++    'https://hints-crm.web.app',
++    'https://app.crmchat.ai',
++  ].includes(event.origin) && !isLocalOrigin) {
++    return;
++  }
++
++  crmChatLog('Got message from CRMchat', event.data);
++
++  if (event.data.type === 'sessionResponse') {
++    dcAuthParams = event.data.authParams;
++    resolveSession(event.data.session);
++  }
++  if (event.data.type === 'openChat') {
++    if (event.data.username) {
++      callActionWhenAvailable('openChatByUsername', {
++        username: event.data.username,
++      });
++    } else if (event.data.id) {
++      callActionWhenAvailable('openChat', {
++        id: String(event.data.id),
++      });
++    }
++  }
++  if (event.data.type === 'setDisplayedProperties') {
++    const global: GlobalState = {
++      ...getGlobal(),
++      crmchatDisplayedProperties: event.data.displayedProperties,
++    };
++    setGlobal(global);
++  }
++});
++
++function sendMessage(data: any) {
++  crmChatLog('Sending message to CRMchat', data);
++  window.parent.postMessage(data, '*');
++}
++
++export async function requestSessionFromCrmChat(): Promise<ApiSessionData> {
++  sendMessage({ type: 'sessionRequest' });
++  try {
++    return await Promise.race([
++      sessionPromise,
++      new Promise<never>((_, reject) => {
++        setTimeout(() => {
++          reject(new Error('Session request timed out'));
++        }, 20_000);
++      }),
++    ]);
++  } catch (e) {
++    sendMessage({ type: 'sessionRequestFailed' });
++    throw e;
++  }
++}
++
++addActionHandler('apiUpdate', (global, actions, update): void => {
++  switch (update['@type']) {
++    case 'updateAuthorizationState':
++      sendMessage({
++        type: 'authState',
++        state: update.authorizationState,
++      });
++      break;
++    case 'updateConnectionState':
++      sendMessage({
++        type: 'connectionState',
++        state: update.connectionState,
++      });
++      break;
++  }
++});
++
++const dcDomain = new URLSearchParams(self.location.search).get('dcDomain') ?? 'dc';
++
++// Patch Worker constructor to pass variables to workers
++const OriginalWorker = window.Worker;
++window.Worker = class PatchedWorker extends OriginalWorker {
++  constructor(url: string | URL, options?: WorkerOptions) {
++    const newUrl = url instanceof URL ? url : new URL(url, self.location.href);
++    newUrl.searchParams.set('accountId', new URLSearchParams(self.location.search).get('accountId') ?? '');
++    newUrl.searchParams.set('_dcAuth', dcAuthParams ?? '');
++    newUrl.searchParams.set('_dcDomain', dcDomain);
++    super(newUrl, options);
++
++    this.addEventListener('message', (event: WorkerMessageEvent) => {
++      const logs = event.data.payloads.filter((payload) => payload.type === 'mtprotoSenderLog');
++      if (logs.length > 0) {
++        sendMessage({ type: 'mtprotoSenderLogs', logs });
++      }
++    });
++  }
++} satisfies typeof Worker;
++
++async function blobUrlToDataURI(blobUrl: string) {
++  const resp = await fetch(blobUrl);
++  const blob = await resp.blob();
++
++  // Read it as a Data URI via FileReader
++  return new Promise((resolve, reject) => {
++    const reader = new FileReader();
++    reader.onerror = reject;
++    reader.onloadend = () => resolve(reader.result);
++    reader.readAsDataURL(blob);
++  });
++}
++
++const urlParams = new URLSearchParams(window.location.search);
++const isChatter = urlParams.get('p') === '0';
++
++export const CAN_DELETE_CHAT = !isChatter;
++export const CAN_DELETE_MESSAGES = !isChatter;
++export const CAN_ACCESS_SETTINGS = !isChatter;
++export const CAN_ACCESS_SERVICE_NOTIFICATIONS = !isChatter;
++export const CAN_BLOCK_CONTACT = !isChatter;
++export const CAN_MUTE_CHAT = !isChatter;
