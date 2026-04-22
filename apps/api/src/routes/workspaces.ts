@@ -7,12 +7,12 @@ import {
 } from "@repo/core";
 import { db } from "../db/client";
 import { organizations, workspaces } from "../db/schema";
+import type { SessionVars } from "../middleware/require-session";
 
 const WorkspaceSchema = BaseWorkspaceSchema.openapi("Workspace");
 const CreateWorkspaceSchema = BaseCreateWorkspaceSchema.openapi("CreateWorkspace");
 
-type Vars = { Variables: { userId: string } };
-const app = new OpenAPIHono<Vars>();
+const app = new OpenAPIHono<{ Variables: SessionVars }>();
 
 const listRoute = createRoute({
   method: "get",
@@ -64,9 +64,9 @@ app.openapi(createRouteDef, async (c) => {
     .where(eq(organizations.createdBy, userId))
     .limit(1);
   if (!org) {
-    throw new HTTPException(500, {
-      message: "No organization for this user. Run `pnpm setup` to seed.",
-    });
+    // TODO: вместо 500 — auto-create organization при первом workspace
+    // (или в onboarding после OAuth). Сейчас попадаем сюда только если seed не отработал.
+    throw new HTTPException(500, { message: "User has no organization" });
   }
   const [row] = await db
     .insert(workspaces)

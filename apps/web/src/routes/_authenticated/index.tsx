@@ -2,9 +2,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "@tanstack/react-form";
 import { CreateWorkspaceSchema } from "@repo/core";
-import { api } from "../lib/api";
+import { api } from "../../lib/api";
 
-export const Route = createFileRoute("/")({
+export const Route = createFileRoute("/_authenticated/")({
   component: WorkspacesPage,
 });
 

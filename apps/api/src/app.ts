@@ -1,16 +1,29 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { cors } from "hono/cors";
-import { devAuth } from "./middleware/dev-auth";
+import {
+  requireSession,
+  type SessionVars,
+} from "./middleware/require-session";
+import auth from "./routes/auth";
+import me from "./routes/me";
 import workspaces from "./routes/workspaces";
 
-type Vars = { Variables: { userId: string } };
+export const app = new OpenAPIHono<{ Variables: SessionVars }>();
 
-export const app = new OpenAPIHono<Vars>();
+app.use(
+  "*",
+  cors({ origin: ["http://localhost:5173"], credentials: true }),
+);
 
-app.use("*", cors({ origin: ["http://localhost:5173"], credentials: true }));
-app.use("/v1/*", devAuth);
+// public: dev login + logout (no session needed)
+app.route("/", auth);
 
-app.route("/", workspaces);
+// everything below requires a session
+const protectedApp = new OpenAPIHono<{ Variables: SessionVars }>();
+protectedApp.use("/v1/*", requireSession);
+protectedApp.route("/", me);
+protectedApp.route("/", workspaces);
+app.route("/", protectedApp);
 
 app.doc("/openapi.json", {
   openapi: "3.1.0",

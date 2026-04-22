@@ -2,38 +2,52 @@ import { eq } from "drizzle-orm";
 import { db, sql } from "./db/client";
 import { organizations, users } from "./db/schema";
 
-const devUserId = process.env.DEV_USER_ID;
-if (!devUserId) {
-  console.error("DEV_USER_ID is not set");
-  process.exit(1);
+// Фиксированные UUID — чтобы dev-данные были предсказуемы между перезапусками.
+const DEV_USERS = [
+  {
+    id: "00000000-0000-0000-0000-0000000d3eff",
+    email: "anna@local",
+    name: "Анна",
+  },
+  {
+    id: "00000000-0000-0000-0000-0000000d3ef1",
+    email: "boris@local",
+    name: "Борис",
+  },
+  {
+    id: "00000000-0000-0000-0000-0000000d3ef2",
+    email: "vera@local",
+    name: "Вера",
+  },
+] as const;
+
+for (const u of DEV_USERS) {
+  await db
+    .insert(users)
+    .values(u)
+    .onConflictDoUpdate({
+      target: users.id,
+      set: { email: u.email, name: u.name, updatedAt: new Date() },
+    });
+  console.log(`upserted user ${u.email}`);
 }
 
-const [existingUser] = await db
-  .select()
-  .from(users)
-  .where(eq(users.id, devUserId))
-  .limit(1);
-
-if (!existingUser) {
-  await db.insert(users).values({
-    id: devUserId,
-    email: "dev@local",
-    name: "Dev User",
-  });
-  console.log("seeded dev user");
-} else {
-  console.log("dev user already exists");
-}
-
-const [existingOrg] = await db.select().from(organizations).limit(1);
-if (!existingOrg) {
-  await db.insert(organizations).values({
-    name: "Default",
-    createdBy: devUserId,
-  });
-  console.log("seeded default organization");
-} else {
-  console.log("organization already exists");
+// Каждому dev-user — своя organization, чтобы он мог создавать workspaces.
+// При боевом OAuth onboarding-flow будет создавать org через тот же helper.
+for (const u of DEV_USERS) {
+  const [existingOrg] = await db
+    .select({ id: organizations.id })
+    .from(organizations)
+    .where(eq(organizations.createdBy, u.id))
+    .limit(1);
+  if (existingOrg) {
+    console.log(`org for ${u.email} already exists`);
+    continue;
+  }
+  await db
+    .insert(organizations)
+    .values({ name: `${u.name} Org`, createdBy: u.id });
+  console.log(`seeded org for ${u.email}`);
 }
 
 await sql.end();
