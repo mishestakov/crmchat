@@ -29,7 +29,6 @@ fs.mkdirSync(OUT_DIR, { recursive: true });
 const INV_FILE = path.join(OUT_DIR, "static_inventory.json");
 const OUT_BY_ROUTE = path.join(OUT_DIR, "by_route.json");
 const OUT_BY_BACKEND = path.join(OUT_DIR, "by_backend.json");
-const OUT_MD = path.join(OUT_DIR, "by_route.md");
 
 if (!fs.existsSync(INV_FILE)) {
   console.error(`[x] ${INV_FILE} not found — run extract.ts first`);
@@ -229,8 +228,21 @@ interface RouteDerivation {
   fetch_urls: string[];
   posthog_events: string[];
   feature_flags: string[];
-  i18n_keys_count: number;      // they're huge — don't inline, just count
+  i18n_keys_count: number;      // raw key count across the transitive closure
+  i18n_prefixes: string[];      // feature-level prefixes (web.X.Y → X.Y) across closure
   env_vars: string[];
+}
+
+// Feature-level prefix: strip the universal `web.` root. `web.outreach.sequences`
+// → `outreach.sequences`; `web.cancel` → `cancel`; `text.foo` → `text` (rare).
+function leafPrefix(key: string): string | null {
+  const parts = key.split(".");
+  if (parts[0] === "web") {
+    if (parts.length >= 3) return parts.slice(1, 3).join(".");
+    if (parts.length === 2) return parts[1];
+    return null;
+  }
+  return parts[0] || null;
 }
 
 const byRoute: Record<string, RouteDerivation> = {};
@@ -259,6 +271,7 @@ for (const r of inv.routes) {
   const posthog = new Set<string>();
   const flags = new Set<string>();
   const envs = new Set<string>();
+  const i18nPrefSet = new Set<string>();
   let i18nCount = 0;
 
   for (const fAbs of reach) {
@@ -271,7 +284,11 @@ for (const r of inv.routes) {
     for (const c of idxFetch.get(fRel) ?? []) fetchSet.add(c.url ?? c.raw);
     for (const c of idxPosthog.get(fRel) ?? []) posthog.add(c.name);
     for (const c of idxFlags.get(fRel) ?? []) flags.add(c.name);
-    for (const _ of idxI18n.get(fRel) ?? []) i18nCount++;
+    for (const k of idxI18n.get(fRel) ?? []) {
+      i18nCount++;
+      const p = leafPrefix(k.key);
+      if (p) i18nPrefSet.add(p);
+    }
     for (const c of idxEnv.get(fRel) ?? []) envs.add(c.name);
   }
 
@@ -289,6 +306,7 @@ for (const r of inv.routes) {
     posthog_events: [...posthog].sort(),
     feature_flags: [...flags].sort(),
     i18n_keys_count: i18nCount,
+    i18n_prefixes: [...i18nPrefSet].sort(),
     env_vars: [...envs].sort(),
   };
 }
@@ -408,23 +426,3 @@ const byBackendOut = {
 fs.writeFileSync(OUT_BY_BACKEND, stableStringify(byBackendOut));
 console.log(`[+] wrote ${OUT_BY_BACKEND} (${fs.statSync(OUT_BY_BACKEND).size.toLocaleString()} bytes)`);
 
-// Human summary (by_route.md)
-const md: string[] = [];
-md.push(`# by_route — per-screen backend surface\n`);
-md.push(`Derived from \`static_inventory.json\` over ${files.length} files / ${Object.keys(byRouteSorted).length} routes.\n`);
-for (const [rid, rd] of Object.entries(byRouteSorted)) {
-  md.push(`\n## ${rid}`);
-  md.push(`- file: \`${rd.file}\``);
-  md.push(`- reachable files: ${rd.reachableFiles}`);
-  if (rd.trpc_procedures.length) md.push(`- tRPC: ${rd.trpc_procedures.map(s=>`\`${s}\``).join(", ")}`);
-  if (rd.orpc_procedures.length) md.push(`- oRPC: ${rd.orpc_procedures.map(s=>`\`${s}\``).join(", ")}`);
-  if (rd.firestore_ops.length) md.push(`- Firestore: ${rd.firestore_ops.map(s=>`\`${s}\``).join(", ")}`);
-  if (rd.firebase_auth_fns.length) md.push(`- Firebase Auth: ${rd.firebase_auth_fns.join(", ")}`);
-  if (rd.posthog_events.length) md.push(`- Posthog: ${rd.posthog_events.map(s=>`\`${s}\``).join(", ")}`);
-  if (rd.feature_flags.length) md.push(`- Flags: ${rd.feature_flags.map(s=>`\`${s}\``).join(", ")}`);
-  if (rd.env_vars.length) md.push(`- Env: ${rd.env_vars.join(", ")}`);
-  if (rd.fetch_urls.length) md.push(`- fetch: ${rd.fetch_urls.slice(0,6).join(", ")}`);
-  md.push(`- i18n keys: ${rd.i18n_keys_count}`);
-}
-fs.writeFileSync(OUT_MD, md.join("\n"));
-console.log(`[+] wrote ${OUT_MD}`);

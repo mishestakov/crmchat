@@ -4,7 +4,10 @@
   "type": "module",
   "scripts": {
     "run": "tsx src/extract.ts",
-    "derive": "tsx src/derive.ts"
+    "derive": "tsx src/derive.ts",
+    "matrix": "tsx src/matrix.ts",
+    "matrix_html": "tsx src/matrix_html.ts",
+    "enrich": "tsx src/enrich.ts"
   },
   "dependencies": {
     "ts-morph": "^24.0.0",
