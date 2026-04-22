@@ -38,7 +38,7 @@ coverage:
 
 | Поле | Label | Placeholder | Описание | Валидация |
 |---|---|---|---|---|
-| `telegramUsername` | **«Имя пользователя Telegram»** | (i18n) | (i18n-описание) | trim + non-empty («Поле не должно быть пустым») |
+| `telegramUsername` | **«Имя пользователя Telegram»** | — | — | trim + non-empty («Поле не должно быть пустым») |
 | `role` | **«Роль»** | — | combobox | enum `WorkspaceRoleSchema`: **`member` / `admin` / `chatter`** (отображаются как «Участник», «Админ», «Чаттер»); default `member` |
 
 **Условный warning-alert** над формой — только если в воркспейсе уже подключён хотя бы один TG-аккаунт: **«⚠️ Члены команды в этом рабочем пространстве увидят ваши чаты Telegram»**.

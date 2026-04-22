@@ -1,6 +1,6 @@
 # Architecture
 
-Восстановленная картина стека и потоков данных. Источники: `code-inventory.json`, captured RPC в `tools/capture/processed/`, `api-contract.generated.json`, названия пакетов в imports (`@repo/core`, `@repo/ui` и т.п.).
+Картина стека и потоков данных.
 
 ---
 
@@ -8,198 +8,230 @@
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                       Browser / TG Mini-App                            │
+│                            Browser (SPA)                               │
 │  ┌──────────────────────────────────────────────────────────────┐      │
-│  │  React SPA + TanStack Router                                 │      │
-│  │  state: TanStack Query (serverState) + Firestore subscribe   │      │
+│  │  React + Vite + TanStack Router                              │      │
+│  │  state: TanStack Query (polling + opt. SSE)                  │      │
 │  │  forms: react-form + Zod schemas                             │      │
-│  │  i18n:  i18next (bundled `locales/chunks/*.js`)              │      │
+│  │  REST-клиент: openapi-fetch (typed из OpenAPI)               │      │
 │  └──────────────────────────────────────────────────────────────┘      │
-└──────────────┬────────────────────┬────────────────────┬───────────────┘
-               │                    │                    │
-      [tRPC batched POST]    [oRPC REST]         [Firestore SDK]
-               │                    │                    │
-┌──────────────▼────────────────────▼────────────────────▼───────────────┐
-│           api.crmchat.ai        (backend, Node)                        │
-│  ┌──────────────────────┐  ┌──────────────────────┐                    │
-│  │ tRPC v11 procedures  │  │ oRPC generated REST  │                    │
-│  │ workspace.*          │  │ workspaces.*         │                    │
-│  │ contact.*            │  │ outreach.sequences.* │                    │
-│  │ telegram.*           │  │ ...                  │                    │
-│  └──────────┬───────────┘  └──────────┬───────────┘                    │
-│             │                         │                                │
-│             ▼                         ▼                                │
+└──────────────────────┬─────────────────────────────┬───────────────────┘
+                       │                             │
+               [REST /v1/* + cookie]          [SSE /v1/.../stream]
+                       │                             │
+┌──────────────────────▼─────────────────────────────▼───────────────────┐
+│           api.<domain>           (Bun + Hono, один процесс)            │
 │  ┌──────────────────────────────────────────────────────┐              │
-│  │         Firebase Admin SDK (same GCP project)        │              │
+│  │ REST API (OpenAPI-контракт, Zod-схемы)               │              │
+│  │   /v1/workspaces/{ws}/members                        │              │
+│  │   /v1/workspaces/{ws}/outreach/sequences/{id}        │              │
+│  │   /v1/workspaces/{ws}/contacts                       │              │
+│  │   /v1/.../stream   ← SSE для чата и live-экранов     │              │
+│  └──────────────────────┬───────────────────────────────┘              │
+│                         ▼                                              │
+│  ┌──────────────────────────────────────────────────────┐              │
+│  │ Drizzle ORM · pg-boss (очередь) · gramjs (MTProto)   │              │
 │  └──────────────────────────────────────────────────────┘              │
-└────────────────┬───────────────────────────────┬───────────────────────┘
-                 │                               │
-         ┌───────▼────────┐              ┌───────▼────────┐
-         │  Firestore     │              │ Firebase       │
-         │  (prod data,   │              │ Storage        │
-         │   real-time    │              │ (files, avatars)│
-         │   subscribe)   │              │                │
-         └───────┬────────┘              └────────────────┘
-                 │
-                 ▼
-         ┌──────────────────────────────────────────┐
-         │  Background (Cloud Functions / workers)  │
-         │  – outreach scheduler                    │
-         │  – TG session drivers (MTProto)          │
-         │  – invite TTL expirator                  │
-         └──────────────────────────────────────────┘
+└────────────────┬───────────────────────────┬───────────────────────────┘
+                 │                           │
+         ┌───────▼────────┐          ┌───────▼────────┐
+         │   PostgreSQL    │          │ S3-совместимое │
+         │  (домен, сессии,│          │  (CSV, media,  │
+         │   очередь,      │          │   avatars)     │
+         │   MTProto ses.) │          │                │
+         └────────────────┘          └────────────────┘
 ```
 
----
-
-## 2. API-слои — зачем **два**
-
-В `code-inventory.json` видны два параллельных набора ручек:
-
-| Namespace | Протокол | Пример | Клиент дёргает |
-|---|---|---|---|
-| `workspace.*`, `contact.*`, `telegram.*`, `outreach.*` (частично) | **tRPC v11** batched POST | `POST https://api.crmchat.ai/trpc/workspace.createWorkspace?batch=1` | TanStack Query hooks генерируются из tRPC router'а |
-| `workspaces.*`, `outreach.sequences.*`, `outreach.lists.*` (частично) | **oRPC** generated REST | `POST /api/workspaces.getMembers` | Тот же клиент, но с codegen из `api-contract.generated.json` |
-
-Это **не legacy**, это сознательное разделение:
-
-- **tRPC** = внутренние мутации UI → backend. Type-safe end-to-end внутри монорепы, не стабильный контракт. Timestamp отдаётся как `{_seconds, _nanoseconds}` (Firestore native).
-- **oRPC** = **публично задокументированный** контракт, описанный в `api-contract.generated.json`. Сюда попадают ручки, которые могут вызывать сторонние (integrations, Zapier, будущее публичное API). Timestamp — ISO-строка.
-
-Свидетельство «это не дубль, а два разных набора»: имена различаются явно (`workspace.createWorkspace` vs `workspaces.getMembers` — множественное число у oRPC). Пересечений по семантике почти нет — см. `specs/api-contracts.md`.
-
-**Рекомендация для реимплементации**: начать с одного tRPC. oRPC-слой поднимать только когда появляются реальные внешние потребители.
+Один Bun-процесс обслуживает REST + SSE + воркеры pg-boss. Выделять отдельные сервисы — только когда упрёмся в нагрузку.
 
 ---
 
-## 3. Real-time данных — Firestore subscribe, не tRPC
+## 2. API-слой
 
-Принципиальное архитектурное решение: **чтение** основных коллекций (contacts, messages, activities, sequences leads) идёт напрямую клиентом в Firestore через SDK, а tRPC/oRPC — только для **мутаций** и для тех read'ов, которые нужно обогатить серверной логикой (например, `workspaces.getMembers` джойнит user profile из другой коллекции).
+**Один REST-слой с OpenAPI-контрактом**, обслуживающий и UI, и внешние интеграции.
 
-Это объясняет:
-- Почему в coverage-check 27 Firestore-функций — каждая требует decisions в `scope.json`.
-- Почему US-10 (чат), US-11 (контакты), US-14 (карточка) показывают «RPC на бутстрэпе — вспомогательные, а основной канал — Firestore subscription».
-- Почему US-7/8 (create/edit property) не имеют tRPC create/update ручек — это прямой Firestore write.
+Принципы:
 
-**Impl-следствие**: Firestore security rules — **первая линия авторизации**, не опциональная. Реимплементация без rules = утечка всех данных между воркспейсами. См. `permissions.md`.
+- **Транспорт**: HTTP + JSON, методы по семантике (`GET`, `POST`, `PATCH`, `DELETE`). URL — ресурс-ориентированные: `/v1/workspaces/{wsId}/members`, `/v1/workspaces/{wsId}/contacts/{id}`.
+- **Контракт**: Zod-схемы — source of truth для входа/выхода. Из них генерируются и OpenAPI-описание, и typed-клиент для фронта (`openapi-fetch`). Одна схема — одна правда.
+- **Версионирование**: префикс `/v1/` как convention. Параллельные версии не поддерживаем — фронт деплоится вместе с бэком, с внешним интегратором breaking changes координируем разом.
+- **Timestamps**: всегда ISO-8601 строки (`2026-04-21T02:09:52.989Z`).
+- **Аутентификация** (одним middleware, внутри handler'а source не важен):
+  - UI → httpOnly session-cookie (после Яндекс OAuth).
+  - Внешние интеграции → API-key (scoped на workspace) в `Authorization: Bearer` или `X-API-Key`.
+- **Rate-limit**: отдельные лимиты для UI-трафика и API-key трафика.
+- **Audit-log**: мутации от API-keys логируются с `apiKeyId`; UI-мутации — с `userId`.
+
+Детальный перечень ручек — `api-contracts.md`.
 
 ---
 
-## 4. Монорепо (предположение)
+## 3. Real-time
 
-Видимые пакеты (из имён и импортов):
-- `@repo/core` — shared types (`WorkspaceRoleSchema`, etc.), Zod-схемы, enum'ы.
-- `@repo/ui` — дизайн-система (кнопки, формы).
-- `@repo/api-contract` — `api-contract.generated.json` + codegen.
-- `web` (SPA) — основной фронт.
-- `api` — tRPC/oRPC backend.
-- `functions` — Cloud Functions (scheduler, triggers).
+**Polling как дефолт, SSE точечно** — там, где polling ощутимо портит UX.
 
-⚠️ **OQ-Arch-1**: подтвердить структуру workspace'ов монорепы (pnpm / turborepo / nx). Ни на чём не ловили.
+### Polling
+Используется почти везде (списки контактов, настройки, properties, members). Реализация — `refetchInterval` в TanStack Query:
+
+```ts
+useQuery({ queryKey: ['contacts', ws], refetchInterval: 3000, ... })
+```
+
+Для 50-100 внутренних пользователей при 3-секундном polling'е нагрузка на Postgres ничтожна. Интервал регулируется по фокусу вкладки (TanStack Query делает это из коробки — idle вкладки не опрашивают).
+
+### SSE
+Включаем только на экранах, где нужна суб-секундная реакция:
+- **Чат** (US-10) — сообщения в активном диалоге.
+- **Запущенная кампания** (US-26) — опционально, счётчики отправок/ответов.
+
+Транспорт — `EventSource` на клиенте, поток `text/event-stream` на бэке. На бэке поток держится открытым, heartbeat раз в 30 секунд (иначе прокси рвут idle). Источник событий — Postgres `LISTEN/NOTIFY`: триггер на INSERT/UPDATE в соответствующей таблице шлёт `NOTIFY channel, payload`, бэкенд-подписчик фильтрует по `workspaceId` и пушит клиенту.
+
+Клиентская обвязка — одна обёртка над `EventSource`: реконнект с backoff, интеграция с TanStack Query (обновляет кеш вместо замены состояния).
+
+Это даёт real-time в нужных местах без обслуживания отдельного WS-слоя или Redis.
+
+---
+
+## 4. Монорепо
+
+Инструмент — **pnpm workspaces + Turborepo**.
+
+Пакеты:
+- `@repo/core` — shared Zod-схемы, enum'ы, доменные типы. Source of truth для валидации и OpenAPI-генерации.
+- `@repo/ui` — дизайн-система (кнопки, формы, таблицы).
+- `@repo/api-client` — typed REST-клиент, сгенерирован из OpenAPI-спеки бэка.
+- `web` — React SPA.
+- `api` — Bun backend (REST + SSE + воркеры в одном процессе).
 
 ---
 
 ## 5. Frontend stack
 
-| Слой | Выбор | Свидетельство |
-|---|---|---|
-| Фреймворк | **React** (SPA, CSR) | `index.html` минимален, hydration признаков нет |
-| Роутер | **TanStack Router** (file-based) | `code-inventory.routes` содержит строки вида `ProtectedWWorkspaceIdSettingsWorkspaceInviteRouteImport` — это ровно имена, которые генерирует TanStack Router plugin |
-| Server state | **TanStack Query** | стандартный партнёр TanStack Router + tRPC v11 |
-| Формы | **react-form (`@tanstack/react-form`)** + `revalidateLogic()` | из имён ошибок в UI (`shouldNotEmpty`) и паттерна captured форм |
-| Валидация | **Zod** | пакет `@repo/core` экспортирует schemas |
-| i18n | **i18next**, bundled | `locales/chunks/*.js` = заранее скомпилированные chunks, не fetch'ится |
-| Стили | **Tailwind** + Material-esque компоненты | (OQ, по HTML-снапшотам классы похожи на Tailwind; proof можно найти в bundle) |
-| Telegram Mini-App | `@twa-dev/sdk` или native | см. `auth.md` |
+| Слой | Выбор |
+|---|---|
+| Фреймворк | **React** SPA (CSR) |
+| Bundler | **Vite** |
+| Роутер | **TanStack Router** (file-based, типизированные params/search) |
+| Server state | **TanStack Query** (polling; SSE там, где нужно) |
+| REST-клиент | **`openapi-fetch`** (codegen из OpenAPI) |
+| Формы | **`@tanstack/react-form`** + Zod-валидатор |
+| Валидация | **Zod**, схемы из `@repo/core` |
+| Стили | **Tailwind** + дизайн-система `@repo/ui` |
 
-Auth-ветки: web (Firebase Auth + custom token) и TG Mini-App (initData → custom token). Обе приходят к одному Firebase Auth user.
+Auth — server-side сессия в httpOnly cookie (см. `auth.md`). Клиент просто делает запросы, cookie летит автоматически.
 
 ---
 
 ## 6. Backend stack
 
-| Слой | Выбор | Свидетельство |
-|---|---|---|
-| Хост | **api.crmchat.ai** (отдельный origin от фронта — видим CORS preflight `OPTIONS` в каждом RPC) | captured headers |
-| Runtime | Node (tRPC v11) | ― |
-| Storage | **Firestore** + **Firebase Storage** + **Firebase Auth** | §1 data-model.md |
-| Прямой MTProto | `gramjs`-like библиотека на backend'е — session keys ездят туда-сюда через tRPC | `telegram.account.getAccountConnectionData` отдаёт `{ session.keys, session.hashes }` |
-| Scheduler | Cloud Functions + Cloud Scheduler (предположение) | `rescheduleSequences` эффект — точно backend, не клиент |
-| Прокси (для TG-аккаунтов) | Свой пул прокси по 10 странам | `proxy.getCountries` |
+| Слой | Выбор |
+|---|---|
+| Runtime | **Bun 1.x** (нативный TS, встроенный раннер) |
+| HTTP-фреймворк | **Hono** + `@hono/zod-openapi` |
+| ORM / query | **Drizzle ORM** + `drizzle-kit` для миграций |
+| БД | **PostgreSQL** (managed в Яндекс.Облаке в проде, Docker локально) |
+| Real-time источник | Postgres `LISTEN/NOTIFY` → SSE |
+| Очередь фоновых задач | **pg-boss** (поверх того же Postgres) |
+| Файлы | **S3-совместимое**: Yandex Object Storage в проде, **MinIO** локально |
+| MTProto | **gramjs**; сессии хранятся в Postgres `jsonb`-колонке |
+| Auth | Яндекс OAuth2 → server-side session в Postgres |
+| Scheduler | pg-boss schedules (cron-expression внутри очереди) |
 
-⚠️ **OQ-Arch-2**: используется ли Cloud Functions или это self-hosted Node? Подсказка: admin SA `firebase-adminsdk-bntbj@...` в signed URL'ах — значит, как минимум часть backend'а имеет Admin SDK credentials.
+Ключевой принцип: **один Bun-процесс делает всё** (REST, SSE, воркеры). Выделять отдельные сервисы — только когда конкретный pain point появится.
 
 ---
 
 ## 7. Request flow — пример создания воркспейса
 
-1. Юзер в `/` (ProtectedIndex) или `/settings/workspace/new`.
-2. Форма submit → `useMutation` из tRPC-клиента → `POST /trpc/workspace.createWorkspace?batch=1`.
-   - Payload: `{"0":{"name":"test5","organizationId":"HOg..."}}`.
-   - Headers: `Authorization: Bearer <firebase-id-token>` (OQ, в capture не видим — CDP не перехватывает request headers, но это стандарт).
-3. Backend:
-   - Валидирует id-token через `admin.auth().verifyIdToken()`.
-   - Создаёт doc в `workspaces/{autoId}` + membership в `workspaces/{id}/members/{uid}` с `role: admin`.
-   - Возвращает doc.
-4. Клиент:
-   - TanStack Query инвалидирует связанные queries (`workspaces.getMembers`, sidebar picker).
-   - Router `replace` на `/w/{newId}/settings/workspace`.
-   - Firestore-подписки destination-страницы стартуют (получают members, pending invites из **Firestore напрямую**, не tRPC).
+1. Форма submit → `openapi-fetch` → `POST /v1/workspaces`.
+   - Body: `{ name, organizationId }`.
+   - Cookie с session-id летит автоматически.
+2. Backend (Hono handler):
+   - Auth middleware по cookie поднимает сессию из Postgres, проставляет `ctx.userId`.
+   - Zod валидирует вход из OpenAPI-схемы.
+   - Drizzle транзакция: `INSERT INTO workspaces` + `INSERT INTO workspace_members (user_id, workspace_id, role='admin')`.
+   - Возвращает созданный ресурс (сериализация по тем же Zod-схемам).
+3. Клиент:
+   - TanStack Query инвалидирует связанные queries.
+   - Router переходит на `/w/{newId}/settings/workspace`.
 
 ---
 
-## 8. Why TanStack Router (file-based)
+## 8. Почему Postgres, а не Firestore/Supabase/etc
 
-Свидетельство — `code-inventory.routes` содержит очень длинные generated имена (`ProtectedWWorkspaceIdSettingsWorkspaceInviteRouteImport`). Это **unique signature** TanStack Router file-based конвенции:
-- `_protected` layout → prefix `Protected`.
-- `/w/$workspaceId/settings/workspace/invite` → `WWorkspaceIdSettingsWorkspaceInvite` (camelCase path segments).
-- `RouteImport` — generated binding type.
+- **Нет Google/AWS-only зависимостей** — критично для корпоративного Яндекс-хостинга.
+- **SQL + нормальные JOIN'ы** — `getMembers` с обогащением user profile делается одним запросом, а не денормализацией на запись.
+- **Один формат timestamp**, стандартные транзакции, миграции через `drizzle-kit`.
+- **Локальная отладка** — `docker run postgres` и всё. Без эмуляторов cloud-сервисов.
+- **Real-time через `LISTEN/NOTIFY`** закрывает 90% потребности; SSE-мост пишется один раз.
+- **`jsonb`** для custom properties контактов — динамическая схема без Firestore.
+- **pgvector** — если когда-нибудь захочется AI-поиска по контактам/сообщениям, добавить колонку, не менять БД.
 
-Альтернативы (React Router, Next.js App Router) дают совсем другие signatures. Это фактически neon-sign «TanStack Router».
+Цена: real-time через подписку SDK на клиенте пропадает как паттерн, вместо него polling + точечный SSE. Это осознанный trade-off, см. §3.
 
 ---
 
-## 9. Почему Firestore для real-time
+## 9. Authentication flow
 
-Альтернативы — свой WebSocket / SSE / Supabase Realtime. Firestore выбран, потому что:
-- Chat-heavy продукт — Firestore отлично индексирует «messages for chat X, last N, order by ts» с subscriptions.
-- Outreach lead-lists — тяжёлые коллекции с частыми обновлениями статусов.
-- Нет нужды держать свои WS-серверы.
+Коротко (детали — `auth.md`):
 
-**Цена**: security rules становятся критичными, Firestore pricing растёт линейно с read'ами (каждая подписка платная), schema-миграции дороже (нет native alter table).
+1. Кнопка «Войти через Яндекс» → редирект на `oauth.yandex.ru/authorize` с `client_id`, `scope=login:email login:info`.
+2. Callback `/auth/yandex/callback?code=...` → бэк меняет `code` на `access_token` через `oauth.yandex.ru/token`.
+3. `GET login.yandex.ru/info` с token'ом → `{ email, first_name, ... }`.
+4. Матчим по email на `users`, создаём при первом входе. Генерим session-id, пишем в `sessions`, ставим httpOnly cookie.
+5. Все дальнейшие запросы — по cookie. Middleware поднимает сессию из БД.
+
+API-keys — отдельная таблица `api_keys` (scoped на workspace), передаются в `Authorization: Bearer` или `X-API-Key`, проверяются тем же middleware.
 
 ---
 
 ## 10. Observability
 
-Видимое:
-- **PostHog** — токен и `productId: "crmchat.ai"` зашиты в каждый integration-ответ (Cello, Google Calendar, etc.). Значит, PostHog backend-side.
-- **Sentry / crash reporting** — ⚠️ **OQ-Arch-3**, в capture не видели.
-- **Логирование** — Cloud Logging стандартно для Firebase, но не подтверждено.
+MVP:
+- **Structured JSON-логи в stdout** — читаются любым коллектором Яндекс.Облака.
+- **Sentry** (SaaS trial или self-hosted **GlitchTip**) — ошибки фронта и бэка.
+
+Рост:
+- Выделить structured metrics (rate-limit hit-rate, MTProto flood-wait, pg-boss latency).
+- Request-id в логах каждого запроса, пробрасывать в pg-boss-задачи.
 
 ---
 
 ## 11. Deployment / environments
 
-⚠️ **OQ-Arch-4**: `isSandbox: false` в каждом integration-ответе намекает, что существует `isSandbox: true` режим — вероятно, dev/staging. Детали (URL, отдельный Firebase project?) — не захвачены.
+**Локально:**
+```
+docker compose up
+```
+Один compose поднимает: postgres, minio, backend (Bun hot reload), frontend (vite dev server). Весь dev — офлайн.
+
+**Прод (MVP):**
+- Бэкенд: один Docker-образ, **Yandex Serverless Containers** или обычная VM с `docker compose up -d`.
+- Фронт: статика Vite билда → Yandex Object Storage + CDN, либо nginx на той же VM.
+- БД: **Managed PostgreSQL** в Яндекс.Облаке.
+- Файлы: **Yandex Object Storage** (S3 API).
+
+Окружения: `prod` и `staging` — разные базы и бакеты. Без K8s.
 
 ---
 
-## 12. Что обязательно воспроизвести для работающего клона
+## 12. Что обязательно для работающей системы
 
-1. **Firebase project** — Auth + Firestore + Storage (один проект, как в оригинале).
-2. **Firestore security rules** — без них всё небезопасно. Нужен rules-reverse-engineering отдельной стори.
-3. **tRPC backend** — минимум 50 captured procedures (см. `specs/api-contracts.md`).
-4. **MTProto clients** — отдельный subsystem для outreach-аккаунтов и personal sync. Ядро сложности всего продукта.
-5. **Scheduler** — Cloud Function по cron'у, пересчитывающая sequence schedule.
-6. **Storage signed-URL flow** — для CSV upload и attachments.
-7. **Proxy pool** — 10 стран, mapping country → proxy endpoint. Либо свой пул, либо интеграция с Bright Data / аналог.
+1. **PostgreSQL** + миграции (`drizzle-kit`).
+2. **REST backend** — полный набор ручек из `api-contracts.md`.
+3. **Яндекс OAuth** + session storage в Postgres.
+4. **S3-совместимое хранилище** + signed URL для uploads.
+5. **pg-boss** — фоновые задачи (reschedule sequences, dispatch outreach messages, cleanup expired invites).
+6. **MTProto clients** (gramjs) для outreach и personal sync.
+7. **SSE** для чата (US-10).
 
 ---
 
-## 13. Что можно без потери функциональности выкинуть
+## 13. Что можно отложить / пропустить
 
-- **oRPC слой** — до появления внешних потребителей; всё живёт в tRPC.
 - **Cello integration** — viral/referral, не core.
 - **Google Calendar integration** — nice-to-have для reminders.
-- **PostHog** — замените на ваш favorite analytics.
+- **Proxy pool** для outreach-аккаунтов — до первого flood-wait/блокировки можно без него.
+- **Отдельный worker-процесс** — сначала всё в одном Bun-процессе, выносим когда очередь начнёт тормозить HTTP.
+- **SSE везде** — пишем только для чата (и опционально для live-экрана кампании). Остальное — polling.
+- **Read replica Postgres, Redis, CDN** — по мере роста.

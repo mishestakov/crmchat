@@ -1,19 +1,16 @@
 # API contracts
 
-> Автосгенерировано из `tools/capture/processed/rpc/*`. Не редактируй вручную.
-> Источник: 39 proc'ов, 666 зафиксированных вызовов.
+Справочник REST-ручек (`/v1/*`). Единый контракт обслуживает UI и внешние интеграции; аутентификация — Firebase id-token (UI) или API-key (интеграции).
 
-## Два транспорта
+Формы данных выведены из реальных вызовов оригинального сервиса.
 
-- **tRPC** (`workspace.*`, `telegram.*`, `contact.*`, `outreach.*` в единственном числе) — **внутренний** batched API, `POST /trpc/<proc>?batch=1`. Типы делятся через тот же monorepo, не документируется наружу. Авторизация — Firebase ID-token.
-- **oRPC** (`workspaces.*`, `contacts.*` — во множественном числе) — **публичный** REST-like контракт из `api-contract.generated.json`. Доступен внешним интеграторам через API-keys. HTTP-глаголы соответствуют семантике (`GET /v1/workspaces/{id}`, `PATCH /v1/workspaces/{id}/outreach/sequences/{id}`).
-
-Пересечение по имени (`workspace.createWorkspace` vs `workspaces.get`) — это **две разные ручки** в разных API, не дубль и не легаси.
+> Сгенерировано из `tools/capture/processed/rpc/*`. Не редактируй вручную — правь генератор `tools/capture/src/contracts-extract.ts`. Источник: 39 ручек, 666 зафиксированных вызовов.
 
 ## Обозначения
 - `required` — поле присутствует во всех N вызовах.
-- `optional (seen X/N)` — поле есть не везде. При N=1 optional не детектируется (все поля показаны как required — "assumed").
+- `optional (seen X/N)` — поле есть не везде. При N=1 optional не детектируется (все поля показаны как required — «assumed»).
 - Вложенные объекты и массивы показаны as-is из одного свежего примера, не мёржатся.
+- В реимплементации timestamp'ы сериализуются как ISO-8601 строки; в captured-примерах встречается формат `{_seconds, _nanoseconds}` — особенность перехваченного транспорта, не целевой контракт.
 
 ## activity.scheduleCalendarEventIfPossible
 
@@ -1386,7 +1383,7 @@ Sample:
 
 - **Kind**: ORPC · **HTTP**: GET
 - **Captured calls**: 148
-- **Used by**: US-1, US-11, US-2, US-24, US-4, US-5b, US-7
+- **Used by**: US-1, US-11, US-2, US-24, US-4, US-5, US-7
 - **URL**: `https://api.crmchat.ai/v1/workspaces/4L1YDj39qRZJ23ACcD12/members`
 
 ### Input

@@ -1,397 +1,343 @@
 # Data model
 
-Этот документ — попытка восстановить схему данных (в основном Firestore) по **наблюдаемым** ответам tRPC / oRPC. Всё ниже — из captured RPC в `tools/capture/processed/rpc/`. Там, где свидетельств нет, стоит `⚠️ OQ`.
+PostgreSQL-схема. Sсurce of truth — Drizzle-определения в `api/src/db/schema/*.ts`, этот документ — человеческий обзор.
+
+Принципы:
+- **UUID v7** для всех `id` — монотонные, индекс-friendly, 36 символов.
+- **Timestamps** — `timestamp with time zone`, сериализуются в ISO-8601 на API.
+- **Soft delete** не применяем; удаление — `DELETE` (кроме `workspaces`, где каскад через `ON DELETE CASCADE`).
+- **`workspace_id`** в каждой доменной таблице — security boundary (см. `permissions.md`).
+- **`jsonb`** для динамических custom properties и конфигов, которые не нужно индексировать поштучно.
 
 ---
 
-## 1. Backend-платформа
+## 1. Users / сессии / API-keys
 
-**Firebase (Google Cloud)**. Идентифицируется однозначно:
-- **Storage bucket**: `hints-crm.appspot.com` (видно в `outreach.generateUploadSignedUrl.fileUrl` и `outreach.lists.uploadCsvList.source.fileUrl`).
-- **Firestore** — формат Timestamp `{_seconds, _nanoseconds}` в tRPC-ответах (например, `workspace.createWorkspace.result.data.createdAt`).
-- **Firebase Auth** — синтетические email'ы пользователей `u{uid}@users.crmchat.ai` (видно в каждом `token`-ответе).
-- **Admin SDK SA**: `firebase-adminsdk-bntbj@hints-crm.iam.gserviceaccount.com` (видно в signed-URL query).
-
-⚠️ **Старое название проекта**: `hints-crm`. Брендинг (сайт, ручки) — `crmchat.ai`. Имя GCP-проекта не переименовывалось.
-
----
-
-## 2. User
-
-Firebase Auth пользователь; документ в Firestore хранит профиль.
-
-### Поля (наблюдаемое)
-| Поле | Тип | Откуда |
+### `users`
+| Колонка | Тип | Примечание |
 |---|---|---|
-| `uid` | string | Firebase Auth; используется как `userId` повсюду |
-| `email` | string | синтетический `u{uid}@users.crmchat.ai` (см. `getAccountConnectionData`) |
-| `name` | string | «Вова Телеграмов» (из `workspaces.getMembers.user.name`) |
-| `timezone` | string (IANA) | `Europe/Moscow` (из `workspaces.getMembers.user.timezone`) |
-| `telegramUsername` | string | `vova_telegramov` (из `workspaces.getMembers.user.telegramUsername`) |
+| `id` | uuid (pk) | |
+| `email` | text, unique, not null | из Яндекс OAuth `default_email` |
+| `name` | text | первое + фамилия из OAuth |
+| `avatar_url` | text, nullable | |
+| `timezone` | text, not null, default `'Europe/Moscow'` | IANA |
+| `telegram_username` | text, nullable | если подтверждён через personal sync |
+| `yandex_id` | text, unique, nullable | `id` из `login.yandex.ru/info` |
+| `created_at`, `updated_at` | timestamptz | |
 
-### Коллекция
-⚠️ **OQ-User-1**: путь коллекции — `users/{uid}` ожидаемо, но не подтверждено прямым capture.
-
----
-
-## 3. Organization
-
-Верхний уровень биллинга / привязки воркспейсов. В coverage почти не фигурирует — нет UI-пути создания (см. US-5 OQ).
-
-### Поля (наблюдаемое)
-| Поле | Тип | Откуда |
-|---|---|---|
-| `id` | string | `organizationId: "HOgZBkDHwvEWuly71jdF"` в `createWorkspace.input` |
-| `name` | string | edit-поле «Название организации» (US-5) |
-
-⚠️ **OQ-Org-1**: как создаётся `organization`-документ. Нет захваченного `createOrganization` RPC.
-
-⚠️ **OQ-Org-2**: отношение user → organization. Привязка по `ownerId`? Список `members`?
-
-### Коллекция
-Ожидается `organizations/{id}`.
-
----
-
-## 4. Workspace
-
-Core сущность — в него помещается вся CRM / outreach работа.
-
-### Поля (наблюдаемое)
-| Поле | Тип | Пример |
-|---|---|---|
-| `id` | string | `"zRQtzTiglfyVB5DtRm5Q"` |
-| `name` | string | `"test5"` |
-| `organizationId` | string | `"HOgZBkDHwvEWuly71jdF"` (FK на `organizations`) |
-| `createdBy` | string (uid) | `"iNejvzobbmQxRmzPtEHD4hBxqvQ2"` |
-| `createdAt` | Firestore Timestamp | `{_seconds, _nanoseconds}` |
-| `updatedAt` | Firestore Timestamp | ― |
-
-Источник: `workspace.createWorkspace` response.
-
-### Коллекция
-`workspaces/{id}`.
-
----
-
-## 5. Workspace Member
-
-### Поля (наблюдаемое)
-| Поле | Тип | Значения |
-|---|---|---|
-| `userId` | string (uid) | FK → `users` |
-| `role` | enum | **`admin`**, **`member`**, **`chatter`** (из capture + i18n: «Админ», «Участник», «Чаттер») |
-| `user` | embedded | денормализованный `{name, timezone, telegramUsername}` (из ответа `workspaces.getMembers` — сервер сам джойнит) |
-
-Источник: `workspaces.getMembers` response.
-
-### Коллекция
-⚠️ **OQ-Member-1**: `workspaces/{workspaceId}/members/{userId}` (ожидается) или отдельная top-level `workspaceMembers`. Сервер точно хранит пару `(workspaceId, userId)` — операции `changeWorkspaceMemberRole` и `removeWorkspaceMember` принимают оба.
-
----
-
-## 6. Workspace Invite
-
-### Поля (ожидаемое, не подтверждено полным capture)
-| Поле | Тип | Замечание |
-|---|---|---|
-| `id` / `code` | string | используется в URL `/accept-invite/{workspaceId}/{inviteCode}` |
-| `workspaceId` | string | FK |
-| `telegramUsername` | string | кому отправили (см. `inviteWorkspaceMember.input`) |
-| `role` | enum | `admin` / `member` / `chatter` |
-| `createdBy` | string (uid) | ― |
-| `createdAt` | Timestamp | ― |
-| `expiresAt` | Timestamp | ⚠️ **OQ**: в UI pending-invites виден countdown «осталось N days» (US-4) |
-
-### Коллекция
-⚠️ **OQ-Invite-1**: путь и TTL. Если expiry серверный — вероятно, Cloud Scheduler / scheduled Cloud Function.
-
----
-
-## 7. Property (кастомные поля)
-
-Схема кастомных полей контакта. Из user-stories.md US-7:
-
-### Поля (из UI)
-| Поле | Тип | Замечание |
-|---|---|---|
-| `key` | string | `custom.<id>` для пользовательских; `stage` — системное (воронка) |
-| `name` | string | — |
-| `color` | enum | палитра из 10 значений (см. US-7) |
-| `type` | enum | `text`, `single-select`, `multi-select`, возможно `number`, `date` (OQ) |
-| `required` | bool | — |
-| `showInList` | bool | — |
-| `values` | array | для `*-select`: `[{ id, name, color }]` |
-| `system` | bool | флаг «нельзя удалить» (ожидаемо) |
-| `objectType` | enum | пока в URL виден только `contacts` |
-| `order` | number | для drag-n-drop сортировки |
-
-### Коллекция
-⚠️ **OQ-Property-1**: в capture tRPC-запросов CRUD'а нет → прямой Firestore write. Ожидается `workspaces/{wsId}/properties/{key}` или вложенная в document воркспейса.
-
----
-
-## 8. Contact (лид)
-
-Core CRM-сущность. Прямого create/read RPC в capture нет (Firestore-подписка).
-
-### Поля (из US-12 + capture bulk-update)
-| Поле | Тип | Источник |
-|---|---|---|
-| `id` | string | FK повсюду |
-| `workspaceId` | string | изоляция |
-| `name` | string | UI label «Имя» |
-| `telegramUsername` | string | UI «Имя пользователя Telegram» |
-| `shortDescription`, `description` | string | UI |
-| `stage` | string (property value id) | FK → `properties.stage.values` |
-| `url`, `email`, `phone` | string | UI |
-| `avatarUrl` | string | `contact.updateContactAvatar` существует |
-| `properties` | map | `{ "custom.abc": value, ... }` (см. `outreach.updateLeadProperties.properties`) |
-| `createdBy`, `createdAt`, `updatedAt` | — | стандартно |
-
-### Коллекция
-⚠️ **OQ-Contact-1**: `contacts/{workspaceId}/items/{id}` или top-level с `workspaceId`-фильтром. Нужен Firestore-sniffer capture на US-11.
-
----
-
-## 9. Activity (заметки и напоминания)
-
-### Поля (из US-15)
-| Поле | Тип |
+### `sessions`
+| Колонка | Тип |
 |---|---|
-| `id` | string |
-| `contactId` | FK |
-| `workspaceId` | FK |
-| `type` | enum: `note`, `reminder` |
-| `text` | string (плейн / маркдаун) |
-| `date` | Timestamp (только для `reminder`) |
-| `repeat` | string (?) (UI «Повторять...») |
-| `status` | enum: `open`, `completed` |
-| `completedAt` | Timestamp? |
-| `createdBy`, `createdAt` | — |
+| `id` | text (pk, 32-byte base64url) |
+| `user_id` | uuid → `users.id` ON DELETE CASCADE |
+| `user_agent` | text |
+| `ip` | inet |
+| `created_at`, `expires_at` | timestamptz, indexed по `expires_at` |
 
-`activity.scheduleCalendarEventIfPossible({workspaceId, activityId})` — отдельный боковой эффект (Google Calendar).
-
-### Коллекция
-⚠️ **OQ-Activity-1**: `activities/{contactId}/items/{id}` vs inline в `contact`. URL `/contacts/{cid}/activities/{aid}/edit` намекает на первую.
+### `api_keys`
+| Колонка | Тип |
+|---|---|
+| `id` | uuid (pk) |
+| `workspace_id` | uuid → `workspaces.id` ON DELETE CASCADE |
+| `public_id` | text, unique | префикс в `crmchat_pk_<public-id>_<secret>` |
+| `hashed_secret` | text, not null | `sha256(secret)` |
+| `created_by` | uuid → `users.id` |
+| `scopes` | text[] |
+| `created_at`, `last_used_at`, `revoked_at` | timestamptz |
 
 ---
 
-## 10. Outreach · Sequence (кампания)
+## 2. Organizations и workspaces
 
-### Поля (из `outreach.sequences.create` + `.patch` response)
-```json
-{
-  "id": "GADmh7QJIyXjql37nfRq",
-  "workspaceId": "zRQtzTiglfyVB5DtRm5Q",
-  "listId": "zsWrWrF3NF8hHFmsNyHG",     // FK → outreach lists
-  "name": "csvFile.csv",
-  "status": "draft",                    // draft | active | paused (из updateSequenceStatus)
-  "messages": [],                       // массив step'ов (US-22)
-  "accounts": {                         // привязка TG-аккаунтов (US-23)
-    "mode": "selected",                 // "all" | "selected"
-    "selected": []
-  },
-  "createdBy": "iNejvzobbmQxRmzPtEHD4hBxqvQ2",
-  "createdAt": "2026-04-21T02:09:54.218Z",  // ISO (oRPC!)
-  "updatedAt": "2026-04-21T02:09:54.218Z"
-}
+### `organizations`
+| Колонка | Тип |
+|---|---|
+| `id` | uuid (pk) |
+| `name` | text, not null |
+| `created_by` | uuid → `users.id` |
+| `created_at`, `updated_at` | timestamptz |
+
+### `workspaces`
+| Колонка | Тип |
+|---|---|
+| `id` | uuid (pk) |
+| `organization_id` | uuid → `organizations.id` ON DELETE RESTRICT |
+| `name` | text, not null |
+| `created_by` | uuid → `users.id` |
+| `created_at`, `updated_at` | timestamptz |
+
+Индекс по `organization_id`.
+
+### `workspace_members`
+| Колонка | Тип |
+|---|---|
+| `workspace_id` | uuid → `workspaces.id` ON DELETE CASCADE |
+| `user_id` | uuid → `users.id` ON DELETE CASCADE |
+| `role` | enum `workspace_role` (`admin` / `member` / `chatter`) |
+| `created_at` | timestamptz |
+
+PK: `(workspace_id, user_id)`. Индекс по `user_id` для «мои воркспейсы».
+
+### `workspace_invites`
+| Колонка | Тип |
+|---|---|
+| `id` | uuid (pk) |
+| `workspace_id` | uuid → `workspaces.id` ON DELETE CASCADE |
+| `telegram_username` | text | кому отправлено |
+| `role` | enum `workspace_role` |
+| `code` | text, unique | в URL `/accept-invite/{ws}/{code}` |
+| `created_by` | uuid → `users.id` |
+| `created_at`, `expires_at` | timestamptz |
+| `accepted_at` | timestamptz, nullable |
+
+Expiry обрабатывает pg-boss schedule (`cleanup_expired_invites` раз в час).
+
+---
+
+## 3. Properties / contacts / activities
+
+### `properties` (кастомные поля контакта)
+| Колонка | Тип |
+|---|---|
+| `id` | uuid (pk) |
+| `workspace_id` | uuid → `workspaces.id` ON DELETE CASCADE |
+| `key` | text, not null | `custom.<short>` или системный (`stage`, `owner`) |
+| `name` | text, not null |
+| `type` | enum (`text`, `number`, `date`, `single_select`, `multi_select`) |
+| `color` | text | палитра из 10 значений |
+| `required` | bool, default false |
+| `show_in_list` | bool, default true |
+| `system` | bool, default false | `true` запрещает delete |
+| `object_type` | enum (`contact`), default `contact` | задел на расширение |
+| `order` | integer | для drag-n-drop |
+| `values` | jsonb | `[{id, name, color}]` для `*_select` |
+| `created_at`, `updated_at` | timestamptz |
+
+Unique `(workspace_id, key)`.
+
+### `contacts`
+| Колонка | Тип |
+|---|---|
+| `id` | uuid (pk) |
+| `workspace_id` | uuid → `workspaces.id` ON DELETE CASCADE |
+| `name` | text |
+| `telegram_username` | text, nullable |
+| `email`, `phone`, `url` | text, nullable |
+| `short_description`, `description` | text, nullable |
+| `avatar_url` | text, nullable |
+| `stage` | text, nullable | значение из `properties.stage.values[].id` |
+| `properties` | jsonb, default `'{}'` | `{ "custom.<id>": value, ... }` |
+| `created_by` | uuid → `users.id` |
+| `created_at`, `updated_at` | timestamptz |
+
+Индексы: `(workspace_id)`, `(workspace_id, telegram_username)`, GIN по `properties`.
+
+### `activities`
+| Колонка | Тип |
+|---|---|
+| `id` | uuid (pk) |
+| `workspace_id` | uuid → `workspaces.id` ON DELETE CASCADE |
+| `contact_id` | uuid → `contacts.id` ON DELETE CASCADE |
+| `type` | enum (`note`, `reminder`) |
+| `text` | text |
+| `date` | timestamptz, nullable | для `reminder` |
+| `repeat` | text, nullable | `none` / `daily` / `weekly` / `monthly` |
+| `status` | enum (`open`, `completed`), default `open` |
+| `completed_at` | timestamptz, nullable |
+| `created_by` | uuid → `users.id` |
+| `created_at` | timestamptz |
+
+Индекс: `(workspace_id, contact_id)`, `(workspace_id, status, date)` для напоминаний.
+
+---
+
+## 4. Outreach
+
+### `outreach_lists`
+| Колонка | Тип |
+|---|---|
+| `id` | uuid (pk) |
+| `workspace_id` | uuid → `workspaces.id` ON DELETE CASCADE |
+| `name` | text |
+| `source_type` | enum (`csv_file`, `crm`, `groups`) |
+| `source` | jsonb | структура зависит от `source_type` (см. ниже) |
+| `status` | enum (`pending`, `ready`, `failed`) |
+| `created_by` | uuid → `users.id` |
+| `created_at`, `updated_at` | timestamptz |
+
+`source` для `csv_file`: `{ file_key, file_name, username_column, phone_column, columns: [...] }`.
+`source` для `crm`: `{ filters: [{property, op, value}], mode: "dynamic" | "one_shot" }`.
+`source` для `groups`: `{ group_ids: [...] }`.
+
+### `outreach_sequences`
+| Колонка | Тип |
+|---|---|
+| `id` | uuid (pk) |
+| `workspace_id` | uuid → `workspaces.id` ON DELETE CASCADE |
+| `list_id` | uuid → `outreach_lists.id` ON DELETE RESTRICT |
+| `name` | text |
+| `status` | enum (`draft`, `active`, `paused`) |
+| `messages` | jsonb | `[{text, delay_days, attachments: [{file_key, mime}]}]` |
+| `accounts` | jsonb | `{ mode: "all" | "selected", selected: [account_id] }` |
+| `contact_settings` | jsonb | `{ create_contact_trigger: "on_reply" | "on_first_send", default_owners: [uid], defaults: {stage, "custom.xxx": ...} }` |
+| `created_by` | uuid → `users.id` |
+| `created_at`, `updated_at` | timestamptz |
+
+### `outreach_leads`
+Участник кампании (один контакт × один list).
+
+| Колонка | Тип |
+|---|---|
+| `id` | uuid (pk) |
+| `workspace_id` | uuid → `workspaces.id` ON DELETE CASCADE |
+| `list_id` | uuid → `outreach_lists.id` ON DELETE CASCADE |
+| `contact_id` | uuid → `contacts.id`, nullable | создаётся позже по триггеру |
+| `status` | enum (`queued`, `sent`, `read`, `replied`, `failed`) |
+| `csv_fields` | jsonb | исходные колонки из CSV (`{first_name, phone, ...}`) |
+| `properties` | jsonb | overrides для конкретного lead'а |
+| `messages_sent` | jsonb | `[{step, msg_id, sent_at, read_at, replied_at}]` |
+| `error` | text, nullable | |
+| `created_at`, `updated_at` | timestamptz |
+
+Индексы: `(workspace_id, list_id)`, `(workspace_id, status)`, `(contact_id)` where not null.
+
+---
+
+## 5. Telegram
+
+### `telegram_accounts` (outreach pool)
+| Колонка | Тип |
+|---|---|
+| `id` | uuid (pk) |
+| `workspace_id` | uuid → `workspaces.id` ON DELETE CASCADE |
+| `phone_number` | text |
+| `status` | enum (`active`, `unauthorized`, `banned`, `flood_wait`) |
+| `proxy_country_code` | text, nullable | `ru`, `us`, … |
+| `warmup_enabled` | bool, default false |
+| `daily_limit` | integer, default 40 |
+| `auto_create_leads` | bool, default true |
+| `session` | jsonb | MTProto auth-key: `{ main_dc_id, is_test, keys: {dc: hex}, hashes: {dc: hex} }` |
+| `created_by` | uuid → `users.id` |
+| `created_at`, `updated_at` | timestamptz |
+
+### `telegram_personal_syncs` (US-9)
+| Колонка | Тип |
+|---|---|
+| `user_id` | uuid → `users.id` ON DELETE CASCADE |
+| `workspace_id` | uuid → `workspaces.id` ON DELETE CASCADE |
+| `session` | jsonb | как у `telegram_accounts.session` |
+| `created_at`, `updated_at` | timestamptz |
+
+PK: `(user_id, workspace_id)`. Session шифруется at-rest через колоночное шифрование (см. ниже).
+
+### `telegram_messages`
+Реплика сообщений для чата (US-10) — отдельно от MTProto-потока, чтобы быстро рисовать историю.
+
+| Колонка | Тип |
+|---|---|
+| `id` | uuid (pk) |
+| `workspace_id` | uuid → `workspaces.id` ON DELETE CASCADE |
+| `account_id` | uuid → `telegram_accounts.id`, nullable | `null` = personal sync |
+| `user_id` | uuid → `users.id`, nullable | для personal sync |
+| `chat_id` | text | TG peer id |
+| `tg_message_id` | bigint |
+| `direction` | enum (`in`, `out`) |
+| `text` | text |
+| `attachments` | jsonb |
+| `sent_at`, `read_at` | timestamptz |
+| `created_at` | timestamptz |
+
+Индексы: `(workspace_id, chat_id, sent_at desc)`, unique `(account_id, chat_id, tg_message_id)`.
+
+---
+
+## 6. Files (метаданные uploads)
+
+S3-объекты хранятся в Yandex Object Storage / MinIO; в БД — только метаданные.
+
+### `files`
+| Колонка | Тип |
+|---|---|
+| `id` | uuid (pk) |
+| `workspace_id` | uuid → `workspaces.id` ON DELETE CASCADE |
+| `key` | text, unique | `w/{ws}/outreach/leads/{uuid}.csv` |
+| `mime_type` | text |
+| `size_bytes` | bigint |
+| `uploaded_by` | uuid → `users.id` |
+| `uploaded_at` | timestamptz |
+
+Пути:
+- CSV: `w/{ws}/outreach/leads/{uuid}.csv`
+- Медиа-вложения: `w/{ws}/outreach/media/{uuid}.{ext}`
+- Аватарки контактов: `w/{ws}/avatars/{contact_id}.{ext}`
+- Аватарки пользователей: `u/{user_id}/avatar.{ext}`
+
+---
+
+## 7. Очередь фоновых задач
+
+pg-boss создаёт свою схему `pgboss` автоматически (таблицы `pgboss.job`, `pgboss.schedule` и т.п.). Наши jobs именуются `domain.action`:
+
+| Job | Назначение |
+|---|---|
+| `outreach.dispatch_step` | отправить очередной шаг sequence конкретному lead'у |
+| `outreach.process_csv` | парсинг CSV → создание `outreach_leads` |
+| `telegram.sync_dialogs` | периодический pull диалогов для personal sync |
+| `cleanup.expired_invites` | schedule cron: `0 * * * *` |
+| `cleanup.expired_sessions` | schedule cron: `0 3 * * *` |
+
+---
+
+## 8. Шифрование at-rest
+
+`telegram_accounts.session` и `telegram_personal_syncs.session` хранят MTProto auth-keys — компрометация даёт полный доступ к TG-аккаунту. Применяем колоночное шифрование через pgcrypto:
+
+```sql
+INSERT ... session = pgp_sym_encrypt($1::text, current_setting('app.encryption_key'))
+SELECT pgp_sym_decrypt(session, current_setting('app.encryption_key'))::jsonb FROM ...
 ```
 
-### Типизация sub-полей
-- `messages: [{ text, delayDays, attachments?: [...] }]` — ⚠️ **OQ-Seq-1**, нужен capture с реальными сообщениями.
-- **contact-settings** (из US-24): `{ createContactTrigger: "on-reply" | "on-first-send", defaultOwners: [uid, ...], defaults: { stage, "custom.xxx": ... } }` — вероятно, вложено прямо в sequence.
-- **filters** (US-20, динамические): `{ property: "stage", op: "eq", value: "..." }[]` — ⚠️ **OQ-Seq-2**.
-
-### Timestamps
-⚠️ **Важно**: `sequences.create` возвращает ISO-строки, в отличие от tRPC `createWorkspace` с Firestore Timestamp. Это потому что `outreach.sequences.*` — **oRPC**, а `workspace.*` — tRPC. tRPC оставляет Firestore Timestamp как есть; oRPC сериализует в ISO. Запомни: source-of-truth в Firestore — `Timestamp`; клиент парсит обе формы.
-
-### Коллекция
-⚠️ **OQ-Seq-3**: ожидается `outreachSequences/{id}` или `workspaces/{wsId}/outreach/sequences/{id}`.
+Ключ — в ENV `APP_ENCRYPTION_KEY`, пробрасывается в сессию Postgres через `SET app.encryption_key = ...` в начале транзакции.
 
 ---
 
-## 11. Outreach · List (набор получателей)
+## 9. Real-time триггеры
 
-Из `outreach.lists.uploadCsvList`:
+Postgres-триггеры для SSE (см. `architecture.md` §3):
 
-```json
-{
-  "id": "zsWrWrF3NF8hHFmsNyHG",
-  "workspaceId": "zRQtzTiglfyVB5DtRm5Q",
-  "name": "csvFile.csv",
-  "status": "pending",                  // pending | ready | failed? (OQ)
-  "source": {
-    "type": "csvFile",                  // "csvFile" | "crm" (US-20) | "groups" (US-21a)
-    "fileName": "leads.csv",
-    "fileUrl": "https://firebasestorage.googleapis.com/.../leads.csv?alt=media&token=...",
-    "usernameColumn": "telegram_username",
-    "phoneColumn": "phone",
-    "columns": ["first_name","last_name","telegram_username","phone","email","company","position","city","country","industry","deal_size","lead_source","interest_level","notes"]
-  },
-  "createdBy", "createdAt", "updatedAt"
-}
+```sql
+CREATE FUNCTION notify_chat_message() RETURNS trigger AS $$
+BEGIN
+  PERFORM pg_notify(
+    'chat:' || NEW.workspace_id::text,
+    json_build_object('chat_id', NEW.chat_id, 'message_id', NEW.id)::text
+  );
+  RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER telegram_messages_notify
+  AFTER INSERT ON telegram_messages
+  FOR EACH ROW EXECUTE FUNCTION notify_chat_message();
 ```
 
-Для `source.type === "crm"` ожидаем `{ filters: [...], type: "dynamic" | "oneShot" }` — ⚠️ **OQ-List-1**, нет capture.
-
-### Коллекция
-Ожидаем `outreachLists/{id}`.
+Аналогично для `outreach_leads` (канал `outreach:<ws>`) — для live-экрана кампании.
 
 ---
 
-## 12. Outreach · Lead (участник кампании)
+## 10. Enums — единый перечень
 
-Из `outreach.updateLeadProperties.input`:
-
-| Поле | Пример |
+| Enum | Значения |
 |---|---|
-| `leadId` | `"HsoE4LTYEOLvliySVm6j"` |
-| `listId` | `"t9wsLZpHyrfxMZFLBD90"` (принадлежит списку, не sequence'у — интересно) |
-| `workspaceId` | — |
-| `properties` | `{}` (в captured — пусто) |
+| `workspace_role` | `admin`, `member`, `chatter` |
+| `property_type` | `text`, `number`, `date`, `single_select`, `multi_select` |
+| `property_object_type` | `contact` |
+| `activity_type` | `note`, `reminder` |
+| `activity_status` | `open`, `completed` |
+| `outreach_list_source` | `csv_file`, `crm`, `groups` |
+| `outreach_list_status` | `pending`, `ready`, `failed` |
+| `outreach_sequence_status` | `draft`, `active`, `paused` |
+| `outreach_lead_status` | `queued`, `sent`, `read`, `replied`, `failed` |
+| `telegram_account_status` | `active`, `unauthorized`, `banned`, `flood_wait` |
+| `message_direction` | `in`, `out` |
 
-Ожидаемые поля: `status` (queued/sent/read/replied/failed), `sequenceId`, `contactId`, `messagesSent: [{msgId, sentAt, readAt, repliedAt}]`, CSV-поля (`first_name`, ...).
-
-### Коллекция
-⚠️ **OQ-Lead-1**: `outreachLeads/{id}` с индексами по `listId` / `sequenceId` / `workspaceId` — более вероятно, чем вложение в sequence, потому что leads — тяжёлая коллекция с частыми записями.
-
----
-
-## 13. Telegram · Personal sync session (US-9)
-
-Из `telegram.account.getAccountConnectionData.response`:
-
-```json
-{
-  "session": {
-    "mainDcId": 2,
-    "isTest": false,
-    "keys":  { "2": "5bca5c8b...<256 hex>" },
-    "hashes": { "2": "53862b27...<40 hex>" }
-  },
-  "authParams": "{workspaceId}::{tokenA}::{tokenB}"
-}
-```
-
-Это MTProto auth-key + hash per DC. Сервер хранит → отдаёт клиенту (либо сам проксирует через gramjs).
-
-### Коллекция
-⚠️ **OQ-TGSync-1**: путь коллекции. Учитывая, что `authParams` содержит `workspaceId` — возможно, `workspaces/{wsId}/telegramClients/{userId}`.
-
-### Privacy-обещание UI
-«Зашифрованный токен сессии» (US-9). Но `keys` мы видим **в открытом виде в HTTP-ответе** — значит, на клиенте он в памяти в plain. «Зашифрованный» относится к хранению на сервере (или at-rest).
-
----
-
-## 14. Telegram · Outreach account (US-17)
-
-Для рассылок. Ручки: `telegram.account.auth`, `updateAccount`, `moveAccounts`.
-
-### Поля (ожидаемое)
-| Поле | Тип |
-|---|---|
-| `id` | string |
-| `workspaceId` | FK |
-| `phoneNumber` | string |
-| `status` | enum: `active`, `unauthorized`, `banned`? |
-| `proxyCountryCode` | enum (см. §15) |
-| `warmupEnabled` | bool |
-| `dailyLimit` | number |
-| `autoCreateLeads` | bool |
-| MTProto session | как в §13 |
-
-### Коллекция
-⚠️ **OQ-TGAcc-1**: `workspaces/{wsId}/telegramAccounts/{id}` ожидается.
-
----
-
-## 15. Proxy
-
-Из `proxy.getCountries`:
-```json
-[
-  { "countryCode": "au", "name": "Австралия" },
-  { "countryCode": "gb", "name": "Великобритания" },
-  { "countryCode": "de", "name": "Германия" },
-  { "countryCode": "ca", "name": "Канада" },
-  { "countryCode": "nl", "name": "Нидерланды" },
-  { "countryCode": "ru", "name": "Россия" },
-  { "countryCode": "sg", "name": "Сингапур" },
-  { "countryCode": "us", "name": "Соединенные Штаты" },
-  { "countryCode": "fr", "name": "Франция" },
-  { "countryCode": "jp", "name": "Япония" }
-]
-```
-
-Из `proxy.getProxyStatus.data`:
-```json
-{ "active": true, "countryCode": "ru", "countryName": "Россия" }
-```
-
-Per-workspace или per-account — ⚠️ **OQ-Proxy-1**.
-
----
-
-## 16. Storage (Firebase Storage)
-
-Bucket: `hints-crm.appspot.com`.
-
-### Пути (наблюдаемое)
-| Назначение | Путь |
-|---|---|
-| CSV leads | `w/{workspaceId}/outreach/leads/{fileId}.csv` |
-| Медиа/вложения | `w/{workspaceId}/outreach/media/{fileId}.{ext}` |
-
-Flow:
-1. `outreach.generateUploadSignedUrl({ workspaceId, fileName, mimeType, type, public })` → `{ signedUrl, filePath, fileUrl, headers }`.
-2. Клиент делает PUT по `signedUrl` (TTL из query: `X-Goog-Expires=1800` — 30 минут).
-3. Дальше `outreach.lists.uploadCsvList` / другой RPC ссылается на `fileUrl` или `filePath`.
-
-⚠️ **OQ-Storage-1**: где хранятся avatar'ы (`contact.updateContactAvatar`), вложения сообщений в чате.
-
----
-
-## 17. Integrations (сторонние)
-
-| Интеграция | Где используется | RPC |
-|---|---|---|
-| **Cello** (viral/referral platform) | эмбед в UI, скорее всего «Поделиться / Получить бонус» | `cello.getInitOptions` |
-| **Google Calendar** | активности с датой (US-15) | `googleCalendar.getAccount`, `activity.scheduleCalendarEventIfPossible` |
-| **Telegram (MTProto)** | прямое подключение пользовательских аккаунтов | `telegram.client.*`, `telegram.account.*` |
-| **Telegram Bot API** | доставка invite-ссылок (US-2), вероятно push-уведомлений | ⚠️ **OQ**, не captured |
-| **PostHog** | аналитика (видны `token`, `productId` в каждом integration-ответе) | подписчик backend-side |
-| **Stripe / биллинг** | подписки (out of scope ТЗ) | ⚠️ **OQ** — не в captured scope |
-
----
-
-## 18. Timestamps — два формата
-
-Важный impl-нюанс: сервер отдаёт timestamps в **двух форматах**, зависит от API-слоя.
-
-| API-слой | Формат |
-|---|---|
-| tRPC (`workspace.*`, `contact.*`, `telegram.*`) | `{ "_seconds": 1776778421, "_nanoseconds": 91000000 }` (Firestore Timestamp proto) |
-| oRPC (`workspaces.*`, `outreach.sequences.*`) | ISO 8601 строка `"2026-04-21T02:09:54.218Z"` |
-
-Клиентский код должен обрабатывать оба. Source-of-truth в Firestore — Timestamp; сериализация отличается.
-
----
-
-## 19. ID-формат
-
-Все `id` — 20 символов `[A-Za-z0-9]`, выглядят как **Firestore autoID** (`doc().id`). Примеры:
-- `zRQtzTiglfyVB5DtRm5Q` (workspaceId)
-- `HOgZBkDHwvEWuly71jdF` (organizationId)
-- `GADmh7QJIyXjql37nfRq` (sequenceId)
-- `iNejvzobbmQxRmzPtEHD4hBxqvQ2` (uid — 28 chars, **Firebase Auth uid**, отличается)
-
----
-
-## 20. Что не хватает для полной схемы (priority OQs)
-
-1. **Firestore-capture** — все CRUD'ы по Contact, Property, Activity, View идут через Firestore subscription/write напрямую, минуя tRPC. Пока мы их не перехватим, схема этих коллекций — экспертное угадывание.
-2. **Invite TTL** — механизм expiry (Cloud Function? TTL-policy?).
-3. **Outreach lead status lifecycle** — переходы `queued → sent → read → replied/failed`, где они хранятся.
-4. **Paywall schema** — `subscriptions`, `plans`, `usageCounters` — сознательно вне scope ТЗ, но для реимплементации обязательны.
-5. **Security rules** — без `firestore.rules` невозможно гарантировать workspace isolation.
+Определяются в Drizzle `pgEnum`, дублируются в `@repo/core` как Zod-enum'ы.

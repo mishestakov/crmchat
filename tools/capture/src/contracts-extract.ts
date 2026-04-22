@@ -113,20 +113,17 @@ function storiesFor(proc: string): string[] {
 const lines: string[] = [];
 lines.push("# API contracts");
 lines.push("");
-lines.push("> Автосгенерировано из `tools/capture/processed/rpc/*`. Не редактируй вручную.");
-lines.push(`> Источник: ${procs.length} proc'ов, ${procs.reduce((n, p) => n + p.calls.length, 0)} зафиксированных вызовов.`);
+lines.push("Справочник REST-ручек (`/v1/*`). Единый контракт обслуживает UI и внешние интеграции; аутентификация — Firebase id-token (UI) или API-key (интеграции).");
 lines.push("");
-lines.push("## Два транспорта");
+lines.push("Формы данных выведены из реальных вызовов оригинального сервиса.");
 lines.push("");
-lines.push("- **tRPC** (`workspace.*`, `telegram.*`, `contact.*`, `outreach.*` в единственном числе) — **внутренний** batched API, `POST /trpc/<proc>?batch=1`. Типы делятся через тот же monorepo, не документируется наружу. Авторизация — Firebase ID-token.");
-lines.push("- **oRPC** (`workspaces.*`, `contacts.*` — во множественном числе) — **публичный** REST-like контракт из `api-contract.generated.json`. Доступен внешним интеграторам через API-keys. HTTP-глаголы соответствуют семантике (`GET /v1/workspaces/{id}`, `PATCH /v1/workspaces/{id}/outreach/sequences/{id}`).");
-lines.push("");
-lines.push("Пересечение по имени (`workspace.createWorkspace` vs `workspaces.get`) — это **две разные ручки** в разных API, не дубль и не легаси.");
+lines.push(`> Сгенерировано из \`tools/capture/processed/rpc/*\`. Не редактируй вручную — правь генератор \`tools/capture/src/contracts-extract.ts\`. Источник: ${procs.length} ручек, ${procs.reduce((n, p) => n + p.calls.length, 0)} зафиксированных вызовов.`);
 lines.push("");
 lines.push("## Обозначения");
 lines.push("- `required` — поле присутствует во всех N вызовах.");
-lines.push("- `optional (seen X/N)` — поле есть не везде. При N=1 optional не детектируется (все поля показаны как required — \"assumed\").");
+lines.push("- `optional (seen X/N)` — поле есть не везде. При N=1 optional не детектируется (все поля показаны как required — «assumed»).");
 lines.push("- Вложенные объекты и массивы показаны as-is из одного свежего примера, не мёржатся.");
+lines.push("- В реимплементации timestamp'ы сериализуются как ISO-8601 строки; в captured-примерах встречается формат `{_seconds, _nanoseconds}` — особенность перехваченного транспорта, не целевой контракт.");
 lines.push("");
 
 for (const { proc, kind, calls } of procs) {
