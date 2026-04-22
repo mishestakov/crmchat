@@ -8,7 +8,6 @@ coverage:
     - ProtectedWWorkspaceIdSettingsWorkspaceNewRouteImport  # /w/{id}/settings/workspace/new
   rpc:
     - workspace.createWorkspace
-    - workspaces.getMembers                                 # follow-up после редиректа
   firestore: []
   postmessage: []
   ui_strings:
@@ -39,10 +38,11 @@ coverage:
 Заголовок модалки — **«Создайте рабочее пространство»** (только в варианте "первый вход").
 
 ## Что вызывается
-- `workspace.createWorkspace` — основная мутация.
-- `workspaces.getMembers` — на bootstrap-е после редиректа.
+- `workspace.createWorkspace` — единственная мутация этого сюжета.
 
 Сигнатуры/примеры — см. [`api-contracts.md`](./api-contracts.md).
+
+> Примечание: после успеха пользователь попадает на `/w/{id}/settings/workspace` (экран команды из US-4), который на бутстрэпе сам дёргает `workspaces.getMembers`. Это **не часть US-1** — вызов принадлежит destination-странице.
 
 ## Success-flow
 1. Мутация успешна → получили `workspace.id`.
@@ -53,9 +53,18 @@ coverage:
 Любая ошибка от сервера → `toast.error(err.message)`. Форма остаётся открытой.
 
 ## Скриншоты
-- Модалка "первый вход": `tools/capture/processed/routes/ProtectedIndexRouteImport/1776736702791_nav+500.png`
-- Страница `/settings/workspace/new`: `tools/capture/processed/routes/ProtectedWWorkspaceIdSettingsWorkspaceNewRouteImport/1776778415403_nav+500.png`
-- После создания (settle): `…/1776778421357_response-settle.png`
+
+**Модалка "первый вход"** (`_protected/` при `workspaces.length === 0`):
+
+![Первый вход — модалка создания воркспейса](_screenshots/ProtectedIndexRouteImport/1776736702791_nav+500.png)
+
+**Страница `/settings/workspace/new`** (она же форма, развёрнутая на весь экран):
+
+![Форма нового воркспейса](_screenshots/ProtectedWWorkspaceIdSettingsWorkspaceNewRouteImport/1776778415403_nav+500.png)
+
+**После создания** (settle после `createWorkspace` и редиректа):
+
+![После создания — экран команды](_screenshots/ProtectedWWorkspaceIdSettingsWorkspaceNewRouteImport/1776778421357_response-settle.png)
 
 ## Открытые вопросы
 - Что делает `createWorkspace`, если `organizationId` не передан? В capture только кейс с уже существующей org.

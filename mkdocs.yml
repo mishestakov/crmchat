@@ -1,0 +1,84 @@
+site_name: crmchat TZ
+site_description: Reverse-engineered technical spec
+use_directory_urls: false
+
+docs_dir: specs
+site_dir: _site
+
+# Screenshots живут в ../tools/capture/processed/routes/. MkDocs не сервит
+# файлы вне docs_dir, поэтому перед первым `mkdocs serve` создаём junction:
+#   cmd /c mklink /J specs\_screenshots tools\capture\processed\routes
+# В specs/US-*.md пути к картинкам — через _screenshots/<RouteId>/<file>.png
+# junction сам в .gitignore (см. корневой .gitignore).
+
+nav:
+  - Обзор: README.md
+  - Кросс-каттинг:
+      - Architecture: architecture.md
+      - Data model: data-model.md
+      - Permissions: permissions.md
+      - Auth: auth.md
+      - Контракты API: api-contracts.md
+  - Этап 1 · Воркспейс:
+      - US-1 · Первый вход: US-1.md
+      - US-5 · Управление воркспейсами: US-5.md
+  - Этап 2 · Команда:
+      - US-2 · Пригласить коллегу: US-2.md
+      - US-3 · Принять приглашение: US-3.md
+      - US-4 · Управлять участником: US-4.md
+  - Этап 3 · Properties:
+      - US-6 · Посмотреть свойства: US-6.md
+      - US-7 · Создать поле: US-7.md
+      - US-8 · Редактировать/удалить поле: US-8.md
+  - Этап 4 · Telegram sync:
+      - US-9 · Подключить личный Telegram: US-9.md
+      - US-10 · Чаты: US-10.md
+  - Этап 5 · CRM:
+      - US-11 · Список контактов: US-11.md
+      - US-12 · Создать лида: US-12.md
+      - US-13 · Создать контакт из QR: US-13.md
+      - US-14 · Карточка контакта: US-14.md
+      - US-15 · Активности: US-15.md
+      - US-16 · Массовое удаление: US-16.md
+  - Этап 6 · Outreach:
+      - US-17 · Добавить TG-аккаунт: US-17.md
+      - US-18 · Настройки TG-аккаунта: US-18.md
+      - US-19 · Переместить аккаунты: US-19.md
+      - US-20 · Кампания из CRM: US-20.md
+      - US-21 · Кампания из CSV: US-21.md
+      - US-21a · Кампания из групп: US-21a.md
+      - US-22 · Сообщения кампании: US-22.md
+      - US-23 · Привязать аккаунты к кампании: US-23.md
+      - US-24 · Настройки создания лидов: US-24.md
+      - US-25 · Управление лидами кампании: US-25.md
+      - US-26 · Запуск/пауза/статистика: US-26.md
+      - US-27 · Глобальное расписание: US-27.md
+  - Этап 7 · Общие настройки:
+      - US-28 · Главный экран настроек: US-28.md
+      - US-30 · Главная воркспейса: US-30.md
+
+theme:
+  name: material
+  language: ru
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - toc.integrate
+    - content.code.copy
+  palette:
+    - scheme: default
+      primary: indigo
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify {kwds: {case: lower}}
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.details
