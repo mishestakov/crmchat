@@ -1,0 +1,14 @@
+import { z } from "zod";
+
+export const WorkspaceSchema = z.object({
+  id: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  name: z.string().min(1).max(120),
+  createdBy: z.string().uuid(),
+  createdAt: z.string().datetime(),
+});
+
+export type Workspace = z.infer<typeof WorkspaceSchema>;
+
+export const CreateWorkspaceSchema = WorkspaceSchema.pick({ name: true });
+export type CreateWorkspaceInput = z.infer<typeof CreateWorkspaceSchema>;

@@ -1,0 +1,21 @@
+{
+  "name": "@repo/api-client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "generate": "bun run scripts/generate.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "openapi-fetch": "^0.13.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "openapi-typescript": "^7.4.0",
+    "typescript": "^5.7.0"
+  }
+}
