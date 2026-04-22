@@ -1,0 +1,924 @@
+{
+  "generated_at": "2026-04-22T06:56:00.888Z",
+  "routes": {
+    "total": 69,
+    "keep": 38,
+    "items": [
+      {
+        "id": "rootRouteImport",
+        "decision": "keep",
+        "domain": "App shell",
+        "label": "__root",
+        "url_pattern": "/__root",
+        "route_file": "src/routes/__root.tsx"
+      },
+      {
+        "id": "ProtectedIndexRouteImport",
+        "decision": "keep",
+        "domain": "App shell",
+        "label": "ProtectedIndex",
+        "url_pattern": "/",
+        "route_file": "src/routes/_protected/index.tsx"
+      },
+      {
+        "id": "ProtectedRouteRouteImport",
+        "decision": "keep",
+        "domain": "App shell",
+        "label": "ProtectedRoute",
+        "url_pattern": "/",
+        "route_file": "src/routes/_protected/route.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdAddPendingActivityIdRouteImport",
+        "decision": "drop",
+        "domain": "App shell",
+        "label": "w / add-pending-activity — Detail",
+        "url_pattern": "/w/{workspaceId}/add-pending-activity/{id}",
+        "route_file": "src/routes/_protected/w.$workspaceId/add-pending-activity.$id.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdToolsGroupParserRouteImport",
+        "decision": "drop",
+        "domain": "App shell",
+        "label": "w / tools / group-parser",
+        "url_pattern": "/w/{workspaceId}/tools/group-parser",
+        "route_file": "src/routes/_protected/w.$workspaceId/tools/group-parser.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdToolsLookalikeAudienceRouteImport",
+        "decision": "drop",
+        "domain": "App shell",
+        "label": "w / tools / lookalike-audience",
+        "url_pattern": "/w/{workspaceId}/tools/lookalike-audience",
+        "route_file": "src/routes/_protected/w.$workspaceId/tools/lookalike-audience.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdToolsPhoneNumbersConverterRouteImport",
+        "decision": "drop",
+        "domain": "App shell",
+        "label": "w / tools / phone-numbers-converter",
+        "url_pattern": "/w/{workspaceId}/tools/phone-numbers-converter",
+        "route_file": "src/routes/_protected/w.$workspaceId/tools/phone-numbers-converter.tsx"
+      },
+      {
+        "id": "ProtectedAcceptInviteWorkspaceIdInviteCodeRouteImport",
+        "decision": "keep",
+        "domain": "Workspaces",
+        "label": "accept-invite — Detail",
+        "url_pattern": "/accept-invite/{workspaceId}/{inviteCode}",
+        "route_file": "src/routes/_protected/accept-invite.$workspaceId.$inviteCode.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdIndexRouteImport",
+        "decision": "keep",
+        "domain": "Workspaces",
+        "label": "w — Detail",
+        "url_pattern": "/w/{workspaceId}",
+        "route_file": "src/routes/_protected/w.$workspaceId/index.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdRouteRouteImport",
+        "decision": "keep",
+        "domain": "Workspaces",
+        "label": "w — Detail",
+        "url_pattern": "/w/{workspaceId}",
+        "route_file": "src/routes/_protected/w.$workspaceId/route.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdSettingsWorkspaceIndexRouteImport",
+        "decision": "keep",
+        "domain": "Workspaces",
+        "label": "w / settings / workspace — List",
+        "url_pattern": "/w/{workspaceId}/settings/workspace",
+        "route_file": "src/routes/_protected/w.$workspaceId/settings/workspace/index.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdSettingsWorkspaceAcceptInviteWIdInviteCodeRouteImport",
+        "decision": "keep",
+        "domain": "Workspaces",
+        "label": "w / settings / workspace / accept-invite — Detail",
+        "url_pattern": "/w/{workspaceId}/settings/workspace/accept-invite/{wId}/{inviteCode}",
+        "route_file": "src/routes/_protected/w.$workspaceId/settings/workspace/accept-invite.$wId.$inviteCode.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdSettingsWorkspaceInviteRouteImport",
+        "decision": "keep",
+        "domain": "Workspaces",
+        "label": "w / settings / workspace / invite",
+        "url_pattern": "/w/{workspaceId}/settings/workspace/invite",
+        "route_file": "src/routes/_protected/w.$workspaceId/settings/workspace/invite.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdSettingsWorkspaceNewRouteImport",
+        "decision": "keep",
+        "domain": "Workspaces",
+        "label": "w / settings / workspace / new — New",
+        "url_pattern": "/w/{workspaceId}/settings/workspace/new",
+        "route_file": "src/routes/_protected/w.$workspaceId/settings/workspace/new.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdSettingsWorkspaceUserUserIdRouteImport",
+        "decision": "keep",
+        "domain": "Workspaces",
+        "label": "w / settings / workspace / user — Detail",
+        "url_pattern": "/w/{workspaceId}/settings/workspace/user/{userId}",
+        "route_file": "src/routes/_protected/w.$workspaceId/settings/workspace/user.$userId.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdOnboardingStepIdRouteImport",
+        "decision": "drop",
+        "domain": "Onboarding",
+        "label": "w / onboarding — Detail",
+        "url_pattern": "/w/{workspaceId}/onboarding/{stepId}",
+        "route_file": "src/routes/_protected/w.$workspaceId/onboarding/$stepId.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdOnboardingIndexRouteImport",
+        "decision": "drop",
+        "domain": "Onboarding",
+        "label": "w / onboarding — List",
+        "url_pattern": "/w/{workspaceId}/onboarding",
+        "route_file": "src/routes/_protected/w.$workspaceId/onboarding/index.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdContactsContactIdIndexRouteImport",
+        "decision": "keep",
+        "domain": "CRM",
+        "label": "w / contacts — Detail",
+        "url_pattern": "/w/{workspaceId}/contacts/{contactId}",
+        "route_file": "src/routes/_protected/w.$workspaceId/contacts/$contactId/index.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdContactsIndexRouteImport",
+        "decision": "keep",
+        "domain": "CRM",
+        "label": "w / contacts — List",
+        "url_pattern": "/w/{workspaceId}/contacts",
+        "route_file": "src/routes/_protected/w.$workspaceId/contacts/index.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdContactsContactIdActivitiesActivityIdEditRouteImport",
+        "decision": "keep",
+        "domain": "CRM",
+        "label": "w / contacts / activities / edit",
+        "url_pattern": "/w/{workspaceId}/contacts/{contactId}/activities/{activityId}/edit",
+        "route_file": "src/routes/_protected/w.$workspaceId/contacts/$contactId/activities/$activityId.edit.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdContactsContactIdActivitiesNewRouteImport",
+        "decision": "keep",
+        "domain": "CRM",
+        "label": "w / contacts / activities / new — New",
+        "url_pattern": "/w/{workspaceId}/contacts/{contactId}/activities/new",
+        "route_file": "src/routes/_protected/w.$workspaceId/contacts/$contactId/activities/new.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdContactsContactIdEditRouteImport",
+        "decision": "keep",
+        "domain": "CRM",
+        "label": "w / contacts / edit — Edit",
+        "url_pattern": "/w/{workspaceId}/contacts/{contactId}/edit",
+        "route_file": "src/routes/_protected/w.$workspaceId/contacts/$contactId/edit.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdContactsNewRouteImport",
+        "decision": "keep",
+        "domain": "CRM",
+        "label": "w / contacts / new — New",
+        "url_pattern": "/w/{workspaceId}/contacts/new",
+        "route_file": "src/routes/_protected/w.$workspaceId/contacts/new.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdSettingsTelegramSyncRouteImport",
+        "decision": "keep",
+        "domain": "Telegram",
+        "label": "w / settings / telegram-sync",
+        "url_pattern": "/w/{workspaceId}/settings/telegram-sync",
+        "route_file": "src/routes/_protected/w.$workspaceId/settings/telegram-sync.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdTelegramRouteImport",
+        "decision": "keep",
+        "domain": "Telegram",
+        "label": "w / telegram",
+        "url_pattern": "/w/{workspaceId}/telegram",
+        "route_file": "src/routes/_protected/w.$workspaceId/telegram.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdOutreachIndexRouteImport",
+        "decision": "keep",
+        "domain": "Outreach",
+        "label": "w / outreach — List",
+        "url_pattern": "/w/{workspaceId}/outreach",
+        "route_file": "src/routes/_protected/w.$workspaceId/outreach/index.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdOutreachAiBotRouteImport",
+        "decision": "drop",
+        "domain": "Outreach",
+        "label": "w / outreach / ai-bot",
+        "url_pattern": "/w/{workspaceId}/outreach/ai-bot",
+        "route_file": "src/routes/_protected/w.$workspaceId/outreach/ai-bot.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdOutreachScheduleRouteImport",
+        "decision": "keep",
+        "domain": "Outreach",
+        "label": "w / outreach / schedule",
+        "url_pattern": "/w/{workspaceId}/outreach/schedule",
+        "route_file": "src/routes/_protected/w.$workspaceId/outreach/schedule.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdOutreachSequencesIdIndexRouteImport",
+        "decision": "keep",
+        "domain": "Outreach",
+        "label": "w / outreach / sequences — Detail",
+        "url_pattern": "/w/{workspaceId}/outreach/sequences/{id}",
+        "route_file": "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.index.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdOutreachSequencesIdAccountsRouteImport",
+        "decision": "keep",
+        "domain": "Outreach",
+        "label": "w / outreach / sequences / accounts",
+        "url_pattern": "/w/{workspaceId}/outreach/sequences/{id}/accounts",
+        "route_file": "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.accounts.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdOutreachSequencesIdContactSettingsIndexRouteImport",
+        "decision": "keep",
+        "domain": "Outreach",
+        "label": "w / outreach / sequences / contact-settings",
+        "url_pattern": "/w/{workspaceId}/outreach/sequences/{id}/contact-settings",
+        "route_file": "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.contact-settings.index.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdOutreachSequencesIdContactSettingsOwnersRouteImport",
+        "decision": "keep",
+        "domain": "Outreach",
+        "label": "w / outreach / sequences / contact-settings / owners",
+        "url_pattern": "/w/{workspaceId}/outreach/sequences/{id}/contact-settings/owners",
+        "route_file": "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.contact-settings.owners.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdOutreachSequencesIdLeadsRouteImport",
+        "decision": "keep",
+        "domain": "Outreach",
+        "label": "w / outreach / sequences / leads",
+        "url_pattern": "/w/{workspaceId}/outreach/sequences/{id}/leads",
+        "route_file": "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.leads.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdOutreachSequencesNewIndexRouteImport",
+        "decision": "keep",
+        "domain": "Outreach",
+        "label": "w / outreach / sequences / new — New",
+        "url_pattern": "/w/{workspaceId}/outreach/sequences/new",
+        "route_file": "src/routes/_protected/w.$workspaceId/outreach/sequences/new.index.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdOutreachSequencesNewCrmRouteImport",
+        "decision": "keep",
+        "domain": "Outreach",
+        "label": "w / outreach / sequences / new / crm — New",
+        "url_pattern": "/w/{workspaceId}/outreach/sequences/new/crm",
+        "route_file": "src/routes/_protected/w.$workspaceId/outreach/sequences/new.crm.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdOutreachSequencesNewCsvRouteImport",
+        "decision": "keep",
+        "domain": "Outreach",
+        "label": "w / outreach / sequences / new / csv — New",
+        "url_pattern": "/w/{workspaceId}/outreach/sequences/new/csv",
+        "route_file": "src/routes/_protected/w.$workspaceId/outreach/sequences/new.csv.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdOutreachTelegramAccountsAccountIdRouteImport",
+        "decision": "keep",
+        "domain": "Outreach",
+        "label": "w / outreach / telegram-accounts — Detail",
+        "url_pattern": "/w/{workspaceId}/outreach/telegram-accounts/{accountId}",
+        "route_file": "src/routes/_protected/w.$workspaceId/outreach/telegram-accounts/$accountId.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdOutreachTelegramAccountsIndexRouteImport",
+        "decision": "keep",
+        "domain": "Outreach",
+        "label": "w / outreach / telegram-accounts — List",
+        "url_pattern": "/w/{workspaceId}/outreach/telegram-accounts",
+        "route_file": "src/routes/_protected/w.$workspaceId/outreach/telegram-accounts/index.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdOutreachTelegramAccountsBuyRouteImport",
+        "decision": "drop",
+        "domain": "Outreach",
+        "label": "w / outreach / telegram-accounts / buy",
+        "url_pattern": "/w/{workspaceId}/outreach/telegram-accounts/buy",
+        "route_file": "src/routes/_protected/w.$workspaceId/outreach/telegram-accounts/buy.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdOutreachTelegramAccountsNewRouteImport",
+        "decision": "keep",
+        "domain": "Outreach",
+        "label": "w / outreach / telegram-accounts / new — New",
+        "url_pattern": "/w/{workspaceId}/outreach/telegram-accounts/new",
+        "route_file": "src/routes/_protected/w.$workspaceId/outreach/telegram-accounts/new.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdWalletTopUpRouteImport",
+        "decision": "drop",
+        "domain": "Billing",
+        "label": "w / wallet / top-up",
+        "url_pattern": "/w/{workspaceId}/wallet/top-up",
+        "route_file": "src/routes/_protected/w.$workspaceId/wallet/top-up.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdSettingsIndexRouteImport",
+        "decision": "keep",
+        "domain": "Settings",
+        "label": "w / settings — List",
+        "url_pattern": "/w/{workspaceId}/settings",
+        "route_file": "src/routes/_protected/w.$workspaceId/settings/index.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdSettingsAffiliateRouteImport",
+        "decision": "drop",
+        "domain": "Settings",
+        "label": "w / settings / affiliate",
+        "url_pattern": "/w/{workspaceId}/settings/affiliate",
+        "route_file": "src/routes/_protected/w.$workspaceId/settings/affiliate.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdSettingsApiKeysKeyIdRouteImport",
+        "decision": "drop",
+        "domain": "Settings",
+        "label": "w / settings / api-keys — Detail",
+        "url_pattern": "/w/{workspaceId}/settings/api-keys/{keyId}",
+        "route_file": "src/routes/_protected/w.$workspaceId/settings/api-keys/$keyId.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdSettingsApiKeysIndexRouteImport",
+        "decision": "drop",
+        "domain": "Settings",
+        "label": "w / settings / api-keys — List",
+        "url_pattern": "/w/{workspaceId}/settings/api-keys",
+        "route_file": "src/routes/_protected/w.$workspaceId/settings/api-keys/index.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdSettingsApiKeysWebhooksIndexRouteImport",
+        "decision": "drop",
+        "domain": "Settings",
+        "label": "w / settings / api-keys / webhooks",
+        "url_pattern": "/w/{workspaceId}/settings/api-keys/webhooks",
+        "route_file": "src/routes/_protected/w.$workspaceId/settings/api-keys/webhooks.index.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdSettingsApiKeysWebhooksWebhookIdRouteImport",
+        "decision": "drop",
+        "domain": "Settings",
+        "label": "w / settings / api-keys / webhooks — Detail",
+        "url_pattern": "/w/{workspaceId}/settings/api-keys/webhooks/{webhookId}",
+        "route_file": "src/routes/_protected/w.$workspaceId/settings/api-keys/webhooks.$webhookId.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdSettingsConnectCrmRouteImport",
+        "decision": "drop",
+        "domain": "Settings",
+        "label": "w / settings / connect-crm",
+        "url_pattern": "/w/{workspaceId}/settings/connect-crm",
+        "route_file": "src/routes/_protected/w.$workspaceId/settings/connect-crm.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdSettingsExportRouteImport",
+        "decision": "drop",
+        "domain": "Settings",
+        "label": "w / settings / export",
+        "url_pattern": "/w/{workspaceId}/settings/export",
+        "route_file": "src/routes/_protected/w.$workspaceId/settings/export.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdSettingsFeatureFlagsRouteImport",
+        "decision": "drop",
+        "domain": "Settings",
+        "label": "w / settings / feature-flags",
+        "url_pattern": "/w/{workspaceId}/settings/feature-flags",
+        "route_file": "src/routes/_protected/w.$workspaceId/settings/feature-flags.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdSettingsGoogleCalendarRouteImport",
+        "decision": "drop",
+        "domain": "Settings",
+        "label": "w / settings / google-calendar",
+        "url_pattern": "/w/{workspaceId}/settings/google-calendar",
+        "route_file": "src/routes/_protected/w.$workspaceId/settings/google-calendar.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdSettingsHelpRouteImport",
+        "decision": "drop",
+        "domain": "Settings",
+        "label": "w / settings / help",
+        "url_pattern": "/w/{workspaceId}/settings/help",
+        "route_file": "src/routes/_protected/w.$workspaceId/settings/help.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdSettingsLocaleRouteImport",
+        "decision": "drop",
+        "domain": "Settings",
+        "label": "w / settings / locale",
+        "url_pattern": "/w/{workspaceId}/settings/locale",
+        "route_file": "src/routes/_protected/w.$workspaceId/settings/locale.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdSettingsMembersAcceptInviteWIdInviteCodeRouteImport",
+        "decision": "keep",
+        "domain": "Settings",
+        "label": "w / settings / members / accept-invite — Detail",
+        "url_pattern": "/w/{workspaceId}/settings/members/accept-invite/{wId}/{inviteCode}",
+        "route_file": "src/routes/_protected/w.$workspaceId/settings/members.accept-invite.$wId.$inviteCode.ts"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdSettingsNotificationsRouteImport",
+        "decision": "drop",
+        "domain": "Settings",
+        "label": "w / settings / notifications",
+        "url_pattern": "/w/{workspaceId}/settings/notifications",
+        "route_file": "src/routes/_protected/w.$workspaceId/settings/notifications.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdSettingsOrganizationOrganizationIdRouteImport",
+        "decision": "keep",
+        "domain": "Settings",
+        "label": "w / settings / organization — Detail",
+        "url_pattern": "/w/{workspaceId}/settings/organization/{organizationId}",
+        "route_file": "src/routes/_protected/w.$workspaceId/settings/organization/$organizationId.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdSettingsPropertiesObjectTypeIndexRouteImport",
+        "decision": "keep",
+        "domain": "Settings",
+        "label": "w / settings / properties — Detail",
+        "url_pattern": "/w/{workspaceId}/settings/properties/{objectType}",
+        "route_file": "src/routes/_protected/w.$workspaceId/settings/properties.$objectType/index.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdSettingsPropertiesObjectTypeKeyEditRouteImport",
+        "decision": "keep",
+        "domain": "Settings",
+        "label": "w / settings / properties / edit",
+        "url_pattern": "/w/{workspaceId}/settings/properties/{objectType}/{key}/edit",
+        "route_file": "src/routes/_protected/w.$workspaceId/settings/properties.$objectType/$key.edit.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdSettingsPropertiesObjectTypeNewTypeRouteImport",
+        "decision": "keep",
+        "domain": "Settings",
+        "label": "w / settings / properties / new — New",
+        "url_pattern": "/w/{workspaceId}/settings/properties/{objectType}/new/{type}",
+        "route_file": "src/routes/_protected/w.$workspaceId/settings/properties.$objectType/new.$type.tsx"
+      },
+      {
+        "id": "ProtectedWWorkspaceIdSettingsSubscriptionRouteImport",
+        "decision": "drop",
+        "domain": "Settings",
+        "label": "w / settings / subscription",
+        "url_pattern": "/w/{workspaceId}/settings/subscription",
+        "route_file": "src/routes/_protected/w.$workspaceId/settings/subscription.tsx"
+      },
+      {
+        "id": "CelloRouteImport",
+        "decision": "drop",
+        "domain": "Integrations",
+        "label": "cello",
+        "url_pattern": "/cello",
+        "route_file": "src/routes/cello.tsx"
+      },
+      {
+        "id": "CustomTokenAuthRouteImport",
+        "decision": "drop",
+        "domain": "Integrations",
+        "label": "custom-token-auth",
+        "url_pattern": "/custom-token-auth",
+        "route_file": "src/routes/custom-token-auth.tsx"
+      },
+      {
+        "id": "GoogleCalendarCallbackRouteImport",
+        "decision": "drop",
+        "domain": "Integrations",
+        "label": "google-calendar-callback",
+        "url_pattern": "/google-calendar-callback",
+        "route_file": "src/routes/google-calendar-callback.tsx"
+      },
+      {
+        "id": "PaymentCallbackRouteImport",
+        "decision": "drop",
+        "domain": "Integrations",
+        "label": "payment-callback",
+        "url_pattern": "/payment-callback",
+        "route_file": "src/routes/payment-callback.tsx"
+      },
+      {
+        "id": "ProtectedMiniAppSplatRouteImport",
+        "decision": "drop",
+        "domain": "Host integration",
+        "label": "mini-app — Detail",
+        "url_pattern": "/mini-app/{}",
+        "route_file": "src/routes/_protected/mini-app.$.tsx"
+      },
+      {
+        "id": "orphan::env::MODE",
+        "decision": "drop",
+        "domain": "Infra",
+        "label": "env: MODE",
+        "url_pattern": null,
+        "route_file": null
+      },
+      {
+        "id": "orphan::env::PROD",
+        "decision": "drop",
+        "domain": "Infra",
+        "label": "env: PROD",
+        "url_pattern": null,
+        "route_file": null
+      },
+      {
+        "id": "orphan::env::VITE_POSTHOG_HOST",
+        "decision": "drop",
+        "domain": "Infra",
+        "label": "env: VITE_POSTHOG_HOST",
+        "url_pattern": null,
+        "route_file": null
+      },
+      {
+        "id": "orphan::env::VITE_POSTHOG_KEY",
+        "decision": "drop",
+        "domain": "Infra",
+        "label": "env: VITE_POSTHOG_KEY",
+        "url_pattern": null,
+        "route_file": null
+      }
+    ]
+  },
+  "rpc": {
+    "trpc": {
+      "total": 44,
+      "items": [
+        "account.deleteAccount",
+        "activity.scheduleCalendarEventIfPossible",
+        "contact.bulkUpdate",
+        "contact.createContactFromQr",
+        "contact.deleteContacts",
+        "contact.updateContactAvatar",
+        "outreach.generateUploadSignedUrl",
+        "outreach.getLeads",
+        "outreach.getSequenceAnalytics",
+        "outreach.getSequenceStats",
+        "outreach.removeLeadFromSequence",
+        "outreach.rescheduleSequences",
+        "outreach.resolveDuplicates",
+        "outreach.sendOutreachMessageNow",
+        "outreach.updateLeadProperties",
+        "outreach.updateSequenceStatus",
+        "outreach.validateTextVariables",
+        "proxy.getCountries",
+        "proxy.getProxyStatus",
+        "telegram.account.auth",
+        "telegram.account.authState",
+        "telegram.account.getAccountConnectionData",
+        "telegram.account.moveAccounts",
+        "telegram.account.reauthenticateWebClient",
+        "telegram.account.submitReauthPassword",
+        "telegram.account.toggleWarmup",
+        "telegram.account.triggerWarmupSession",
+        "telegram.account.updateAccount",
+        "telegram.authenticateByInitData",
+        "telegram.client.getFolders",
+        "telegram.client.getQrState",
+        "telegram.client.sendCode",
+        "telegram.client.signIn",
+        "telegram.client.signInWithPassword",
+        "telegram.client.signOut",
+        "telegram.client.status",
+        "telegram.client.triggerSync",
+        "workspace.acceptWorkspaceInvite",
+        "workspace.changeWorkspaceMemberRole",
+        "workspace.createWorkspace",
+        "workspace.getPendingInvites",
+        "workspace.getWorkspaceInvite",
+        "workspace.inviteWorkspaceMember",
+        "workspace.removeWorkspaceMember"
+      ]
+    },
+    "orpc": {
+      "total": 28,
+      "items": [
+        "contacts.create",
+        "contacts.delete",
+        "contacts.get",
+        "contacts.list",
+        "contacts.patch",
+        "organizations.get",
+        "organizations.list",
+        "organizations.patch",
+        "outreach.lists.createCrmList",
+        "outreach.lists.uploadCsvList",
+        "outreach.sequences.create",
+        "outreach.sequences.delete",
+        "outreach.sequences.get",
+        "outreach.sequences.list",
+        "outreach.sequences.patch",
+        "properties.create",
+        "properties.delete",
+        "properties.get",
+        "properties.list",
+        "properties.patch",
+        "telegramAccounts.get",
+        "telegramAccounts.list",
+        "telegramAccounts.patch",
+        "telegramRaw.call",
+        "workspaces.get",
+        "workspaces.getMembers",
+        "workspaces.list",
+        "workspaces.patch"
+      ]
+    }
+  },
+  "firestore": {
+    "total": 29,
+    "items": [
+      {
+        "file": "activites.ts",
+        "fn": "subscribeToActivities",
+        "kind": "read",
+        "op": "onSnapshot",
+        "line": 23
+      },
+      {
+        "file": "activites.ts",
+        "fn": "createActivity",
+        "kind": "write",
+        "op": "addDoc",
+        "line": 34
+      },
+      {
+        "file": "activites.ts",
+        "fn": "updateTaskCompletionStatus",
+        "kind": "write",
+        "op": "updateDocument",
+        "line": 58
+      },
+      {
+        "file": "activites.ts",
+        "fn": "deleteActivtiy",
+        "kind": "write",
+        "op": "deleteDoc",
+        "line": 66
+      },
+      {
+        "file": "auth.ts",
+        "fn": "createWebAuthSession",
+        "kind": "write",
+        "op": "setDoc",
+        "line": 20
+      },
+      {
+        "file": "auth.ts",
+        "fn": "invalidateWebAuthSession",
+        "kind": "write",
+        "op": "updateDoc",
+        "line": 29
+      },
+      {
+        "file": "auth.ts",
+        "fn": "subscribeToAuthSession",
+        "kind": "read",
+        "op": "onSnapshot",
+        "line": 39
+      },
+      {
+        "file": "contacts.ts",
+        "fn": "subscribeToContacts",
+        "kind": "read",
+        "op": "onSnapshot",
+        "line": 27
+      },
+      {
+        "file": "contacts.ts",
+        "fn": "createContact",
+        "kind": "write",
+        "op": "addDoc",
+        "line": 38
+      },
+      {
+        "file": "contacts.ts",
+        "fn": "updateContact",
+        "kind": "write",
+        "op": "updateDocument",
+        "line": 62
+      },
+      {
+        "file": "contacts.ts",
+        "fn": "moveContacts",
+        "kind": "write",
+        "op": "writeBatch",
+        "line": 133
+      },
+      {
+        "file": "index.ts",
+        "fn": "updateDocument",
+        "kind": "write",
+        "op": "updateDocument",
+        "line": 32
+      },
+      {
+        "file": "index.ts",
+        "fn": "updateDocument",
+        "kind": "write",
+        "op": "updateDoc",
+        "line": 35
+      },
+      {
+        "file": "index.ts",
+        "fn": "mergeDocument",
+        "kind": "write",
+        "op": "mergeDocument",
+        "line": 42
+      },
+      {
+        "file": "index.ts",
+        "fn": "mergeDocument",
+        "kind": "write",
+        "op": "setDoc",
+        "line": 45
+      },
+      {
+        "file": "organizations.ts",
+        "fn": "subscribeToOrganizations",
+        "kind": "read",
+        "op": "onSnapshot",
+        "line": 20
+      },
+      {
+        "file": "organizations.ts",
+        "fn": "updateOrganization",
+        "kind": "write",
+        "op": "updateDocument",
+        "line": 34
+      },
+      {
+        "file": "outreach.ts",
+        "fn": "subscribeToOutreachLists",
+        "kind": "read",
+        "op": "onSnapshot",
+        "line": 11
+      },
+      {
+        "file": "outreach.ts",
+        "fn": "subscribeToOutreachSequences",
+        "kind": "read",
+        "op": "onSnapshot",
+        "line": 21
+      },
+      {
+        "file": "telegram.ts",
+        "fn": "subscribeToTelegramAccounts",
+        "kind": "read",
+        "op": "onSnapshot",
+        "line": 31
+      },
+      {
+        "file": "telegram.ts",
+        "fn": "subscribeToLatestWarmupSessions",
+        "kind": "read",
+        "op": "onSnapshot",
+        "line": 42
+      },
+      {
+        "file": "telegram.ts",
+        "fn": "deleteTelegramAccount",
+        "kind": "write",
+        "op": "deleteDoc",
+        "line": 84
+      },
+      {
+        "file": "telegram.ts",
+        "fn": "subscribeToTelegramAccountReauthState",
+        "kind": "read",
+        "op": "onSnapshot",
+        "line": 93
+      },
+      {
+        "file": "telegram.ts",
+        "fn": "subscribeToUnreadDialogs",
+        "kind": "read",
+        "op": "onSnapshot",
+        "line": 104
+      },
+      {
+        "file": "users.ts",
+        "fn": "updateUser",
+        "kind": "write",
+        "op": "updateDoc",
+        "line": 15
+      },
+      {
+        "file": "workspaces.ts",
+        "fn": "subscribeToUserWorkspaces",
+        "kind": "read",
+        "op": "onSnapshot",
+        "line": 25
+      },
+      {
+        "file": "workspaces.ts",
+        "fn": "updateWorkspace",
+        "kind": "write",
+        "op": "updateDocument",
+        "line": 39
+      },
+      {
+        "file": "workspaces.ts",
+        "fn": "updateProperties",
+        "kind": "write",
+        "op": "updateDocument",
+        "line": 47
+      },
+      {
+        "file": "workspaces.ts",
+        "fn": "updateViews",
+        "kind": "write",
+        "op": "updateDocument",
+        "line": 57
+      }
+    ]
+  },
+  "postmessage": {
+    "total": 11,
+    "items": [
+      {
+        "direction": "in",
+        "type": "mtprotoSenderLogs",
+        "file": "reconstructed/src/features/outreach/chat/chat-iframe.tsx",
+        "line": 158
+      },
+      {
+        "direction": "in",
+        "type": "sessionRequest",
+        "file": "reconstructed/src/features/outreach/chat/chat-iframe.tsx",
+        "line": 173
+      },
+      {
+        "direction": "in",
+        "type": "chatOpened",
+        "file": "reconstructed/src/features/outreach/chat/chat-iframe.tsx",
+        "line": 176
+      },
+      {
+        "direction": "in",
+        "type": "sessionRequestFailed",
+        "file": "reconstructed/src/features/outreach/chat/chat-iframe.tsx",
+        "line": 180
+      },
+      {
+        "direction": "in",
+        "type": "authStateLegacy",
+        "file": "reconstructed/src/features/outreach/chat/chat-iframe.tsx",
+        "line": 183
+      },
+      {
+        "direction": "in",
+        "type": "connectionState",
+        "file": "reconstructed/src/features/outreach/chat/chat-iframe.tsx",
+        "line": 186
+      },
+      {
+        "direction": "in",
+        "type": "chatUnreadState",
+        "file": "reconstructed/src/features/outreach/chat/chat-iframe.tsx",
+        "line": 189
+      },
+      {
+        "direction": "out",
+        "type": "openChat",
+        "file": "reconstructed/src/features/outreach/chat/chat-iframe.tsx",
+        "line": 207
+      },
+      {
+        "direction": "out",
+        "type": "sessionResponse",
+        "file": "reconstructed/src/features/outreach/chat/chat-iframe.tsx",
+        "line": 228
+      },
+      {
+        "direction": "out",
+        "type": "setDisplayedProperties",
+        "file": "reconstructed/src/features/outreach/chat/chat-iframe.tsx",
+        "line": 244
+      },
+      {
+        "direction": "in",
+        "type": "authState",
+        "file": "reconstructed/src/features/outreach/chat/chat-iframe.tsx",
+        "line": 29
+      }
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "crmchat-capture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "launch": "tsx src/launch-chrome.ts",
+    "start": "tsx src/capture.ts",
+    "rebuild": "tsx src/rebuild.ts",
+    "inventory": "tsx src/inventory.ts",
+    "coverage": "tsx src/coverage-check.ts",
+    "ui-extract": "tsx src/ui-extract.ts",
+    "contracts": "tsx src/contracts-extract.ts"
+  },
+  "dependencies": {
+    "chrome-remote-interface": "^0.33.2",
+    "tsx": "^4.19.2"
+  }
+}

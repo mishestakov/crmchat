@@ -1,0 +1,8196 @@
+{
+  "total_occurrences": 1035,
+  "unique": 900,
+  "items": [
+    {
+      "value": " У вас нет ни одной папки в Telegram",
+      "keys": [
+        "noFolders"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "- оплата ежегодно",
+      "keys": [
+        "billingPeriodLabelYear"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "- оплата ежемесячно",
+      "keys": [
+        "billingPeriodLabelMonth"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": ", дополнительно: {{price}} {{perUser}}",
+      "keys": [
+        "additionalUser"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "« Назад",
+      "keys": [
+        "back"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "{{count}} аккаунт успешно перемещён",
+      "keys": [
+        "moveSuccess_one"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "{{count}} аккаунта успешно перемещено",
+      "keys": [
+        "moveSuccess_few"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "{{count}} аккаунтов успешно перемещено",
+      "keys": [
+        "moveSuccess_many"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "{{count}} лид",
+      "keys": [
+        "listSize_one",
+        "totalLeads_one"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "{{count}} лид успешно удален!",
+      "keys": [
+        "deletionSuccessToast_one"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "{{count}} лида",
+      "keys": [
+        "listSize_few",
+        "totalLeads_few"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "{{count}} лида успешно удалены!",
+      "keys": [
+        "deletionSuccessToast_few"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "{{count}} лидов",
+      "keys": [
+        "listSize_many",
+        "totalLeads_many"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "{{count}} лидов перемещено в выбранное рабочее пространство",
+      "keys": [
+        "movedDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "{{count}} лидов успешно удалены!",
+      "keys": [
+        "deletionSuccessToast_many"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "{{count}} событие",
+      "keys": [
+        "eventCount_one"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "{{count}} событий",
+      "keys": [
+        "eventCount_many"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "{{count}} события",
+      "keys": [
+        "eventCount_few"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "{{days}}д",
+      "keys": [
+        "shortInfo"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "/ месяц",
+      "keys": [
+        "pricePerMonthLong"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "/мес",
+      "keys": [
+        "pricePerMonthShort"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "<0>{{count, number}}</0> кредит",
+      "keys": [
+        "creditsValue_one"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "<0>{{count, number}}</0> кредита",
+      "keys": [
+        "creditsValue_few"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "<0>{{count, number}}</0> кредитов",
+      "keys": [
+        "creditsValue_many"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "<0>{{name}}</0> получит уведомление как ответственный за лида",
+      "keys": [
+        "willGetNotificationAsOwner"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "<b>{{summary}}</b>\\\nЯ напомню вам {{relativeTime}}",
+      "keys": [
+        "reminderDetails"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "<p>Выберите членов команды, кто будет назначаться по умолчанию ответственным за новые сделки в CRM.</p><p>Если выбрано больше одного, то они будут назначаться по очереди (round-robin).</p><p>Ответственные будут получать уведомления бота о сообщениях от лидов.</p>",
+      "keys": [
+        "infoCard"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "⚠️ {{name}} отсутствует",
+      "keys": [
+        "requiredPropertyIsMissing"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "⚠️ Другие члены команды получат доступ к вашим чатам",
+      "keys": [
+        "teamWarning"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "⚠️ Не удалось загрузить",
+      "keys": [
+        "failedToLoad"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "⚠️ Члены команды в этом рабочем пространстве увидят ваши чаты Telegram.",
+      "keys": [
+        "chatsWarning"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "✅ Ведение сделок с командой прямо в Telegram",
+      "keys": [
+        "inviteTeam"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "✅ Завершено",
+      "keys": [
+        "taskCompleted"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "✅ Напоминание установлено",
+      "keys": [
+        "reminderSet"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "✅ Один интерфейс для всех Telegram-аккаунтов",
+      "keys": [
+        "multipleAccounts"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "✅ Парсинг групп для поиска новых лидов",
+      "keys": [
+        "parseGroups"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "✅ Поиск и работа с клиентами в Telegram",
+      "keys": [
+        "telegramSales"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "✅ Рассылка по лидам в Телеграм",
+      "keys": [
+        "sequences"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "✅ Синхронизируйте контакты и группы из папок Telegram",
+      "keys": [
+        "syncContacts"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "✅ Теперь откройте свои лиды",
+      "keys": [
+        "nowOpenLeads"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "✅ Чат и CRM на одном экране",
+      "keys": [
+        "chat"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "✅ AI-ассистент продаёт за вас",
+      "keys": [
+        "aiBot"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "✨ Извлекаю напоминание...",
+      "keys": [
+        "extractingReminder"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "✨ Напоминание не найдено",
+      "keys": [
+        "noReminderFound"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "➡️ <b>Самый быстрый способ сохранить лида:</b>\\\n\\\nПришли его Telegram-юзернейм или перешли сообщение от него в этот чат.",
+      "keys": [
+        "forwardMessage"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "⬅️ Назад",
+      "keys": [
+        "backEmoji"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "🌐 Сменить язык",
+      "keys": [
+        "changeLanguage"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "🎤 Расшифровка голосового сообщения:\\\n{text}",
+      "keys": [
+        "voiceTranscribed"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "👋 <b>А вы знали, что CRMchat можно интегрировать с любым тулом через Zapier?</b>\\\n\\\nПосмотри примеры интеграции с <a href=\\",
+      "keys": [
+        "integrations"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "👋 <b>Вы знали, что можно работать с чатами и CRM на одном экране?</b>",
+      "keys": [
+        "splitScreen"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "👋 <b>Добро пожаловать в приложение для продаж и управления клиентами в Telegram!</b>\\\n\\\n<b>Продажи:</b>\\\n✅ Индивидуальные шаблоны и автоматические сообщения\\\n✅ Импорт лидов из CSV, папок Telegram и чатов\\\n✅ Лидогенерация: парсинг Telegram-групп и каналов\\\n\\\n<b>Управление клиентами:</b>\\\n✅ Пригласи команду\\\n✅ Управляй лидами, сделками и воронкой\\\n✅ Интеграции с Pipedrive, HubSpot, Notion и другими приложениям\\\n\\\n<a href=\\",
+      "keys": [
+        "start"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "👋 <b>Загрузи контакты и группы разом из Telegram папок — или просто перешли любое сообщение боту @crmchat_crm_bot, чтобы создать контакт.</b>\\\n\\\n❓ Вопросы? Напиши @HintsSupportBot.",
+      "keys": [
+        "bulkUpload"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "👋 <b>Запускай автоматические кампании для продаж? Загружай лидов через CSV или из открытых Telegram-групп.</b>\\\n\\\nНужна помощь? Напишите @HintsSupportBot.",
+      "keys": [
+        "import"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "👋 <b>Запускай автоматические кампании с нескольких Telegram-аккаунтов!</b>\\\n\\\nНужна помощь с настройкой? <a href=\\",
+      "keys": [
+        "campaigns"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "👋 <b>Легко переключайся между списком лидов и воронкой!</b>",
+      "keys": [
+        "views"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "👋 <b>Мы постоянно улучшаем CRMchat! Подскажи, как мы можем сделать CRMchat лучше для вас?</b>\\\n\\\nНапиши @HintsSupportBot — нам правда важно ваше мнение!",
+      "keys": [
+        "feedback"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "👋 <b>Поделись ссылкой на CRMchat с друзьями!</b>\\\n\\\nПолучи 30% с каждого подписчика, кто придет по твоей ссылке!",
+      "keys": [
+        "share"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "👋 <b>Пригласи друзей в CRMchat! Друзья получат месяц бесплатно, ты — 30% с каждой подписки.</b>",
+      "keys": [
+        "referral"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "👋 <b>Пригласи команду, чтобы вместе работать с воронками и задачами!</b>\\\n\\\nХочешь разграничить доступы? Создай отдельное рабочее пространство.",
+      "keys": [
+        "team"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "👋 <b>Создавай собственные поля для удобного управления лидами:</b>\\\n\\\n✅ Отметь поле как обязательное, чтобы получать напоминания, если оно не заполнено.\\\n⏳ Установи таймер, чтобы получать уведомления, если лид задержался на стадии.",
+      "keys": [
+        "properties"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "👋 <b>Спасибо, что используешь CRMchat! Нужна помощь?</b>\\\n\\\n🗂️ Изучи нашу <a href=\\",
+      "keys": [
+        "help"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "👋 <b>Хочешь найти дополнительную информацию по вашим лидам?</b>\\\n\\\nСпроси @HintsSupportBot как!",
+      "keys": [
+        "enrich"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "👤 Новый лид создан через QR: {{contactHtml}}",
+      "keys": [
+        "newLeadCreatedViaQr"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "👤 Новый лид создан: {{contactHtml}}\\\n📝 Новая заметка добавлена",
+      "keys": [
+        "newLeadCreatedNoteAdded"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "👤 Новый лид: {{contactHtml}}\\\n📅 Новое напоминание добавлено",
+      "keys": [
+        "newLeadReminderAdded"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "📅 Напоминание для {contact}:\\\n\\\n{summary}\\\n\\\n{rescheduledTime}",
+      "keys": [
+        "taskReminder"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "📅 Новое напоминание добавлено к {{contactHtml}}",
+      "keys": [
+        "reminderAddedToLead"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "📝 Новая заметка добавлена к {{contactHtml}}",
+      "keys": [
+        "noteAddedToLead"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "🕔 Напоминание обновлено",
+      "keys": [
+        "taskReminderUpdated"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "${{amount}} в год",
+      "keys": [
+        "priceYearly"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "${{amount}} в месяц",
+      "keys": [
+        "priceMonthly"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "${{price}} / аккаунт",
+      "keys": [
+        "price"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "${{price}} за аккаунт",
+      "keys": [
+        "description"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "1 месяц Pro-функций бесплатно",
+      "keys": [
+        "friendsGetDesc"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "30 дней",
+      "keys": [
+        "30d"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "30% пожизненной доли дохода, когда они подпишутся",
+      "keys": [
+        "youEarnDesc"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "7 дней",
+      "keys": [
+        "7d"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "90 дней",
+      "keys": [
+        "90d"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Авто",
+      "keys": [
+        "auto",
+        "proxyLocationAuto"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Автоматизируйте общение с клиентами. Подключите AI бота к своей кампании — как только лиды ответят, бот продолжит общение от вашего имени.",
+      "keys": [
+        "description"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Автоматическая синхронизация",
+      "keys": [
+        "automaticallySyncLeads"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Автоматически синхронизируйте контакты и чаты из ваших папок Telegram",
+      "keys": [
+        "description"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Авторизация...",
+      "keys": [
+        "loading"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Авторизоваться",
+      "keys": [
+        "button"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Автосоздание лидов",
+      "keys": [
+        "autoCreationLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Админ",
+      "keys": [
+        "admin"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Аккаунт",
+      "keys": [
+        "accountHeader",
+        "header"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Аккаунт успешно добавлен",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Аккаунты",
+      "keys": [
+        "accountsLabel",
+        "header",
+        "telegramAccountsShort"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Аккаунты для рассылок",
+      "keys": [
+        "accountsTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Аккаунты не учитываются в биллинге",
+      "keys": [
+        "excludedFromAccountBilling"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Активен",
+      "keys": [
+        "active"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Активна",
+      "keys": [
+        "active"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Анализирую изображение",
+      "keys": [
+        "imageAnalyzing"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Аналитика",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "База знаний",
+      "keys": [
+        "knowledgeBase"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Без цвета",
+      "keys": [
+        "none"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Бесплатно",
+      "keys": [
+        "free",
+        "freePlan"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Будет сгенерирован новый секретный ключ. Текущий ключ сразу перестанет работать. Убедитесь, что обновили интеграцию перед сменой.",
+      "keys": [
+        "rotateSecretDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "В этой кампании нет лидов",
+      "keys": [
+        "noLeads"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вам может потребоваться ввести пароль от аккаунта.",
+      "keys": [
+        "subtitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вам нужно установить email адрес для этого аккаунта",
+      "keys": [
+        "emailRequired"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вас пригласили присоединиться к рабочему пространству <0>{{workspaceName}}</0>. Хотите принять приглашение?",
+      "keys": [
+        "acceptDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Ваш браузер не поддерживает воспроизведение видео.",
+      "keys": [
+        "helpVideoFallback"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Ваш токен сессии Telegram полностью зашифрован.",
+      "keys": [
+        "privacyItem2Desc"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Ваш Google\\xA0Календарь теперь подключен.",
+      "keys": [
+        "successMessage"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Ваша персональная ссылка",
+      "keys": [
+        "personalLinkLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Ваши друзья получат:",
+      "keys": [
+        "friendsGetTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Ваши сообщения остаются приватными — мы их не храним.",
+      "keys": [
+        "messagesStayPrivate"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Введите ваш номер телефона",
+      "keys": [
+        "prompt"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Введите ваш пароль",
+      "keys": [
+        "placeholder"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Введите имя пользователя Telegram человека, которого вы хотите пригласить в свое рабочее пространство. Он получит сообщение со ссылкой-приглашением.",
+      "keys": [
+        "telegramUsernameDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Введите код, который вы получили",
+      "keys": [
+        "default"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Введите код, полученный в Telegram",
+      "keys": [
+        "app"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Введите код, полученный по Email",
+      "keys": [
+        "email"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Введите код, полученный по SMS",
+      "keys": [
+        "sms",
+        "sms_phrase",
+        "sms_word"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Введите код, полученный через звонок",
+      "keys": [
+        "call"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Введите номер телефона",
+      "keys": [
+        "placeholder"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Введите номер телефона вашего аккаунта",
+      "keys": [
+        "prompt"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Введите пароль для этого аккаунта",
+      "keys": [
+        "prompt"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Введите пароль от аккаунта",
+      "keys": [
+        "enterPassword"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Введите последние 5 цифр номера звонящего",
+      "keys": [
+        "flash_call",
+        "missed_call"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Введите ссылку на группу",
+      "keys": [
+        "inputPlaceholder"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вебхук \\",
+      "keys": [
+        "deleteDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вебхук включён",
+      "keys": [
+        "enableSuccess"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вебхук отключён",
+      "keys": [
+        "disableSuccess"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вебхук переименован",
+      "keys": [
+        "renameSuccess"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вебхук создан",
+      "keys": [
+        "createdTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вебхук удалён",
+      "keys": [
+        "deleteSuccess"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вебхуки",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вернем деньги в течении 3-x дней, если недовольны результатом",
+      "keys": [
+        "moneybackGuaranteeDisclaimer"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вернуться в CRMchat",
+      "keys": [
+        "returnButton",
+        "returnToCRMchat"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "видео кружок",
+      "keys": [
+        "videoNote"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Видеогиды по рассылкам",
+      "keys": [
+        "outreachVideoGuides"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Видеогиды по CRM",
+      "keys": [
+        "crmVideoGuides"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Включить вебхук",
+      "keys": [
+        "enableButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Включить синхронизацию",
+      "keys": [
+        "enableSyncButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Включить уведомления о зависших лидах",
+      "keys": [
+        "titleSwitch"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Войти",
+      "keys": [
+        "signInButton",
+        "submitPassword"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Воркспейсы",
+      "keys": [
+        "workspacesLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Воронка",
+      "keys": [
+        "pipeline"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Воскресенье",
+      "keys": [
+        "sunday"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вот ваш чеклист перед запуском холодной аутрич-кампании, чтобы уменьшить баны аккаунтов и обеспечить успех ваших рассылок.",
+      "keys": [
+        "description"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Все",
+      "keys": [
+        "allAccounts"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Все аккаунты будут добавлены в ваше рабочее пространство в течении 48 часов",
+      "keys": [
+        "footer"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Все группы из CRM, которые удовлетворяют фильтрам, будут автоматически добавляться в эту кампанию",
+      "keys": [
+        "dynamicGroupsDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Всё из Personal плюс",
+      "keys": [
+        "featureHeaderTeam"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Всё из Team плюс",
+      "keys": [
+        "featureHeaderOutreach"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Все кампании будут перепланированы",
+      "keys": [
+        "dailyLimitUpdatedDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Все лиды из CRM, которые удовлетворяют фильтрам, будут автоматически добавляться в эту кампанию",
+      "keys": [
+        "dynamicLeadsDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Все новые лиды будут создаваться с этим значением по умолчанию.",
+      "keys": [
+        "defaultOptionDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Все основные функции CRM",
+      "keys": [
+        "featureHeader"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вторник",
+      "keys": [
+        "tuesday"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вход в аккаунт...",
+      "keys": [
+        "authenticating"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы абсолютно уверены?",
+      "keys": [
+        "deleteConfirmTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы больше не будете получать ежедневный дайджест",
+      "keys": [
+        "digestUnsubscribed"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы больше не сможете использовать этот аккаунт для рассылок.",
+      "keys": [
+        "signOutDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы входите в Telegram для использования в CRMchat",
+      "keys": [
+        "loggingIntoTelegram"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы достигли лимита в 50 контактов. Обновите до Pro, чтобы добавить больше контактов.",
+      "keys": [
+        "contactLimitReached"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы достигли лимита в 50 лидов",
+      "keys": [
+        "limitReached"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы достигли лимита Telegram-аккаунтов. Свяжитесь с нами, чтобы увеличить его.",
+      "keys": [
+        "orgLimitReached"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы заработаете:",
+      "keys": [
+        "youEarnTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы можете купить Telegram-аккаунты напрямую через нас.",
+      "keys": [
+        "description"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы можете открыть Telegram-аккаунт прямо из CRMchat.",
+      "keys": [
+        "openTelegramFromCrmchat"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы можете отменить подписку в любое время, перейдя в\\\n Настройки → Подписка.",
+      "keys": [
+        "cancelInfo"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы можете перетаскивать элементы для изменения порядка полей",
+      "keys": [
+        "dragDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы можете подключить несколько аккаунтов.",
+      "keys": [
+        "canLinkMultiple"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы не можете изменить свою собственную роль",
+      "keys": [
+        "cannotChangeOwnRole"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы не предоставили доступ к вашему Google\\xA0Календарю. Пожалуйста, попробуйте еще раз.",
+      "keys": [
+        "missingScopeError"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы не являетесь администратором текущего рабочего пространства.",
+      "keys": [
+        "notAdminWarning"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы отписались от наших обновлений",
+      "keys": [
+        "updatesUnsubscribed"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы отписались от советов по продукту. Вы всегда можете обратиться к @HintsSupportBot за помощью!",
+      "keys": [
+        "unsubscribeTips"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы подписались на ежедневный дайджест",
+      "keys": [
+        "digestSubscribed"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы подписались на наши обновления",
+      "keys": [
+        "updatesSubscribed"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы получили ответ от <b>{{from}}</b>\\\n\\\nАккаунт: <b>{{account}}</b>",
+      "keys": [
+        "text"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы получите результат в Telegram в течении 24-48 часов. По любым вопросам пишите нам в <supportLink/>. ",
+      "keys": [
+        "successDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы получите уведомление в Telegram, похожее на то, которое приходит при входе с нового устройства, подтверждающее подключение вашего аккаунта к CRMchat.",
+      "keys": [
+        "description"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы получите уведомление, если лид пробудет в этом статусе больше <strong>{{days}}д</strong>",
+      "keys": [
+        "tooltip"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы потеряете доступ к рабочему пространству и всему его содержимому.",
+      "keys": [
+        "youLoseAccessWarning"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы уверены, что хотите перейти на план {{plan}}? Оплата будет скорректирована пропорционально.",
+      "keys": [
+        "description"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы уверены, что хотите удалить {{count}} лид?",
+      "keys": [
+        "description_one"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы уверены, что хотите удалить {{count}} лида?",
+      "keys": [
+        "description_few"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы уверены, что хотите удалить {{count}} лидов?",
+      "keys": [
+        "description_many"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы уверены, что хотите удалить это представление?",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы хотите обновить текущее представление или создать новое?",
+      "keys": [
+        "descriptionUpdateOrCreate"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Вы хотите сохранить новое представление?",
+      "keys": [
+        "descriptionCreate"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выберите дату",
+      "keys": [
+        "pickDate"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выберите действие",
+      "keys": [
+        "select"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выберите лида",
+      "keys": [
+        "selectLeadTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выберите лида...",
+      "keys": [
+        "selectLead"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выберите ответственных",
+      "keys": [
+        "selectMembers"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выберите период",
+      "keys": [
+        "pickDate"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выберите поля, которые хотите отредактировать",
+      "keys": [
+        "description"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выберите рабочее пространство для перемещения выбранных аккаунтов",
+      "keys": [
+        "moveDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выберите рабочее пространство для перемещения лидов",
+      "keys": [
+        "chooseWorkspace"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выберите столбец с именем пользователя",
+      "keys": [
+        "selectUsernameColumn"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выберите столбец с номером телефона",
+      "keys": [
+        "selectPhoneColumn"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выберите хотя бы столбец с username или телефоном",
+      "keys": [
+        "pleaseSelectColumn"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выберите чат",
+      "keys": [
+        "selectContactToChat"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выберите язык",
+      "keys": [
+        "selectLanguage"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выберите, где в файле находятся username и телефон. Достаточно указать только одно поле.",
+      "keys": [
+        "selectColumnsDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выберите, как создать новый лид",
+      "keys": [
+        "chooseHowToCreate"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выборочная синхронизация",
+      "keys": [
+        "privacyItem1Title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выбран {{count}} ответственный по умолчанию",
+      "keys": [
+        "membersSelected_one"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выбранная страна прокси временно недоступна",
+      "keys": [
+        "proxyCountryUnavailable"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выбрано {{count}} ответственных для round-robin",
+      "keys": [
+        "membersSelected_few",
+        "membersSelected_many",
+        "membersSelected_other"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выбрано: {{count}}",
+      "keys": [
+        "selected"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выбрать",
+      "keys": [
+        "select"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выбрать аккаунт",
+      "keys": [
+        "selectAccount"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выбрать все",
+      "keys": [
+        "selectAll"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выбрать другой файл",
+      "keys": [
+        "selectAnotherFile"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выбрать рабочее пространство {{workspaceName}}",
+      "keys": [
+        "selectWorkspace"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выбрать файл",
+      "keys": [
+        "selectFile"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выйти",
+      "keys": [
+        "signOut"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Выйти из аккаунта",
+      "keys": [
+        "logout"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "голосовое",
+      "keys": [
+        "voice"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Готово",
+      "keys": [
+        "done"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Группировка по дате отправки сообщения.",
+      "keys": [
+        "sendDateTooltip"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Группировка по дате событий (прочтения/ответы).",
+      "keys": [
+        "eventDateTooltip"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Групповой чат",
+      "keys": [
+        "groupChatTooltip"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Группы из CRM",
+      "keys": [
+        "groupsFromCrmTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Дайте вашему рабочему пространству имя, чтобы вы могли легко его идентифицировать.",
+      "keys": [
+        "nameDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Далее",
+      "keys": [
+        "next",
+        "nextButton",
+        "previewButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Дата",
+      "keys": [
+        "date"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Даты для планирования и сроков",
+      "keys": [
+        "helpItemDate"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Действия",
+      "keys": [
+        "actionsButton",
+        "actionsSrOnly"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "день",
+      "keys": [
+        "days_one"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Детали кампании",
+      "keys": [
+        "leadsLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Динамическая",
+      "keys": [
+        "dynamic"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Динамические папки не поддерживаются",
+      "keys": [
+        "dynamicFoldersNotSupported"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Длинный текст",
+      "keys": [
+        "textarea"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Дневеной лимит обновлен",
+      "keys": [
+        "dailyLimitUpdated"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Дневной лимит лидов",
+      "keys": [
+        "dailyLimitLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "дней",
+      "keys": [
+        "days",
+        "days_many"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "дня",
+      "keys": [
+        "days_few"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "До {{count}} пользователей",
+      "keys": [
+        "upToUsers"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Добавить",
+      "keys": [
+        "add"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Добавить аккаунт для рассылок",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Добавить ваше первое сообщение",
+      "keys": [
+        "addFirstMessage"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Добавить вручную",
+      "keys": [
+        "addManually"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Добавить к {{name}}",
+      "keys": [
+        "addButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Добавить к существующему лиду",
+      "keys": [
+        "addToExistingLead"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Добавить новый аккаунт",
+      "keys": [
+        "addNewAccount"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Добавить описание",
+      "keys": [
+        "addDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Добавить подпись...",
+      "keys": [
+        "addCaptionPlaceholder"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Добавить сообщение",
+      "keys": [
+        "addMessage"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Добавить фильтр",
+      "keys": [
+        "addFilterLong"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Добавить opt-out текст в конце первого сообщения:",
+      "keys": [
+        "text"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Добавить Telegram-аккаунт",
+      "keys": [
+        "addAccountButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Добавить<br/>заметку",
+      "keys": [
+        "addNote"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Добавить<br/>напоминание",
+      "keys": [
+        "addReminder"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Добавьте больше лидов",
+      "keys": [
+        "addMoreLeads"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "документ",
+      "keys": [
+        "document"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Документация API",
+      "keys": [
+        "docsTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Должно быть не менее 300 номеров",
+      "keys": [
+        "notEnoughRows"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Дополнительные члены команды оплачиваются отдельно. <0>Посмотреть тарифы</0>",
+      "keys": [
+        "willBeChargedNotification"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "ежегодно",
+      "keys": [
+        "yearly"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Ежегодно",
+      "keys": [
+        "yearlyLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Ежедневный дайджест",
+      "keys": [
+        "dailyDigest"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "ежемесячно",
+      "keys": [
+        "monthly"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Ежемесячно",
+      "keys": [
+        "monthlyLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Ежемесячные обновления о продукте",
+      "keys": [
+        "monthlyUpdates"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Если аккаунт не был открыт на другом устройстве, или на нем не установлена резервная почта, то к нему не получится восстановить доступ 😞 ",
+      "keys": [
+        "whatToDoNext_noRecovery"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Если аккаунт открыт на другом устройстве или у вас есть доступ к номеру телефона, то в разделе \\",
+      "keys": [
+        "whatToDoNext_reauth"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Ещё раз, чтобы подтвердить",
+      "keys": [
+        "confirmAction"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Желтый",
+      "keys": [
+        "color_yellow"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "За каждый Telegram-аккаунт взимается дополнительная плата согласно вашему <0>тарифу</0>",
+      "keys": [
+        "willBeChargedNotification"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "за пользователя",
+      "keys": [
+        "perUser"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Завершена",
+      "keys": [
+        "completed"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Завершить",
+      "keys": [
+        "taskComplete"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Завтра",
+      "keys": [
+        "1d",
+        "tomorrow"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Загружается...",
+      "keys": [
+        "loading"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Загрузите CSV файл с вашими лидами",
+      "keys": [
+        "uploadCsvLeads"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Загрузить голосовое сообщение",
+      "keys": [
+        "uploadVoice"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Загрузить CSV",
+      "keys": [
+        "csvTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Загрузить CSV файл с лидами",
+      "keys": [
+        "csvDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Загрузка чата...",
+      "keys": [
+        "loadingChat"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Загрузка...",
+      "keys": [
+        "loading",
+        "proxyLoading"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Зайдите в Настройки > Устройства > Подключить устройство",
+      "keys": [
+        "step2Title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Закрыть",
+      "keys": [
+        "close",
+        "closeButton",
+        "completedButton",
+        "convertAnotherButton",
+        "findAnotherButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Закрыть онбординг",
+      "keys": [
+        "close"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Закрыть<br/>чат",
+      "keys": [
+        "closeChat"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Заметка",
+      "keys": [
+        "label"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Заметка...",
+      "keys": [
+        "placeholder"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Запланировано",
+      "keys": [
+        "scheduled"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Запустить",
+      "keys": [
+        "start",
+        "startSequenceButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Заработай {{value, currency}}",
+      "keys": [
+        "affiliateProgram.earn"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "зачем?",
+      "keys": [
+        "linkText"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Зашифрованный токен сессии",
+      "keys": [
+        "privacyItem2Title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "звонок",
+      "keys": [
+        "call",
+        "flash_call",
+        "missed_call"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Здесь отображаются только лиды с именем пользователя Telegram",
+      "keys": [
+        "onlyTelegramUsername"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Зеленый",
+      "keys": [
+        "color_green"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Значение будет удалено, если оставить пустым",
+      "keys": [
+        "fieldWillBeRemoved"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Значение по умолчанию",
+      "keys": [
+        "defaultOption"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Значения",
+      "keys": [
+        "options"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Значения по умолчанию для новых лидов в CRM",
+      "keys": [
+        "defaultsHeader"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Зона отладки",
+      "keys": [
+        "debugZone"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "и другие",
+      "keys": [
+        "andMore"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "и т.д.",
+      "keys": [
+        "helpItemEtc"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Идет синхронизация",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Извините, не удалось обработать ваше голосовое сообщение",
+      "keys": [
+        "voiceError"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Изменить цвет",
+      "keys": [
+        "changeColor"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "или",
+      "keys": [
+        "or"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Или вы можете настроить интеграцию с Zapier самостоятельно.",
+      "keys": [
+        "setupZapier"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Или добавьте вручную",
+      "keys": [
+        "orAddManually"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Имитируем поведение реального пользователя, увеличивая количество взаимодействий.",
+      "keys": [
+        "description"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Имя",
+      "keys": [
+        "firstName",
+        "fullName",
+        "fullNamePlaceholder"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Имя отправителя",
+      "keys": [
+        "senderFirstName"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Имя пользователя Telegram",
+      "keys": [
+        "telegramPlaceholder",
+        "telegramUsernameLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Инициализация прокси...",
+      "keys": [
+        "proxyPending"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "инструкция",
+      "keys": [
+        "linkText"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Инструменты",
+      "keys": [
+        "toolsLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Интеграции",
+      "keys": [
+        "integrations"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Интервал",
+      "keys": [
+        "label"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Использовать все аккаунты",
+      "keys": [
+        "useAll"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Использовать выбранные аккаунты",
+      "keys": [
+        "useSelected"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Использовать лидов из CRM",
+      "keys": [
+        "leadsFromCrmDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Используется в кампании:",
+      "keys": [
+        "sequenceDuplicates"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Используйте мобильное устройство для быстрого добавления лидов с помощью QR-кода Telegram",
+      "keys": [
+        "useMobileDeviceForQr"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Используйте этот ключ, чтобы проверять, что входящие вебхуки действительно отправлены CRMchat и не были изменены.",
+      "keys": [
+        "secretHint"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Каждую неделю",
+      "keys": [
+        "everyWeek"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Каждые 3 месяца",
+      "keys": [
+        "every3Months"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Каждый месяц",
+      "keys": [
+        "everyMonth"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Как использовать поля?",
+      "keys": [
+        "helpTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Кампании",
+      "keys": [
+        "sequences",
+        "sequencesTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Кампания",
+      "keys": [
+        "sequenceHeader"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Кампания активна",
+      "keys": [
+        "activeSequenceToastTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "картинку/видео",
+      "keys": [
+        "media"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Кастомные поля",
+      "keys": [
+        "customProperties",
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Кастомные поля позволяют определять поля для вашей воронки. Позже вы можете использовать их для перемещения лидов в воронке. Вы можете создавать различные типы полей, такие как:",
+      "keys": [
+        "helpDescription1"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Ключ \\",
+      "keys": [
+        "revokeDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Когда лид ответит",
+      "keys": [
+        "triggerOnReply"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Когда первое сообщение отправлено",
+      "keys": [
+        "triggerOnFirstMessage"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Количество",
+      "keys": [
+        "countLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Команда",
+      "keys": [
+        "teamMembers"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Коричневый",
+      "keys": [
+        "color_brown"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Красный",
+      "keys": [
+        "color_red"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Краткое описание",
+      "keys": [
+        "descriptionPlaceholder"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Кредитная карта не требуется",
+      "keys": [
+        "noCreditCard"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Купить",
+      "keys": [
+        "button"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Купить {{count, number}} кредитов",
+      "keys": [
+        "buyButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Купить за ${{price}}",
+      "keys": [
+        "buyButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Купить молоко",
+      "keys": [
+        "reminderPlaceholder"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Купить Telegram Premium на все аутрич-аккаунты:",
+      "keys": [
+        "text"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Купить Telegram-аккаунты",
+      "keys": [
+        "buttonText",
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Лид",
+      "keys": [
+        "lead",
+        "leadHeader"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Лид создан",
+      "keys": [
+        "newLeadCreated"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Лид уже существует",
+      "keys": [
+        "leadAlreadyExists"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Лиды",
+      "keys": [
+        "leads"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Лиды из CRM",
+      "keys": [
+        "leadsFromCrm",
+        "leadsFromCrmTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Лиды успешно перемещены",
+      "keys": [
+        "movedSuccess"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Массовое редактирование",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Массовое редактирование завершено",
+      "keys": [
+        "completedDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "минут",
+      "keys": [
+        "minutes_many"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "минуту",
+      "keys": [
+        "minutes_one"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "минуты",
+      "keys": [
+        "minutes_few"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Множественный выбор",
+      "keys": [
+        "multiSelect"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Мое рабочее пространство",
+      "keys": [
+        "namePlaceholder"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Мои лиды",
+      "keys": [
+        "menuMyLeads"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Мой вебхук",
+      "keys": [
+        "namePlaceholder"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Мы импортируем только метаданные чата (имя, участники, время последнего сообщения), но не содержимое сообщений.",
+      "keys": [
+        "privacyItem3Desc"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Мы отправили вам код в приложение Telegram",
+      "keys": [
+        "sentTo_app"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Мы отправили вам код на номер +{{phoneNumber}}",
+      "keys": [
+        "sentTo_sms"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "На паузе",
+      "keys": [
+        "paused"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "навсегда",
+      "keys": [
+        "forever"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Назад",
+      "keys": [
+        "backButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Название",
+      "keys": [
+        "nameLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Название ключа",
+      "keys": [
+        "nameLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Название организации",
+      "keys": [
+        "nameLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Название организации обязательно",
+      "keys": [
+        "nameRequiredError"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Название организации успешно сохранено!",
+      "keys": [
+        "saveNameSuccess"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Название поля",
+      "keys": [
+        "name"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Название представления",
+      "keys": [
+        "namePlaceholder"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Название рабочего пространства",
+      "keys": [
+        "nameLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Название рабочего пространства сохранено!",
+      "keys": [
+        "nameUpdated"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Найдены дублирующиеся лиды",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Найдите похожую аудиторию в Telegram на ту, что у вас уже есть.",
+      "keys": [
+        "description"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Найти по номерам телефонов",
+      "keys": [
+        "phoneNumbers"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Найти по Telegram ID",
+      "keys": [
+        "telegramIds"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Найти по Telegram Username",
+      "keys": [
+        "usernames"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Найти похожую аудиторию группы",
+      "keys": [
+        "group"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Найти похожую аудиторию за 1 000 кредитов",
+      "keys": [
+        "submitButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Написать <1>Сэму</1>",
+      "keys": [
+        "chatWithUs"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Напоминание",
+      "keys": [
+        "reminderLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Напомнить",
+      "keys": [
+        "followUp"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Напомнить позже",
+      "keys": [
+        "taskRemindLater"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "напр., Моя интеграция",
+      "keys": [
+        "namePlaceholder"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "например, durov",
+      "keys": [
+        "telegramDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Настроить список",
+      "keys": [
+        "customize"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Настроить Zapier",
+      "keys": [
+        "setupButton",
+        "setupZapierButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Настройка и тестирование бота в соответствии с тоном и целями вашей кампании",
+      "keys": [
+        "whatsIncludedDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Настройка ответственных по умолчанию",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Настройки",
+      "keys": [
+        "settings"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Настройки ответственных за сделки успешно сохранены",
+      "keys": [
+        "savedSuccess"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Настройки представления",
+      "keys": [
+        "displayOptionsButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Настройки создания контакта сохранены",
+      "keys": [
+        "savedSuccess"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Настройки создания лидов в CRM",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Настройки уведомлений",
+      "keys": [
+        "notificationSettings",
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Начальный этап",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Начать 🚀",
+      "keys": [
+        "getStarted"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Начать бесплатно",
+      "keys": [
+        "getStartedFree"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Начать работу с Zapier",
+      "keys": [
+        "getStartedButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Начать с 5 холодных сообщений в день на аккаунт и плавно увеличивать до 15",
+      "keys": [
+        "limits"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Начните закрывать сделки быстрее с инструментами для продаж, которые можно использовать бесплатно",
+      "keys": [
+        "description"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Не выбран",
+      "keys": [
+        "none"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Не оплачена",
+      "keys": [
+        "unpaid"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Не пришёл код? Отправить через {{method}}",
+      "keys": [
+        "resendButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Не удалось аутентифицировать чат",
+      "keys": [
+        "authError"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Не удалось включить вебхук",
+      "keys": [
+        "enableError"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Не удалось войти",
+      "keys": [
+        "errorFailed"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Не удалось загрузить",
+      "keys": [
+        "loadError"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Не удалось загрузить чат",
+      "keys": [
+        "failedToLoad"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Не удалось загрузить Telegram клиент. Проверьте настройки интернета или напишите нам",
+      "keys": [
+        "clientError"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Не удалось обновить {{count}} лид:",
+      "keys": [
+        "failedToUpdateSubtitle_one"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Не удалось обновить {{count}} лида:",
+      "keys": [
+        "failedToUpdateSubtitle_few"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Не удалось обновить {{count}} лидов:",
+      "keys": [
+        "failedToUpdateSubtitle_many"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Не удалось отключить вебхук",
+      "keys": [
+        "disableError"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Не удалось отправить код",
+      "keys": [
+        "errorFailed"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Не удалось переименовать вебхук",
+      "keys": [
+        "renameError"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Не удалось переместить аккаунты",
+      "keys": [
+        "moveError"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Не удалось переместить лиды",
+      "keys": [
+        "moveFailed"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Не удалось подключиться",
+      "keys": [
+        "connectionFailedTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Не удалось подключиться к вашему Google\\xA0Календарю :(",
+      "keys": [
+        "connectionError"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Не удалось распознать лид",
+      "keys": [
+        "failedToParseLead"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Не удалось сменить план. Попробуйте ещё раз.",
+      "keys": [
+        "error"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Не удалось сменить секретный ключ",
+      "keys": [
+        "rotateSecretError"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Не удалось создать вебхук",
+      "keys": [
+        "createError"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Не удалось удалить вебхук",
+      "keys": [
+        "deleteError"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Неверный код",
+      "keys": [
+        "codeInvalid",
+        "errorInvalid"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Неверный номер телефона",
+      "keys": [
+        "errorInvalid",
+        "phoneNumberInvalid"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Неверный пароль",
+      "keys": [
+        "INVALID_PASSWORD",
+        "errorInvalid",
+        "passwordInvalid"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Недостаточно кредитов",
+      "keys": [
+        "notEnoughBalance"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Неизвестная ошибка",
+      "keys": [
+        "unknownError"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Неизвестная ошибка. Пожалуйста, попробуйте еще раз.",
+      "keys": [
+        "UNKNOWN_ERROR"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Некоторые получатели могут быть недоступны из-за их настроек приватности",
+      "keys": [
+        "privacySettings"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Необходимо выбрать хотя бы одного ответственного при включенной настройке",
+      "keys": [
+        "mustSelectAtLeastOne"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Необходимо заново авторизоваться в Telegram аккаунте.",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Нет данных за выбранный период",
+      "keys": [
+        "noData"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Нет доступных рабочих пространств для переноса",
+      "keys": [
+        "moveNoWorkspaces"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Нет лидов",
+      "keys": [
+        "emptyList"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Нет лидов, соответствующих вашим фильтрам. Здесь отображаются только лиды с именем пользователя Telegram",
+      "keys": [
+        "noLeadsMatchFilters"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Никогда",
+      "keys": [
+        "neverUsed"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Ничего не найдено",
+      "keys": [
+        "nothingFound"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Новая кампания",
+      "keys": [
+        "newSequenceButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Новая кампания рассылки",
+      "keys": [
+        "newOutreachSequence"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "НОВОЕ",
+      "keys": [
+        "new"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Новое значение",
+      "keys": [
+        "newOption"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Новое поле",
+      "keys": [
+        "newProperty",
+        "newPropertyButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Новое представление",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Новый лид",
+      "keys": [
+        "newLead"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Новый секретный ключ",
+      "keys": [
+        "newSecretTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Номер телефона",
+      "keys": [
+        "inputPlaceholder",
+        "tel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Номер телефона +{{phoneNumber}} не зарегистрирован в Telegram",
+      "keys": [
+        "errorUserNotFound"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Номер телефона забанен",
+      "keys": [
+        "phoneNumberBanned"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Нравится CRMchat?",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Нужна помощь?",
+      "keys": [
+        "needHelpButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Нужна помощь? Поговорите с нами",
+      "keys": [
+        "needHelp"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Нужны дополнительные аккаунты для рассылок?",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "О нас",
+      "keys": [
+        "about",
+        "aboutUs"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Обновить",
+      "keys": [
+        "update"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Обновить {{name}}",
+      "keys": [
+        "updateLead"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Обновить до Pro",
+      "keys": [
+        "upgradeToPro"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Обновить заметку",
+      "keys": [
+        "updateNote"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Обновить напоминание",
+      "keys": [
+        "updateTask"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Обновить план",
+      "keys": [
+        "upgrade"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Обновить поле",
+      "keys": [
+        "updateProperty"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Обновить представление <0/>",
+      "keys": [
+        "updateViewButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Обновление лидов...",
+      "keys": [
+        "updatingTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Обработка",
+      "keys": [
+        "listProcessing"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Общайтесь и управляйте лидами в одном месте",
+      "keys": [
+        "manageChatAndLeads"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Обязательное поле",
+      "keys": [
+        "required"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Ограничения для рассылок по номерам",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Одиночный выбор",
+      "keys": [
+        "singleSelect"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Одноразовая",
+      "keys": [
+        "oneTime"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Ожидающие приглашения",
+      "keys": [
+        "pendingInvitesTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Оно удалится у всех участников вашей команды",
+      "keys": [
+        "description"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Описание",
+      "keys": [
+        "description"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Описание...",
+      "keys": [
+        "descriptionPlaceholder"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Оплата ежегодно",
+      "keys": [
+        "billedAnnually"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Оплата ежемесячно",
+      "keys": [
+        "billedMonthly"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Оплата за участников и Telegram-аккаунты рассчитывается по фактическому использованию.",
+      "keys": [
+        "teamNote"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Опционально",
+      "keys": [
+        "optional"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Оранжевый",
+      "keys": [
+        "color_orange"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Основной этап прогрева",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Оставить в кампании",
+      "keys": [
+        "keep"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Оставить все",
+      "keys": [
+        "keepAll"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Осталась {{count}} попытка",
+      "keys": [
+        "attemptsLeft_one"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Осталось {{count}} попытки",
+      "keys": [
+        "attemptsLeft_few"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Осталось {{count}} попыток",
+      "keys": [
+        "attemptsLeft_many"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "осталось {{distance}}",
+      "keys": [
+        "inviteExpiresIn"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Осталось попыток: {{count}}",
+      "keys": [
+        "attemptsLeft"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Остановить",
+      "keys": [
+        "stop"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Ответили",
+      "keys": [
+        "replied"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Ответственные не выбраны. {{name}} будет назначен по умолчанию.",
+      "keys": [
+        "noMembersSelected"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Ответственные по умолчанию",
+      "keys": [
+        "defaultOwners"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отвечено",
+      "keys": [
+        "replied"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отклонить",
+      "keys": [
+        "discardButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отключён",
+      "keys": [
+        "disabled"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отключено",
+      "keys": [
+        "autoCreationDisabled"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отключить",
+      "keys": [
+        "disconnectButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отключить вебхук",
+      "keys": [
+        "disableButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Откройте Telegram на вашем телефоне",
+      "keys": [
+        "step1Title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Открыть в браузере",
+      "keys": [
+        "openInBrowser"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Открыть в Google Calendar",
+      "keys": [
+        "openInGoogleCalendar"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Открыть в Telegram",
+      "keys": [
+        "openTelegramApp"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Открыть документацию",
+      "keys": [
+        "docsButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Открыть чат",
+      "keys": [
+        "openChat"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Открыть localhost",
+      "keys": [
+        "openLocalhost"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Открыть Telegram",
+      "keys": [
+        "openTelegramButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Открыть<br/>чат",
+      "keys": [
+        "openChat"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отмена",
+      "keys": [
+        "cancel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отменена",
+      "keys": [
+        "canceled"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отменить",
+      "keys": [
+        "cancel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отменить подписку",
+      "keys": [
+        "cancelButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отменяется",
+      "keys": [
+        "cancelsLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отображать",
+      "keys": [
+        "label"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отображать в списке",
+      "keys": [
+        "displayedInList"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отозвать ключ",
+      "keys": [
+        "revokeAction"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отозвать API-ключ",
+      "keys": [
+        "revokeTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отписаться",
+      "keys": [
+        "unsubscribeTipsButton",
+        "unsubscribeUpdates"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отписаться от ежедневного дайджеста",
+      "keys": [
+        "unsubscribeDigest"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отправить <messageType/>",
+      "keys": [
+        "firstMessageHeader"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отправить код",
+      "keys": [
+        "sendCodeButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отправить рассылку по группам",
+      "keys": [
+        "groupsFromCrmDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отправить сообщение",
+      "keys": [
+        "sendMessage"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отправить через {{method}} ({{seconds}}с)",
+      "keys": [
+        "resendCountdown"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отправка кода...",
+      "keys": [
+        "proxyReady"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отправка...",
+      "keys": [
+        "resendLoading"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отправлено",
+      "keys": [
+        "sent"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отправляется...",
+      "keys": [
+        "sending"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отправлять уведомление после",
+      "keys": [
+        "sendNotificationEvery"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отсканируйте этот QR-код",
+      "keys": [
+        "step3Title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Отсканируйте QR код в приложении Telegram",
+      "keys": [
+        "prompt"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Очистить",
+      "keys": [
+        "clear"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Ошибка",
+      "keys": [
+        "failed",
+        "proxyError"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Ошибка обработки изображения",
+      "keys": [
+        "imageError"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "папка",
+      "keys": [
+        "folderLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Пароль",
+      "keys": [
+        "inputPlaceholder",
+        "passwordPlaceholder"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Парсер групп",
+      "keys": [
+        "groupParser"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Парсер Telegram групп",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Парсинг группы поставлен в очередь",
+      "keys": [
+        "successToastTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Партнерская программа",
+      "keys": [
+        "affiliateProgram"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Первая попытка не удалась",
+      "keys": [
+        "firstAttemptFailed"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Первое сообщение",
+      "keys": [
+        "firstMessageHeader"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Переговоры",
+      "keys": [
+        "negotiation"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Перед запуском кампании",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Переименовать",
+      "keys": [
+        "rename",
+        "renameButton",
+        "saveButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Переименовать вебхук",
+      "keys": [
+        "renameTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Переименовать представление",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Переименовать API-ключ",
+      "keys": [
+        "renameTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Перейти с устаревшего плана",
+      "keys": [
+        "migrateLegacy"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Переключено на новое рабочее пространство",
+      "keys": [
+        "switchToNewToast"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Переключить синхронизацию для папки {{folderTitle}}",
+      "keys": [
+        "toggleFolderSync"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Переместить",
+      "keys": [
+        "move"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Переместить аккаунты",
+      "keys": [
+        "moveTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Переместить лиды",
+      "keys": [
+        "moveLeads"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Перетащите файл сюда",
+      "keys": [
+        "dropFileHere"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Перетащите файл сюда, или нажмите для выбора",
+      "keys": [
+        "dragAndDropFile"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Период",
+      "keys": [
+        "label"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "План успешно изменён",
+      "keys": [
+        "success"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Платформа",
+      "keys": [
+        "platform"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "По дате отправки",
+      "keys": [
+        "sendDate"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "По дате события",
+      "keys": [
+        "eventDate"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "По дате создания",
+      "keys": [
+        "creationDate"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "По дням",
+      "keys": [
+        "day"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "По имени",
+      "keys": [
+        "name"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "По месяцам",
+      "keys": [
+        "month"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "По неделям",
+      "keys": [
+        "week"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "По сроку задач",
+      "keys": [
+        "dueDate"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "По умолчанию",
+      "keys": [
+        "default"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Повторяется",
+      "keys": [
+        "repeats"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Повторять...",
+      "keys": [
+        "repeatEvery"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Поддержка",
+      "keys": [
+        "supportTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Поделиться с другом",
+      "keys": [
+        "shareButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Подключение успешно!",
+      "keys": [
+        "connectionSuccessTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Подключение...",
+      "keys": [
+        "connecting"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Подключено",
+      "keys": [
+        "connected"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Подключено как",
+      "keys": [
+        "connectedAs"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Подключите вашу CRM",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Подключите Telegram-аккаунт для рассылок",
+      "keys": [
+        "connectOutreachAccount"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Подключить за ${{price}}",
+      "keys": [
+        "buyButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Подключить по номеру телефона",
+      "keys": [
+        "usePhoneNumber"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Подключить CRM через Zapier",
+      "keys": [
+        "connectCrmViaZapier"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Подключить Google Календарь",
+      "keys": [
+        "connectButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Подключить Telegram",
+      "keys": [
+        "signInButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Подключить Telegram-аккаунт",
+      "keys": [
+        "connectTelegramAccount"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Подписаться",
+      "keys": [
+        "subscribe"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Подписаться на ежедневный дайджест",
+      "keys": [
+        "subscribeDigest"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Подписаться снова",
+      "keys": [
+        "subscribeUpdates"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Подписка",
+      "keys": [
+        "header",
+        "subscription",
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "подробнее",
+      "keys": [
+        "linkText"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Подробнее",
+      "keys": [
+        "statsViewMore"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Подсказка: {{hint}}",
+      "keys": [
+        "passwordHint"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Подтвердите свои изменения",
+      "keys": [
+        "previewDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Подтвердить",
+      "keys": [
+        "confirm",
+        "submitButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Поехали!",
+      "keys": [
+        "letsGo"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Пожалуйста, введите ваш пароль",
+      "keys": [
+        "prompt"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Пожалуйста, выберите столбец с именем пользователя",
+      "keys": [
+        "pleaseSelectUsername"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Пожалуйста, загрузите CSV файл",
+      "keys": [
+        "pleaseUploadCsv"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Пожалуйста, не закрывайте это окно",
+      "keys": [
+        "updatingDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Поиск",
+      "keys": [
+        "search",
+        "searchPlaceholder"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Поиск...",
+      "keys": [
+        "search"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Показать пустые",
+      "keys": [
+        "showEmpty"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Показать CSV данные",
+      "keys": [
+        "showCsvData"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Покинуть рабочее пространство",
+      "keys": [
+        "leaveWorkspace"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Поле не должно быть пустым",
+      "keys": [
+        "shouldNotEmpty"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Политика конфиденциальности",
+      "keys": [
+        "privacyPolicy"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Полная настройка и интеграция в ваше рабочее пространство",
+      "keys": [
+        "whatsIncludedDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Полное имя отправителя",
+      "keys": [
+        "senderFullName"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Получайте напоминания прямо в свой календарь",
+      "keys": [
+        "receiveReminders"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Получайте уведомление, если лид находится в <0>{{option}}</0> более {{days}} дней.",
+      "keys": [
+        "description"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Получайте HTTP-уведомления о событиях в ваших воркспейсах.",
+      "keys": [
+        "description"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Пользователь потеряет доступ к рабочему пространству и всему его содержимому.",
+      "keys": [
+        "loseAccessWarning"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Пользователь успешно приглашен",
+      "keys": [
+        "successToast"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Поля выбора для предопределенных опций",
+      "keys": [
+        "helpItemSelect"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Поменять тему",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Помогите нам расти и получайте вознаграждение!",
+      "keys": [
+        "description"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Помощь",
+      "keys": [
+        "button",
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Понедельник",
+      "keys": [
+        "monday"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Понятно",
+      "keys": [
+        "gotIt"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Пополнить",
+      "keys": [
+        "title",
+        "topUpButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Попробовать {{days}} дней бесплатно",
+      "keys": [
+        "startTrialButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Попробовать снова",
+      "keys": [
+        "tryAgainButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Популярно",
+      "keys": [
+        "mostPopularBadge"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Последнее использование",
+      "keys": [
+        "lastUsedLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Последнее использование {{date}}",
+      "keys": [
+        "lastUsed"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Посмотреть лид",
+      "keys": [
+        "taskViewLead"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Посмотреть онбординг",
+      "keys": [
+        "viewOnboarding"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Посмотреть чаты",
+      "keys": [
+        "action"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Постепенно увеличиваем активность, чтобы аккаунт выглядел естественно.",
+      "keys": [
+        "description"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Превью",
+      "keys": [
+        "button"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Предварительный просмотр",
+      "keys": [
+        "preview"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Предложение",
+      "keys": [
+        "proposal"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Предпросмотр",
+      "keys": [
+        "preview"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Предпросмотр для лида",
+      "keys": [
+        "loadDataForLead"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Предпросмотр сообщения",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Представление сохранено",
+      "keys": [
+        "successToast"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Предупреждение",
+      "keys": [
+        "warning"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Префикс ключа",
+      "keys": [
+        "keyPrefix"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Приватность и безопасность прежде всего",
+      "keys": [
+        "privacyTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Привет, <hl>{{name}}</hl>! Выбери папки для синхронизации",
+      "keys": [
+        "greeting"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Пригласить",
+      "keys": [
+        "inviteButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Пригласить команду",
+      "keys": [
+        "inviteTeam"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Пригласить члена команды",
+      "keys": [
+        "inviteTeamMember"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Применить",
+      "keys": [
+        "applyButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Принять",
+      "keys": [
+        "acceptButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Принять приглашение",
+      "keys": [
+        "acceptTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Приостановите кампанию, чтобы внести изменения",
+      "keys": [
+        "activeSequenceToastDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Приостановите кампанию, чтобы удалить ее",
+      "keys": [
+        "activeSequenceDeleteToastDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Приостановить",
+      "keys": [
+        "pauseSequenceButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Присоединиться к чату сообщества",
+      "keys": [
+        "joinCommunityChat"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Пробный период",
+      "keys": [
+        "trialing"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Проверка дубликатов недоступна по номерам телефонов",
+      "keys": [
+        "noDuplicateDetection"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Проверьте сообщения в Telegram",
+      "keys": [
+        "check_app"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Проверьте SMS-сообщения",
+      "keys": [
+        "check_sms"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Прогрев аккаунта",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Прогрев завершён",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Прогрев отключен",
+      "keys": [
+        "inactive"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Прогресс",
+      "keys": [
+        "progress"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Прогреть аккаунты перед запуском кампании:",
+      "keys": [
+        "text"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Продолжаем выполнять действия с небольшой частотой, чтобы аккаунт оставался активным.",
+      "keys": [
+        "description"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Продолжайте развивать свой pipeline",
+      "keys": [
+        "keepGrowing"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Продолжить",
+      "keys": [
+        "continue",
+        "submitButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Произошла ошибка при перемещении лидов",
+      "keys": [
+        "moveError"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Прокси сервер временно недоступен",
+      "keys": [
+        "proxyUnavailable"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Просмотреть аккаунт",
+      "keys": [
+        "viewAccountButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Просрочена",
+      "keys": [
+        "past_due"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Процесс прогрева активен",
+      "keys": [
+        "active"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Прочитали",
+      "keys": [
+        "read"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Прочитано",
+      "keys": [
+        "read"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Пятница",
+      "keys": [
+        "friday"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Рабочее пространство",
+      "keys": [
+        "workspaceLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Развернуть панель",
+      "keys": [
+        "expandSidebar"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Разговор",
+      "keys": [
+        "conversation"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Рандомизируйте сообщения как можно больше с помощью спинтакса:",
+      "keys": [
+        "text"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Расписание отправки",
+      "keys": [
+        "scheduleTitle",
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Расписание сохранено",
+      "keys": [
+        "saveSuccessToast"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Рассчитать стоимость",
+      "keys": [
+        "calculatePricing"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Рассылки",
+      "keys": [
+        "outreachLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Расшифровываю голосовое сообщение",
+      "keys": [
+        "voiceTranscribing"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Регион",
+      "keys": [
+        "regionLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Редактирование завершено",
+      "keys": [
+        "completedTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Редактирование лида",
+      "keys": [
+        "editLeadTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Редактировать",
+      "keys": [
+        "bulkEdit",
+        "edit",
+        "editAction",
+        "editContact",
+        "editLead",
+        "editOrganizationName"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Редактировать заметку",
+      "keys": [
+        "edit_note"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Редактировать лид",
+      "keys": [
+        "editLead"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Редактировать напоминание",
+      "keys": [
+        "edit_task"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Розовый",
+      "keys": [
+        "color_pink"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Роль",
+      "keys": [
+        "roleLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Руководство по использованию полей для создания воронки:",
+      "keys": [
+        "helpVideoDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сбросить",
+      "keys": [
+        "resetButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Светлая",
+      "keys": [
+        "light"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Свой",
+      "keys": [
+        "custom"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Свяжитесь с нами",
+      "keys": [
+        "talkToUs"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Свяжитесь с нами по адресу <1>ask@hints.so</1>, чтобы экспортировать данные.",
+      "keys": [
+        "description"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Свяжитесь с нами, и мы поможем настроить ваш рабочий процесс.",
+      "keys": [
+        "setupHelp"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Связаться с нами",
+      "keys": [
+        "contactUsButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сделать значением по умолчанию",
+      "keys": [
+        "makeDefault"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сделка закрыта",
+      "keys": [
+        "won"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Серый",
+      "keys": [
+        "color_gray"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Синий",
+      "keys": [
+        "color_blue"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Синк ТГ-каналов",
+      "keys": [
+        "channelSync"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Синк ТГ-папок",
+      "keys": [
+        "telegramFolderSync"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Синхронизация включена для <hl>{{count}}</hl> папки",
+      "keys": [
+        "syncEnabled_one",
+        "syncEnabled_other"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Синхронизация включена для <hl>{{count}}</hl> папок",
+      "keys": [
+        "syncEnabled_few",
+        "syncEnabled_many"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Синхронизация чатов...",
+      "keys": [
+        "syncingChats"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Синхронизировать все контакты и чаты в ваше рабочее пространство",
+      "keys": [
+        "syncToWorkspaceDesc"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Синхронизируйте папки Telegram",
+      "keys": [
+        "syncTelegramFolders"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Синхронизируйте только выбранные вами папки Telegram с Hints.",
+      "keys": [
+        "privacyItem1Desc"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Системная",
+      "keys": [
+        "system"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сканировать QR",
+      "keys": [
+        "scanQr"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сканировать QR-код Telegram",
+      "keys": [
+        "scanTelegramQr"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Скидка 30%",
+      "keys": [
+        "saveBadge"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сконвертировать за {{count, number}} кредит",
+      "keys": [
+        "convertButton_one"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сконвертировать за {{count, number}} кредита",
+      "keys": [
+        "convertButton_few"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сконвертировать за {{count, number}} кредитов",
+      "keys": [
+        "convertButton_many"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сконвертируй телефонные номера в Telegram аккаунты, готовые для рассылок",
+      "keys": [
+        "description"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Скопируйте ваш API-ключ, он понадобится вам для настройки Zapier",
+      "keys": [
+        "apiKeyDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Скопируйте ключ сейчас. Он больше не будет показан.",
+      "keys": [
+        "createdWarning"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Скопируйте ключ сейчас. Позже он будет недоступен.",
+      "keys": [
+        "secretWarning"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Скрыть пустые",
+      "keys": [
+        "hideEmpty"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Скрыть пустые столбцы",
+      "keys": [
+        "hideEmptyColumnsLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "След. раб. день",
+      "keys": [
+        "nextBusinessDay"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Следуйте другим общим советам и лучшим практикам:",
+      "keys": [
+        "text"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Следующее действие:",
+      "keys": [
+        "nextAction"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Следующее напоминание будет {time}",
+      "keys": [
+        "taskReminderRescheduled"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "следующий",
+      "keys": [
+        "next"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Слишком много попыток входа",
+      "keys": [
+        "passwordFlood"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Слишком много попыток входа. Пожалуйста, подождите {{waitSeconds}} секунд",
+      "keys": [
+        "floodWait"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Слишком много попыток входа. Пожалуйста, попробуйте позже.",
+      "keys": [
+        "PASSWORD_FLOOD"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Случайный",
+      "keys": [
+        "randomize"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Случайный текст (Spintax)",
+      "keys": [
+        "random"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сменить ключ",
+      "keys": [
+        "rotateSecretAction"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сменить план",
+      "keys": [
+        "switchPlanButton",
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сменить секретный ключ",
+      "keys": [
+        "rotateSecretButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "События",
+      "keys": [
+        "eventsLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Создавать контакт в CRM",
+      "keys": [
+        "triggerHeader"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Создавать лиды в CRM для первичных входящих сообщений",
+      "keys": [
+        "autoCreationOnReply"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Создайте рабочее просранство",
+      "keys": [
+        "createFirstWorkspace"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Создайте свой первый лид",
+      "keys": [
+        "createFirstLead"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Создан",
+      "keys": [
+        "createdAtLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Создатель последовательности",
+      "keys": [
+        "sequenceCreator"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Создать",
+      "keys": [
+        "createAction"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Создать \\",
+      "keys": [
+        "create"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Создать вебхук",
+      "keys": [
+        "createButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Создать заметку",
+      "keys": [
+        "createNote"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Создать кампанию",
+      "keys": [
+        "createCampaign"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Создать лид",
+      "keys": [
+        "createLead"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Создать лида в CRM",
+      "keys": [
+        "createLeadInCrm"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Создать напоминание",
+      "keys": [
+        "createTask"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Создать новый лид",
+      "keys": [
+        "createNewLead"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Создать одноразовую кампанию",
+      "keys": [
+        "oneTimeDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Создать поле",
+      "keys": [
+        "createProperty"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Создать представление",
+      "keys": [
+        "createButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Создать раб. пространство",
+      "keys": [
+        "newWorkspace"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Создать рабочее пространство",
+      "keys": [
+        "createButton",
+        "createWorkspace"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Создать API-ключ",
+      "keys": [
+        "createButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сообщение {{index}}",
+      "keys": [
+        "messageHeader"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сопоставьте поля со столбцами",
+      "keys": [
+        "selectColumns"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сортировка",
+      "keys": [
+        "sortLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сохранение настроек...",
+      "keys": [
+        "saving"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сохранение...",
+      "keys": [
+        "saving"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сохранить",
+      "keys": [
+        "renameAction",
+        "save",
+        "saveButton",
+        "saveNameButton",
+        "saveOption"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сохранить для всех",
+      "keys": [
+        "saveForEveryoneButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сохранить как новое представление",
+      "keys": [
+        "saveAsNewViewButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сохранить название",
+      "keys": [
+        "saveNameButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сохранить настройки",
+      "keys": [
+        "saveButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сохранить представление для всех",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сохранить расписание",
+      "keys": [
+        "saveButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сохранить роль",
+      "keys": [
+        "saveRoleButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Спарсить группу за 500 кредитов",
+      "keys": [
+        "parseButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Спасибо за оплату!",
+      "keys": [
+        "thankYouPayment"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Спасибо за оплату. В течение 24 часов (обычно раньше) аккаунт будет перенесён в ваше рабочее пространство и появится в разделе «Telegram-аккаунты». Как только это будет сделано, вы получите уведомление в боте.",
+      "keys": [
+        "thankYouAccountPurchase"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Спасибо за подписку на CRMchat!",
+      "keys": [
+        "thankYouSubscription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Спасибо!",
+      "keys": [
+        "successTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Список",
+      "keys": [
+        "list"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Среда",
+      "keys": [
+        "wednesday"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Ссылка на чат недоступна из-за настроек приватности группы",
+      "keys": [
+        "chatLinkUnvailable"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Ссылка-приглашение недействительна или срок ее действия истек.",
+      "keys": [
+        "errorDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Стадия",
+      "keys": [
+        "name",
+        "stage"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Статистика",
+      "keys": [
+        "statsHeader"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Статус",
+      "keys": [
+        "statusLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "статья",
+      "keys": [
+        "linkText"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Столбец с телефоном",
+      "keys": [
+        "phoneColumn",
+        "selectPhoneColumnPlaceholder"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Столбец с username",
+      "keys": [
+        "selectColumn",
+        "usernameColumn"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Столбцы",
+      "keys": [
+        "pipelinePropertyLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Столбцы без заголовка были пропущены.",
+      "keys": [
+        "columnsWithoutHeader"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Страна прокси",
+      "keys": [
+        "proxyCountryLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Страна прокси:",
+      "keys": [
+        "proxyLocationLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Суббота",
+      "keys": [
+        "saturday"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Сумма",
+      "keys": [
+        "amount"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Существующий лид в CRM:",
+      "keys": [
+        "contactsDuplicates"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Тарифы",
+      "keys": [
+        "viewPricing"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "текст",
+      "keys": [
+        "text"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Текст",
+      "keys": [
+        "text"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Текстовые поля для имен и описаний",
+      "keys": [
+        "helpItemText"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Текущий баланс",
+      "keys": [
+        "currentBalanceTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Текущий план",
+      "keys": [
+        "currentPlan"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Телефон",
+      "keys": [
+        "phone"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Телефонные номера в Telegram",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Телефоны → Telegram",
+      "keys": [
+        "phoneNumbersConverter"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Тем временем, вы можете посмотреть список чатов",
+      "keys": [
+        "description"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Тёмная",
+      "keys": [
+        "dark"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Тип",
+      "keys": [
+        "type"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Тип поля",
+      "keys": [
+        "type"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Только метаданные",
+      "keys": [
+        "privacyItem3Title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Требуется название",
+      "keys": [
+        "nameRequiredError"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "У вас еще нет кастомных полей :(",
+      "keys": [
+        "noCustomProperties"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Убрать значение по умолчанию",
+      "keys": [
+        "removeDefault"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Уведомления о зависших лидах",
+      "keys": [
+        "staleNotifications"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Уведомления о новых сообщениях",
+      "keys": [
+        "chatNotifications"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Удаление лидов",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Удаленная кампания",
+      "keys": [
+        "deletedSequence"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Удалить",
+      "keys": [
+        "delete",
+        "deleteAction",
+        "deleteButton",
+        "deleteOption",
+        "trigger"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Удалить аккаунт",
+      "keys": [
+        "deleteAccount"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Удалить вебхук",
+      "keys": [
+        "deleteButton",
+        "deleteTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Удалить все",
+      "keys": [
+        "removeAll"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Удалить заметку",
+      "keys": [
+        "delete_note"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Удалить из кампании",
+      "keys": [
+        "remove",
+        "removeAction"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Удалить из рабочего пространства",
+      "keys": [
+        "removeFromWorkspace"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Удалить кампанию",
+      "keys": [
+        "deleteSequenceButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Удалить напоминание",
+      "keys": [
+        "delete_task"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Удалить поле",
+      "keys": [
+        "deleteButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Удалить сообщение",
+      "keys": [
+        "deleteStepButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Удалить фильтр",
+      "keys": [
+        "removeFilter"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Уже есть переписка в Telegram аккаунте:",
+      "keys": [
+        "accountsDuplicates"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Узнайте, как интегрироваться с нашим REST API.",
+      "keys": [
+        "docsDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Укажите значения по умолчанию для новых лидов в CRM, созданных из этой кампании.",
+      "keys": [
+        "defaultsDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Укажите телефонные номера",
+      "keys": [
+        "convertButton_zero"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Управление вебхуками",
+      "keys": [
+        "manageButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Управлять подпиской",
+      "keys": [
+        "manageButton"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Упс :(",
+      "keys": [
+        "errorTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Условия использования",
+      "keys": [
+        "termsAndConditions"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Установите имя пользователя для этого аккаунта, чтобы запустить прогрев.",
+      "keys": [
+        "usernameNotSetError"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Участник",
+      "keys": [
+        "member",
+        "memberHeader"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Участники команды",
+      "keys": [
+        "membersLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Файл",
+      "keys": [
+        "selectedFile"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Фильтр",
+      "keys": [
+        "addFilter"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Фильтры",
+      "keys": [
+        "filters"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Фиолетовый",
+      "keys": [
+        "color_purple"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Форвадни сообщение",
+      "keys": [
+        "forwardMessage"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "час",
+      "keys": [
+        "hours_one"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "часа",
+      "keys": [
+        "hours_few"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "часов",
+      "keys": [
+        "hours_many"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Часовой пояс",
+      "keys": [
+        "timezone",
+        "timezoneHeader"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Чат",
+      "keys": [
+        "chatLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Чаттер",
+      "keys": [
+        "chatter"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Через <waitValue/> <waitPeriod/> отправить <messageType/>",
+      "keys": [
+        "messageHeader"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Через 1 час",
+      "keys": [
+        "1h"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Через 2 раб. дня",
+      "keys": [
+        "in2BusinessDays"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Через 3 дня",
+      "keys": [
+        "3d"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Через 3 раб. дня",
+      "keys": [
+        "in3BusinessDays"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Через 3 часа",
+      "keys": [
+        "3h"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Через 4 раб. дня",
+      "keys": [
+        "in4BusinessDays"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Через месяц",
+      "keys": [
+        "1m",
+        "inAMonth"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Через неделю",
+      "keys": [
+        "1w",
+        "inAWeek"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Черновик",
+      "keys": [
+        "draft"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Четверг",
+      "keys": [
+        "thursday"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Числа для количества и сумм",
+      "keys": [
+        "helpItemNumber"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Член команды",
+      "keys": [
+        "userSelect"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Что включено:",
+      "keys": [
+        "whatsIncluded"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Что делать дальше",
+      "keys": [
+        "whatToDoNext"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Что-то пошло не так",
+      "keys": [
+        "somethingWentWrong"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Что-то пошло не так, попробуйте позже",
+      "keys": [
+        "error"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Экспорт данных",
+      "keys": [
+        "exportData",
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Это действие нельзя отменить.",
+      "keys": [
+        "deleteWarning"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Это может занять несколько минут. Пожалуйста, не закрывайте окно.",
+      "keys": [
+        "loadingDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Это навсегда удалит ваш аккаунт и все данные с наших серверов.",
+      "keys": [
+        "deleteConfirmDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Это навсегда удалит лид <0>{{name}}</0> и удалит данные с наших серверов.",
+      "keys": [
+        "deleteContactConfirmation"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Это навсегда удалит поле <1>{{name}}</1> и удалит данные с наших серверов.",
+      "keys": [
+        "deleteConfirmDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Это навсегда удалит это напоминание",
+      "keys": [
+        "deleteConfirmation_task"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Это навсегда удалит это сообщение",
+      "keys": [
+        "deleteStepConfirmDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Это навсегда удалит эту заметку",
+      "keys": [
+        "deleteConfirmation_note"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Это навсегда удалит эту кампанию и ее сообщения.",
+      "keys": [
+        "deleteConfirmDescription"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Это поле не задано у некоторых лидов, поэтому в сообщении оно останется пустым:",
+      "keys": [
+        "notDefinedTooltip"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Это происходит редко, но по разным причинам вне нашего контроля.",
+      "keys": [
+        "subtitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Я нашел {{count}} похожий лид:\\\n\\\n{{list}}\\\n\\\nВы хотите обновить существующий лид или создать новый?",
+      "keys": [
+        "foundSimilarLeads_one"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Я нашел {{count}} похожих лида:\\\n\\\n{{list}}\\\n\\\nВы хотите обновить существующий лид или создать новый?",
+      "keys": [
+        "foundSimilarLeads_few",
+        "foundSimilarLeads_other"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Я нашел {{count}} похожих лидов:\\\n\\\n{{list}}\\\n\\\nВы хотите обновить существующий лид или создать новый?",
+      "keys": [
+        "foundSimilarLeads_many"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Я нашел похожего лида: <b>{{name}}</b>\\\n\\\nВы хотите обновить этого лида или создать нового?",
+      "keys": [
+        "foundOneSimilarLead"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Я не смог найти информацию о лиде в этом сообщении.\\\n\\\nСмотрите <a href=\\",
+      "keys": [
+        "noLeadInfoFound"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Язык",
+      "keys": [
+        "language"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Язык изменен на Русский",
+      "keys": [
+        "languageChanged"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "API Ключ",
+      "keys": [
+        "apiKeyLabel"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "API-ключ переименован",
+      "keys": [
+        "renameSuccess"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "API-ключ создан",
+      "keys": [
+        "createdTitle"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "API-ключей пока нет. Создайте ключ для доступа к публичному REST API.",
+      "keys": [
+        "emptyState"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "API-ключи",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "API-ключи привязаны к вашему аккаунту и имеют тот же доступ, что и вы.",
+      "keys": [
+        "description"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "CSV файл",
+      "keys": [
+        "uploadCsv"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Email адрес",
+      "keys": [
+        "emailPlaceholder"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Google Календарь",
+      "keys": [
+        "googleCalendar",
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "https://crmchat.ai/ru/help-center/telegram-outreach-best-practices#:~:text=Лайфхак: добавьте опцию отказа в конце первого сообщения",
+      "keys": [
+        "linkUrl"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "ID пользователя",
+      "keys": [
+        "userId"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "ID рабочего пространства",
+      "keys": [
+        "workspaceId"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Look-alike аудитория",
+      "keys": [
+        "lookalikeAudiences",
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Telegram сбросил вашу сессию.",
+      "keys": [
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Telegram-аккаунты",
+      "keys": [
+        "telegramAccounts",
+        "telegramAccountsLabel",
+        "title"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Telegram-аккаунты с прогрессивной тарификацией",
+      "keys": [
+        "telegramAccountsIncluded"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    },
+    {
+      "value": "Username отправителя",
+      "keys": [
+        "senderUsername"
+      ],
+      "files": [
+        "index-BJdrm_7B.js"
+      ]
+    }
+  ]
+}

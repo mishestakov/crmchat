@@ -1,0 +1,1149 @@
+{
+  "generated_at": "2026-04-21T01:27:45.330Z",
+  "decisions": {
+    "rootRouteImport": {
+      "decision": "keep",
+      "domain": "App shell",
+      "label": "__root",
+      "url_pattern": "/__root",
+      "route_file": "src/routes/__root.tsx",
+      "trpc": [],
+      "orpc": [],
+      "firestore_ops": 0
+    },
+    "ProtectedIndexRouteImport": {
+      "decision": "keep",
+      "domain": "App shell",
+      "label": "ProtectedIndex",
+      "url_pattern": "/",
+      "route_file": "src/routes/_protected/index.tsx",
+      "trpc": [
+        "workspace.createWorkspace"
+      ],
+      "orpc": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedRouteRouteImport": {
+      "decision": "keep",
+      "domain": "App shell",
+      "label": "ProtectedRoute",
+      "url_pattern": "/",
+      "route_file": "src/routes/_protected/route.tsx",
+      "trpc": [
+        "telegram.authenticateByInitData"
+      ],
+      "orpc": [],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdAddPendingActivityIdRouteImport": {
+      "decision": "drop",
+      "domain": "App shell",
+      "label": "w / add-pending-activity — Detail",
+      "url_pattern": "/w/{workspaceId}/add-pending-activity/{id}",
+      "route_file": "src/routes/_protected/w.$workspaceId/add-pending-activity.$id.tsx",
+      "trpc": [
+        "pendingContact.addPendingActivity",
+        "pendingContact.getPendingActivity"
+      ],
+      "orpc": [],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdToolsGroupParserRouteImport": {
+      "decision": "drop",
+      "domain": "App shell",
+      "label": "w / tools / group-parser",
+      "url_pattern": "/w/{workspaceId}/tools/group-parser",
+      "route_file": "src/routes/_protected/w.$workspaceId/tools/group-parser.tsx",
+      "trpc": [
+        "outreach.tools.createGroupParseRequest"
+      ],
+      "orpc": [],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdToolsLookalikeAudienceRouteImport": {
+      "decision": "drop",
+      "domain": "App shell",
+      "label": "w / tools / lookalike-audience",
+      "url_pattern": "/w/{workspaceId}/tools/lookalike-audience",
+      "route_file": "src/routes/_protected/w.$workspaceId/tools/lookalike-audience.tsx",
+      "trpc": [
+        "outreach.tools.lookalikeAudienceRequest"
+      ],
+      "orpc": [],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdToolsPhoneNumbersConverterRouteImport": {
+      "decision": "drop",
+      "domain": "App shell",
+      "label": "w / tools / phone-numbers-converter",
+      "url_pattern": "/w/{workspaceId}/tools/phone-numbers-converter",
+      "route_file": "src/routes/_protected/w.$workspaceId/tools/phone-numbers-converter.tsx",
+      "trpc": [
+        "outreach.tools.convertPhoneNumbersRequest"
+      ],
+      "orpc": [],
+      "firestore_ops": 33
+    },
+    "ProtectedAcceptInviteWorkspaceIdInviteCodeRouteImport": {
+      "decision": "keep",
+      "domain": "Workspaces",
+      "label": "accept-invite — Detail",
+      "url_pattern": "/accept-invite/{workspaceId}/{inviteCode}",
+      "route_file": "src/routes/_protected/accept-invite.$workspaceId.$inviteCode.tsx",
+      "trpc": [
+        "workspace.acceptWorkspaceInvite",
+        "workspace.getWorkspaceInvite"
+      ],
+      "orpc": [],
+      "firestore_ops": 0
+    },
+    "ProtectedWWorkspaceIdIndexRouteImport": {
+      "decision": "keep",
+      "domain": "Workspaces",
+      "label": "w — Detail",
+      "url_pattern": "/w/{workspaceId}",
+      "route_file": "src/routes/_protected/w.$workspaceId/index.tsx",
+      "trpc": [],
+      "orpc": [],
+      "firestore_ops": 0
+    },
+    "ProtectedWWorkspaceIdRouteRouteImport": {
+      "decision": "keep",
+      "domain": "Workspaces",
+      "label": "w — Detail",
+      "url_pattern": "/w/{workspaceId}",
+      "route_file": "src/routes/_protected/w.$workspaceId/route.tsx",
+      "trpc": [
+        "workspace.createWorkspace"
+      ],
+      "orpc": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdSettingsWorkspaceIndexRouteImport": {
+      "decision": "keep",
+      "domain": "Workspaces",
+      "label": "w / settings / workspace — List",
+      "url_pattern": "/w/{workspaceId}/settings/workspace",
+      "route_file": "src/routes/_protected/w.$workspaceId/settings/workspace/index.tsx",
+      "trpc": [
+        "workspace.getPendingInvites"
+      ],
+      "orpc": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdSettingsWorkspaceAcceptInviteWIdInviteCodeRouteImport": {
+      "decision": "keep",
+      "domain": "Workspaces",
+      "label": "w / settings / workspace / accept-invite — Detail",
+      "url_pattern": "/w/{workspaceId}/settings/workspace/accept-invite/{wId}/{inviteCode}",
+      "route_file": "src/routes/_protected/w.$workspaceId/settings/workspace/accept-invite.$wId.$inviteCode.tsx",
+      "trpc": [],
+      "orpc": [],
+      "firestore_ops": 0
+    },
+    "ProtectedWWorkspaceIdSettingsWorkspaceInviteRouteImport": {
+      "decision": "keep",
+      "domain": "Workspaces",
+      "label": "w / settings / workspace / invite",
+      "url_pattern": "/w/{workspaceId}/settings/workspace/invite",
+      "route_file": "src/routes/_protected/w.$workspaceId/settings/workspace/invite.tsx",
+      "trpc": [
+        "workspace.inviteWorkspaceMember"
+      ],
+      "orpc": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdSettingsWorkspaceNewRouteImport": {
+      "decision": "keep",
+      "domain": "Workspaces",
+      "label": "w / settings / workspace / new — New",
+      "url_pattern": "/w/{workspaceId}/settings/workspace/new",
+      "route_file": "src/routes/_protected/w.$workspaceId/settings/workspace/new.tsx",
+      "trpc": [
+        "workspace.createWorkspace"
+      ],
+      "orpc": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdSettingsWorkspaceUserUserIdRouteImport": {
+      "decision": "keep",
+      "domain": "Workspaces",
+      "label": "w / settings / workspace / user — Detail",
+      "url_pattern": "/w/{workspaceId}/settings/workspace/user/{userId}",
+      "route_file": "src/routes/_protected/w.$workspaceId/settings/workspace/user.$userId.tsx",
+      "trpc": [
+        "workspace.changeWorkspaceMemberRole",
+        "workspace.removeWorkspaceMember"
+      ],
+      "orpc": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdOnboardingStepIdRouteImport": {
+      "decision": "drop",
+      "domain": "Onboarding",
+      "label": "w / onboarding — Detail",
+      "url_pattern": "/w/{workspaceId}/onboarding/{stepId}",
+      "route_file": "src/routes/_protected/w.$workspaceId/onboarding/$stepId.tsx",
+      "trpc": [],
+      "orpc": [],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdOnboardingIndexRouteImport": {
+      "decision": "drop",
+      "domain": "Onboarding",
+      "label": "w / onboarding — List",
+      "url_pattern": "/w/{workspaceId}/onboarding",
+      "route_file": "src/routes/_protected/w.$workspaceId/onboarding/index.tsx",
+      "trpc": [],
+      "orpc": [],
+      "firestore_ops": 0
+    },
+    "ProtectedWWorkspaceIdContactsContactIdIndexRouteImport": {
+      "decision": "keep",
+      "domain": "CRM",
+      "label": "w / contacts — Detail",
+      "url_pattern": "/w/{workspaceId}/contacts/{contactId}",
+      "route_file": "src/routes/_protected/w.$workspaceId/contacts/$contactId/index.tsx",
+      "trpc": [
+        "activity.scheduleCalendarEventIfPossible",
+        "contact.deleteContacts",
+        "contact.updateContactAvatar",
+        "proxy.getProxyStatus",
+        "telegram.account.getAccountConnectionData",
+        "telegram.account.reauthenticateWebClient",
+        "telegram.account.submitReauthPassword"
+      ],
+      "orpc": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdContactsIndexRouteImport": {
+      "decision": "keep",
+      "domain": "CRM",
+      "label": "w / contacts — List",
+      "url_pattern": "/w/{workspaceId}/contacts",
+      "route_file": "src/routes/_protected/w.$workspaceId/contacts/index.tsx",
+      "trpc": [
+        "contact.bulkUpdate",
+        "contact.createContactFromQr",
+        "contact.deleteContacts"
+      ],
+      "orpc": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdContactsContactIdActivitiesActivityIdEditRouteImport": {
+      "decision": "keep",
+      "domain": "CRM",
+      "label": "w / contacts / activities / edit",
+      "url_pattern": "/w/{workspaceId}/contacts/{contactId}/activities/{activityId}/edit",
+      "route_file": "src/routes/_protected/w.$workspaceId/contacts/$contactId/activities/$activityId.edit.tsx",
+      "trpc": [
+        "activity.scheduleCalendarEventIfPossible"
+      ],
+      "orpc": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdContactsContactIdActivitiesNewRouteImport": {
+      "decision": "keep",
+      "domain": "CRM",
+      "label": "w / contacts / activities / new — New",
+      "url_pattern": "/w/{workspaceId}/contacts/{contactId}/activities/new",
+      "route_file": "src/routes/_protected/w.$workspaceId/contacts/$contactId/activities/new.tsx",
+      "trpc": [
+        "activity.scheduleCalendarEventIfPossible"
+      ],
+      "orpc": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdContactsContactIdEditRouteImport": {
+      "decision": "keep",
+      "domain": "CRM",
+      "label": "w / contacts / edit — Edit",
+      "url_pattern": "/w/{workspaceId}/contacts/{contactId}/edit",
+      "route_file": "src/routes/_protected/w.$workspaceId/contacts/$contactId/edit.tsx",
+      "trpc": [],
+      "orpc": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdContactsNewRouteImport": {
+      "decision": "keep",
+      "domain": "CRM",
+      "label": "w / contacts / new — New",
+      "url_pattern": "/w/{workspaceId}/contacts/new",
+      "route_file": "src/routes/_protected/w.$workspaceId/contacts/new.tsx",
+      "trpc": [],
+      "orpc": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdSettingsTelegramSyncRouteImport": {
+      "decision": "keep",
+      "domain": "Telegram",
+      "label": "w / settings / telegram-sync",
+      "url_pattern": "/w/{workspaceId}/settings/telegram-sync",
+      "route_file": "src/routes/_protected/w.$workspaceId/settings/telegram-sync.tsx",
+      "trpc": [
+        "telegram.client.getFolders",
+        "telegram.client.getQrState",
+        "telegram.client.sendCode",
+        "telegram.client.signIn",
+        "telegram.client.signInWithPassword",
+        "telegram.client.signOut",
+        "telegram.client.status",
+        "telegram.client.triggerSync"
+      ],
+      "orpc": [],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdTelegramRouteImport": {
+      "decision": "keep",
+      "domain": "Telegram",
+      "label": "w / telegram",
+      "url_pattern": "/w/{workspaceId}/telegram",
+      "route_file": "src/routes/_protected/w.$workspaceId/telegram.tsx",
+      "trpc": [
+        "activity.scheduleCalendarEventIfPossible",
+        "contact.deleteContacts",
+        "contact.updateContactAvatar",
+        "proxy.getProxyStatus",
+        "telegram.account.getAccountConnectionData",
+        "telegram.account.reauthenticateWebClient",
+        "telegram.account.submitReauthPassword"
+      ],
+      "orpc": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdOutreachIndexRouteImport": {
+      "decision": "keep",
+      "domain": "Outreach",
+      "label": "w / outreach — List",
+      "url_pattern": "/w/{workspaceId}/outreach",
+      "route_file": "src/routes/_protected/w.$workspaceId/outreach/index.tsx",
+      "trpc": [],
+      "orpc": [],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdOutreachAiBotRouteImport": {
+      "decision": "drop",
+      "domain": "Outreach",
+      "label": "w / outreach / ai-bot",
+      "url_pattern": "/w/{workspaceId}/outreach/ai-bot",
+      "route_file": "src/routes/_protected/w.$workspaceId/outreach/ai-bot.tsx",
+      "trpc": [],
+      "orpc": [],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdOutreachScheduleRouteImport": {
+      "decision": "keep",
+      "domain": "Outreach",
+      "label": "w / outreach / schedule",
+      "url_pattern": "/w/{workspaceId}/outreach/schedule",
+      "route_file": "src/routes/_protected/w.$workspaceId/outreach/schedule.tsx",
+      "trpc": [
+        "outreach.rescheduleSequences"
+      ],
+      "orpc": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdOutreachSequencesIdIndexRouteImport": {
+      "decision": "keep",
+      "domain": "Outreach",
+      "label": "w / outreach / sequences — Detail",
+      "url_pattern": "/w/{workspaceId}/outreach/sequences/{id}",
+      "route_file": "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.index.tsx",
+      "trpc": [
+        "outreach.generateUploadSignedUrl",
+        "outreach.getLeads",
+        "outreach.getSequenceAnalytics",
+        "outreach.getSequenceStats",
+        "outreach.updateSequenceStatus",
+        "outreach.validateTextVariables"
+      ],
+      "orpc": [
+        "outreach.sequences.delete",
+        "outreach.sequences.patch",
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdOutreachSequencesIdAccountsRouteImport": {
+      "decision": "keep",
+      "domain": "Outreach",
+      "label": "w / outreach / sequences / accounts",
+      "url_pattern": "/w/{workspaceId}/outreach/sequences/{id}/accounts",
+      "route_file": "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.accounts.tsx",
+      "trpc": [],
+      "orpc": [
+        "outreach.sequences.patch"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdOutreachSequencesIdContactSettingsIndexRouteImport": {
+      "decision": "keep",
+      "domain": "Outreach",
+      "label": "w / outreach / sequences / contact-settings",
+      "url_pattern": "/w/{workspaceId}/outreach/sequences/{id}/contact-settings",
+      "route_file": "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.contact-settings.index.tsx",
+      "trpc": [],
+      "orpc": [
+        "outreach.sequences.patch",
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdOutreachSequencesIdContactSettingsOwnersRouteImport": {
+      "decision": "keep",
+      "domain": "Outreach",
+      "label": "w / outreach / sequences / contact-settings / owners",
+      "url_pattern": "/w/{workspaceId}/outreach/sequences/{id}/contact-settings/owners",
+      "route_file": "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.contact-settings.owners.tsx",
+      "trpc": [],
+      "orpc": [
+        "outreach.sequences.patch",
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdOutreachSequencesIdLeadsRouteImport": {
+      "decision": "keep",
+      "domain": "Outreach",
+      "label": "w / outreach / sequences / leads",
+      "url_pattern": "/w/{workspaceId}/outreach/sequences/{id}/leads",
+      "route_file": "src/routes/_protected/w.$workspaceId/outreach/sequences/$id.leads.tsx",
+      "trpc": [
+        "outreach.getLeads",
+        "outreach.removeLeadFromSequence",
+        "outreach.resolveDuplicates",
+        "outreach.sendOutreachMessageNow",
+        "outreach.updateLeadProperties"
+      ],
+      "orpc": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdOutreachSequencesNewIndexRouteImport": {
+      "decision": "keep",
+      "domain": "Outreach",
+      "label": "w / outreach / sequences / new — New",
+      "url_pattern": "/w/{workspaceId}/outreach/sequences/new",
+      "route_file": "src/routes/_protected/w.$workspaceId/outreach/sequences/new.index.tsx",
+      "trpc": [],
+      "orpc": [],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdOutreachSequencesNewCrmRouteImport": {
+      "decision": "keep",
+      "domain": "Outreach",
+      "label": "w / outreach / sequences / new / crm — New",
+      "url_pattern": "/w/{workspaceId}/outreach/sequences/new/crm",
+      "route_file": "src/routes/_protected/w.$workspaceId/outreach/sequences/new.crm.tsx",
+      "trpc": [],
+      "orpc": [
+        "outreach.lists.createCrmList",
+        "outreach.sequences.create",
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdOutreachSequencesNewCsvRouteImport": {
+      "decision": "keep",
+      "domain": "Outreach",
+      "label": "w / outreach / sequences / new / csv — New",
+      "url_pattern": "/w/{workspaceId}/outreach/sequences/new/csv",
+      "route_file": "src/routes/_protected/w.$workspaceId/outreach/sequences/new.csv.tsx",
+      "trpc": [],
+      "orpc": [
+        "outreach.lists.uploadCsvList",
+        "outreach.sequences.create"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdOutreachTelegramAccountsAccountIdRouteImport": {
+      "decision": "keep",
+      "domain": "Outreach",
+      "label": "w / outreach / telegram-accounts — Detail",
+      "url_pattern": "/w/{workspaceId}/outreach/telegram-accounts/{accountId}",
+      "route_file": "src/routes/_protected/w.$workspaceId/outreach/telegram-accounts/$accountId.tsx",
+      "trpc": [
+        "outreach.rescheduleSequences",
+        "proxy.getProxyStatus",
+        "telegram.account.toggleWarmup",
+        "telegram.account.triggerWarmupSession",
+        "telegram.account.updateAccount"
+      ],
+      "orpc": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdOutreachTelegramAccountsIndexRouteImport": {
+      "decision": "keep",
+      "domain": "Outreach",
+      "label": "w / outreach / telegram-accounts — List",
+      "url_pattern": "/w/{workspaceId}/outreach/telegram-accounts",
+      "route_file": "src/routes/_protected/w.$workspaceId/outreach/telegram-accounts/index.tsx",
+      "trpc": [
+        "telegram.account.moveAccounts"
+      ],
+      "orpc": [],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdOutreachTelegramAccountsBuyRouteImport": {
+      "decision": "drop",
+      "domain": "Outreach",
+      "label": "w / outreach / telegram-accounts / buy",
+      "url_pattern": "/w/{workspaceId}/outreach/telegram-accounts/buy",
+      "route_file": "src/routes/_protected/w.$workspaceId/outreach/telegram-accounts/buy.tsx",
+      "trpc": [],
+      "orpc": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdOutreachTelegramAccountsNewRouteImport": {
+      "decision": "keep",
+      "domain": "Outreach",
+      "label": "w / outreach / telegram-accounts / new — New",
+      "url_pattern": "/w/{workspaceId}/outreach/telegram-accounts/new",
+      "route_file": "src/routes/_protected/w.$workspaceId/outreach/telegram-accounts/new.tsx",
+      "trpc": [
+        "proxy.getCountries",
+        "telegram.account.auth",
+        "telegram.account.authState"
+      ],
+      "orpc": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 34
+    },
+    "ProtectedWWorkspaceIdWalletTopUpRouteImport": {
+      "decision": "drop",
+      "domain": "Billing",
+      "label": "w / wallet / top-up",
+      "url_pattern": "/w/{workspaceId}/wallet/top-up",
+      "route_file": "src/routes/_protected/w.$workspaceId/wallet/top-up.tsx",
+      "trpc": [
+        "organization.wallet.getTopUpOptions"
+      ],
+      "orpc": [],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdSettingsIndexRouteImport": {
+      "decision": "keep",
+      "domain": "Settings",
+      "label": "w / settings — List",
+      "url_pattern": "/w/{workspaceId}/settings",
+      "route_file": "src/routes/_protected/w.$workspaceId/settings/index.tsx",
+      "trpc": [
+        "account.deleteAccount"
+      ],
+      "orpc": [],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdSettingsAffiliateRouteImport": {
+      "decision": "drop",
+      "domain": "Settings",
+      "label": "w / settings / affiliate",
+      "url_pattern": "/w/{workspaceId}/settings/affiliate",
+      "route_file": "src/routes/_protected/w.$workspaceId/settings/affiliate.tsx",
+      "trpc": [
+        "account.getAffiliateInfo"
+      ],
+      "orpc": [],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdSettingsApiKeysKeyIdRouteImport": {
+      "decision": "drop",
+      "domain": "Settings",
+      "label": "w / settings / api-keys — Detail",
+      "url_pattern": "/w/{workspaceId}/settings/api-keys/{keyId}",
+      "route_file": "src/routes/_protected/w.$workspaceId/settings/api-keys/$keyId.tsx",
+      "trpc": [
+        "apiKey.list",
+        "apiKey.rename",
+        "apiKey.revoke"
+      ],
+      "orpc": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdSettingsApiKeysIndexRouteImport": {
+      "decision": "drop",
+      "domain": "Settings",
+      "label": "w / settings / api-keys — List",
+      "url_pattern": "/w/{workspaceId}/settings/api-keys",
+      "route_file": "src/routes/_protected/w.$workspaceId/settings/api-keys/index.tsx",
+      "trpc": [
+        "apiKey.create",
+        "apiKey.list"
+      ],
+      "orpc": [],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdSettingsApiKeysWebhooksIndexRouteImport": {
+      "decision": "drop",
+      "domain": "Settings",
+      "label": "w / settings / api-keys / webhooks",
+      "url_pattern": "/w/{workspaceId}/settings/api-keys/webhooks",
+      "route_file": "src/routes/_protected/w.$workspaceId/settings/api-keys/webhooks.index.tsx",
+      "trpc": [
+        "webhook.create",
+        "webhook.list"
+      ],
+      "orpc": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdSettingsApiKeysWebhooksWebhookIdRouteImport": {
+      "decision": "drop",
+      "domain": "Settings",
+      "label": "w / settings / api-keys / webhooks — Detail",
+      "url_pattern": "/w/{workspaceId}/settings/api-keys/webhooks/{webhookId}",
+      "route_file": "src/routes/_protected/w.$workspaceId/settings/api-keys/webhooks.$webhookId.tsx",
+      "trpc": [
+        "webhook.delete",
+        "webhook.disable",
+        "webhook.enable",
+        "webhook.list",
+        "webhook.rotateSecret",
+        "webhook.update"
+      ],
+      "orpc": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdSettingsConnectCrmRouteImport": {
+      "decision": "drop",
+      "domain": "Settings",
+      "label": "w / settings / connect-crm",
+      "url_pattern": "/w/{workspaceId}/settings/connect-crm",
+      "route_file": "src/routes/_protected/w.$workspaceId/settings/connect-crm.tsx",
+      "trpc": [
+        "zapier.status"
+      ],
+      "orpc": [],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdSettingsExportRouteImport": {
+      "decision": "drop",
+      "domain": "Settings",
+      "label": "w / settings / export",
+      "url_pattern": "/w/{workspaceId}/settings/export",
+      "route_file": "src/routes/_protected/w.$workspaceId/settings/export.tsx",
+      "trpc": [],
+      "orpc": [],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdSettingsFeatureFlagsRouteImport": {
+      "decision": "drop",
+      "domain": "Settings",
+      "label": "w / settings / feature-flags",
+      "url_pattern": "/w/{workspaceId}/settings/feature-flags",
+      "route_file": "src/routes/_protected/w.$workspaceId/settings/feature-flags.tsx",
+      "trpc": [],
+      "orpc": [],
+      "firestore_ops": 35
+    },
+    "ProtectedWWorkspaceIdSettingsGoogleCalendarRouteImport": {
+      "decision": "drop",
+      "domain": "Settings",
+      "label": "w / settings / google-calendar",
+      "url_pattern": "/w/{workspaceId}/settings/google-calendar",
+      "route_file": "src/routes/_protected/w.$workspaceId/settings/google-calendar.tsx",
+      "trpc": [],
+      "orpc": [],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdSettingsHelpRouteImport": {
+      "decision": "drop",
+      "domain": "Settings",
+      "label": "w / settings / help",
+      "url_pattern": "/w/{workspaceId}/settings/help",
+      "route_file": "src/routes/_protected/w.$workspaceId/settings/help.tsx",
+      "trpc": [],
+      "orpc": [],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdSettingsLocaleRouteImport": {
+      "decision": "drop",
+      "domain": "Settings",
+      "label": "w / settings / locale",
+      "url_pattern": "/w/{workspaceId}/settings/locale",
+      "route_file": "src/routes/_protected/w.$workspaceId/settings/locale.tsx",
+      "trpc": [],
+      "orpc": [],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdSettingsMembersAcceptInviteWIdInviteCodeRouteImport": {
+      "decision": "keep",
+      "domain": "Settings",
+      "label": "w / settings / members / accept-invite — Detail",
+      "url_pattern": "/w/{workspaceId}/settings/members/accept-invite/{wId}/{inviteCode}",
+      "route_file": "src/routes/_protected/w.$workspaceId/settings/members.accept-invite.$wId.$inviteCode.ts",
+      "trpc": [],
+      "orpc": [],
+      "firestore_ops": 0
+    },
+    "ProtectedWWorkspaceIdSettingsNotificationsRouteImport": {
+      "decision": "drop",
+      "domain": "Settings",
+      "label": "w / settings / notifications",
+      "url_pattern": "/w/{workspaceId}/settings/notifications",
+      "route_file": "src/routes/_protected/w.$workspaceId/settings/notifications.tsx",
+      "trpc": [],
+      "orpc": [],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdSettingsOrganizationOrganizationIdRouteImport": {
+      "decision": "keep",
+      "domain": "Settings",
+      "label": "w / settings / organization — Detail",
+      "url_pattern": "/w/{workspaceId}/settings/organization/{organizationId}",
+      "route_file": "src/routes/_protected/w.$workspaceId/settings/organization/$organizationId.tsx",
+      "trpc": [],
+      "orpc": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdSettingsPropertiesObjectTypeIndexRouteImport": {
+      "decision": "keep",
+      "domain": "Settings",
+      "label": "w / settings / properties — Detail",
+      "url_pattern": "/w/{workspaceId}/settings/properties/{objectType}",
+      "route_file": "src/routes/_protected/w.$workspaceId/settings/properties.$objectType/index.tsx",
+      "trpc": [],
+      "orpc": [],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdSettingsPropertiesObjectTypeKeyEditRouteImport": {
+      "decision": "keep",
+      "domain": "Settings",
+      "label": "w / settings / properties / edit",
+      "url_pattern": "/w/{workspaceId}/settings/properties/{objectType}/{key}/edit",
+      "route_file": "src/routes/_protected/w.$workspaceId/settings/properties.$objectType/$key.edit.tsx",
+      "trpc": [],
+      "orpc": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdSettingsPropertiesObjectTypeNewTypeRouteImport": {
+      "decision": "keep",
+      "domain": "Settings",
+      "label": "w / settings / properties / new — New",
+      "url_pattern": "/w/{workspaceId}/settings/properties/{objectType}/new/{type}",
+      "route_file": "src/routes/_protected/w.$workspaceId/settings/properties.$objectType/new.$type.tsx",
+      "trpc": [],
+      "orpc": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "ProtectedWWorkspaceIdSettingsSubscriptionRouteImport": {
+      "decision": "drop",
+      "domain": "Settings",
+      "label": "w / settings / subscription",
+      "url_pattern": "/w/{workspaceId}/settings/subscription",
+      "route_file": "src/routes/_protected/w.$workspaceId/settings/subscription.tsx",
+      "trpc": [
+        "workspace.subscription.getPrices",
+        "workspace.subscription.switchPlan"
+      ],
+      "orpc": [],
+      "firestore_ops": 33
+    },
+    "CelloRouteImport": {
+      "decision": "drop",
+      "domain": "Integrations",
+      "label": "cello",
+      "url_pattern": "/cello",
+      "route_file": "src/routes/cello.tsx",
+      "trpc": [],
+      "orpc": [],
+      "firestore_ops": 0
+    },
+    "CustomTokenAuthRouteImport": {
+      "decision": "drop",
+      "domain": "Integrations",
+      "label": "custom-token-auth",
+      "url_pattern": "/custom-token-auth",
+      "route_file": "src/routes/custom-token-auth.tsx",
+      "trpc": [],
+      "orpc": [],
+      "firestore_ops": 33
+    },
+    "GoogleCalendarCallbackRouteImport": {
+      "decision": "drop",
+      "domain": "Integrations",
+      "label": "google-calendar-callback",
+      "url_pattern": "/google-calendar-callback",
+      "route_file": "src/routes/google-calendar-callback.tsx",
+      "trpc": [],
+      "orpc": [],
+      "firestore_ops": 0
+    },
+    "PaymentCallbackRouteImport": {
+      "decision": "drop",
+      "domain": "Integrations",
+      "label": "payment-callback",
+      "url_pattern": "/payment-callback",
+      "route_file": "src/routes/payment-callback.tsx",
+      "trpc": [],
+      "orpc": [],
+      "firestore_ops": 0
+    },
+    "ProtectedMiniAppSplatRouteImport": {
+      "decision": "drop",
+      "domain": "Host integration",
+      "label": "mini-app — Detail",
+      "url_pattern": "/mini-app/{}",
+      "route_file": "src/routes/_protected/mini-app.$.tsx",
+      "trpc": [
+        "workspace.createWorkspace"
+      ],
+      "orpc": [
+        "workspaces.getMembers"
+      ],
+      "firestore_ops": 33
+    },
+    "orphan::env::MODE": {
+      "decision": "drop",
+      "domain": "Infra",
+      "label": "env: MODE",
+      "url_pattern": null,
+      "route_file": null,
+      "trpc": [],
+      "orpc": [],
+      "firestore_ops": 0
+    },
+    "orphan::env::PROD": {
+      "decision": "drop",
+      "domain": "Infra",
+      "label": "env: PROD",
+      "url_pattern": null,
+      "route_file": null,
+      "trpc": [],
+      "orpc": [],
+      "firestore_ops": 0
+    },
+    "orphan::env::VITE_POSTHOG_HOST": {
+      "decision": "drop",
+      "domain": "Infra",
+      "label": "env: VITE_POSTHOG_HOST",
+      "url_pattern": null,
+      "route_file": null,
+      "trpc": [],
+      "orpc": [],
+      "firestore_ops": 0
+    },
+    "orphan::env::VITE_POSTHOG_KEY": {
+      "decision": "drop",
+      "domain": "Infra",
+      "label": "env: VITE_POSTHOG_KEY",
+      "url_pattern": null,
+      "route_file": null,
+      "trpc": [],
+      "orpc": [],
+      "firestore_ops": 0
+    }
+  },
+  "rpc_decisions": {
+    "outreach.sendOutreachMessageNow": {
+      "decision": "exclude",
+      "reason": "DevSendMessageNow — NODE_ENV===development only"
+    },
+    "telegram.authenticateByInitData": {
+      "decision": "exclude",
+      "reason": "mini-app only (TG WebApp)"
+    },
+    "workspace.getWorkspaceInvite": {
+      "decision": "describe_by_code",
+      "reason": "deep-link /accept-invite/{token}, нужен второй юзер"
+    },
+    "workspace.acceptWorkspaceInvite": {
+      "decision": "describe_by_code",
+      "reason": "deep-link accept, нужен второй юзер"
+    },
+    "outreach.validateTextVariables": {
+      "decision": "describe_by_code",
+      "reason": "валидация {{vars}} в редакторе рассылки"
+    },
+    "account.deleteAccount": {
+      "decision": "describe_by_code",
+      "reason": "невозвратно, не проходил в capture"
+    },
+    "telegram.account.reauthenticateWebClient": {
+      "decision": "describe_by_code",
+      "reason": "триггерится при session break"
+    },
+    "telegram.account.submitReauthPassword": {
+      "decision": "describe_by_code",
+      "reason": "парная к reauthenticateWebClient"
+    },
+    "outreach.lists.createCrmList": {
+      "decision": "skip",
+      "reason": "не понимаю UI-путь, не нужно"
+    },
+    "contact.createContactFromQr": {
+      "decision": "skip",
+      "reason": "не понимаю UI-путь, не нужно"
+    },
+    "contact.updateContactAvatar": {
+      "decision": "skip",
+      "reason": "дергается автоматически из NonExistingLeadCard, UI нет"
+    },
+    "telegram.account.toggleWarmup": {
+      "decision": "later",
+      "reason": "warmup feature — отдельная итерация"
+    },
+    "telegram.account.triggerWarmupSession": {
+      "decision": "later",
+      "reason": "warmup feature — отдельная итерация"
+    },
+    "contacts.list": {
+      "decision": "exclude",
+      "reason": "public REST API (oRPC contract) — out of scope вместе с /settings/api-keys"
+    },
+    "contacts.get": {
+      "decision": "exclude",
+      "reason": "public REST API (oRPC contract) — out of scope вместе с /settings/api-keys"
+    },
+    "contacts.create": {
+      "decision": "exclude",
+      "reason": "public REST API (oRPC contract) — out of scope вместе с /settings/api-keys"
+    },
+    "contacts.patch": {
+      "decision": "exclude",
+      "reason": "public REST API (oRPC contract) — out of scope вместе с /settings/api-keys"
+    },
+    "contacts.delete": {
+      "decision": "exclude",
+      "reason": "public REST API (oRPC contract) — out of scope вместе с /settings/api-keys"
+    },
+    "organizations.list": {
+      "decision": "exclude",
+      "reason": "public REST API (oRPC contract) — out of scope вместе с /settings/api-keys"
+    },
+    "organizations.get": {
+      "decision": "exclude",
+      "reason": "public REST API (oRPC contract) — out of scope вместе с /settings/api-keys"
+    },
+    "organizations.patch": {
+      "decision": "exclude",
+      "reason": "public REST API (oRPC contract) — out of scope вместе с /settings/api-keys"
+    },
+    "properties.list": {
+      "decision": "exclude",
+      "reason": "public REST API (oRPC contract) — out of scope вместе с /settings/api-keys"
+    },
+    "properties.get": {
+      "decision": "exclude",
+      "reason": "public REST API (oRPC contract) — out of scope вместе с /settings/api-keys"
+    },
+    "properties.create": {
+      "decision": "exclude",
+      "reason": "public REST API (oRPC contract) — out of scope вместе с /settings/api-keys"
+    },
+    "properties.patch": {
+      "decision": "exclude",
+      "reason": "public REST API (oRPC contract) — out of scope вместе с /settings/api-keys"
+    },
+    "properties.delete": {
+      "decision": "exclude",
+      "reason": "public REST API (oRPC contract) — out of scope вместе с /settings/api-keys"
+    },
+    "telegramAccounts.list": {
+      "decision": "exclude",
+      "reason": "public REST API (oRPC contract) — out of scope вместе с /settings/api-keys"
+    },
+    "telegramAccounts.get": {
+      "decision": "exclude",
+      "reason": "public REST API (oRPC contract) — out of scope вместе с /settings/api-keys"
+    },
+    "telegramAccounts.patch": {
+      "decision": "exclude",
+      "reason": "public REST API (oRPC contract) — out of scope вместе с /settings/api-keys"
+    },
+    "workspaces.list": {
+      "decision": "exclude",
+      "reason": "public REST API (oRPC contract) — out of scope вместе с /settings/api-keys"
+    },
+    "workspaces.get": {
+      "decision": "exclude",
+      "reason": "public REST API (oRPC contract) — out of scope вместе с /settings/api-keys"
+    },
+    "workspaces.patch": {
+      "decision": "exclude",
+      "reason": "public REST API (oRPC contract) — out of scope вместе с /settings/api-keys"
+    },
+    "outreach.sequences.list": {
+      "decision": "exclude",
+      "reason": "public REST API (oRPC contract) — out of scope вместе с /settings/api-keys"
+    },
+    "outreach.sequences.get": {
+      "decision": "exclude",
+      "reason": "public REST API (oRPC contract) — out of scope вместе с /settings/api-keys"
+    },
+    "telegramRaw.call": {
+      "decision": "exclude",
+      "reason": "public REST API (oRPC contract) — out of scope вместе с /settings/api-keys"
+    }
+  },
+  "firestore_decisions": {
+    "deleteTelegramAccount": {
+      "decision": "covered_by_story",
+      "reason": "US для /telegram-accounts/{id} (кнопка Выйти)"
+    },
+    "subscribeToUnreadDialogs": {
+      "decision": "describe_by_code",
+      "reason": "feed unread в сайдбаре чата"
+    },
+    "subscribeToUserWorkspaces": {
+      "decision": "describe_by_code",
+      "reason": "root-shell, не привязан к конкретному route"
+    },
+    "subscribeToTelegramAccounts": {
+      "decision": "covered_by_story",
+      "reason": "US /outreach/telegram-accounts"
+    },
+    "subscribeToLatestWarmupSessions": {
+      "decision": "later",
+      "reason": "warmup feature"
+    },
+    "subscribeToTelegramAccountReauthState": {
+      "decision": "describe_by_code",
+      "reason": "session break UI"
+    },
+    "createWebAuthSession": {
+      "decision": "describe_by_code",
+      "reason": "login flow — deep internal"
+    },
+    "invalidateWebAuthSession": {
+      "decision": "describe_by_code",
+      "reason": "logout flow"
+    },
+    "subscribeToAuthSession": {
+      "decision": "describe_by_code",
+      "reason": "login flow"
+    },
+    "updateDocument": {
+      "decision": "internal_helper",
+      "reason": "generic wrapper, не пользовательский API"
+    },
+    "mergeDocument": {
+      "decision": "internal_helper",
+      "reason": "generic wrapper, не пользовательский API"
+    },
+    "subscribeToActivities": {
+      "decision": "covered_by_story",
+      "story": "US-15",
+      "reason": "timeline активностей на карточке"
+    },
+    "createActivity": {
+      "decision": "covered_by_story",
+      "story": "US-15",
+      "reason": "Добавить заметку/напоминание"
+    },
+    "updateTaskCompletionStatus": {
+      "decision": "covered_by_story",
+      "story": "US-15",
+      "reason": "отметить выполненным"
+    },
+    "deleteActivtiy": {
+      "decision": "covered_by_story",
+      "story": "US-15",
+      "reason": "Удалить напоминание (typo в исходнике)"
+    },
+    "subscribeToContacts": {
+      "decision": "covered_by_story",
+      "story": "US-11",
+      "reason": "список/воронка"
+    },
+    "createContact": {
+      "decision": "covered_by_story",
+      "story": "US-12",
+      "reason": "создать лида вручную (+ chat NonExistingLeadCard, см. chat-spec)"
+    },
+    "updateContact": {
+      "decision": "covered_by_story",
+      "story": "US-14",
+      "reason": "редактирование карточки (+ chat unread-sync, см. chat-spec)"
+    },
+    "moveContacts": {
+      "decision": "covered_by_story",
+      "story": "US-16",
+      "reason": "bulk-действия над выбранными контактами"
+    },
+    "subscribeToOrganizations": {
+      "decision": "covered_by_story",
+      "story": "US-5b",
+      "reason": "настройки организации"
+    },
+    "updateOrganization": {
+      "decision": "covered_by_story",
+      "story": "US-5b",
+      "reason": "inline-поле Название организации"
+    },
+    "subscribeToOutreachLists": {
+      "decision": "covered_by_story",
+      "story": "US-20",
+      "reason": "CRM-lists для кампаний"
+    },
+    "subscribeToOutreachSequences": {
+      "decision": "covered_by_story",
+      "story": "US-26",
+      "reason": "индекс кампаний"
+    },
+    "updateUser": {
+      "decision": "covered_by_story",
+      "story": "US-28",
+      "reason": "язык/уведомления/timezone-autoset через auth-provider"
+    },
+    "updateWorkspace": {
+      "decision": "covered_by_story",
+      "story": "US-5a",
+      "reason": "переименовать воркспейс"
+    },
+    "updateProperties": {
+      "decision": "covered_by_story",
+      "story": "US-7",
+      "reason": "создать/отредактировать кастомное поле"
+    },
+    "updateViews": {
+      "decision": "covered_by_story",
+      "story": "US-11",
+      "reason": "Сохранить представление"
+    }
+  }
+}

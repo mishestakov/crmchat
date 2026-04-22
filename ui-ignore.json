@@ -1,0 +1,17 @@
+{
+  "note": "Patterns (regex) of UI strings that are intentionally out of scope for user-stories.md coverage. Keep each rule with its reason.",
+  "patterns": [
+    { "re": "\\{\\{count",                 "reason": "i18n plural variants — singular is enough" },
+    { "re": "вебхук|API.?ключ|Webhook",    "reason": "DROP: /settings/api-keys + webhooks" },
+    { "re": "тариф|подписк|кредит|оплат|биллинг|ежемесяч|ежегодн|/ *мес|Скидка|Скопируйте ключ|Текущий баланс|Текущий план|Рассчитать стоимость", "reason": "DROP: /settings/subscription + wallet + billing" },
+    { "re": "аффилиа|Пригласи друз|30%",   "reason": "DROP: /settings/affiliate (referral)" },
+    { "re": "Спарсить|Лукалайк|Конверти.*телефон|телефонные номера", "reason": "DROP: /tools/* (group-parser, lookalike, phone-numbers)" },
+    { "re": "Zapier|Подключить CRM|экспортир|Google.?Календ", "reason": "DROP: /settings/connect-crm + google-calendar + export" },
+    { "re": "организац",                   "reason": "DROP: /settings/organization (US-5b is skip)" },
+    { "re": "прогрев|warmup",              "reason": "LATER: warmup feature" },
+    { "re": "@HintsSupportBot|@crmchat_|<a href|<hl>|<\\/?b>|<\\/?p>|<\\/?i>|crmchat\\.ai|hints\\.so", "reason": "Bot notification templates / HTML blocks — out of app UI scope" },
+    { "re": "^[👋🎁🎉🚀✨🎤➡️⬅️🌐📢📅📝👤🗂️⏳]", "reason": "Bot/onboarding message prefix emojis" },
+    { "re": "^✅ ",                          "reason": "Marketing bullets on onboarding/paywall screens" },
+    { "re": "^\\{[a-z]+\\}$|^\\\\+$",       "reason": "Extractor artifacts (string continuation fragments)" }
+  ]
+}
