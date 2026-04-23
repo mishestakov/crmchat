@@ -1,4 +1,14 @@
-import { pgTable, uuid, text, timestamp, index } from "drizzle-orm/pg-core";
+import {
+  index,
+  integer,
+  jsonb,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  unique,
+  uuid,
+} from "drizzle-orm/pg-core";
 
 // TODO: switch to UUID v7 (pg_uuidv7 extension or app-side) when adding observability —
 // v7 is monotonic and index-friendly. v4 is fine for the skeleton.
@@ -54,5 +64,67 @@ export const workspaces = pgTable(
   },
   (t) => ({
     orgIdx: index("workspaces_organization_id_idx").on(t.organizationId),
+  }),
+);
+
+// Custom-property types. По спеке data-model.md §3 — date/multi_select добавим
+// когда упрёмся; для скелета достаточно трёх.
+export const propertyType = pgEnum("property_type", [
+  "text",
+  "number",
+  "single_select",
+]);
+
+export type PropertyValue = { id: string; name: string };
+
+export const properties = pgTable(
+  "properties",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    name: text("name").notNull(),
+    type: propertyType("type").notNull(),
+    order: integer("order").notNull().default(0),
+    // null для text/number; массив опций для single_select
+    values: jsonb("values").$type<PropertyValue[]>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    workspaceKeyUnique: unique("properties_workspace_id_key_key").on(
+      t.workspaceId,
+      t.key,
+    ),
+    workspaceIdx: index("properties_workspace_id_idx").on(t.workspaceId),
+  }),
+);
+
+export const contacts = pgTable(
+  "contacts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name"),
+    email: text("email"),
+    phone: text("phone"),
+    telegramUsername: text("telegram_username"),
+    // { [property.key]: value } — value подбирается по property.type на app-уровне.
+    properties: jsonb("properties")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    workspaceIdx: index("contacts_workspace_id_idx").on(t.workspaceId),
   }),
 );

@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { Link, createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "@tanstack/react-form";
 import { CreateWorkspaceSchema } from "@repo/core";
@@ -78,9 +78,15 @@ function WorkspacesPage() {
             <li className="text-zinc-500">Пока пусто</li>
           )}
           {list.data.map((w) => (
-            <li key={w.id} className="rounded border border-zinc-200 p-3">
-              <div className="font-medium">{w.name}</div>
-              <div className="text-xs text-zinc-500">{w.id}</div>
+            <li key={w.id}>
+              <Link
+                to="/w/$wsId/contacts"
+                params={{ wsId: w.id }}
+                className="block rounded border border-zinc-200 p-3 hover:bg-zinc-50"
+              >
+                <div className="font-medium">{w.name}</div>
+                <div className="text-xs text-zinc-500">{w.id}</div>
+              </Link>
             </li>
           ))}
         </ul>

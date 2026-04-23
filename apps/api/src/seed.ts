@@ -1,6 +1,12 @@
 import { eq } from "drizzle-orm";
 import { db, sql } from "./db/client";
-import { organizations, users } from "./db/schema";
+import {
+  contacts,
+  organizations,
+  properties,
+  users,
+  workspaces,
+} from "./db/schema";
 
 // Фиксированные UUID — чтобы dev-данные были предсказуемы между перезапусками.
 const DEV_USERS = [
@@ -49,5 +55,83 @@ for (const u of DEV_USERS) {
     .values({ name: `${u.name} Org`, createdBy: u.id });
   console.log(`seeded org for ${u.email}`);
 }
+
+// Demo workspace для Анны: фикс-UUID, идемпотентно.
+const ANNA_ID = DEV_USERS[0].id;
+const DEMO_WS_ID = "00000000-0000-0000-0000-00000000d3e0";
+const STAGE_PROP_ID = "00000000-0000-0000-0000-00000000d3e1";
+const NOTES_PROP_ID = "00000000-0000-0000-0000-00000000d3e2";
+const IVAN_ID = "00000000-0000-0000-0000-00000000d3e3";
+const MARIA_ID = "00000000-0000-0000-0000-00000000d3e4";
+
+const [annaOrg] = await db
+  .select({ id: organizations.id })
+  .from(organizations)
+  .where(eq(organizations.createdBy, ANNA_ID))
+  .limit(1);
+
+if (!annaOrg) throw new Error("Anna's organization missing — re-run seed");
+
+await db
+  .insert(workspaces)
+  .values({
+    id: DEMO_WS_ID,
+    organizationId: annaOrg.id,
+    name: "Demo",
+    createdBy: ANNA_ID,
+  })
+  .onConflictDoNothing({ target: workspaces.id });
+
+await db
+  .insert(properties)
+  .values([
+    {
+      id: STAGE_PROP_ID,
+      workspaceId: DEMO_WS_ID,
+      key: "stage",
+      name: "Стадия",
+      type: "single_select",
+      order: 0,
+      values: [
+        { id: "new", name: "Новый" },
+        { id: "wip", name: "В работе" },
+        { id: "done", name: "Закрыт" },
+      ],
+    },
+    {
+      id: NOTES_PROP_ID,
+      workspaceId: DEMO_WS_ID,
+      key: "notes",
+      name: "Заметки",
+      type: "text",
+      order: 1,
+      values: null,
+    },
+  ])
+  .onConflictDoNothing({ target: [properties.workspaceId, properties.key] });
+
+await db
+  .insert(contacts)
+  .values([
+    {
+      id: IVAN_ID,
+      workspaceId: DEMO_WS_ID,
+      name: "Иван Петров",
+      email: "ivan@example.com",
+      properties: { stage: "new", notes: "первый клиент" },
+      createdBy: ANNA_ID,
+    },
+    {
+      id: MARIA_ID,
+      workspaceId: DEMO_WS_ID,
+      name: "Мария Сидорова",
+      phone: "+79001234567",
+      properties: { stage: "wip" },
+      createdBy: ANNA_ID,
+    },
+  ])
+  .onConflictDoNothing({ target: contacts.id });
+
+console.log("seeded demo workspace + properties + contacts");
 
 await sql.end();

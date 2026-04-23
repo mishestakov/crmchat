@@ -67,6 +67,7 @@ function AuthLayout() {
 // В prod-сборке (`vite build`) ветка не попадёт в бандл — DCE по `import.meta.env.DEV`.
 function DevUserSwitcher({ currentUserId }: { currentUserId?: string }) {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const devUsers = useQuery({
     queryKey: ["devUsers"],
     queryFn: async () => {
@@ -80,7 +81,12 @@ function DevUserSwitcher({ currentUserId }: { currentUserId?: string }) {
       const { error } = await api.POST("/v1/_dev/login", { body: { userId } });
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries(),
+    onSuccess: async () => {
+      // Скорее всего мы на workspace-scoped URL чужого юзера → 403 на любой запрос.
+      // Уходим на "/" (свои workspace'ы), потом инвалидируем — me/devUsers перетянутся.
+      await navigate({ to: "/" });
+      qc.invalidateQueries();
+    },
   });
   return (
     <select
