@@ -1,13 +1,11 @@
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { Property, PropertyType, PropertyValue } from "@repo/core";
-import { api } from "../../../../../lib/api";
-import { errorMessage } from "../../../../../lib/errors";
+import { api } from "../../../../lib/api";
+import { errorMessage } from "../../../../lib/errors";
 
-export const Route = createFileRoute(
-  "/_authenticated/w/$wsId/settings/properties",
-)({
+export const Route = createFileRoute("/_authenticated/w/$wsId/properties")({
   component: PropertiesSettings,
 });
 
@@ -141,16 +139,7 @@ function PropertiesSettings() {
 
   return (
     <div className="mx-auto max-w-3xl p-8 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Properties</h1>
-        <Link
-          to="/w/$wsId/contacts"
-          params={{ wsId }}
-          className="text-sm text-zinc-500 hover:text-zinc-900"
-        >
-          ← Contacts
-        </Link>
-      </div>
+      <h1 className="text-2xl font-semibold">Кастомные поля</h1>
 
       <p className="text-sm text-zinc-500">
         Кастомные поля контактов. <code>key</code> — внутренний идентификатор

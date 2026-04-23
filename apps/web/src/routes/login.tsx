@@ -27,7 +27,7 @@ function Login() {
     },
     onSuccess: async () => {
       await qc.invalidateQueries();
-      navigate({ to: "/" });
+      navigate({ to: "/", search: { new: false } });
     },
   });
 

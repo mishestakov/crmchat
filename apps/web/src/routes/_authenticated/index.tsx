@@ -1,25 +1,45 @@
-import { Link, createFileRoute } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  createFileRoute,
+  redirect,
+  useNavigate,
+} from "@tanstack/react-router";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "@tanstack/react-form";
 import { CreateWorkspaceSchema } from "@repo/core";
 import { api } from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
 
+const workspacesQueryOptions = {
+  queryKey: ["workspaces"] as const,
+  queryFn: async () => {
+    const { data, error } = await api.GET("/v1/workspaces");
+    if (error) throw error;
+    return data;
+  },
+};
+
 export const Route = createFileRoute("/_authenticated/")({
-  component: WorkspacesPage,
+  validateSearch: (s: Record<string, unknown>) => ({
+    new: s.new === true || s.new === "1" || s.new === "true",
+  }),
+  beforeLoad: async ({ context, search }) => {
+    // ?new=1 → намеренно показываем форму создания, redirect не делаем.
+    if (search.new) return;
+    // Иначе (default landing) — если уже есть workspace, ведём в него.
+    const ws = await context.queryClient.fetchQuery(workspacesQueryOptions);
+    if (ws.length > 0) {
+      throw redirect({
+        to: "/w/$wsId/contacts",
+        params: { wsId: ws[0]!.id },
+      });
+    }
+  },
+  component: CreateWorkspacePage,
 });
 
-function WorkspacesPage() {
+function CreateWorkspacePage() {
   const qc = useQueryClient();
-
-  const list = useQuery({
-    queryKey: ["workspaces"],
-    queryFn: async () => {
-      const { data, error } = await api.GET("/v1/workspaces");
-      if (error) throw error;
-      return data;
-    },
-  });
+  const navigate = useNavigate();
 
   const create = useMutation({
     mutationFn: async (name: string) => {
@@ -27,9 +47,12 @@ function WorkspacesPage() {
         body: { name },
       });
       if (error) throw error;
-      return data;
+      return data!;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["workspaces"] }),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["workspaces"] });
+      navigate({ to: "/w/$wsId/contacts", params: { wsId: data.id } });
+    },
   });
 
   const form = useForm({
@@ -37,16 +60,14 @@ function WorkspacesPage() {
     validators: { onChange: CreateWorkspaceSchema },
     onSubmit: async ({ value }) => {
       await create.mutateAsync(value.name);
-      form.reset();
     },
   });
 
   return (
-    <div className="mx-auto max-w-2xl p-8 space-y-6">
-      <h1 className="text-2xl font-semibold">Workspaces</h1>
-
+    <div className="mx-auto max-w-md p-8 space-y-6">
+      <h1 className="text-2xl font-semibold">Создать workspace</h1>
       <form
-        className="flex gap-2"
+        className="space-y-3"
         onSubmit={(e) => {
           e.preventDefault();
           form.handleSubmit();
@@ -55,8 +76,9 @@ function WorkspacesPage() {
         <form.Field name="name">
           {(field) => (
             <input
-              className="flex-1 rounded border border-zinc-300 px-3 py-2"
-              placeholder="Название воркспейса"
+              autoFocus
+              className="w-full rounded border border-zinc-300 px-3 py-2"
+              placeholder="Название workspace"
               value={field.state.value}
               onChange={(e) => field.handleChange(e.target.value)}
             />
@@ -69,31 +91,10 @@ function WorkspacesPage() {
         >
           Создать
         </button>
+        {create.error && (
+          <p className="text-sm text-red-600">{errorMessage(create.error)}</p>
+        )}
       </form>
-
-      {list.isLoading && <p>Загрузка…</p>}
-      {list.error && (
-        <p className="text-red-600">{errorMessage(list.error)}</p>
-      )}
-      {list.data && (
-        <ul className="space-y-2">
-          {list.data.length === 0 && (
-            <li className="text-zinc-500">Пока пусто</li>
-          )}
-          {list.data.map((w) => (
-            <li key={w.id}>
-              <Link
-                to="/w/$wsId/contacts"
-                params={{ wsId: w.id }}
-                className="block rounded border border-zinc-200 p-3 hover:bg-zinc-50"
-              >
-                <div className="font-medium">{w.name}</div>
-                <div className="text-xs text-zinc-500">{w.id}</div>
-              </Link>
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   );
 }

@@ -1,10 +1,13 @@
 import {
+  Link,
   Outlet,
   createFileRoute,
   redirect,
   useNavigate,
+  useParams,
 } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { ReactNode } from "react";
 import { api } from "../lib/api";
 
 const meQueryOptions = {
@@ -19,7 +22,6 @@ const meQueryOptions = {
 
 export const Route = createFileRoute("/_authenticated")({
   beforeLoad: async ({ context }) => {
-    // Прогреваем кэш — useQuery ниже возьмёт результат отсюда без второго запроса.
     const me = await context.queryClient.fetchQuery(meQueryOptions);
     if (!me) throw redirect({ to: "/login" });
   },
@@ -27,6 +29,123 @@ export const Route = createFileRoute("/_authenticated")({
 });
 
 function AuthLayout() {
+  const params = useParams({ strict: false }) as { wsId?: string };
+  const wsId = params.wsId;
+
+  return (
+    <div className="flex min-h-screen bg-zinc-50">
+      <aside className="flex w-60 shrink-0 flex-col border-r border-zinc-200 bg-white">
+        <WorkspaceSwitcher currentWsId={wsId} />
+        <nav className="flex-1 space-y-4 p-3 text-sm">
+          {wsId && (
+            <>
+              <SidebarGroup title="Лиды">
+                <SidebarLink to="/w/$wsId/contacts" wsId={wsId}>
+                  Список
+                </SidebarLink>
+                <SidebarLink to="/w/$wsId/properties" wsId={wsId}>
+                  Кастомные поля
+                </SidebarLink>
+              </SidebarGroup>
+              <SidebarLink to="/w/$wsId/settings/workspace" wsId={wsId}>
+                Настройки
+              </SidebarLink>
+            </>
+          )}
+        </nav>
+        <SidebarFooter />
+      </aside>
+      <main className="min-w-0 flex-1">
+        <Outlet />
+      </main>
+    </div>
+  );
+}
+
+function WorkspaceSwitcher({ currentWsId }: { currentWsId?: string }) {
+  const navigate = useNavigate();
+  const list = useQuery({
+    queryKey: ["workspaces"],
+    queryFn: async () => {
+      const { data, error } = await api.GET("/v1/workspaces");
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  return (
+    <div className="border-b border-zinc-200 p-3">
+      <select
+        value={currentWsId ?? ""}
+        onChange={(e) => {
+          const id = e.target.value;
+          if (id)
+            navigate({
+              to: "/w/$wsId/contacts",
+              params: { wsId: id },
+            });
+        }}
+        className="w-full rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm"
+      >
+        {!currentWsId && <option value="">— выбрать workspace —</option>}
+        {list.data?.map((w) => (
+          <option key={w.id} value={w.id}>
+            {w.name}
+          </option>
+        ))}
+      </select>
+      <Link
+        to="/"
+        search={{ new: true }}
+        className="mt-2 block text-xs text-zinc-500 hover:text-zinc-900"
+      >
+        + Создать workspace
+      </Link>
+    </div>
+  );
+}
+
+function SidebarGroup({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="space-y-0.5">
+      <div className="mb-1 px-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function SidebarLink(props: {
+  to:
+    | "/w/$wsId/contacts"
+    | "/w/$wsId/properties"
+    | "/w/$wsId/settings/workspace";
+  wsId: string;
+  children: ReactNode;
+}) {
+  return (
+    <Link
+      to={props.to}
+      params={{ wsId: props.wsId }}
+      className="block rounded px-2 py-1.5 text-zinc-700 hover:bg-zinc-100"
+      activeProps={{
+        className: "block rounded px-2 py-1.5 bg-zinc-100 font-medium text-zinc-900",
+      }}
+      activeOptions={{ exact: false }}
+    >
+      {props.children}
+    </Link>
+  );
+}
+
+function SidebarFooter() {
   const navigate = useNavigate();
   const qc = useQueryClient();
 
@@ -43,28 +162,21 @@ function AuthLayout() {
   });
 
   return (
-    <div>
-      <header className="flex items-center justify-between border-b border-zinc-200 bg-white px-6 py-3">
-        <div className="text-sm text-zinc-700">
-          {me.data ? `${me.data.name ?? me.data.email}` : "…"}
-        </div>
-        <div className="flex items-center gap-3">
-          {import.meta.env.DEV && <DevUserSwitcher currentUserId={me.data?.id} />}
-          <button
-            onClick={() => logout.mutate()}
-            className="rounded border border-zinc-300 px-3 py-1 text-sm hover:bg-zinc-100"
-          >
-            Выйти
-          </button>
-        </div>
-      </header>
-      <Outlet />
+    <div className="space-y-2 border-t border-zinc-200 p-3 text-sm">
+      <div className="truncate text-xs text-zinc-500">
+        {me.data ? me.data.name ?? me.data.email : "…"}
+      </div>
+      {import.meta.env.DEV && <DevUserSwitcher currentUserId={me.data?.id} />}
+      <button
+        onClick={() => logout.mutate()}
+        className="w-full rounded border border-zinc-300 px-2 py-1.5 text-left hover:bg-zinc-50"
+      >
+        Выйти
+      </button>
     </div>
   );
 }
 
-// Dev-only: быстрое переключение между сидированными юзерами.
-// В prod-сборке (`vite build`) ветка не попадёт в бандл — DCE по `import.meta.env.DEV`.
 function DevUserSwitcher({ currentUserId }: { currentUserId?: string }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -82,9 +194,7 @@ function DevUserSwitcher({ currentUserId }: { currentUserId?: string }) {
       if (error) throw error;
     },
     onSuccess: async () => {
-      // Скорее всего мы на workspace-scoped URL чужого юзера → 403 на любой запрос.
-      // Уходим на "/" (свои workspace'ы), потом инвалидируем — me/devUsers перетянутся.
-      await navigate({ to: "/" });
+      await navigate({ to: "/", search: { new: false } });
       qc.invalidateQueries();
     },
   });
@@ -92,7 +202,7 @@ function DevUserSwitcher({ currentUserId }: { currentUserId?: string }) {
     <select
       value={currentUserId ?? ""}
       onChange={(e) => switchUser.mutate(e.target.value)}
-      className="rounded border border-zinc-300 bg-white px-2 py-1 text-sm"
+      className="w-full rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm"
       title="Сменить dev-юзера"
     >
       {devUsers.data?.map((u) => (

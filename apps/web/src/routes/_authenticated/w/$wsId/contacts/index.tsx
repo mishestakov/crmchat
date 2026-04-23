@@ -46,33 +46,14 @@ function ContactsList() {
   return (
     <div className="mx-auto max-w-5xl p-8 space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Contacts</h1>
-        <div className="flex items-center gap-3 text-sm">
-          <Link to="/" className="text-zinc-500 hover:text-zinc-900">
-            ← Workspaces
-          </Link>
-          <Link
-            to="/w/$wsId/settings/workspace"
-            params={{ wsId }}
-            className="text-zinc-500 hover:text-zinc-900"
-          >
-            Settings
-          </Link>
-          <Link
-            to="/w/$wsId/settings/properties"
-            params={{ wsId }}
-            className="text-zinc-500 hover:text-zinc-900"
-          >
-            Properties
-          </Link>
-          <Link
-            to="/w/$wsId/contacts/new"
-            params={{ wsId }}
-            className="rounded bg-zinc-900 px-3 py-1.5 text-white"
-          >
-            + Новый
-          </Link>
-        </div>
+        <h1 className="text-2xl font-semibold">Список</h1>
+        <Link
+          to="/w/$wsId/contacts/new"
+          params={{ wsId }}
+          className="rounded bg-zinc-900 px-3 py-1.5 text-sm text-white"
+        >
+          + Новый
+        </Link>
       </div>
 
       {(properties.isLoading || contacts.isLoading) && <p>Загрузка…</p>}

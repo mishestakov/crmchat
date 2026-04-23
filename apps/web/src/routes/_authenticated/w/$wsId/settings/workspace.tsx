@@ -1,4 +1,4 @@
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api } from "../../../../../lib/api";
@@ -42,16 +42,7 @@ function WorkspaceSettings() {
 
   return (
     <div className="mx-auto max-w-2xl p-8 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Workspace</h1>
-        <Link
-          to="/w/$wsId/contacts"
-          params={{ wsId }}
-          className="text-sm text-zinc-500 hover:text-zinc-900"
-        >
-          ← Contacts
-        </Link>
-      </div>
+      <h1 className="text-2xl font-semibold">Настройки</h1>
 
       {ws.isLoading && <p>Загрузка…</p>}
       {ws.error && <p className="text-red-600">{errorMessage(ws.error)}</p>}
