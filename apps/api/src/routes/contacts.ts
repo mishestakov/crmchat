@@ -39,8 +39,8 @@ const ContactSchema = BaseContactSchema.openapi("Contact");
 const CreateContactSchema = BaseCreate.openapi("CreateContact");
 const UpdateContactSchema = BaseUpdate.openapi("UpdateContact");
 
-const WsParam = z.object({ wsId: z.string().uuid() });
-const WsIdParam = z.object({ wsId: z.string().uuid(), id: z.string().uuid() });
+const WsParam = z.object({ wsId: z.string().min(1).max(64) });
+const WsIdParam = z.object({ wsId: z.string().min(1).max(64), id: z.string().min(1).max(64) });
 
 // Поиск через `q` — только по имени и telegram. У нас TG-CRM, остальные identity
 // поля (email/phone/url) опциональны и редко заполнены — мусор в результатах.

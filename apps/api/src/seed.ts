@@ -8,23 +8,13 @@ import {
 } from "./db/schema";
 import { seedDefaultProperties } from "./lib/workspace-presets";
 
-// Фиксированные UUID — чтобы dev-данные были предсказуемы между перезапусками.
+// Фиксированные id — чтобы dev-данные были предсказуемы между перезапусками.
+// Формат — читаемый префикс (usr_/ws_/cont_), не как 12-hex рантайм-id (см.
+// short-id.ts). Так в логах сразу видно, что строка из seed'а.
 const DEV_USERS = [
-  {
-    id: "00000000-0000-0000-0000-0000000d3eff",
-    email: "anna@local",
-    name: "Анна",
-  },
-  {
-    id: "00000000-0000-0000-0000-0000000d3ef1",
-    email: "boris@local",
-    name: "Борис",
-  },
-  {
-    id: "00000000-0000-0000-0000-0000000d3ef2",
-    email: "vera@local",
-    name: "Вера",
-  },
+  { id: "usr_anna", email: "anna@local", name: "Анна" },
+  { id: "usr_boris", email: "boris@local", name: "Борис" },
+  { id: "usr_vera", email: "vera@local", name: "Вера" },
 ] as const;
 
 for (const u of DEV_USERS) {
@@ -56,11 +46,11 @@ for (const u of DEV_USERS) {
   console.log(`seeded org for ${u.email}`);
 }
 
-// Demo workspace для Анны: фикс-UUID, идемпотентно.
+// Demo workspace для Анны: фикс-id, идемпотентно.
 const ANNA_ID = DEV_USERS[0].id;
-const DEMO_WS_ID = "00000000-0000-0000-0000-00000000d3e0";
-const IVAN_ID = "00000000-0000-0000-0000-00000000d3e3";
-const MARIA_ID = "00000000-0000-0000-0000-00000000d3e4";
+const DEMO_WS_ID = "ws_demo";
+const IVAN_ID = "cont_ivan";
+const MARIA_ID = "cont_maria";
 
 const [annaOrg] = await db
   .select({ id: organizations.id })

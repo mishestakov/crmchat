@@ -8,14 +8,14 @@ import {
   text,
   timestamp,
   unique,
-  uuid,
 } from "drizzle-orm/pg-core";
+import { shortId } from "./short-id";
 
-// TODO: switch to UUID v7 (pg_uuidv7 extension or app-side) when adding observability —
-// v7 is monotonic and index-friendly. v4 is fine for the skeleton.
+// Все PK — короткие 12-hex id (см. short-id.ts). Раньше были UUID-36, в URL'ах
+// и логах слишком длинно для нашей шкалы. Тип в БД — обычный text.
 
 export const users = pgTable("users", {
-  id: uuid("id").primaryKey().defaultRandom(),
+  id: text("id").primaryKey().$defaultFn(shortId),
   email: text("email").notNull().unique(),
   name: text("name"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -23,9 +23,9 @@ export const users = pgTable("users", {
 });
 
 export const organizations = pgTable("organizations", {
-  id: uuid("id").primaryKey().defaultRandom(),
+  id: text("id").primaryKey().$defaultFn(shortId),
   name: text("name").notNull(),
-  createdBy: uuid("created_by")
+  createdBy: text("created_by")
     .notNull()
     .references(() => users.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -36,7 +36,7 @@ export const sessions = pgTable(
   "sessions",
   {
     id: text("id").primaryKey(),
-    userId: uuid("user_id")
+    userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -52,12 +52,12 @@ export const sessions = pgTable(
 export const workspaces = pgTable(
   "workspaces",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    organizationId: uuid("organization_id")
+    id: text("id").primaryKey().$defaultFn(shortId),
+    organizationId: text("organization_id")
       .notNull()
       .references(() => organizations.id, { onDelete: "restrict" }),
     name: text("name").notNull(),
-    createdBy: uuid("created_by")
+    createdBy: text("created_by")
       .notNull()
       .references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -90,8 +90,8 @@ export type PropertyValue = { id: string; name: string };
 export const properties = pgTable(
   "properties",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    workspaceId: uuid("workspace_id")
+    id: text("id").primaryKey().$defaultFn(shortId),
+    workspaceId: text("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
     key: text("key").notNull(),
@@ -127,8 +127,8 @@ export type ContactViewFilters = {
 export const contactViews = pgTable(
   "contact_views",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    workspaceId: uuid("workspace_id")
+    id: text("id").primaryKey().$defaultFn(shortId),
+    workspaceId: text("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
@@ -137,7 +137,7 @@ export const contactViews = pgTable(
       .$type<ContactViewFilters>()
       .notNull()
       .default({}),
-    createdBy: uuid("created_by")
+    createdBy: text("created_by")
       .notNull()
       .references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -164,15 +164,15 @@ export const activityRepeat = pgEnum("activity_repeat", [
 export const contacts = pgTable(
   "contacts",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    workspaceId: uuid("workspace_id")
+    id: text("id").primaryKey().$defaultFn(shortId),
+    workspaceId: text("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
     properties: jsonb("properties")
       .$type<Record<string, unknown>>()
       .notNull()
       .default({}),
-    createdBy: uuid("created_by")
+    createdBy: text("created_by")
       .notNull()
       .references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -186,11 +186,11 @@ export const contacts = pgTable(
 export const activities = pgTable(
   "activities",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    workspaceId: uuid("workspace_id")
+    id: text("id").primaryKey().$defaultFn(shortId),
+    workspaceId: text("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
-    contactId: uuid("contact_id")
+    contactId: text("contact_id")
       .notNull()
       .references(() => contacts.id, { onDelete: "cascade" }),
     type: activityType("type").notNull(),
@@ -200,7 +200,7 @@ export const activities = pgTable(
     repeat: activityRepeat("repeat").notNull().default("none"),
     status: activityStatus("status").notNull().default("open"),
     completedAt: timestamp("completed_at", { withTimezone: true }),
-    createdBy: uuid("created_by")
+    createdBy: text("created_by")
       .notNull()
       .references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

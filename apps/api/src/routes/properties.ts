@@ -21,8 +21,8 @@ const PropertySchema = BasePropertySchema.openapi("Property");
 const CreatePropertySchema = BaseCreate.openapi("CreateProperty");
 const UpdatePropertySchema = BaseUpdate.openapi("UpdateProperty");
 
-const WsParam = z.object({ wsId: z.string().uuid() });
-const WsIdParam = z.object({ wsId: z.string().uuid(), id: z.string().uuid() });
+const WsParam = z.object({ wsId: z.string().min(1).max(64) });
+const WsIdParam = z.object({ wsId: z.string().min(1).max(64), id: z.string().min(1).max(64) });
 
 const app = new OpenAPIHono<{ Variables: WorkspaceVars }>();
 

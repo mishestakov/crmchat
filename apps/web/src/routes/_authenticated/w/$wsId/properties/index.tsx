@@ -56,31 +56,28 @@ function PropertiesList() {
   // motion Reorder требует controlled values. Обновляем кэш React Query
   // (он же source-of-truth) → motion видит новый порядок, анимирует.
   // PATCH-и шлём после drag-end (а не на каждый swap).
+  //
+  // Order глобально-уникален: visible идут первыми (в drag-порядке), скрытые
+  // hidden internal — после, sequential 0..N-1. Иначе sort `ORDER BY order` в
+  // БД получает коллизии (visible.order=0, full_name.order=0), tie ломается
+  // через createdAt и порядок «не сохраняется» после рефетча.
   const onReorder = (ordered: Property[]) => {
     qc.setQueryData<Property[]>(propertiesKey(wsId), (prev) => {
       if (!prev) return prev;
-      // Скрытые internal (которых нет в `ordered`) сохраняем как есть. Раньше тут
-      // фильтровали по `internal=true`, но `stage` (internal=true) видим в списке
-      // и перемещается → попадал и в `ordered`, и в "internal" → дубль в кэше.
       const orderedIds = new Set(ordered.map((p) => p.id));
       const rest = prev.filter((p) => !orderedIds.has(p.id));
-      return [
-        ...ordered.map((p, i) => ({ ...p, order: i })),
-        ...rest,
-      ];
+      return [...ordered, ...rest].map((p, i) => ({ ...p, order: i }));
     });
   };
 
   const persistOrder = () => {
     const cached = qc.getQueryData<Property[]>(propertiesKey(wsId));
     if (!cached) return;
-    // Тот же фильтр что у `items` — иначе `stage` (internal+visible) не попадёт
-    // в PATCH-и и его перенос потеряется при следующем рефетче.
-    const visibleNow = cached.filter((p) => !p.internal || p.key === "stage");
-    const newOrder = visibleNow
-      .map((p, i) => ({ id: p.id, order: i }))
-      .filter((x, i) => items[i]?.id !== x.id || items[i]?.order !== x.order);
-    if (newOrder.length === 0) return;
+    // Шлём весь порядок — diff с `list.data` не работает, т.к. это та же React Query
+    // кэш, и onReorder уже обновил её через setQueryData → к моменту onDragEnd
+    // closure ловит уже-новый list.data → diff пустой → ничего не уходило в БД.
+    // Для ~10 properties N round-trip'ов незаметны.
+    const newOrder = cached.map((p, i) => ({ id: p.id, order: i }));
     reorder.mutate({ newOrder });
   };
 
@@ -166,7 +163,7 @@ function PropertyRow(props: {
       onDragStart={props.onDragStart}
       onDragEnd={props.onDragEnd}
       onClick={props.onClick}
-      className="flex cursor-pointer items-center gap-3 bg-white px-5 py-3 hover:bg-zinc-50"
+      className="flex cursor-pointer select-none items-center gap-3 bg-white px-5 py-3 hover:bg-zinc-50"
     >
       <span
         onPointerDown={(e) => {

@@ -15,10 +15,10 @@ const CreateActivitySchema = BaseCreate.openapi("CreateActivity");
 const UpdateActivitySchema = BaseUpdate.openapi("UpdateActivity");
 
 const ListParam = z.object({
-  wsId: z.string().uuid(),
-  contactId: z.string().uuid(),
+  wsId: z.string().min(1).max(64),
+  contactId: z.string().min(1).max(64),
 });
-const ItemParam = ListParam.extend({ id: z.string().uuid() });
+const ItemParam = ListParam.extend({ id: z.string().min(1).max(64) });
 
 const app = new OpenAPIHono<{ Variables: WorkspaceVars }>();
 

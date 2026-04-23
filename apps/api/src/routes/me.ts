@@ -7,7 +7,7 @@ import type { SessionVars } from "../middleware/require-session";
 
 const Me = z
   .object({
-    id: z.string().uuid(),
+    id: z.string().min(1).max(64),
     // email — z.string(), не z.string().email(): dev seed использует "anna@local",
     // которое не пройдёт RFC-валидацию. Можно ужесточить когда выкинем dev-login.
     email: z.string(),

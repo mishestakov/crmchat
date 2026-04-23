@@ -1,10 +1,10 @@
 import { z } from "zod";
 
 export const WorkspaceSchema = z.object({
-  id: z.string().uuid(),
-  organizationId: z.string().uuid(),
+  id: z.string().min(1).max(64),
+  organizationId: z.string().min(1).max(64),
   name: z.string().min(1).max(120),
-  createdBy: z.string().uuid(),
+  createdBy: z.string().min(1).max(64),
   createdAt: z.string().datetime(),
 });
 

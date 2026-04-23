@@ -43,8 +43,8 @@ export const PropertyValueSchema = z.object({
 export type PropertyValue = z.infer<typeof PropertyValueSchema>;
 
 export const PropertySchema = z.object({
-  id: z.string().uuid(),
-  workspaceId: z.string().uuid(),
+  id: z.string().min(1).max(64),
+  workspaceId: z.string().min(1).max(64),
   key: z
     .string()
     .min(1)

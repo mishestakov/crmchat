@@ -11,12 +11,12 @@ export const ContactViewFiltersSchema = z.object({
 export type ContactViewFilters = z.infer<typeof ContactViewFiltersSchema>;
 
 export const ContactViewSchema = z.object({
-  id: z.string().uuid(),
-  workspaceId: z.string().uuid(),
+  id: z.string().min(1).max(64),
+  workspaceId: z.string().min(1).max(64),
   name: z.string(),
   mode: ContactViewModeSchema,
   filters: ContactViewFiltersSchema,
-  createdBy: z.string().uuid(),
+  createdBy: z.string().min(1).max(64),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });

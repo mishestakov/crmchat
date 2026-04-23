@@ -18,7 +18,7 @@ const isDevAuthEnabled =
 if (isDevAuthEnabled) {
   const DevUser = z
     .object({
-      id: z.string().uuid(),
+      id: z.string().min(1).max(64),
       email: z.string(),
       name: z.string().nullable(),
     })
@@ -54,7 +54,7 @@ if (isDevAuthEnabled) {
         body: {
           content: {
             "application/json": {
-              schema: z.object({ userId: z.string().uuid() }),
+              schema: z.object({ userId: z.string().min(1).max(64) }),
             },
           },
           required: true,

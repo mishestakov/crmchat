@@ -13,11 +13,11 @@ export type ContactNextStep = z.infer<typeof ContactNextStepSchema>;
 // (full_name) делает бэкенд через enforceRequiredProperties, а не Zod — потому что
 // "обязательность" зависит от runtime-определений в workspace.
 export const ContactSchema = z.object({
-  id: z.string().uuid(),
-  workspaceId: z.string().uuid(),
+  id: z.string().min(1).max(64),
+  workspaceId: z.string().min(1).max(64),
   properties: z.record(z.string(), z.unknown()),
   nextStep: ContactNextStepSchema.nullable(),
-  createdBy: z.string().uuid(),
+  createdBy: z.string().min(1).max(64),
   createdAt: z.string().datetime(),
 });
 export type Contact = z.infer<typeof ContactSchema>;

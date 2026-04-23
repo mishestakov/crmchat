@@ -15,7 +15,7 @@ const WorkspaceSchema = BaseWorkspaceSchema.openapi("Workspace");
 const CreateWorkspaceSchema = BaseCreateWorkspaceSchema.openapi("CreateWorkspace");
 const UpdateWorkspaceSchema = BaseUpdateWorkspaceSchema.openapi("UpdateWorkspace");
 
-const IdParam = z.object({ id: z.string().uuid() });
+const IdParam = z.object({ id: z.string().min(1).max(64) });
 
 const app = new OpenAPIHono<{ Variables: SessionVars }>();
 

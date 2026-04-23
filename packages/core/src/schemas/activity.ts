@@ -15,16 +15,16 @@ export const ActivityRepeatSchema = z.enum([
 export type ActivityRepeat = z.infer<typeof ActivityRepeatSchema>;
 
 export const ActivitySchema = z.object({
-  id: z.string().uuid(),
-  workspaceId: z.string().uuid(),
-  contactId: z.string().uuid(),
+  id: z.string().min(1).max(64),
+  workspaceId: z.string().min(1).max(64),
+  contactId: z.string().min(1).max(64),
   type: ActivityTypeSchema,
   text: z.string(),
   date: z.string().datetime().nullable(),
   repeat: ActivityRepeatSchema,
   status: ActivityStatusSchema,
   completedAt: z.string().datetime().nullable(),
-  createdBy: z.string().uuid(),
+  createdBy: z.string().min(1).max(64),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });

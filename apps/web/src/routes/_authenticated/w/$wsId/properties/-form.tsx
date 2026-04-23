@@ -281,6 +281,10 @@ function ValuesEditor(props: {
   protectedIds: Set<string>;
   newId: () => string;
 }) {
+  // id только что добавленной опции — чтобы автофокусом подсветить её input,
+  // и юзер мог сразу набирать название без второго клика.
+  const [justAddedId, setJustAddedId] = useState<string | null>(null);
+
   const update = (id: string, patch: Partial<PropertyValue>) => {
     props.onChange(
       props.values.map((v) => (v.id === id ? { ...v, ...patch } : v)),
@@ -298,7 +302,9 @@ function ValuesEditor(props: {
     props.onChange(props.values.filter((x) => x.id !== id));
   };
   const add = () => {
-    props.onChange([...props.values, { id: props.newId(), name: "" }]);
+    const id = props.newId();
+    props.onChange([...props.values, { id, name: "" }]);
+    setJustAddedId(id);
   };
 
   return (
@@ -314,6 +320,7 @@ function ValuesEditor(props: {
           <ValueRow
             key={v.id}
             value={v}
+            autoFocus={v.id === justAddedId}
             onChange={(patch) => update(v.id, patch)}
             onRemove={() => remove(v.id)}
           />
@@ -333,6 +340,7 @@ function ValuesEditor(props: {
 
 function ValueRow(props: {
   value: PropertyValue;
+  autoFocus?: boolean;
   onChange: (patch: Partial<PropertyValue>) => void;
   onRemove: () => void;
 }) {
@@ -343,7 +351,7 @@ function ValueRow(props: {
       as="li"
       dragListener={false}
       dragControls={controls}
-      className="flex items-center gap-2 bg-white px-3 py-2"
+      className="flex select-none items-center gap-2 bg-white px-3 py-2"
     >
       <span
         onPointerDown={(e) => {
@@ -357,7 +365,8 @@ function ValueRow(props: {
         ⠿
       </span>
       <input
-        className="flex-1 rounded border border-zinc-300 px-2 py-1 text-sm"
+        autoFocus={props.autoFocus}
+        className="flex-1 select-text rounded border border-zinc-300 px-2 py-1 text-sm"
         value={props.value.name}
         onChange={(e) => props.onChange({ name: e.target.value })}
         placeholder="Название значения"
