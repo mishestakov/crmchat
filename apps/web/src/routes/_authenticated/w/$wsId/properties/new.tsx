@@ -1,5 +1,6 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import type { PropertyType } from "@repo/core";
 import { api } from "../../../../../lib/api";
 import { errorMessage } from "../../../../../lib/errors";
 import { BackButton } from "../../../../../components/back-button";
@@ -18,7 +19,7 @@ function NewProperty() {
     mutationFn: async (input: {
       key: string;
       name: string;
-      type: "text" | "single_select" | "multi_select";
+      type: PropertyType;
       required: boolean;
       showInList: boolean;
       values: { id: string; name: string }[];

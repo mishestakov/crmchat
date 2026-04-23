@@ -22,6 +22,18 @@ const UpdateContactSchema = BaseUpdate.openapi("UpdateContact");
 const WsParam = z.object({ wsId: z.string().uuid() });
 const WsIdParam = z.object({ wsId: z.string().uuid(), id: z.string().uuid() });
 
+// По каким properties.* ключам делаем поиск через `q`. Только текстовые типы —
+// числа/select-ы фильтруем через `filters`. Совпадает с donor: full-text поиск
+// по identity полям, structured filter — отдельный canal.
+const SEARCHABLE_KEYS = [
+  "full_name",
+  "description",
+  "email",
+  "phone",
+  "telegram_username",
+  "url",
+];
+
 const app = new OpenAPIHono<{ Variables: WorkspaceVars }>();
 
 app.openapi(
@@ -68,10 +80,9 @@ app.openapi(
     if (q && q.trim()) {
       const pat = `%${q.trim()}%`;
       const matchOr = or(
-        ilike(contacts.name, pat),
-        ilike(contacts.email, pat),
-        ilike(contacts.phone, pat),
-        ilike(contacts.telegramUsername, pat),
+        ...SEARCHABLE_KEYS.map(
+          (k) => ilike(sql`${contacts.properties}->>${k}`, pat) as SQL,
+        ),
       );
       if (matchOr) conditions.push(matchOr);
     }
@@ -134,10 +145,6 @@ app.openapi(
       .insert(contacts)
       .values({
         workspaceId: wsId,
-        name: body.name ?? null,
-        email: body.email ?? null,
-        phone: body.phone ?? null,
-        telegramUsername: body.telegramUsername ?? null,
         properties: validatedProps,
         createdBy: userId,
       })
@@ -196,53 +203,44 @@ app.openapi(
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
 
-    // Для properties — merge-семантика: ключи с null/"" удаляются, остальные мерджатся
-    // поверх existing. Базовые поля (name/email/...) — replace по нормальной PATCH-семантике
-    // (Zod valid → значит клиент явно прислал; не присланные поля undefined → не трогаем).
-    const updates: Record<string, unknown> = { updatedAt: new Date() };
-    if ("name" in body) updates.name = body.name ?? null;
-    if ("email" in body) updates.email = body.email ?? null;
-    if ("phone" in body) updates.phone = body.phone ?? null;
-    if ("telegramUsername" in body) {
-      updates.telegramUsername = body.telegramUsername ?? null;
-    }
-
-    let finalProps: Record<string, unknown> | undefined;
-    if (body.properties !== undefined) {
-      const [existing] = await db
-        .select({ properties: contacts.properties })
+    if (body.properties === undefined) {
+      // Нечего обновлять — возвращаем текущий контакт без записи.
+      const [row] = await db
+        .select()
         .from(contacts)
         .where(and(eq(contacts.id, id), eq(contacts.workspaceId, wsId)))
         .limit(1);
-      if (!existing) {
-        throw new HTTPException(404, { message: "contact not found" });
-      }
-      const merged = { ...existing.properties };
-      // null / "" / [] в body.properties → удалить ключ
-      for (const [k, v] of Object.entries(body.properties)) {
-        if (
-          v === null ||
-          v === "" ||
-          (Array.isArray(v) && v.length === 0)
-        ) {
-          delete merged[k];
-        }
-      }
-      const defs = await loadPropertyDefs(wsId);
-      const validated = validateContactProperties(defs, body.properties);
-      Object.assign(merged, validated);
-      enforceRequiredProperties(defs, merged);
-      finalProps = merged;
-      updates.properties = merged;
+      if (!row) throw new HTTPException(404, { message: "contact not found" });
+      return c.json(serialize(row));
     }
+
+    const [existing] = await db
+      .select({ properties: contacts.properties })
+      .from(contacts)
+      .where(and(eq(contacts.id, id), eq(contacts.workspaceId, wsId)))
+      .limit(1);
+    if (!existing) {
+      throw new HTTPException(404, { message: "contact not found" });
+    }
+
+    // null / "" / [] в body.properties → удалить ключ; остальное мерджится поверх.
+    const merged = { ...existing.properties };
+    for (const [k, v] of Object.entries(body.properties)) {
+      if (v === null || v === "" || (Array.isArray(v) && v.length === 0)) {
+        delete merged[k];
+      }
+    }
+    const defs = await loadPropertyDefs(wsId);
+    const validated = validateContactProperties(defs, body.properties);
+    Object.assign(merged, validated);
+    enforceRequiredProperties(defs, merged);
 
     const [row] = await db
       .update(contacts)
-      .set(updates)
+      .set({ properties: merged, updatedAt: new Date() })
       .where(and(eq(contacts.id, id), eq(contacts.workspaceId, wsId)))
       .returning();
     if (!row) throw new HTTPException(404, { message: "contact not found" });
-    void finalProps;
     return c.json(serialize(row));
   },
 );
@@ -273,10 +271,6 @@ function serialize(row: typeof contacts.$inferSelect) {
   return {
     id: row.id,
     workspaceId: row.workspaceId,
-    name: row.name,
-    email: row.email,
-    phone: row.phone,
-    telegramUsername: row.telegramUsername,
     properties: row.properties,
     createdBy: row.createdBy,
     createdAt: row.createdAt.toISOString(),

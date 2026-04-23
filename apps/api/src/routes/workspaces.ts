@@ -8,6 +8,7 @@ import {
 } from "@repo/core";
 import { db } from "../db/client";
 import { organizations, workspaces } from "../db/schema";
+import { seedDefaultProperties } from "../lib/workspace-presets";
 import type { SessionVars } from "../middleware/require-session";
 
 const WorkspaceSchema = BaseWorkspaceSchema.openapi("Workspace");
@@ -76,6 +77,10 @@ app.openapi(createRouteDef, async (c) => {
     .insert(workspaces)
     .values({ name, organizationId: org.id, createdBy: userId })
     .returning();
+  // 8 preset-properties (full_name, description, email, phone, telegram_username,
+  // url, amount, stage). Делаем всегда — без них контакты невозможно создать,
+  // и UI ожидает их как identity-секцию карточки.
+  await seedDefaultProperties(row!.id);
   return c.json(serialize(row!), 201);
 });
 

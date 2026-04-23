@@ -2,12 +2,27 @@
 
 import { Reorder, useDragControls } from "motion/react";
 import { useState } from "react";
-import type { Property, PropertyType, PropertyValue } from "@repo/core";
+import {
+  CREATEABLE_PROPERTY_TYPES,
+  type Property,
+  type PropertyType,
+  type PropertyValue,
+} from "@repo/core";
 
+// Локализованные подписи для всех 9 типов (включая internal-only).
+// Internal-properties (email/url/tel/...) показываем в edit-режиме как label, потому
+// что тип фиксирован и не меняется. В create-режиме сегментированный селектор
+// фильтрует только CREATEABLE_PROPERTY_TYPES.
 const TYPE_LABELS: Record<PropertyType, string> = {
   text: "Текст",
   single_select: "Одиночный выбор",
   multi_select: "Множественный выбор",
+  user_select: "Пользователь",
+  textarea: "Многострочный текст",
+  url: "Ссылка",
+  email: "Email",
+  tel: "Телефон",
+  number: "Число",
 };
 
 const RU_TRANSLIT: Record<string, string> = {
@@ -113,11 +128,10 @@ export function PropertyForm(props: {
             <Segmented
               value={type}
               onChange={setType}
-              options={[
-                { value: "text", label: "Текст" },
-                { value: "single_select", label: "Одиночный выбор" },
-                { value: "multi_select", label: "Множественный выбор" },
-              ]}
+              options={CREATEABLE_PROPERTY_TYPES.map((t) => ({
+                value: t,
+                label: TYPE_LABELS[t],
+              }))}
             />
           )}
         </Row>

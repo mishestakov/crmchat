@@ -70,10 +70,19 @@ export const workspaces = pgTable(
 
 // Custom-property types. По спеке data-model.md §3 — date добавим когда упрёмся.
 // multi_select хранит string[] значений option.id; single_select — одно option.id.
+// Аналог donor PROPERTY_METADATA. Createable (text/single_select/multi_select) — юзер
+// сам создаёт через UI; остальные — только через preset-сидинг при создании workspace
+// (флаг `internal`). UI отфильтровывает createable при «новое поле».
 export const propertyType = pgEnum("property_type", [
   "text",
   "single_select",
   "multi_select",
+  "user_select",
+  "textarea",
+  "url",
+  "email",
+  "tel",
+  "number",
 ]);
 
 export type PropertyValue = { id: string; name: string };
@@ -91,7 +100,10 @@ export const properties = pgTable(
     order: integer("order").notNull().default(0),
     required: boolean("required").notNull().default(false),
     showInList: boolean("show_in_list").notNull().default(true),
-    // null для text/number; массив опций для single_select
+    // true для preset-полей, засеянных при создании workspace (full_name/email/...).
+    // UI: нельзя удалить, тип фиксирован; rename/required/showInList разрешены.
+    internal: boolean("internal").notNull().default(false),
+    // null для скалярных типов; массив опций для single_select/multi_select.
     values: jsonb("values").$type<PropertyValue[]>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -145,6 +157,10 @@ export const activityRepeat = pgEnum("activity_repeat", [
   "monthly",
 ]);
 
+// Все данные контакта — в `properties` jsonb. Системные поля (full_name, email,
+// phone, url, amount, telegram_username, description, stage) сидятся как preset
+// properties при создании workspace; кастомные поля юзера лежат тут же. Структура
+// 1:1 с donor (за вычетом avatarUrl).
 export const contacts = pgTable(
   "contacts",
   {
@@ -152,11 +168,6 @@ export const contacts = pgTable(
     workspaceId: uuid("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
-    name: text("name"),
-    email: text("email"),
-    phone: text("phone"),
-    telegramUsername: text("telegram_username"),
-    // { [property.key]: value } — value подбирается по property.type на app-уровне.
     properties: jsonb("properties")
       .$type<Record<string, unknown>>()
       .notNull()

@@ -161,6 +161,11 @@ function PropertyRow(props: {
         ⠿
       </span>
       <div className="flex-1 font-medium">{props.property.name}</div>
+      {props.property.internal && (
+        <span className="rounded-full border border-zinc-200 px-2 py-0.5 text-xs text-zinc-500">
+          системное
+        </span>
+      )}
       <span className="text-2xl leading-none text-zinc-300">›</span>
     </Reorder.Item>
   );

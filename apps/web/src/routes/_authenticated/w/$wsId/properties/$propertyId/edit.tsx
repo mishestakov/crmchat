@@ -1,5 +1,6 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { PropertyType } from "@repo/core";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
 import { BackButton } from "../../../../../../components/back-button";
@@ -35,7 +36,7 @@ function EditProperty() {
       name: string;
       required: boolean;
       showInList: boolean;
-      type: "text" | "single_select" | "multi_select";
+      type: PropertyType;
       values: { id: string; name: string }[];
     }) => {
       const { error } = await api.PATCH(
@@ -101,15 +102,19 @@ function EditProperty() {
           initial={property}
           onCancel={() => router.history.back()}
           onSave={(input) => update.mutate(input)}
-          onDelete={() => {
-            if (
-              confirm(
-                `Удалить «${property.name}»? Значения у контактов тоже будут стёрты.`,
-              )
-            ) {
-              remove.mutate();
-            }
-          }}
+          onDelete={
+            property.internal
+              ? undefined
+              : () => {
+                  if (
+                    confirm(
+                      `Удалить «${property.name}»? Значения у контактов тоже будут стёрты.`,
+                    )
+                  ) {
+                    remove.mutate();
+                  }
+                }
+          }
           saving={update.isPending}
           error={update.error ? errorMessage(update.error) : null}
         />

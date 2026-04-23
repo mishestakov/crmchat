@@ -72,9 +72,12 @@ app.openapi(
   async (c) => {
     const wsId = c.get("workspaceId");
     const body = c.req.valid("json");
-    if (body.type === "single_select" && (!body.values || body.values.length === 0)) {
+    if (
+      (body.type === "single_select" || body.type === "multi_select") &&
+      (!body.values || body.values.length === 0)
+    ) {
       throw new HTTPException(400, {
-        message: "single_select requires non-empty values[]",
+        message: `${body.type} requires non-empty values[]`,
       });
     }
     try {
@@ -87,6 +90,9 @@ app.openapi(
           type: body.type,
           required: body.required ?? false,
           showInList: body.showInList ?? true,
+          // internal=true ставится только при сидинге workspace'а; пользовательский
+          // POST всегда создаёт обычное (deletable, type-fixed) свойство.
+          internal: false,
           values: body.values ?? null,
         })
         .returning();
@@ -201,16 +207,27 @@ app.openapi(
     // workspace'а. Иначе в JSONB остаются висячие ключи, которые позже всплывут в
     // экспорте/аналитике.
     await db.transaction(async (tx) => {
-      const [deleted] = await tx
-        .delete(properties)
+      const [existing] = await tx
+        .select({ key: properties.key, internal: properties.internal })
+        .from(properties)
         .where(and(eq(properties.id, id), eq(properties.workspaceId, wsId)))
-        .returning({ key: properties.key });
-      if (!deleted) {
+        .limit(1);
+      if (!existing) {
         throw new HTTPException(404, { message: "property not found" });
       }
+      if (existing.internal) {
+        // Preset (full_name/email/.../stage) — переименовать можно, удалить нельзя.
+        // UI и так не показывает кнопку удаления для internal, это страховка.
+        throw new HTTPException(400, {
+          message: "internal property cannot be deleted",
+        });
+      }
+      await tx
+        .delete(properties)
+        .where(and(eq(properties.id, id), eq(properties.workspaceId, wsId)));
       await tx
         .update(contacts)
-        .set({ properties: sql`${contacts.properties} - ${deleted.key}` })
+        .set({ properties: sql`${contacts.properties} - ${existing.key}` })
         .where(eq(contacts.workspaceId, wsId));
     });
     return c.body(null, 204);
@@ -227,6 +244,7 @@ function serialize(row: typeof properties.$inferSelect) {
     order: row.order,
     required: row.required,
     showInList: row.showInList,
+    internal: row.internal,
     values: row.values,
     createdAt: row.createdAt.toISOString(),
   };

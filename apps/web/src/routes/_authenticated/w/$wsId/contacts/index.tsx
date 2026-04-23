@@ -1,6 +1,7 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { Send } from "lucide-react";
 import type {
   Contact,
   ContactView,
@@ -396,16 +397,16 @@ function ListView(props: {
 }) {
   const navigate = useNavigate();
   const { wsId, rows, properties } = props;
-  // Только properties, помеченные «Отображать в списке».
-  const visibleProps = properties.filter((p) => p.showInList);
+  // full_name всегда первая колонка (как «Имя»); остальные — properties.showInList
+  // в порядке, заданном в /properties (drag-reorder).
+  const visibleProps = properties.filter(
+    (p) => p.showInList && p.key !== "full_name",
+  );
   return (
     <table className="w-full border-collapse text-sm">
       <thead>
         <tr className="border-b border-zinc-300 text-left">
           <th className="py-2 pr-4">Имя</th>
-          <th className="py-2 pr-4">Email</th>
-          <th className="py-2 pr-4">Телефон</th>
-          <th className="py-2 pr-4">Telegram</th>
           {visibleProps.map((p) => (
             <th key={p.id} className="py-2 pr-4">
               {p.name}
@@ -417,35 +418,36 @@ function ListView(props: {
         {rows.length === 0 && (
           <tr>
             <td
-              colSpan={4 + visibleProps.length}
+              colSpan={1 + visibleProps.length}
               className="py-4 text-zinc-500"
             >
               Пока пусто
             </td>
           </tr>
         )}
-        {rows.map((r) => (
-          <tr
-            key={r.id}
-            onClick={() =>
-              navigate({
-                to: "/w/$wsId/contacts/$id",
-                params: { wsId, id: r.id },
-              })
-            }
-            className="cursor-pointer border-b border-zinc-100 hover:bg-zinc-50"
-          >
-            <td className="py-2 pr-4">{r.name ?? "—"}</td>
-            <td className="py-2 pr-4">{r.email ?? "—"}</td>
-            <td className="py-2 pr-4">{r.phone ?? "—"}</td>
-            <td className="py-2 pr-4">{r.telegramUsername ?? "—"}</td>
-            {visibleProps.map((p) => (
-              <td key={p.id} className="py-2 pr-4">
-                {renderValue(p, (r.properties as Record<string, unknown>)[p.key])}
-              </td>
-            ))}
-          </tr>
-        ))}
+        {rows.map((r) => {
+          const v = r.properties as Record<string, unknown>;
+          const name = typeof v.full_name === "string" ? v.full_name : null;
+          return (
+            <tr
+              key={r.id}
+              onClick={() =>
+                navigate({
+                  to: "/w/$wsId/contacts/$id",
+                  params: { wsId, id: r.id },
+                })
+              }
+              className="cursor-pointer border-b border-zinc-100 hover:bg-zinc-50"
+            >
+              <td className="py-2 pr-4">{name ?? "—"}</td>
+              {visibleProps.map((p) => (
+                <td key={p.id} className="py-2 pr-4">
+                  {renderValue(p, v[p.key])}
+                </td>
+              ))}
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );
@@ -577,23 +579,33 @@ function Column(props: {
         {props.title} <span className="text-zinc-500">{props.rows.length}</span>
       </div>
       <div className="flex-1 space-y-2 overflow-y-auto">
-        {props.rows.map((r) => (
-          <div
-            key={r.id}
-            draggable
-            onDragStart={(e) => {
-              e.dataTransfer.setData("text/plain", r.id);
-              e.dataTransfer.effectAllowed = "move";
-            }}
-            onClick={() => props.onOpen(r.id)}
-            className="cursor-pointer rounded-md border border-zinc-200 bg-white p-2.5 text-sm shadow-sm hover:bg-zinc-50 active:cursor-grabbing"
-          >
-            <div className="font-medium">{r.name ?? "—"}</div>
-            {r.email && (
-              <div className="text-xs text-zinc-500">{r.email}</div>
-            )}
-          </div>
-        ))}
+        {props.rows.map((r) => {
+          const v = r.properties as Record<string, unknown>;
+          const name = typeof v.full_name === "string" ? v.full_name : null;
+          const tg =
+            typeof v.telegram_username === "string"
+              ? v.telegram_username.replace(/^@/, "")
+              : null;
+          return (
+            <div
+              key={r.id}
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.setData("text/plain", r.id);
+                e.dataTransfer.effectAllowed = "move";
+              }}
+              onClick={() => props.onOpen(r.id)}
+              className="cursor-pointer rounded-md border border-zinc-200 bg-white p-2.5 text-sm shadow-sm hover:bg-zinc-50 active:cursor-grabbing"
+            >
+              <div className="font-medium">{name ?? "—"}</div>
+              {tg && (
+                <div className="mt-0.5 flex items-center gap-1 text-xs text-zinc-500">
+                  <Send size={11} className="text-sky-500" />@{tg}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -614,6 +626,9 @@ function renderValue(p: Property, raw: unknown): string {
           : String(id),
       )
       .join(", ");
+  }
+  if (p.type === "number" && typeof raw === "number") {
+    return raw.toLocaleString("ru-RU");
   }
   return String(raw);
 }

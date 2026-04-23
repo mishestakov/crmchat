@@ -34,30 +34,76 @@ export function validateContactProperties(
     if (!def) {
       throw new HTTPException(400, { message: `unknown property: ${key}` });
     }
-    if (def.type === "text") {
-      if (typeof raw !== "string") {
+    out[key] = validateValue(def, raw);
+  }
+  return out;
+}
+
+function validateValue(def: PropertyDef, raw: unknown): unknown {
+  const expectString = (label: string) => {
+    if (typeof raw !== "string") {
+      throw new HTTPException(400, {
+        message: `property "${def.key}" expects ${label}`,
+      });
+    }
+    return raw;
+  };
+
+  switch (def.type) {
+    case "text":
+    case "textarea":
+    case "tel":
+    case "user_select":
+      return expectString("string");
+
+    case "email": {
+      const s = expectString("email string");
+      // Лёгкая проверка — UI ставит type="email" и валидирует браузером;
+      // здесь финальный страховочный rejection уродцев.
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)) {
         throw new HTTPException(400, {
-          message: `property "${key}" expects string`,
+          message: `property "${def.key}": invalid email`,
         });
       }
-      out[key] = raw;
-    } else if (def.type === "single_select") {
-      if (typeof raw !== "string") {
+      return s;
+    }
+
+    case "url": {
+      const s = expectString("url string");
+      try {
+        new URL(s);
+      } catch {
         throw new HTTPException(400, {
-          message: `property "${key}" expects option id`,
+          message: `property "${def.key}": invalid url`,
         });
       }
-      const ok = def.values?.some((v) => v.id === raw);
+      return s;
+    }
+
+    case "number": {
+      if (typeof raw !== "number" || !Number.isFinite(raw)) {
+        throw new HTTPException(400, {
+          message: `property "${def.key}" expects number`,
+        });
+      }
+      return raw;
+    }
+
+    case "single_select": {
+      const s = expectString("option id");
+      const ok = def.values?.some((v) => v.id === s);
       if (!ok) {
         throw new HTTPException(400, {
-          message: `property "${key}": unknown option "${raw}"`,
+          message: `property "${def.key}": unknown option "${s}"`,
         });
       }
-      out[key] = raw;
-    } else if (def.type === "multi_select") {
+      return s;
+    }
+
+    case "multi_select": {
       if (!Array.isArray(raw)) {
         throw new HTTPException(400, {
-          message: `property "${key}" expects array of option ids`,
+          message: `property "${def.key}" expects array of option ids`,
         });
       }
       const allowed = new Set(def.values?.map((v) => v.id) ?? []);
@@ -65,20 +111,28 @@ export function validateContactProperties(
       for (const item of raw) {
         if (typeof item !== "string") {
           throw new HTTPException(400, {
-            message: `property "${key}": each value must be string`,
+            message: `property "${def.key}": each value must be string`,
           });
         }
         if (!allowed.has(item)) {
           throw new HTTPException(400, {
-            message: `property "${key}": unknown option "${item}"`,
+            message: `property "${def.key}": unknown option "${item}"`,
           });
         }
         cleaned.push(item);
       }
-      out[key] = Array.from(new Set(cleaned));
+      return Array.from(new Set(cleaned));
+    }
+
+    default: {
+      // exhaustiveness: добавил новый PropertyType — TS зажжёт здесь, и без явного
+      // case значение не пройдёт молча через валидатор.
+      const _exhaustive: never = def.type;
+      throw new HTTPException(500, {
+        message: `unhandled property type: ${String(_exhaustive)}`,
+      });
     }
   }
-  return out;
 }
 
 // Проверяет, что для всех required-properties значение задано (не пусто) в финальном
