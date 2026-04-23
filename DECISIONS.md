@@ -142,6 +142,16 @@
 
 ---
 
+## Property type enum: number → multi_select без миграции
+
+**Решение.** В MVP-итерации property_type был `text|number|single_select`. После UX-feedback `number` убран, добавлен `multi_select` (хранится массивом option.id в `contacts.properties[key]`). Переход сделан **дропом БД** (`docker compose down -v && db:push && db:seed`).
+
+**Почему дроп, а не миграция.** Постгрес не поддерживает `ALTER TYPE ... DROP VALUE`. Аккуратная prod-миграция этого enum требует recreate через временный тип + `ALTER TABLE ALTER COLUMN ... USING ...`. До prod-деплоя у нас нет «живых» данных — дроп проще и оставляет схему чистой. Согласовано как универсальное правило (см. memory: «Drop DB before prod»).
+
+**Что когда поедем в prod.** Включить `drizzle-kit generate + migrate`, и любая будущая правка enum будет идти через явную миграцию (recreate-pattern). Записать в pre-launch чек-лист.
+
+---
+
 ## Шаблон для новых записей
 
 ```

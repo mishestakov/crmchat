@@ -1,14 +1,18 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { and, eq } from "drizzle-orm";
+import { and, eq, ilike, or, sql, type SQL } from "drizzle-orm";
 import {
   ContactSchema as BaseContactSchema,
   CreateContactSchema as BaseCreate,
   UpdateContactSchema as BaseUpdate,
 } from "@repo/core";
 import { db } from "../db/client";
-import { contacts } from "../db/schema";
-import { validateContactProperties } from "../lib/contact-properties";
+import { contacts, properties as propsTable } from "../db/schema";
+import {
+  enforceRequiredProperties,
+  loadPropertyDefs,
+  validateContactProperties,
+} from "../lib/contact-properties";
 import type { WorkspaceVars } from "../middleware/assert-member";
 
 const ContactSchema = BaseContactSchema.openapi("Contact");
@@ -25,20 +29,76 @@ app.openapi(
     method: "get",
     path: "/v1/workspaces/{wsId}/contacts",
     tags: ["contacts"],
-    request: { params: WsParam },
+    request: {
+      params: WsParam,
+      query: z.object({
+        q: z.string().optional(),
+        // JSON-encoded { [propertyKey]: value } — динамические ключи плохо лезут
+        // в openapi typed query. Оборачиваем строкой и парсим.
+        filters: z.string().optional(),
+      }),
+    },
     responses: {
       200: {
         content: { "application/json": { schema: z.array(ContactSchema) } },
-        description: "All contacts in the workspace",
+        description: "Contacts (опционально отфильтрованные)",
       },
     },
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const { q, filters: filtersStr } = c.req.valid("query");
+
+    let filters: Record<string, string> = {};
+    if (filtersStr) {
+      try {
+        const parsed = JSON.parse(filtersStr);
+        if (parsed && typeof parsed === "object") {
+          for (const [k, v] of Object.entries(parsed)) {
+            if (typeof v === "string" && v !== "") filters[k] = v;
+          }
+        }
+      } catch {
+        throw new HTTPException(400, { message: "filters must be valid JSON" });
+      }
+    }
+
+    const conditions: SQL[] = [eq(contacts.workspaceId, wsId)];
+
+    if (q && q.trim()) {
+      const pat = `%${q.trim()}%`;
+      const matchOr = or(
+        ilike(contacts.name, pat),
+        ilike(contacts.email, pat),
+        ilike(contacts.phone, pat),
+        ilike(contacts.telegramUsername, pat),
+      );
+      if (matchOr) conditions.push(matchOr);
+    }
+
+    if (Object.keys(filters).length > 0) {
+      // Загружаем определения properties, чтобы выбрать оператор:
+      // multi_select хранится массивом → containment, остальное → "->" сравнение.
+      const defs = await db
+        .select({ key: propsTable.key, type: propsTable.type })
+        .from(propsTable)
+        .where(eq(propsTable.workspaceId, wsId));
+      const typeByKey = new Map(defs.map((d) => [d.key, d.type]));
+      for (const [key, value] of Object.entries(filters)) {
+        if (typeByKey.get(key) === "multi_select") {
+          conditions.push(
+            sql`${contacts.properties}->${key} @> ${JSON.stringify([value])}::jsonb`,
+          );
+        } else {
+          conditions.push(sql`${contacts.properties}->>${key} = ${value}`);
+        }
+      }
+    }
+
     const rows = await db
       .select()
       .from(contacts)
-      .where(eq(contacts.workspaceId, wsId))
+      .where(and(...conditions))
       .orderBy(contacts.createdAt);
     return c.json(rows.map(serialize));
   },
@@ -67,7 +127,9 @@ app.openapi(
     const wsId = c.get("workspaceId");
     const userId = c.get("userId");
     const body = c.req.valid("json");
-    const validatedProps = await validateContactProperties(wsId, body.properties);
+    const defs = await loadPropertyDefs(wsId);
+    const validatedProps = validateContactProperties(defs, body.properties);
+    enforceRequiredProperties(defs, validatedProps);
     const [row] = await db
       .insert(contacts)
       .values({
@@ -145,6 +207,7 @@ app.openapi(
       updates.telegramUsername = body.telegramUsername ?? null;
     }
 
+    let finalProps: Record<string, unknown> | undefined;
     if (body.properties !== undefined) {
       const [existing] = await db
         .select({ properties: contacts.properties })
@@ -155,13 +218,21 @@ app.openapi(
         throw new HTTPException(404, { message: "contact not found" });
       }
       const merged = { ...existing.properties };
-      // null/"" в body.properties → удалить ключ
+      // null / "" / [] в body.properties → удалить ключ
       for (const [k, v] of Object.entries(body.properties)) {
-        if (v === null || v === "") delete merged[k];
+        if (
+          v === null ||
+          v === "" ||
+          (Array.isArray(v) && v.length === 0)
+        ) {
+          delete merged[k];
+        }
       }
-      // валидация non-null значений + merge поверх
-      const validated = await validateContactProperties(wsId, body.properties);
+      const defs = await loadPropertyDefs(wsId);
+      const validated = validateContactProperties(defs, body.properties);
       Object.assign(merged, validated);
+      enforceRequiredProperties(defs, merged);
+      finalProps = merged;
       updates.properties = merged;
     }
 
@@ -171,6 +242,7 @@ app.openapi(
       .where(and(eq(contacts.id, id), eq(contacts.workspaceId, wsId)))
       .returning();
     if (!row) throw new HTTPException(404, { message: "contact not found" });
+    void finalProps;
     return c.json(serialize(row));
   },
 );

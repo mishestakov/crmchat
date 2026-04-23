@@ -11,6 +11,7 @@ import {
 } from "./middleware/assert-member";
 import activities from "./routes/activities";
 import auth from "./routes/auth";
+import contactViews from "./routes/contact-views";
 import contacts from "./routes/contacts";
 import me from "./routes/me";
 import properties from "./routes/properties";
@@ -36,6 +37,7 @@ protectedApp.route("/", workspaces);
 const wsApp = new OpenAPIHono<{ Variables: WorkspaceVars }>();
 wsApp.use("/v1/workspaces/:wsId/*", assertMember);
 wsApp.route("/", contacts);
+wsApp.route("/", contactViews);
 wsApp.route("/", properties);
 wsApp.route("/", activities);
 protectedApp.route("/", wsApp);

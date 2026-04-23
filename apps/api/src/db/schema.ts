@@ -1,4 +1,5 @@
 import {
+  boolean,
   index,
   integer,
   jsonb,
@@ -67,12 +68,12 @@ export const workspaces = pgTable(
   }),
 );
 
-// Custom-property types. По спеке data-model.md §3 — date/multi_select добавим
-// когда упрёмся; для скелета достаточно трёх.
+// Custom-property types. По спеке data-model.md §3 — date добавим когда упрёмся.
+// multi_select хранит string[] значений option.id; single_select — одно option.id.
 export const propertyType = pgEnum("property_type", [
   "text",
-  "number",
   "single_select",
+  "multi_select",
 ]);
 
 export type PropertyValue = { id: string; name: string };
@@ -88,6 +89,8 @@ export const properties = pgTable(
     name: text("name").notNull(),
     type: propertyType("type").notNull(),
     order: integer("order").notNull().default(0),
+    required: boolean("required").notNull().default(false),
+    showInList: boolean("show_in_list").notNull().default(true),
     // null для text/number; массив опций для single_select
     values: jsonb("values").$type<PropertyValue[]>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -99,6 +102,37 @@ export const properties = pgTable(
       t.key,
     ),
     workspaceIdx: index("properties_workspace_id_idx").on(t.workspaceId),
+  }),
+);
+
+export const contactViewMode = pgEnum("contact_view_mode", ["list", "kanban"]);
+
+export type ContactViewFilters = {
+  q?: string;
+  props?: Record<string, string>;
+};
+
+export const contactViews = pgTable(
+  "contact_views",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    mode: contactViewMode("mode").notNull().default("list"),
+    filters: jsonb("filters")
+      .$type<ContactViewFilters>()
+      .notNull()
+      .default({}),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    workspaceIdx: index("contact_views_workspace_id_idx").on(t.workspaceId),
   }),
 );
 

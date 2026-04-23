@@ -1,8 +1,4 @@
-import {
-  Link,
-  createFileRoute,
-  useNavigate,
-} from "@tanstack/react-router";
+import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { Property } from "@repo/core";
@@ -15,7 +11,7 @@ export const Route = createFileRoute("/_authenticated/w/$wsId/contacts/new")({
 
 function NewContact() {
   const { wsId } = Route.useParams();
-  const navigate = useNavigate();
+  const router = useRouter();
   const qc = useQueryClient();
 
   const properties = useQuery({
@@ -36,21 +32,17 @@ function NewContact() {
     phone: "",
     telegramUsername: "",
   });
-  const [props, setProps] = useState<Record<string, string>>({});
+  const [props, setProps] = useState<Record<string, string | string[]>>({});
 
   const create = useMutation({
     mutationFn: async () => {
       const propsClean: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(props)) {
-        if (v === "") continue;
-        const def = properties.data?.find((p) => p.key === k);
-        if (def?.type === "number") {
-          const n = Number(v);
-          if (!Number.isFinite(n)) {
-            throw new Error(`Поле "${def.name}": ожидается число`);
-          }
-          propsClean[k] = n;
-        } else propsClean[k] = v;
+        if (Array.isArray(v)) {
+          if (v.length > 0) propsClean[k] = v;
+        } else if (v !== "") {
+          propsClean[k] = v;
+        }
       }
       const { data, error } = await api.POST(
         "/v1/workspaces/{wsId}/contacts",
@@ -70,7 +62,9 @@ function NewContact() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["contacts", wsId] });
-      navigate({ to: "/w/$wsId/contacts", params: { wsId } });
+      // back, чтобы сохранить mode/q/filters (если пришли из канбана —
+      // вернёмся в канбан, а не сбросимся на дефолт-список).
+      router.history.back();
     },
   });
 
@@ -78,13 +72,12 @@ function NewContact() {
     <div className="mx-auto max-w-xl p-8 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Новый контакт</h1>
-        <Link
-          to="/w/$wsId/contacts"
-          params={{ wsId }}
+        <button
+          onClick={() => router.history.back()}
           className="text-sm text-zinc-500 hover:text-zinc-900"
         >
           ← Назад
-        </Link>
+        </button>
       </div>
 
       <form
@@ -118,8 +111,8 @@ function NewContact() {
         {properties.data?.map((p) => (
           <PropertyField
             key={p.id}
-            property={p as Property}
-            value={props[p.key] ?? ""}
+            property={p}
+            value={props[p.key]}
             onChange={(v) => setProps({ ...props, [p.key]: v })}
           />
         ))}
@@ -158,8 +151,8 @@ function Field(props: {
 
 function PropertyField(props: {
   property: Property;
-  value: string;
-  onChange: (v: string) => void;
+  value: string | string[] | undefined;
+  onChange: (v: string | string[]) => void;
 }) {
   const { property: p, value, onChange } = props;
   return (
@@ -168,7 +161,7 @@ function PropertyField(props: {
       {p.type === "single_select" ? (
         <select
           className="w-full rounded border border-zinc-300 bg-white px-3 py-2"
-          value={value}
+          value={typeof value === "string" ? value : ""}
           onChange={(e) => onChange(e.target.value)}
         >
           <option value="">—</option>
@@ -178,14 +171,55 @@ function PropertyField(props: {
             </option>
           ))}
         </select>
+      ) : p.type === "multi_select" ? (
+        <MultiSelectField
+          options={p.values ?? []}
+          value={Array.isArray(value) ? value : []}
+          onChange={onChange}
+        />
       ) : (
         <input
-          type={p.type === "number" ? "number" : "text"}
+          type="text"
           className="w-full rounded border border-zinc-300 px-3 py-2"
-          value={value}
+          value={typeof value === "string" ? value : ""}
           onChange={(e) => onChange(e.target.value)}
         />
       )}
     </label>
+  );
+}
+
+function MultiSelectField(props: {
+  options: { id: string; name: string }[];
+  value: string[];
+  onChange: (v: string[]) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {props.options.map((o) => {
+        const selected = props.value.includes(o.id);
+        return (
+          <button
+            type="button"
+            key={o.id}
+            onClick={() =>
+              props.onChange(
+                selected
+                  ? props.value.filter((x) => x !== o.id)
+                  : [...props.value, o.id],
+              )
+            }
+            className={
+              "rounded-full border px-3 py-1 text-sm transition-colors " +
+              (selected
+                ? "border-zinc-900 bg-zinc-900 text-white"
+                : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50")
+            }
+          >
+            {o.name}
+          </button>
+        );
+      })}
+    </div>
   );
 }

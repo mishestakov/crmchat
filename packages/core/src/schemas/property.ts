@@ -1,6 +1,10 @@
 import { z } from "zod";
 
-export const PropertyTypeSchema = z.enum(["text", "number", "single_select"]);
+export const PropertyTypeSchema = z.enum([
+  "text",
+  "single_select",
+  "multi_select",
+]);
 export type PropertyType = z.infer<typeof PropertyTypeSchema>;
 
 export const PropertyValueSchema = z.object({
@@ -20,6 +24,8 @@ export const PropertySchema = z.object({
   name: z.string().min(1).max(120),
   type: PropertyTypeSchema,
   order: z.number().int(),
+  required: z.boolean(),
+  showInList: z.boolean(),
   values: z.array(PropertyValueSchema).nullable(),
   createdAt: z.string().datetime(),
 });
@@ -30,6 +36,8 @@ export const CreatePropertySchema = PropertySchema.pick({
   name: true,
   type: true,
 }).extend({
+  required: z.boolean().optional(),
+  showInList: z.boolean().optional(),
   values: z.array(PropertyValueSchema).optional(),
 });
 export type CreatePropertyInput = z.infer<typeof CreatePropertySchema>;
@@ -38,6 +46,8 @@ export const UpdatePropertySchema = z
   .object({
     name: z.string().min(1).max(120),
     order: z.number().int(),
+    required: z.boolean(),
+    showInList: z.boolean(),
     values: z.array(PropertyValueSchema).nullable(),
   })
   .partial();

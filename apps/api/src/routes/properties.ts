@@ -85,6 +85,8 @@ app.openapi(
           key: body.key,
           name: body.name,
           type: body.type,
+          required: body.required ?? false,
+          showInList: body.showInList ?? true,
           values: body.values ?? null,
         })
         .returning();
@@ -122,12 +124,64 @@ app.openapi(
     const wsId = c.get("workspaceId");
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
-    const [row] = await db
-      .update(properties)
-      .set({ ...body, updatedAt: new Date() })
-      .where(and(eq(properties.id, id), eq(properties.workspaceId, wsId)))
-      .returning();
-    if (!row) throw new HTTPException(404, { message: "property not found" });
+
+    // Если меняем values у *_select — определяем удалённые option.id и в той же
+    // транзакции чистим их из contacts.properties[key]:
+    //  - single_select: ключ удаляется (`- key`), если значение было одним из removed
+    //  - multi_select: фильтруем массив без removed
+    const row = await db.transaction(async (tx) => {
+      const [existing] = await tx
+        .select()
+        .from(properties)
+        .where(and(eq(properties.id, id), eq(properties.workspaceId, wsId)))
+        .limit(1);
+      if (!existing) {
+        throw new HTTPException(404, { message: "property not found" });
+      }
+
+      let removedIds: string[] = [];
+      if (body.values !== undefined && existing.values) {
+        const newIds = new Set((body.values ?? []).map((v) => v.id));
+        removedIds = existing.values
+          .map((v) => v.id)
+          .filter((vid) => !newIds.has(vid));
+      }
+
+      const [updated] = await tx
+        .update(properties)
+        .set({ ...body, updatedAt: new Date() })
+        .where(and(eq(properties.id, id), eq(properties.workspaceId, wsId)))
+        .returning();
+
+      if (removedIds.length > 0) {
+        if (existing.type === "single_select") {
+          await tx.execute(sql`
+            UPDATE contacts
+            SET properties = properties - ${existing.key}::text
+            WHERE workspace_id = ${wsId}
+              AND properties->>${existing.key} = ANY(${removedIds}::text[])
+          `);
+        } else if (existing.type === "multi_select") {
+          await tx.execute(sql`
+            UPDATE contacts
+            SET properties = jsonb_set(
+              properties,
+              ARRAY[${existing.key}::text],
+              COALESCE(
+                (SELECT jsonb_agg(e)
+                 FROM jsonb_array_elements_text(properties->${existing.key}) e
+                 WHERE NOT (e = ANY(${removedIds}::text[]))),
+                '[]'::jsonb
+              )
+            )
+            WHERE workspace_id = ${wsId}
+              AND jsonb_typeof(properties->${existing.key}) = 'array'
+          `);
+        }
+      }
+
+      return updated!;
+    });
     return c.json(serialize(row));
   },
 );
@@ -171,6 +225,8 @@ function serialize(row: typeof properties.$inferSelect) {
     name: row.name,
     type: row.type,
     order: row.order,
+    required: row.required,
+    showInList: row.showInList,
     values: row.values,
     createdAt: row.createdAt.toISOString(),
   };
