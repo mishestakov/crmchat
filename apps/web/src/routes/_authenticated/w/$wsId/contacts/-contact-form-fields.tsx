@@ -1,33 +1,15 @@
 // Общая форма полей контакта — используется в /contacts/new и /contacts/$id/edit.
-// Получает properties (определения) + values (текущее состояние) + onChange.
-// Сама группирует поля на 2 карточки и реализует progressive disclosure для
-// optional identity-полей (email/phone/telegram/url через chip-ряд).
+// Один блок, одно правило отображения:
+//   ALWAYS_SHOWN_KEYS — всегда поле (full_name, description, stage)
+//   filled (есть значение) — поле
+//   иначе — chip «+ Email» внизу, по клику раскрывается в поле
+// Без деления identity/properties и спец-исключений.
 
 import { useState } from "react";
 import type { Property, PropertyType } from "@repo/core";
 
-// Identity-properties: имя, описание + контакты. В view рендерятся специально
-// (имя по центру, описание подписью, остальное — соц.иконки). В edit — собраны
-// в верхнюю карточку. Импортируется отсюда же в $id/index.tsx, чтобы не плодить
-// дубликат.
-export const IDENTITY_KEYS = new Set([
-  "full_name",
-  "description",
-  "email",
-  "phone",
-  "url",
-  "telegram_username",
-]);
-
-// Identity-поля, которые можно скрыть когда пусты (показываются как chip
-// «+ Email» внизу карточки и раскрываются по клику в полноценный input).
-// full_name (required) и description (всегда нужно поле) — не скрываются.
-const COLLAPSIBLE_KEYS = new Set([
-  "email",
-  "phone",
-  "telegram_username",
-  "url",
-]);
+// Жёсткий порядок верхушки. Дальше — properties.order.
+const ALWAYS_SHOWN_KEYS = ["full_name", "description", "stage"] as const;
 
 export function ContactFormFields(props: {
   properties: Property[];
@@ -40,71 +22,56 @@ export function ContactFormFields(props: {
     onChange({ ...values, [key]: v });
   };
 
-  const identity = properties.filter((p) => IDENTITY_KEYS.has(p.key));
-  const others = properties.filter((p) => !IDENTITY_KEYS.has(p.key));
+  // revealed — что раскрыл юзер кликом по chip'у. С прошлого раскрытия не сворачивается
+  // обратно автоматически, даже если очистил значение (UX: «передумал — закрою сам»).
+  // Lazy init: считаем только на первом mount'е, иначе пересчитывалось бы на каждом
+  // рендере (и setState игнорировал бы кроме первого раза).
+  const [revealed, setRevealed] = useState<Set<string>>(() => {
+    const r = new Set<string>();
+    for (const p of properties) {
+      if (!isAlwaysShown(p.key) && hasValue(values[p.key])) r.add(p.key);
+    }
+    return r;
+  });
 
-  // Какие collapsible-identity поля «раскрыты» (либо имеют значение, либо юзер
-  // нажал chip). Не раскрытые с пустым значением рендерятся как chip внизу.
-  const initiallyRevealed = new Set<string>();
-  for (const p of identity) {
-    if (COLLAPSIBLE_KEYS.has(p.key) && hasValue(values[p.key])) {
-      initiallyRevealed.add(p.key);
+  const visible: Property[] = [];
+  const hidden: Property[] = [];
+  for (const p of properties) {
+    if (
+      isAlwaysShown(p.key) ||
+      hasValue(values[p.key]) ||
+      revealed.has(p.key)
+    ) {
+      visible.push(p);
+    } else {
+      hidden.push(p);
     }
   }
-  const [revealed, setRevealed] = useState<Set<string>>(initiallyRevealed);
-
-  const visibleIdentity = identity.filter(
-    (p) => !COLLAPSIBLE_KEYS.has(p.key) || revealed.has(p.key),
-  );
-  const hiddenIdentity = identity.filter(
-    (p) => COLLAPSIBLE_KEYS.has(p.key) && !revealed.has(p.key),
-  );
+  visible.sort(visibleOrder);
 
   return (
-    <div className="space-y-3">
-      {identity.length > 0 && (
-        <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
-          {visibleIdentity.map((p, i) => (
-            <PropertyRow
+    <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
+      {visible.map((p, i) => (
+        <PropertyRow
+          key={p.id}
+          property={p}
+          value={values[p.key]}
+          onChange={(v) => setValue(p.key, v)}
+          isLast={i === visible.length - 1 && hidden.length === 0}
+          autoFocus={i === 0}
+        />
+      ))}
+      {hidden.length > 0 && (
+        <div className="flex flex-wrap gap-2 border-t border-zinc-100 px-4 py-3">
+          {hidden.map((p) => (
+            <button
+              type="button"
               key={p.id}
-              property={p}
-              value={values[p.key]}
-              onChange={(v) => setValue(p.key, v)}
-              isLast={
-                i === visibleIdentity.length - 1 && hiddenIdentity.length === 0
-              }
-              autoFocus={i === 0}
-            />
-          ))}
-          {hiddenIdentity.length > 0 && (
-            <div className="flex flex-wrap gap-2 border-t border-zinc-100 px-4 py-3">
-              {hiddenIdentity.map((p) => (
-                <button
-                  type="button"
-                  key={p.id}
-                  onClick={() =>
-                    setRevealed((s) => new Set([...s, p.key]))
-                  }
-                  className="rounded-full border border-zinc-300 px-3 py-1 text-xs text-zinc-600 hover:bg-zinc-50"
-                >
-                  + {p.name}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {others.length > 0 && (
-        <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
-          {others.map((p, i) => (
-            <PropertyRow
-              key={p.id}
-              property={p}
-              value={values[p.key]}
-              onChange={(v) => setValue(p.key, v)}
-              isLast={i === others.length - 1}
-            />
+              onClick={() => setRevealed((s) => new Set([...s, p.key]))}
+              className="rounded-full border border-zinc-300 px-3 py-1 text-xs text-zinc-600 hover:bg-zinc-50"
+            >
+              + {p.name}
+            </button>
           ))}
         </div>
       )}
@@ -112,10 +79,25 @@ export function ContactFormFields(props: {
   );
 }
 
+function isAlwaysShown(key: string): boolean {
+  return (ALWAYS_SHOWN_KEYS as readonly string[]).includes(key);
+}
+
 function hasValue(v: unknown): boolean {
   if (v === undefined || v === null || v === "") return false;
   if (Array.isArray(v) && v.length === 0) return false;
   return true;
+}
+
+// ALWAYS_SHOWN сверху в фиксированном порядке, дальше — по property.order.
+function visibleOrder(a: Property, b: Property): number {
+  const all: readonly string[] = ALWAYS_SHOWN_KEYS;
+  const aA = all.indexOf(a.key);
+  const bA = all.indexOf(b.key);
+  if (aA !== -1 && bA !== -1) return aA - bA;
+  if (aA !== -1) return -1;
+  if (bA !== -1) return 1;
+  return a.order - b.order;
 }
 
 function PropertyRow(props: {
@@ -126,27 +108,20 @@ function PropertyRow(props: {
   autoFocus?: boolean;
 }) {
   const { property: p, value, onChange } = props;
-  // textarea и multi_select шире обычной строки → лейбл сверху, не слева.
-  const labelTop = p.type === "textarea" || p.type === "multi_select";
   return (
     <div
       className={
-        (labelTop
-          ? "flex flex-col gap-1.5 px-4 py-3 text-sm"
-          : "flex items-center gap-3 px-4 py-3 text-sm") +
-        (props.isLast ? "" : " border-b border-zinc-100")
+        "flex items-start gap-3 px-4 py-3 text-sm " +
+        (props.isLast ? "" : "border-b border-zinc-100")
       }
     >
-      <span
-        className={
-          labelTop ? "text-zinc-500" : "w-28 shrink-0 text-zinc-500"
-        }
-      >
-        {p.name}
-      </span>
+      {/* pt-1.5 совпадает с py-1.5 у инпутов → label выравнен с первой строкой
+          текста (для многострочного textarea — с верхней строкой, как и должно). */}
+      <span className="w-28 shrink-0 pt-1.5 text-zinc-500">{p.name}</span>
       <div className="min-w-0 flex-1">
         <ValueInput
           type={p.type}
+          required={p.required}
           value={value}
           onChange={onChange}
           options={p.values ?? []}
@@ -159,6 +134,7 @@ function PropertyRow(props: {
 
 function ValueInput(props: {
   type: PropertyType;
+  required: boolean;
   value: unknown;
   onChange: (v: unknown) => void;
   options: { id: string; name: string }[];
@@ -173,11 +149,12 @@ function ValueInput(props: {
   if (type === "single_select") {
     return (
       <select
+        autoFocus={props.autoFocus}
         className={inputCls}
         value={typeof value === "string" ? value : ""}
         onChange={(e) => onChange(e.target.value)}
       >
-        <option value="">—</option>
+        {!props.required && <option value="">—</option>}
         {props.options.map((v) => (
           <option key={v.id} value={v.id}>
             {v.name}

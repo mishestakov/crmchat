@@ -21,11 +21,22 @@ import {
   NoteModal,
   ReminderModal,
 } from "../-activities-section";
-import { IDENTITY_KEYS } from "../-contact-form-fields";
 
 export const Route = createFileRoute("/_authenticated/w/$wsId/contacts/$id/")({
   component: ContactDetail,
 });
+
+// Identity-properties: рендерятся специально в верхней карточке (имя по центру,
+// описание подписью, email/url/tel/telegram → соц.иконки). Остальные (amount,
+// stage, custom_*) идут отдельным блоком с inline-edit.
+const IDENTITY_KEYS = new Set([
+  "full_name",
+  "description",
+  "email",
+  "phone",
+  "url",
+  "telegram_username",
+]);
 
 function ContactDetail() {
   const { wsId, id } = Route.useParams();
@@ -391,7 +402,7 @@ function InlineEdit(props: {
           onChange={(e) => onCommit(e.target.value)}
           className="w-full appearance-none rounded-md border border-zinc-200 bg-white py-1 pl-2 pr-7 text-right text-sm hover:border-zinc-400 focus:border-emerald-500 focus:outline-none"
         >
-          <option value="">—</option>
+          {!p.required && <option value="">—</option>}
           {p.values?.map((v) => (
             <option key={v.id} value={v.id}>
               {v.name}

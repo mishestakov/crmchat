@@ -1,64 +1,28 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import { Send } from "lucide-react";
-import type {
-  Contact,
-  ContactView,
-  ContactViewMode,
-  Property,
-} from "@repo/core";
+import { useEffect, useRef, useState } from "react";
+import { Columns3, Search as SearchIcon, Send } from "lucide-react";
+import type { Contact, ContactViewMode, Property } from "@repo/core";
 import { api } from "../../../../../lib/api";
 import { errorMessage } from "../../../../../lib/errors";
 
-// Все поля optional — иначе любой Link/navigate на этот route потребует
-// передавать mode/filters явно. validateSearch ниже всё равно нормализует.
-type Search = {
-  q?: string;
-  mode?: ContactViewMode;
-  filters?: string; // JSON-encoded { [propertyKey]: value }
-};
+// q + mode держим в URL (shareable, refresh-friendly). filters/views в UI
+// отсутствуют — их концепцию выпилили: заменили на «настройка колонок» (тот же
+// флаг properties.showInList, переключаемый через popover рядом с поиском).
+type Search = { q?: string; mode?: ContactViewMode };
 
 export const Route = createFileRoute("/_authenticated/w/$wsId/contacts/")({
   validateSearch: (s: Record<string, unknown>): Search => ({
     q: typeof s.q === "string" && s.q !== "" ? s.q : undefined,
     mode: s.mode === "kanban" ? "kanban" : undefined,
-    filters: typeof s.filters === "string" ? s.filters : undefined,
   }),
   component: ContactsList,
 });
-
-function parseFilters(s?: string): Record<string, string> {
-  if (!s) return {};
-  try {
-    const o = JSON.parse(s);
-    if (!o || typeof o !== "object") return {};
-    const out: Record<string, string> = {};
-    for (const [k, v] of Object.entries(o)) {
-      if (typeof v === "string" && v !== "") out[k] = v;
-    }
-    return out;
-  } catch {
-    return {};
-  }
-}
-
-function stringifyFilters(o: Record<string, string>): string | undefined {
-  const filtered: Record<string, string> = {};
-  for (const [k, v] of Object.entries(o)) {
-    if (v !== "") filtered[k] = v;
-  }
-  return Object.keys(filtered).length === 0
-    ? undefined
-    : JSON.stringify(filtered);
-}
 
 function ContactsList() {
   const { wsId } = Route.useParams();
   const search = Route.useSearch();
   const navigate = useNavigate();
-  const qc = useQueryClient();
-  const filters = parseFilters(search.filters);
   const mode: ContactViewMode = search.mode ?? "list";
 
   const properties = useQuery({
@@ -73,30 +37,15 @@ function ContactsList() {
     },
   });
 
-  const views = useQuery({
-    queryKey: ["contact-views", wsId],
-    queryFn: async () => {
-      const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/contact-views",
-        { params: { path: { wsId } } },
-      );
-      if (error) throw error;
-      return data;
-    },
-  });
-
   const contacts = useQuery({
-    queryKey: ["contacts", wsId, search.q ?? "", search.filters ?? ""] as const,
+    queryKey: ["contacts", wsId, search.q ?? ""] as const,
     queryFn: async () => {
       const { data, error } = await api.GET(
         "/v1/workspaces/{wsId}/contacts",
         {
           params: {
             path: { wsId },
-            query: {
-              q: search.q || undefined,
-              filters: search.filters || undefined,
-            },
+            query: { q: search.q || undefined },
           },
         },
       );
@@ -112,49 +61,6 @@ function ContactsList() {
       search: (prev) => ({ ...prev, ...patch }) as Search,
       replace: true,
     });
-  };
-
-  const createView = useMutation({
-    mutationFn: async (name: string) => {
-      const { data, error } = await api.POST(
-        "/v1/workspaces/{wsId}/contact-views",
-        {
-          params: { path: { wsId } },
-          body: {
-            name,
-            mode,
-            filters: { q: search.q, props: filters },
-          },
-        },
-      );
-      if (error) throw error;
-      return data!;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["contact-views", wsId] }),
-  });
-
-  const deleteView = useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await api.DELETE(
-        "/v1/workspaces/{wsId}/contact-views/{id}",
-        { params: { path: { wsId, id } } },
-      );
-      if (error) throw error;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["contact-views", wsId] }),
-  });
-
-  const applyView = (v: ContactView) => {
-    setSearch({
-      q: v.filters.q ?? undefined,
-      mode: v.mode,
-      filters: stringifyFilters(v.filters.props ?? {}),
-    });
-  };
-
-  const onSaveView = () => {
-    const name = prompt("Название представления:");
-    if (name && name.trim()) createView.mutate(name.trim());
   };
 
   const props = properties.data ?? [];
@@ -176,19 +82,15 @@ function ContactsList() {
         </Link>
       </div>
 
-      <Toolbar
-        q={search.q ?? ""}
-        filters={filters}
-        properties={props}
-        views={views.data ?? []}
-        onSetQ={(q) => setSearch({ q: q || undefined })}
-        onSetFilters={(f) => setSearch({ filters: stringifyFilters(f) })}
-        onApplyView={applyView}
-        onSaveView={onSaveView}
-        onDeleteView={(id) => {
-          if (confirm("Удалить представление?")) deleteView.mutate(id);
-        }}
-      />
+      <div className="flex items-center gap-2">
+        <SearchInput
+          value={search.q ?? ""}
+          onChange={(q) => setSearch({ q: q || undefined })}
+        />
+        {mode === "list" && (
+          <ColumnsMenu wsId={wsId} properties={props} />
+        )}
+      </div>
 
       {(properties.isLoading || contacts.isLoading) && <p>Загрузка…</p>}
       {properties.error && (
@@ -199,12 +101,145 @@ function ContactsList() {
       )}
 
       {contacts.data && mode === "list" && (
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-auto rounded-2xl bg-white shadow-sm">
           <ListView wsId={wsId} rows={rows} properties={props} />
         </div>
       )}
       {contacts.data && mode === "kanban" && (
         <KanbanView wsId={wsId} rows={rows} properties={props} />
+      )}
+    </div>
+  );
+}
+
+function SearchInput(props: { value: string; onChange: (v: string) => void }) {
+  const [local, setLocal] = useState(props.value);
+  const inputRef = useRef<HTMLInputElement>(null);
+  // Свежий callback в ref — чтобы debounce effect не пересоздавал setTimeout при
+  // каждом рендере только потому что родитель передал новый props.onChange.
+  const onChangeRef = useRef(props.onChange);
+  onChangeRef.current = props.onChange;
+
+  // Синхронизируемся с внешним значением (back-button, apply-view etc.) — но не
+  // затираем то что юзер сейчас печатает. Гейт по activeElement.
+  useEffect(() => {
+    if (document.activeElement === inputRef.current) return;
+    setLocal(props.value);
+  }, [props.value]);
+
+  // 500 мс после последнего keystroke → пушим в URL. Пока юзер печатает, таймер
+  // сбрасывается. `local === props.value` — нечего коммитить.
+  useEffect(() => {
+    if (local === props.value) return;
+    const t = setTimeout(() => onChangeRef.current(local), 500);
+    return () => clearTimeout(t);
+  }, [local, props.value]);
+
+  return (
+    <div className="relative flex-1">
+      <SearchIcon
+        size={14}
+        className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400"
+      />
+      <input
+        ref={inputRef}
+        value={local}
+        onChange={(e) => setLocal(e.target.value)}
+        onKeyDown={(e) => {
+          // Enter = коммит сейчас (без ожидания 500мс), Escape = откат к URL.
+          if (e.key === "Enter") onChangeRef.current(local);
+          else if (e.key === "Escape") setLocal(props.value);
+        }}
+        placeholder="Поиск по имени, email, телефону…"
+        className="w-full rounded-lg border border-zinc-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm focus:border-emerald-500 focus:outline-none"
+      />
+    </div>
+  );
+}
+
+function ColumnsMenu(props: { wsId: string; properties: Property[] }) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  // Управляем всеми properties кроме full_name (он фикс-колонка таблицы — без
+  // имени строка нечитаема). Internal (phone/email/url/...) тоже togglable, чтобы
+  // юзер мог вытащить, например, телефон в список.
+  const togglable = props.properties.filter((p) => p.key !== "full_name");
+
+  const toggle = useMutation({
+    mutationFn: async (args: { id: string; showInList: boolean }) => {
+      const { error } = await api.PATCH(
+        "/v1/workspaces/{wsId}/properties/{id}",
+        {
+          params: { path: { wsId: props.wsId, id: args.id } },
+          body: { showInList: args.showInList },
+        },
+      );
+      if (error) throw error;
+    },
+    onMutate: async (args) => {
+      // Оптимистично: дёргаем кэш properties, иначе чекбокс мигает между кликом
+      // и refetch'ем (особенно по сети с лагом).
+      await qc.cancelQueries({ queryKey: ["properties", props.wsId] });
+      const prev = qc.getQueryData<Property[]>(["properties", props.wsId]);
+      qc.setQueryData<Property[]>(["properties", props.wsId], (cached) =>
+        cached?.map((p) =>
+          p.id === args.id ? { ...p, showInList: args.showInList } : p,
+        ),
+      );
+      return { prev };
+    },
+    onError: (_e, _args, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["properties", props.wsId], ctx.prev);
+    },
+    onSettled: () =>
+      qc.invalidateQueries({ queryKey: ["properties", props.wsId] }),
+  });
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((s) => !s)}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm shadow-sm hover:bg-zinc-50"
+      >
+        <Columns3 size={14} className="text-zinc-500" />
+        Колонки
+      </button>
+      {open && (
+        <div className="absolute right-0 top-11 z-20 w-64 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-lg">
+          {togglable.length === 0 ? (
+            <p className="px-3 py-3 text-xs text-zinc-500">
+              Нет полей для отображения.
+            </p>
+          ) : (
+            togglable.map((p) => (
+              <label
+                key={p.id}
+                className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm hover:bg-zinc-50"
+              >
+                <input
+                  type="checkbox"
+                  checked={p.showInList}
+                  onChange={(e) =>
+                    toggle.mutate({ id: p.id, showInList: e.target.checked })
+                  }
+                  className="h-4 w-4 accent-emerald-600"
+                />
+                <span>{p.name}</span>
+              </label>
+            ))
+          )}
+        </div>
       )}
     </div>
   );
@@ -242,154 +277,6 @@ function ModeSwitcher(props: {
   );
 }
 
-function Toolbar(props: {
-  q: string;
-  filters: Record<string, string>;
-  properties: Property[];
-  views: ContactView[];
-  onSetQ: (q: string) => void;
-  onSetFilters: (f: Record<string, string>) => void;
-  onApplyView: (v: ContactView) => void;
-  onSaveView: () => void;
-  onDeleteView: (id: string) => void;
-}) {
-  const [showFilters, setShowFilters] = useState(
-    Object.keys(props.filters).length > 0,
-  );
-
-  const addFilter = (key: string) => {
-    if (!key || key in props.filters) return;
-    props.onSetFilters({ ...props.filters, [key]: "" });
-  };
-  const setFilterValue = (key: string, value: string) => {
-    props.onSetFilters({ ...props.filters, [key]: value });
-  };
-  const removeFilter = (key: string) => {
-    const next = { ...props.filters };
-    delete next[key];
-    props.onSetFilters(next);
-  };
-
-  return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <input
-          value={props.q}
-          onChange={(e) => props.onSetQ(e.target.value)}
-          placeholder="Поиск…"
-          className="flex-1 min-w-[180px] rounded border border-zinc-300 px-3 py-1.5 text-sm"
-        />
-
-        <button
-          onClick={() => setShowFilters((s) => !s)}
-          className="rounded border border-zinc-300 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
-        >
-          Фильтр{Object.keys(props.filters).length > 0 && ` (${Object.keys(props.filters).length})`}
-        </button>
-
-        <select
-          value=""
-          onChange={(e) => {
-            const v = props.views.find((x) => x.id === e.target.value);
-            if (v) props.onApplyView(v);
-            e.target.value = "";
-          }}
-          className="rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm"
-        >
-          <option value="">Представления…</option>
-          {props.views.map((v) => (
-            <option key={v.id} value={v.id}>
-              {v.name}
-            </option>
-          ))}
-        </select>
-
-        <button
-          onClick={props.onSaveView}
-          className="rounded border border-zinc-300 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
-        >
-          Сохранить
-        </button>
-      </div>
-
-      {showFilters && (
-        <div className="rounded-2xl bg-white p-4 shadow-sm space-y-2">
-          {Object.entries(props.filters).map(([key, value]) => {
-            const def = props.properties.find((p) => p.key === key);
-            return (
-              <div key={key} className="flex items-center gap-2 text-sm">
-                <div className="w-32 truncate text-zinc-600">
-                  {def?.name ?? key}
-                </div>
-                {def?.type === "single_select" ? (
-                  <select
-                    value={value}
-                    onChange={(e) => setFilterValue(key, e.target.value)}
-                    className="flex-1 rounded border border-zinc-300 bg-white px-2 py-1"
-                  >
-                    <option value="">— любое —</option>
-                    {def.values?.map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.name}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    value={value}
-                    onChange={(e) => setFilterValue(key, e.target.value)}
-                    className="flex-1 rounded border border-zinc-300 px-2 py-1"
-                  />
-                )}
-                <button
-                  onClick={() => removeFilter(key)}
-                  className="rounded border border-red-300 px-2 py-1 text-xs text-red-700 hover:bg-red-50"
-                >
-                  ×
-                </button>
-              </div>
-            );
-          })}
-          <select
-            value=""
-            onChange={(e) => addFilter(e.target.value)}
-            className="rounded border border-zinc-300 bg-white px-2 py-1 text-sm"
-          >
-            <option value="">+ Добавить фильтр…</option>
-            {props.properties
-              .filter((p) => !(p.key in props.filters))
-              .map((p) => (
-                <option key={p.id} value={p.key}>
-                  {p.name}
-                </option>
-              ))}
-          </select>
-        </div>
-      )}
-
-      {props.views.length > 0 && (
-        <div className="flex flex-wrap gap-2 text-xs text-zinc-500">
-          {props.views.map((v) => (
-            <span
-              key={v.id}
-              className="inline-flex items-center gap-1 rounded border border-zinc-200 bg-white px-2 py-0.5"
-            >
-              {v.name}
-              <button
-                onClick={() => props.onDeleteView(v.id)}
-                className="text-red-600"
-                title="Удалить"
-              >
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function ListView(props: {
   wsId: string;
   rows: Contact[];
@@ -397,18 +284,19 @@ function ListView(props: {
 }) {
   const navigate = useNavigate();
   const { wsId, rows, properties } = props;
-  // full_name всегда первая колонка (как «Имя»); остальные — properties.showInList
-  // в порядке, заданном в /properties (drag-reorder).
+  // full_name всегда первая колонка (как «Имя»); остальные — любые properties
+  // (custom + internal phone/email/...) с включённым showInList.
+  // Управление showInList — popover «Колонки» в тулбаре.
   const visibleProps = properties.filter(
     (p) => p.showInList && p.key !== "full_name",
   );
   return (
     <table className="w-full border-collapse text-sm">
-      <thead>
-        <tr className="border-b border-zinc-300 text-left">
-          <th className="py-2 pr-4">Имя</th>
+      <thead className="bg-zinc-50 text-zinc-500">
+        <tr className="text-left">
+          <th className="px-5 py-3 font-normal">Имя</th>
           {visibleProps.map((p) => (
-            <th key={p.id} className="py-2 pr-4">
+            <th key={p.id} className="px-5 py-3 font-normal">
               {p.name}
             </th>
           ))}
@@ -419,7 +307,7 @@ function ListView(props: {
           <tr>
             <td
               colSpan={1 + visibleProps.length}
-              className="py-4 text-zinc-500"
+              className="px-5 py-6 text-center text-zinc-500"
             >
               Пока пусто
             </td>
@@ -437,11 +325,11 @@ function ListView(props: {
                   params: { wsId, id: r.id },
                 })
               }
-              className="cursor-pointer border-b border-zinc-100 hover:bg-zinc-50"
+              className="cursor-pointer border-t border-zinc-100 hover:bg-zinc-50"
             >
-              <td className="py-2 pr-4">{name ?? "—"}</td>
+              <td className="px-5 py-3">{name ?? "—"}</td>
               {visibleProps.map((p) => (
-                <td key={p.id} className="py-2 pr-4">
+                <td key={p.id} className="px-5 py-3">
                   {renderValue(p, v[p.key])}
                 </td>
               ))}
@@ -461,9 +349,11 @@ function KanbanView(props: {
   const { wsId, rows, properties } = props;
   const navigate = useNavigate();
   const qc = useQueryClient();
-  // Группирующее свойство = первый single_select в порядке properties (как у донора).
-  // Селектор «по какому свойству строить воронку» — отдельный шаг.
-  const groupProp = properties.find((p) => p.type === "single_select");
+  // Канбан фиксированно строится на preset `stage` — он internal+required, юзер
+  // не может его удалить, тип не меняется → канбан никогда «не сломается».
+  // Когда понадобится несколько канбанов / выбор поля — делаем как в доноре через
+  // contact_views.pipelineProperty.
+  const groupProp = properties.find((p) => p.key === "stage");
 
   // Native HTML5 drag&drop: на карточку — setData(id), на колонку — drop
   // → PATCH groupProp.key. Без сторонних либ; для kanban с десятками карточек хватает.
@@ -506,16 +396,18 @@ function KanbanView(props: {
     );
   }
 
+  // Канбан = flat map options → колонки. Никаких unassigned/«Без значения»:
+  // stage required, POST дефолтит на первую опцию, cleanup переводит на оставшуюся
+  // — контакт всегда в одной из существующих колонок.
   const buckets = new Map<string, Contact[]>();
   for (const v of groupProp.values) buckets.set(v.id, []);
-  const unassigned: Contact[] = [];
   for (const r of rows) {
     const v = (r.properties as Record<string, unknown>)[groupProp.key];
     if (typeof v === "string" && buckets.has(v)) {
       buckets.get(v)!.push(r);
-    } else {
-      unassigned.push(r);
     }
+    // Контакт со stage вне известных опций молчаливо не отображается. По
+    // инвариантам сюда никто попасть не должен — если попал, баг в API.
   }
 
   const onOpen = (id: string) =>
@@ -525,27 +417,16 @@ function KanbanView(props: {
     });
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col space-y-3">
-      <div className="text-xs text-zinc-500">
-        Группировка: <strong>{groupProp.name}</strong>
-      </div>
-      <div className="flex flex-1 min-h-0 gap-4 overflow-x-auto px-1 pb-3 pt-1">
-        {groupProp.values.map((v) => (
-          <Column
-            key={v.id}
-            title={v.name}
-            rows={buckets.get(v.id) ?? []}
-            onOpen={onOpen}
-            onDrop={(id) => move.mutate({ id, value: v.id })}
-          />
-        ))}
+    <div className="flex min-h-0 flex-1 gap-4 overflow-x-auto px-1 pb-3 pt-1">
+      {groupProp.values.map((v) => (
         <Column
-          title="Без значения"
-          rows={unassigned}
+          key={v.id}
+          title={v.name}
+          rows={buckets.get(v.id) ?? []}
           onOpen={onOpen}
-          onDrop={(id) => move.mutate({ id, value: null })}
+          onDrop={(id) => move.mutate({ id, value: v.id })}
         />
-      </div>
+      ))}
     </div>
   );
 }

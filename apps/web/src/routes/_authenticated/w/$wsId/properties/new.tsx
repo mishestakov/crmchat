@@ -21,7 +21,6 @@ function NewProperty() {
       name: string;
       type: PropertyType;
       required: boolean;
-      showInList: boolean;
       values: { id: string; name: string }[];
     }) => {
       const { error } = await api.POST(
@@ -33,7 +32,6 @@ function NewProperty() {
             name: input.name,
             type: input.type,
             required: input.required,
-            showInList: input.showInList,
             ...(input.type === "single_select" || input.type === "multi_select"
               ? { values: input.values }
               : {}),

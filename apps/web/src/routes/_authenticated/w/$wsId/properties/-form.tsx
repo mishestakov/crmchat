@@ -55,7 +55,6 @@ export type PropertyFormValue = {
   name: string;
   type: PropertyType;
   required: boolean;
-  showInList: boolean;
   values: PropertyValue[];
 };
 
@@ -75,24 +74,23 @@ export function PropertyForm(props: {
     name: props.initial?.name ?? "",
     type: props.initial?.type ?? "text",
     required: props.initial?.required ?? false,
-    showInList: props.initial?.showInList ?? true,
     values: props.initial?.values ?? [],
   };
   const [name, setName] = useState(initialValue.name);
   const [type, setType] = useState<PropertyType>(initialValue.type);
   const [required, setRequired] = useState(initialValue.required);
-  const [showInList, setShowInList] = useState(initialValue.showInList);
   const [values, setValues] = useState<PropertyValue[]>(initialValue.values);
   const [protectedIds] = useState<Set<string>>(
     () => new Set(props.initial?.values?.map((v) => v.id) ?? []),
   );
 
-  const current: PropertyFormValue = { name, type, required, showInList, values };
+  const current: PropertyFormValue = { name, type, required, values };
   const isDirty = JSON.stringify(current) !== JSON.stringify(initialValue);
   const needsValues = type === "single_select" || type === "multi_select";
   const isValid =
     name.trim().length > 0 && (!needsValues || values.length > 0);
   const canSave = isDirty && isValid;
+  const isStage = props.initial?.key === "stage";
 
   return (
     <form
@@ -105,11 +103,17 @@ export function PropertyForm(props: {
           name,
           type,
           required,
-          showInList,
           values: needsValues ? values : [],
         });
       }}
     >
+      {isStage && (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          Это поле управляет канбаном. Его опции — колонки на странице
+          «Воронка».
+        </p>
+      )}
+
       <Section label="Название поля">
         <input
           autoFocus
@@ -135,11 +139,11 @@ export function PropertyForm(props: {
             />
           )}
         </Row>
-        <Row label="Обязательное поле">
+        <Row
+          label="Обязательное поле"
+          help="Контакт нельзя сохранить без значения"
+        >
           <Toggle value={required} onChange={setRequired} />
-        </Row>
-        <Row label="Отображать в списке">
-          <Toggle value={showInList} onChange={setShowInList} />
         </Row>
       </div>
 
@@ -197,11 +201,20 @@ function Section(props: { label: string; children: React.ReactNode }) {
   );
 }
 
-function Row(props: { label: string; children: React.ReactNode }) {
+function Row(props: {
+  label: string;
+  help?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex items-center justify-between gap-3 px-5 py-3 text-sm not-last:border-b not-last:border-zinc-100">
-      <span>{props.label}</span>
-      <div>{props.children}</div>
+      <div className="min-w-0">
+        <div>{props.label}</div>
+        {props.help && (
+          <div className="mt-0.5 text-xs text-zinc-500">{props.help}</div>
+        )}
+      </div>
+      <div className="shrink-0">{props.children}</div>
     </div>
   );
 }

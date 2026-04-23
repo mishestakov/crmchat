@@ -51,9 +51,7 @@ function NewContact() {
   return (
     <div className="space-y-3 p-6">
       <BackButton />
-      <div className="mx-auto max-w-xl space-y-4">
-        <h1 className="text-2xl font-semibold">Новый контакт</h1>
-
+      <div className="mx-auto max-w-xl">
         <form
           className="space-y-3"
           onSubmit={(e) => {
@@ -67,22 +65,34 @@ function NewContact() {
             onChange={setValues}
           />
 
-          <div className="flex items-center gap-2 pt-1">
-            <button
-              type="submit"
-              disabled={create.isPending}
-              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-            >
-              Создать
-            </button>
-            {create.error && (
-              <span className="text-sm text-red-600">
-                {errorMessage(create.error)}
-              </span>
-            )}
-          </div>
+          <SubmitButton
+            label="Создать контакт"
+            pending={create.isPending}
+            error={create.error ? errorMessage(create.error) : null}
+          />
         </form>
       </div>
     </div>
+  );
+}
+
+function SubmitButton(props: {
+  label: string;
+  pending: boolean;
+  error: string | null;
+}) {
+  return (
+    <>
+      <button
+        type="submit"
+        disabled={props.pending}
+        className="w-full rounded-xl bg-emerald-600 py-3 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+      >
+        {props.label}
+      </button>
+      {props.error && (
+        <p className="text-sm text-red-600">{props.error}</p>
+      )}
+    </>
   );
 }

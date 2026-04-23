@@ -161,12 +161,31 @@ app.openapi(
 
       if (removedIds.length > 0) {
         if (existing.type === "single_select") {
-          await tx.execute(sql`
-            UPDATE contacts
-            SET properties = properties - ${existing.key}::text
-            WHERE workspace_id = ${wsId}
-              AND properties->>${existing.key} = ANY(${removedIds}::text[])
-          `);
+          // Required single_select → cleanup НЕ может оставить контакт без значения
+          // (это бы тихо нарушило enforceRequiredProperties инвариант). Переводим
+          // на first remaining option. Для optional — старое поведение, удаляем ключ.
+          if (existing.required) {
+            const fallback = (body.values ?? [])[0]?.id;
+            if (fallback) {
+              await tx.execute(sql`
+                UPDATE contacts
+                SET properties = jsonb_set(
+                  properties,
+                  ARRAY[${existing.key}::text],
+                  to_jsonb(${fallback}::text)
+                )
+                WHERE workspace_id = ${wsId}
+                  AND properties->>${existing.key} = ANY(${removedIds}::text[])
+              `);
+            }
+          } else {
+            await tx.execute(sql`
+              UPDATE contacts
+              SET properties = properties - ${existing.key}::text
+              WHERE workspace_id = ${wsId}
+                AND properties->>${existing.key} = ANY(${removedIds}::text[])
+            `);
+          }
         } else if (existing.type === "multi_select") {
           await tx.execute(sql`
             UPDATE contacts

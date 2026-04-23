@@ -140,6 +140,17 @@ app.openapi(
     const body = c.req.valid("json");
     const defs = await loadPropertyDefs(wsId);
     const validatedProps = validateContactProperties(defs, body.properties);
+
+    // Дефолт для stage: если юзер не задал, ставим первую опцию воронки. Это
+    // обязательное internal-поле; без значения нельзя, а ситуация «нет статуса»
+    // не должна порождать «Без значения» колонку — новый лид = старт воронки.
+    const stage = defs.find(
+      (d) => d.key === "stage" && d.type === "single_select",
+    );
+    if (stage && !validatedProps.stage && stage.values?.[0]) {
+      validatedProps.stage = stage.values[0].id;
+    }
+
     enforceRequiredProperties(defs, validatedProps);
     const [row] = await db
       .insert(contacts)

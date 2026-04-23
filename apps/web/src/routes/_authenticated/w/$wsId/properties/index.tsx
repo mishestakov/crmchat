@@ -46,22 +46,38 @@ function PropertiesList() {
     onSettled: () => qc.invalidateQueries({ queryKey: propertiesKey(wsId) }),
   });
 
-  const items = list.data ?? [];
+  // Системные (internal=true) поля скрыты со страницы — юзер их не создавал и
+  // не управляет ими в обычном смысле. Исключение — `stage`: на нём строится канбан,
+  // юзер реально настраивает его опции (стадии воронки) и переименовывает.
+  const items = (list.data ?? []).filter(
+    (p) => !p.internal || p.key === "stage",
+  );
 
   // motion Reorder требует controlled values. Обновляем кэш React Query
   // (он же source-of-truth) → motion видит новый порядок, анимирует.
   // PATCH-и шлём после drag-end (а не на каждый swap).
   const onReorder = (ordered: Property[]) => {
-    qc.setQueryData<Property[]>(
-      propertiesKey(wsId),
-      ordered.map((p, i) => ({ ...p, order: i })),
-    );
+    qc.setQueryData<Property[]>(propertiesKey(wsId), (prev) => {
+      if (!prev) return prev;
+      // Скрытые internal (которых нет в `ordered`) сохраняем как есть. Раньше тут
+      // фильтровали по `internal=true`, но `stage` (internal=true) видим в списке
+      // и перемещается → попадал и в `ordered`, и в "internal" → дубль в кэше.
+      const orderedIds = new Set(ordered.map((p) => p.id));
+      const rest = prev.filter((p) => !orderedIds.has(p.id));
+      return [
+        ...ordered.map((p, i) => ({ ...p, order: i })),
+        ...rest,
+      ];
+    });
   };
 
   const persistOrder = () => {
     const cached = qc.getQueryData<Property[]>(propertiesKey(wsId));
     if (!cached) return;
-    const newOrder = cached
+    // Тот же фильтр что у `items` — иначе `stage` (internal+visible) не попадёт
+    // в PATCH-и и его перенос потеряется при следующем рефетче.
+    const visibleNow = cached.filter((p) => !p.internal || p.key === "stage");
+    const newOrder = visibleNow
       .map((p, i) => ({ id: p.id, order: i }))
       .filter((x, i) => items[i]?.id !== x.id || items[i]?.order !== x.order);
     if (newOrder.length === 0) return;
@@ -70,8 +86,6 @@ function PropertiesList() {
 
   return (
     <div className="mx-auto max-w-xl p-6 space-y-4">
-      <h1 className="text-2xl font-semibold">Кастомные поля</h1>
-
       {list.isLoading && <p className="text-sm">Загрузка…</p>}
       {list.error && (
         <p className="text-red-600">{errorMessage(list.error)}</p>
@@ -79,38 +93,43 @@ function PropertiesList() {
 
       {list.data && (
         <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
-          <Reorder.Group
-            as="ul"
-            axis="y"
-            values={items}
-            onReorder={onReorder}
-            className="divide-y divide-zinc-100"
-          >
-            {items.map((p) => (
-              <PropertyRow
-                key={p.id}
-                property={p}
-                onClick={() => {
-                  if (isDragging) return;
-                  navigate({
-                    to: "/w/$wsId/properties/$propertyId/edit",
-                    params: { wsId, propertyId: p.id },
-                  });
-                }}
-                onDragStart={() => setIsDragging(true)}
-                onDragEnd={() => {
-                  // setTimeout — иначе click срабатывает после drop и открывает карточку.
-                  setTimeout(() => setIsDragging(false), 100);
-                  persistOrder();
-                }}
-              />
-            ))}
-          </Reorder.Group>
+          {items.length > 0 && (
+            <Reorder.Group
+              as="ul"
+              axis="y"
+              values={items}
+              onReorder={onReorder}
+              className="divide-y divide-zinc-100"
+            >
+              {items.map((p) => (
+                <PropertyRow
+                  key={p.id}
+                  property={p}
+                  onClick={() => {
+                    if (isDragging) return;
+                    navigate({
+                      to: "/w/$wsId/properties/$propertyId/edit",
+                      params: { wsId, propertyId: p.id },
+                    });
+                  }}
+                  onDragStart={() => setIsDragging(true)}
+                  onDragEnd={() => {
+                    // setTimeout — иначе click срабатывает после drop и открывает карточку.
+                    setTimeout(() => setIsDragging(false), 100);
+                    persistOrder();
+                  }}
+                />
+              ))}
+            </Reorder.Group>
+          )}
 
           <Link
             to="/w/$wsId/properties/new"
             params={{ wsId }}
-            className="flex items-center gap-3 border-t border-zinc-100 px-5 py-3 text-sm text-zinc-600 hover:bg-zinc-50"
+            className={
+              "flex items-center gap-3 px-5 py-3 text-sm text-zinc-600 hover:bg-zinc-50 " +
+              (items.length > 0 ? "border-t border-zinc-100" : "")
+            }
           >
             <span className="text-lg leading-none">+</span>
             <span>Новое поле</span>
@@ -160,12 +179,14 @@ function PropertyRow(props: {
       >
         ⠿
       </span>
-      <div className="flex-1 font-medium">{props.property.name}</div>
-      {props.property.internal && (
-        <span className="rounded-full border border-zinc-200 px-2 py-0.5 text-xs text-zinc-500">
-          системное
-        </span>
-      )}
+      <div className="flex flex-1 items-center gap-2">
+        <span>{props.property.name}</span>
+        {props.property.key === "stage" && (
+          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">
+            воронка
+          </span>
+        )}
+      </div>
       <span className="text-2xl leading-none text-zinc-300">›</span>
     </Reorder.Item>
   );
