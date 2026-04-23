@@ -101,8 +101,10 @@ await db
     {
       id: NOTES_PROP_ID,
       workspaceId: DEMO_WS_ID,
-      key: "notes",
-      name: "Заметки",
+      // key=comment, не notes — настоящие «Заметки» = activities (US-15),
+      // отдельная таблица. Это просто demo text-property.
+      key: "comment",
+      name: "Комментарий",
       type: "text",
       order: 1,
       values: null,
@@ -118,7 +120,7 @@ await db
       workspaceId: DEMO_WS_ID,
       name: "Иван Петров",
       email: "ivan@example.com",
-      properties: { stage: "new", notes: "первый клиент" },
+      properties: { stage: "new", comment: "первый клиент" },
       createdBy: ANNA_ID,
     },
     {

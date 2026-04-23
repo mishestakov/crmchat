@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import { errorMessage } from "../lib/errors";
 
 export const Route = createFileRoute("/login")({
   component: Login,
@@ -38,7 +39,9 @@ function Login() {
       </p>
 
       {users.isLoading && <p>Загрузка…</p>}
-      {users.error && <p className="text-red-600">{String(users.error)}</p>}
+      {users.error && (
+        <p className="text-red-600">{errorMessage(users.error)}</p>
+      )}
       {users.data && (
         <ul className="space-y-2">
           {users.data.map((u) => (

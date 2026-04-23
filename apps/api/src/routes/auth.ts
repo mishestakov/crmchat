@@ -8,9 +8,14 @@ import { createSession, destroySession } from "../lib/sessions";
 
 const app = new OpenAPIHono();
 
-const isDev = process.env.NODE_ENV !== "production";
+// Двойной гейт: одной env-переменной не хватит на prod-страховку.
+// NODE_ENV должен быть строго "development" (не "test", не "staging"), И
+// явный opt-in ALLOW_DEV_AUTH=true. Опечатка в env → ручка не появится.
+const isDevAuthEnabled =
+  process.env.NODE_ENV === "development" &&
+  process.env.ALLOW_DEV_AUTH === "true";
 
-if (isDev) {
+if (isDevAuthEnabled) {
   const DevUser = z
     .object({
       id: z.string().uuid(),

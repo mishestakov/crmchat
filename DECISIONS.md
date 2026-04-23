@@ -103,6 +103,45 @@
 
 ---
 
+## Известный технический долг (отложен до обоснования)
+
+Поднято в ревью, осознанно НЕ делаем сейчас (MVP-режим, см. `CLAUDE.md`). Возвращаемся, когда упрёмся.
+
+**Безопасность / надёжность:**
+- `createSession` удаляет старую row только по `sid`, без сверки `userId`. Sid 256-битный, угадать невозможно — реальный риск ~ноль. Усилить когда появится shared-environment (kiosk, terminal).
+- Rate limit на `/v1/auth/*` и `/v1/_dev/login` — pre-launch чек, не до prod.
+- CSRF-защита через `SameSite=Lax` + CORS-allowlist. На текущих ручках достаточно (мутации только через fetch с CORS). Усиление через double-submit token — когда появится cross-subdomain (`app.crmchat.ai` + `api.crmchat.ai`).
+- `assertMember` → 403 одинаково для «не существует» и «не ваш». Это намеренно — не раскрываем существование чужих wsId. Не «исправлять» на 404.
+
+**БД / схема:**
+- `updatedAt` руками проставляется в handler'ах, не через `$onUpdate`. Забытая ручка → таблица разъедется. Перевести на `$onUpdate(() => new Date())` когда будет 5+ доменов.
+- Compound index `(workspace_id, created_at)` на `contacts`/`properties` — нужен на 10к+ строк. Сейчас полный seq scan = 0.1мс.
+- GIN-индекс на `contacts.properties` jsonb — нужен когда появится фильтр «contacts where properties.stage='wip'» в UI (US-2).
+- pg-boss schedule `cleanup.expired_sessions` (DELETE WHERE expires_at < now()) — pre-prod cron.
+- Переход с `drizzle-kit push` на `generate + migrate` для prod. Включает `propertyType` enum: `ALTER TYPE ADD VALUE` при добавлении `date`/`multi_select`.
+- Nullable workspace.organizationId / auto-create org при OAuth-callback — сейчас seed создаёт org, новый OAuth-юзер словит 500 на первом workspace.
+
+**API контракты:**
+- `updatedAt` в response-схемах `Workspace/Contact/Property` (data shape финальный по `CLAUDE.md`).
+- POST `/v1/workspaces/{wsId}/properties/reorder` — single-transaction batch. Сейчас два независимых PATCH с optimistic update + rollback.
+- PATCH контакта в БД-транзакции (read existing → validate → update). Race-окно есть, но в single-user MVP не выстрелит.
+
+**UX / архитектура:**
+- Optimistic concurrency для edit property (ETag/updatedAt). Multi-user сценарий.
+- Dirty-flag в edit form контакта (background refetch затирает локальные правки). MVP — игнор.
+- defaultHook OpenAPIHono для унификации Zod-validation errors через onError.
+- contact-payload helper (parsing propsClean) — выносим на 3-м повторе.
+- Lint/prettier — когда появится 2-й разработчик.
+- Тесты `contact-properties.ts` — самый богатый на edge-cases модуль, первый кандидат на Bun test.
+
+**Инфра:**
+- CORS origin в `WEB_ORIGIN` env вместо хардкода — перед первым деплоем.
+- SIGTERM/SIGINT graceful shutdown (`sql.end()`) — когда Bun-процесс пойдёт в Docker.
+- Prod-деплой: где запускается, как конфигурится, где `NODE_ENV=production` — описать в specs перед staging.
+- `drizzle-kit --env-file=...` вместо ручного парсера в drizzle.config.ts — рефакторинг ради рефакторинга, текущий работает.
+
+---
+
 ## Шаблон для новых записей
 
 ```

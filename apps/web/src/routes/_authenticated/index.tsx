@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "@tanstack/react-form";
 import { CreateWorkspaceSchema } from "@repo/core";
 import { api } from "../../lib/api";
+import { errorMessage } from "../../lib/errors";
 
 export const Route = createFileRoute("/_authenticated/")({
   component: WorkspacesPage,
@@ -71,7 +72,9 @@ function WorkspacesPage() {
       </form>
 
       {list.isLoading && <p>Загрузка…</p>}
-      {list.error && <p className="text-red-600">{String(list.error)}</p>}
+      {list.error && (
+        <p className="text-red-600">{errorMessage(list.error)}</p>
+      )}
       {list.data && (
         <ul className="space-y-2">
           {list.data.length === 0 && (
