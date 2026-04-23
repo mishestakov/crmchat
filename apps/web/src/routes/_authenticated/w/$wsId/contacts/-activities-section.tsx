@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Bell, Check, MoreHorizontal, StickyNote, X } from "lucide-react";
 import type { Activity, ActivityRepeat } from "@repo/core";
 import { api } from "../../../../../lib/api";
 import { errorMessage } from "../../../../../lib/errors";
@@ -11,15 +12,14 @@ const REPEAT_LABELS: Record<ActivityRepeat, string> = {
   monthly: "Ежемесячно",
 };
 
-export function ActivitiesSection(props: {
-  wsId: string;
-  contactId: string;
-}) {
+const activitiesKey = (wsId: string, contactId: string) =>
+  ["activities", wsId, contactId] as const;
+
+export function ActivitiesList(props: { wsId: string; contactId: string }) {
   const { wsId, contactId } = props;
   const qc = useQueryClient();
-  const queryKey = ["activities", wsId, contactId] as const;
-  const [adding, setAdding] = useState<"note" | "reminder" | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const queryKey = activitiesKey(wsId, contactId);
+  const [editing, setEditing] = useState<Activity | null>(null);
 
   const list = useQuery({
     queryKey,
@@ -30,32 +30,6 @@ export function ActivitiesSection(props: {
       );
       if (error) throw error;
       return data;
-    },
-  });
-
-  const create = useMutation({
-    mutationFn: async (
-      input:
-        | { type: "note"; text: string }
-        | {
-            type: "reminder";
-            text: string;
-            date: string;
-            repeat?: ActivityRepeat;
-          },
-    ) => {
-      const { error } = await api.POST(
-        "/v1/workspaces/{wsId}/contacts/{contactId}/activities",
-        {
-          params: { path: { wsId, contactId } },
-          body: input,
-        },
-      );
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey });
-      setAdding(null);
     },
   });
 
@@ -92,349 +66,342 @@ export function ActivitiesSection(props: {
     onSuccess: () => qc.invalidateQueries({ queryKey }),
   });
 
+  if (list.isLoading) {
+    return <p className="px-1 text-sm text-zinc-500">Загрузка…</p>;
+  }
+  if (list.error) {
+    return (
+      <p className="px-1 text-sm text-red-600">{errorMessage(list.error)}</p>
+    );
+  }
+  if (!list.data || list.data.length === 0) {
+    return null;
+  }
+
   return (
-    <section className="space-y-4">
-      <div className="flex items-center gap-2">
-        <h2 className="text-lg font-semibold">Активности</h2>
-        <button
-          onClick={() => setAdding("note")}
-          className="rounded border border-zinc-300 px-2 py-1 text-sm hover:bg-zinc-50"
-        >
-          + Заметка
-        </button>
-        <button
-          onClick={() => setAdding("reminder")}
-          className="rounded border border-zinc-300 px-2 py-1 text-sm hover:bg-zinc-50"
-        >
-          + Напоминание
-        </button>
+    <>
+      <div className="space-y-2">
+        {list.data.map((a) => (
+          <ActivityCard
+            key={a.id}
+            activity={a}
+            onToggle={() =>
+              update.mutate({
+                id: a.id,
+                patch: {
+                  status: a.status === "open" ? "completed" : "open",
+                },
+              })
+            }
+            onEdit={() => setEditing(a)}
+            onDelete={() => {
+              if (confirm("Удалить активность?")) remove.mutate(a.id);
+            }}
+          />
+        ))}
       </div>
-
-      {adding === "note" && (
-        <NoteForm
-          onCancel={() => {
-            create.reset();
-            setAdding(null);
-          }}
-          onSave={(text) => create.mutate({ type: "note", text })}
-          saving={create.isPending}
-          error={create.error ? errorMessage(create.error) : null}
-        />
-      )}
-      {adding === "reminder" && (
-        <ReminderForm
-          onCancel={() => {
-            create.reset();
-            setAdding(null);
-          }}
-          onSave={(input) =>
-            create.mutate({ type: "reminder", ...input })
-          }
-          saving={create.isPending}
-          error={create.error ? errorMessage(create.error) : null}
-        />
-      )}
-
-      {list.isLoading && <p className="text-sm">Загрузка…</p>}
-      {list.error && (
-        <p className="text-red-600 text-sm">{errorMessage(list.error)}</p>
-      )}
-
-      {list.data && list.data.length === 0 && !adding && (
-        <p className="text-sm text-zinc-500">Пока пусто</p>
-      )}
-
-      {list.data && (
-        <ul className="space-y-2">
-          {list.data.map((a) => (
-            <li
-              key={a.id}
-              className="rounded border border-zinc-200 bg-white p-3"
-            >
-              {editingId === a.id ? (
-                <ActivityEditForm
-                  activity={a}
-                  onCancel={() => setEditingId(null)}
-                  onSave={(patch) =>
-                    update.mutate(
-                      { id: a.id, patch },
-                      { onSuccess: () => setEditingId(null) },
-                    )
-                  }
-                  saving={update.isPending}
-                />
-              ) : (
-                <ActivityRow
-                  activity={a}
-                  onEdit={() => setEditingId(a.id)}
-                  onToggle={() =>
-                    update.mutate({
-                      id: a.id,
-                      patch: {
-                        status: a.status === "open" ? "completed" : "open",
-                      },
-                    })
-                  }
-                  onDelete={() => {
-                    if (confirm(`Удалить активность?`)) remove.mutate(a.id);
-                  }}
-                />
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+      {editing &&
+        (editing.type === "note" ? (
+          <NoteModal
+            wsId={wsId}
+            contactId={contactId}
+            initial={editing}
+            onClose={() => setEditing(null)}
+          />
+        ) : (
+          <ReminderModal
+            wsId={wsId}
+            contactId={contactId}
+            initial={editing}
+            onClose={() => setEditing(null)}
+          />
+        ))}
+    </>
   );
 }
 
-function ActivityRow(props: {
+function ActivityCard(props: {
   activity: Activity;
-  onEdit: () => void;
   onToggle: () => void;
+  onEdit: () => void;
   onDelete: () => void;
 }) {
   const { activity: a } = props;
+  const isReminder = a.type === "reminder";
+  const completed = a.status === "completed";
+
   return (
-    <div className="flex items-start justify-between gap-3">
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 text-xs text-zinc-500">
-          <span className="font-medium uppercase">{a.type}</span>
-          {a.status === "completed" && (
-            <span className="rounded bg-green-100 px-1.5 py-0.5 text-green-800">
-              completed
-              {a.completedAt &&
-                ` · ${new Date(a.completedAt).toLocaleString()}`}
-            </span>
-          )}
-        </div>
-        <div
-          className={`mt-1 whitespace-pre-wrap ${
-            a.status === "completed" ? "text-zinc-400 line-through" : ""
-          }`}
-        >
-          {a.text}
-        </div>
-        {a.type === "reminder" && a.date && (
-          <div className="mt-1 text-xs text-zinc-500">
-            {new Date(a.date).toLocaleString()}
-            {a.repeat !== "none" && ` · ${REPEAT_LABELS[a.repeat]}`}
+    <div className="rounded-2xl bg-white px-4 py-3 shadow-sm">
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div
+            className={
+              "whitespace-pre-wrap text-sm font-medium " +
+              (completed ? "text-zinc-400 line-through" : "text-zinc-900")
+            }
+          >
+            {a.text || (isReminder ? "Напоминание" : "Заметка")}
           </div>
+          <div className="mt-0.5 text-xs text-zinc-500">
+            {isReminder && a.date
+              ? completed && a.completedAt
+                ? `выполнено ${formatDateTime(new Date(a.completedAt))}`
+                : `до ${formatDateTime(new Date(a.date))}${
+                    a.repeat !== "none" ? ` · ${REPEAT_LABELS[a.repeat]}` : ""
+                  }`
+              : `создано ${formatDateTime(new Date(a.createdAt))}`}
+          </div>
+        </div>
+        {isReminder && (
+          <button
+            type="button"
+            onClick={props.onToggle}
+            title={completed ? "Снова открыть" : "Завершить"}
+            className={
+              "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-colors " +
+              (completed
+                ? "border-emerald-600 bg-emerald-600 text-white"
+                : "border-zinc-300 bg-white hover:border-zinc-500")
+            }
+          >
+            {completed && <Check size={12} strokeWidth={3} />}
+          </button>
         )}
-      </div>
-      <div className="flex shrink-0 gap-1 text-xs">
-        <button
-          onClick={props.onToggle}
-          className="rounded border border-zinc-300 px-2 py-1 hover:bg-zinc-50"
-          title={a.status === "open" ? "Завершить" : "Снова открыть"}
-        >
-          {a.status === "open" ? "✓" : "↺"}
-        </button>
-        <button
-          onClick={props.onEdit}
-          className="rounded border border-zinc-300 px-2 py-1 hover:bg-zinc-50"
-        >
-          Изменить
-        </button>
-        <button
-          onClick={props.onDelete}
-          className="rounded border border-red-300 px-2 py-1 text-red-700 hover:bg-red-50"
-        >
-          Удалить
-        </button>
+        <RowMenu onEdit={props.onEdit} onDelete={props.onDelete} />
       </div>
     </div>
   );
 }
 
-function NoteForm(props: {
-  onCancel: () => void;
-  onSave: (text: string) => void;
-  saving: boolean;
-  error: string | null;
-}) {
-  const [text, setText] = useState("");
+function RowMenu(props: { onEdit: () => void; onDelete: () => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useClickOutside(ref, () => setOpen(false));
   return (
-    <form
-      className="rounded border border-zinc-300 bg-white p-3 space-y-2"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (text.trim()) props.onSave(text);
-      }}
-    >
-      <textarea
-        autoFocus
-        rows={3}
-        className="w-full rounded border border-zinc-300 px-3 py-2"
-        placeholder="Заметка..."
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-      />
-      <div className="flex gap-2">
-        <button
-          type="submit"
-          disabled={props.saving || !text.trim()}
-          className="rounded bg-zinc-900 px-3 py-1.5 text-sm text-white disabled:opacity-50"
-        >
-          Создать заметку
-        </button>
-        <button
-          type="button"
-          onClick={props.onCancel}
-          className="rounded border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-50"
-        >
-          Отмена
-        </button>
-      </div>
-      {props.error && (
-        <p className="text-sm text-red-600">{props.error}</p>
+    <div ref={ref} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((s) => !s)}
+        className="flex h-7 w-7 items-center justify-center rounded-md text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600"
+      >
+        <MoreHorizontal size={16} />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-8 z-20 w-40 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-lg">
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              props.onEdit();
+            }}
+            className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50"
+          >
+            Редактировать
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              props.onDelete();
+            }}
+            className="block w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-zinc-50"
+          >
+            Удалить
+          </button>
+        </div>
       )}
-    </form>
+    </div>
   );
 }
 
-function ReminderForm(props: {
-  onCancel: () => void;
-  onSave: (input: {
-    text: string;
-    date: string;
-    repeat?: ActivityRepeat;
-  }) => void;
-  saving: boolean;
-  error: string | null;
+export function NoteModal(props: {
+  wsId: string;
+  contactId: string;
+  initial?: Activity;
+  onClose: () => void;
 }) {
-  const [text, setText] = useState("");
-  const [date, setDate] = useState(""); // datetime-local format
-  const [repeat, setRepeat] = useState<ActivityRepeat>("none");
+  const qc = useQueryClient();
+  const [text, setText] = useState(props.initial?.text ?? "");
+  const isEdit = !!props.initial;
 
-  const submit = () => {
-    if (!text.trim() || !date) return;
-    // datetime-local не имеет TZ → интерпретируем как локальное и конвертим в ISO.
-    const iso = new Date(date).toISOString();
-    props.onSave({
-      text,
-      date: iso,
-      ...(repeat !== "none" ? { repeat } : {}),
-    });
-  };
+  const create = useMutation({
+    mutationFn: async () => {
+      const { error } = await api.POST(
+        "/v1/workspaces/{wsId}/contacts/{contactId}/activities",
+        {
+          params: { path: { wsId: props.wsId, contactId: props.contactId } },
+          body: { type: "note", text },
+        },
+      );
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: activitiesKey(props.wsId, props.contactId) });
+      props.onClose();
+    },
+  });
+
+  const update = useMutation({
+    mutationFn: async () => {
+      const { error } = await api.PATCH(
+        "/v1/workspaces/{wsId}/contacts/{contactId}/activities/{id}",
+        {
+          params: {
+            path: {
+              wsId: props.wsId,
+              contactId: props.contactId,
+              id: props.initial!.id,
+            },
+          },
+          body: { text },
+        },
+      );
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: activitiesKey(props.wsId, props.contactId) });
+      props.onClose();
+    },
+  });
+
+  const m = isEdit ? update : create;
+  const canSave = text.trim().length > 0;
 
   return (
-    <form
-      className="rounded border border-zinc-300 bg-white p-3 space-y-2"
-      onSubmit={(e) => {
-        e.preventDefault();
-        submit();
-      }}
-    >
-      <textarea
-        autoFocus
-        rows={2}
-        className="w-full rounded border border-zinc-300 px-3 py-2"
-        placeholder="Описание..."
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-      />
-      <div className="flex gap-2">
-        <input
-          type="datetime-local"
-          className="rounded border border-zinc-300 px-3 py-2 text-sm"
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
-        />
-        <select
-          className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm"
-          value={repeat}
-          onChange={(e) => setRepeat(e.target.value as ActivityRepeat)}
-        >
-          {(Object.keys(REPEAT_LABELS) as ActivityRepeat[]).map((r) => (
-            <option key={r} value={r}>
-              {REPEAT_LABELS[r]}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className="flex gap-2">
+    <Modal title="Заметка" onClose={props.onClose}>
+      <form
+        className="space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (canSave) m.mutate();
+        }}
+      >
+        <Field label="Текст">
+          <textarea
+            autoFocus
+            rows={4}
+            className={fieldInputClass}
+            placeholder="Что важно зафиксировать"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+          />
+        </Field>
+        {m.error && (
+          <p className="text-sm text-red-600">{errorMessage(m.error)}</p>
+        )}
         <button
           type="submit"
-          disabled={props.saving || !text.trim() || !date}
-          className="rounded bg-zinc-900 px-3 py-1.5 text-sm text-white disabled:opacity-50"
+          disabled={!canSave || m.isPending}
+          className="w-full rounded-lg bg-emerald-600 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
         >
-          Создать напоминание
+          {isEdit ? "Сохранить заметку" : "Создать заметку"}
         </button>
-        <button
-          type="button"
-          onClick={props.onCancel}
-          className="rounded border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-50"
-        >
-          Отмена
-        </button>
-      </div>
-      {props.error && (
-        <p className="text-sm text-red-600">{props.error}</p>
-      )}
-    </form>
+      </form>
+    </Modal>
   );
 }
 
-function ActivityEditForm(props: {
-  activity: Activity;
-  onCancel: () => void;
-  onSave: (patch: {
-    text?: string;
-    date?: string | null;
-    repeat?: ActivityRepeat;
-  }) => void;
-  saving: boolean;
+export function ReminderModal(props: {
+  wsId: string;
+  contactId: string;
+  initial?: Activity;
+  onClose: () => void;
 }) {
-  const { activity: a } = props;
-  const [text, setText] = useState(a.text);
-  // datetime-local требует "YYYY-MM-DDTHH:mm" в локальной TZ.
+  const qc = useQueryClient();
+  const isEdit = !!props.initial;
+  const [text, setText] = useState(props.initial?.text ?? "");
   const [date, setDate] = useState(
-    a.date
-      ? toLocalInputValue(new Date(a.date))
-      : "",
+    props.initial?.date ? toLocalInputValue(new Date(props.initial.date)) : "",
   );
-  const [repeat, setRepeat] = useState<ActivityRepeat>(a.repeat);
+  const [repeat, setRepeat] = useState<ActivityRepeat>(
+    props.initial?.repeat ?? "none",
+  );
 
-  const canSave =
-    text.trim().length > 0 && (a.type === "note" || date !== "");
+  const create = useMutation({
+    mutationFn: async () => {
+      const iso = new Date(date).toISOString();
+      const { error } = await api.POST(
+        "/v1/workspaces/{wsId}/contacts/{contactId}/activities",
+        {
+          params: { path: { wsId: props.wsId, contactId: props.contactId } },
+          body: {
+            type: "reminder",
+            text,
+            date: iso,
+            ...(repeat !== "none" ? { repeat } : {}),
+          },
+        },
+      );
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: activitiesKey(props.wsId, props.contactId) });
+      props.onClose();
+    },
+  });
+
+  const update = useMutation({
+    mutationFn: async () => {
+      const { error } = await api.PATCH(
+        "/v1/workspaces/{wsId}/contacts/{contactId}/activities/{id}",
+        {
+          params: {
+            path: {
+              wsId: props.wsId,
+              contactId: props.contactId,
+              id: props.initial!.id,
+            },
+          },
+          body: {
+            text,
+            date: new Date(date).toISOString(),
+            repeat,
+          },
+        },
+      );
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: activitiesKey(props.wsId, props.contactId) });
+      props.onClose();
+    },
+  });
+
+  const m = isEdit ? update : create;
+  const canSave = text.trim().length > 0 && date !== "";
 
   return (
-    <form
-      className="space-y-2"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (!canSave) return;
-        const patch: {
-          text?: string;
-          date?: string | null;
-          repeat?: ActivityRepeat;
-        } = { text };
-        if (a.type === "reminder") {
-          patch.date = new Date(date).toISOString();
-          patch.repeat = repeat;
-        }
-        props.onSave(patch);
-      }}
-    >
-      <textarea
-        rows={2}
-        className="w-full rounded border border-zinc-300 px-3 py-2"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-      />
-      {a.type === "reminder" && (
-        <div className="flex gap-2">
+    <Modal title="Напоминание" onClose={props.onClose}>
+      <form
+        className="space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (canSave) m.mutate();
+        }}
+      >
+        <Field label="Что напомнить">
+          <input
+            autoFocus
+            type="text"
+            className={fieldInputClass}
+            placeholder="Например, «Уточнить решение»"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+          />
+        </Field>
+        <Field label="Дата">
           <input
             type="datetime-local"
-            className="rounded border border-zinc-300 px-3 py-2 text-sm"
+            className={fieldInputClass}
             value={date}
             onChange={(e) => setDate(e.target.value)}
           />
+        </Field>
+        <Field label="Повтор">
           <select
-            className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm"
             value={repeat}
             onChange={(e) => setRepeat(e.target.value as ActivityRepeat)}
+            className={fieldInputClass + " bg-white"}
           >
             {(Object.keys(REPEAT_LABELS) as ActivityRepeat[]).map((r) => (
               <option key={r} value={r}>
@@ -442,26 +409,84 @@ function ActivityEditForm(props: {
               </option>
             ))}
           </select>
-        </div>
-      )}
-      <div className="flex gap-2">
+        </Field>
+        {m.error && (
+          <p className="text-sm text-red-600">{errorMessage(m.error)}</p>
+        )}
         <button
           type="submit"
-          disabled={props.saving || !canSave}
-          className="rounded bg-zinc-900 px-3 py-1.5 text-sm text-white disabled:opacity-50"
+          disabled={!canSave || m.isPending}
+          className="w-full rounded-lg bg-emerald-600 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
         >
-          Сохранить
+          {isEdit ? "Сохранить напоминание" : "Создать напоминание"}
         </button>
-        <button
-          type="button"
-          onClick={props.onCancel}
-          className="rounded border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-50"
-        >
-          Отмена
-        </button>
-      </div>
-    </form>
+      </form>
+    </Modal>
   );
+}
+
+const fieldInputClass =
+  "w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none";
+
+function Field(props: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="mb-1.5 block text-sm text-zinc-600">{props.label}</span>
+      {props.children}
+    </label>
+  );
+}
+
+function Modal(props: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") props.onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [props.onClose]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <button
+        type="button"
+        aria-label="Закрыть"
+        onClick={props.onClose}
+        className="absolute inset-0 cursor-default bg-zinc-900/30"
+      />
+      <div className="relative w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
+        <div className="mb-4 flex items-center justify-between">
+          <div className="text-base font-semibold text-zinc-900">
+            {props.title}
+          </div>
+          <button
+            type="button"
+            onClick={props.onClose}
+            className="flex h-7 w-7 items-center justify-center rounded-md text-zinc-400 hover:bg-zinc-100"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        {props.children}
+      </div>
+    </div>
+  );
+}
+
+function useClickOutside(
+  ref: React.RefObject<HTMLElement | null>,
+  handler: () => void,
+) {
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) handler();
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [ref, handler]);
 }
 
 function toLocalInputValue(d: Date): string {
@@ -470,3 +495,19 @@ function toLocalInputValue(d: Date): string {
     d.getHours(),
   )}:${pad(d.getMinutes())}`;
 }
+
+function formatDateTime(d: Date): string {
+  const today = new Date();
+  const sameDay =
+    d.getFullYear() === today.getFullYear() &&
+    d.getMonth() === today.getMonth() &&
+    d.getDate() === today.getDate();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  if (sameDay) return `сегодня в ${hm}`;
+  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()} в ${hm}`;
+}
+
+// Re-export для совместимости — старый ActivitiesSection (note/reminder buttons + list)
+// больше не используется в карточке: заметка/напоминание открываются как модалки
+// из action-row карточки контакта, а ActivitiesList рендерит только список.

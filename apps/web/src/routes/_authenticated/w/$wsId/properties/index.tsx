@@ -69,10 +69,8 @@ function PropertiesList() {
   };
 
   return (
-    <div className="mx-auto max-w-2xl p-8 space-y-3">
-      <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-        Кастомные поля
-      </div>
+    <div className="mx-auto max-w-xl p-6 space-y-4">
+      <h1 className="text-2xl font-semibold">Кастомные поля</h1>
 
       {list.isLoading && <p className="text-sm">Загрузка…</p>}
       {list.error && (
@@ -80,13 +78,13 @@ function PropertiesList() {
       )}
 
       {list.data && (
-        <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+        <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
           <Reorder.Group
             as="ul"
             axis="y"
             values={items}
             onReorder={onReorder}
-            className="divide-y divide-zinc-200"
+            className="divide-y divide-zinc-100"
           >
             {items.map((p) => (
               <PropertyRow
@@ -112,7 +110,7 @@ function PropertiesList() {
           <Link
             to="/w/$wsId/properties/new"
             params={{ wsId }}
-            className="flex items-center gap-3 border-t border-zinc-200 px-4 py-3 text-sm text-zinc-600 hover:bg-zinc-50"
+            className="flex items-center gap-3 border-t border-zinc-100 px-5 py-3 text-sm text-zinc-600 hover:bg-zinc-50"
           >
             <span className="text-lg leading-none">+</span>
             <span>Новое поле</span>
@@ -149,7 +147,7 @@ function PropertyRow(props: {
       onDragStart={props.onDragStart}
       onDragEnd={props.onDragEnd}
       onClick={props.onClick}
-      className="flex cursor-pointer items-center gap-3 bg-white px-4 py-3 hover:bg-zinc-50"
+      className="flex cursor-pointer items-center gap-3 bg-white px-5 py-3 hover:bg-zinc-50"
     >
       <span
         onPointerDown={(e) => {

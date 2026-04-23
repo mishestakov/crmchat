@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { Property } from "@repo/core";
 import { api } from "../../../../../lib/api";
 import { errorMessage } from "../../../../../lib/errors";
+import { BackButton } from "../../../../../components/back-button";
 
 export const Route = createFileRoute("/_authenticated/w/$wsId/contacts/new")({
   component: NewContact,
@@ -69,24 +70,18 @@ function NewContact() {
   });
 
   return (
-    <div className="mx-auto max-w-xl p-8 space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-3 p-6">
+      <BackButton />
+      <div className="mx-auto max-w-xl space-y-4">
         <h1 className="text-2xl font-semibold">Новый контакт</h1>
-        <button
-          onClick={() => router.history.back()}
-          className="text-sm text-zinc-500 hover:text-zinc-900"
-        >
-          ← Назад
-        </button>
-      </div>
 
-      <form
-        className="space-y-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          create.mutate();
-        }}
-      >
+        <form
+          className="space-y-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            create.mutate();
+          }}
+        >
         <Field
           label="Имя"
           value={base.name}
@@ -117,17 +112,18 @@ function NewContact() {
           />
         ))}
 
-        <button
-          type="submit"
-          disabled={create.isPending}
-          className="rounded bg-zinc-900 px-4 py-2 text-white disabled:opacity-50"
-        >
-          Создать
-        </button>
-        {create.error && (
-          <p className="text-sm text-red-600">{errorMessage(create.error)}</p>
-        )}
-      </form>
+          <button
+            type="submit"
+            disabled={create.isPending}
+            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+          >
+            Создать
+          </button>
+          {create.error && (
+            <p className="text-sm text-red-600">{errorMessage(create.error)}</p>
+          )}
+        </form>
+      </div>
     </div>
   );
 }

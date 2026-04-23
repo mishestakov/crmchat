@@ -2,6 +2,7 @@ import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../../lib/api";
 import { errorMessage } from "../../../../../lib/errors";
+import { BackButton } from "../../../../../components/back-button";
 import { PropertyForm } from "./-form";
 
 export const Route = createFileRoute("/_authenticated/w/$wsId/properties/new")({
@@ -47,12 +48,17 @@ function NewProperty() {
   });
 
   return (
-    <PropertyForm
-      mode="create"
-      onCancel={() => router.history.back()}
-      onSave={(input) => create.mutate(input)}
-      saving={create.isPending}
-      error={create.error ? errorMessage(create.error) : null}
-    />
+    <div className="space-y-3 p-6">
+      <BackButton />
+      <div className="mx-auto max-w-xl">
+        <PropertyForm
+          mode="create"
+          onCancel={() => router.history.back()}
+          onSave={(input) => create.mutate(input)}
+          saving={create.isPending}
+          error={create.error ? errorMessage(create.error) : null}
+        />
+      </div>
+    </div>
   );
 }

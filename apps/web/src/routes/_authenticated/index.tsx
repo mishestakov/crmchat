@@ -87,7 +87,7 @@ function CreateWorkspacePage() {
         <button
           type="submit"
           disabled={create.isPending}
-          className="rounded bg-zinc-900 px-4 py-2 text-white disabled:opacity-50"
+          className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
         >
           Создать
         </button>

@@ -81,7 +81,7 @@ export function PropertyForm(props: {
 
   return (
     <form
-      className="mx-auto max-w-2xl space-y-4 p-8"
+      className="space-y-4"
       onSubmit={(e) => {
         e.preventDefault();
         if (!canSave) return;
@@ -105,7 +105,7 @@ export function PropertyForm(props: {
         />
       </Section>
 
-      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+      <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
         <Row label="Тип поля">
           {isEdit ? (
             <span className="text-zinc-500">{TYPE_LABELS[type]}</span>
@@ -175,7 +175,7 @@ export function PropertyForm(props: {
 function Section(props: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="mb-1 text-xs font-medium uppercase tracking-wide text-zinc-500">
+      <div className="mb-1.5 text-sm text-zinc-600">
         {props.label}
       </div>
       {props.children}
@@ -185,7 +185,7 @@ function Section(props: { label: string; children: React.ReactNode }) {
 
 function Row(props: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-3 px-4 py-3 text-sm not-last:border-b not-last:border-zinc-200">
+    <div className="flex items-center justify-between gap-3 px-5 py-3 text-sm not-last:border-b not-last:border-zinc-100">
       <span>{props.label}</span>
       <div>{props.children}</div>
     </div>
@@ -265,13 +265,13 @@ function ValuesEditor(props: {
   };
 
   return (
-    <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+    <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
       <Reorder.Group
         as="ul"
         axis="y"
         values={props.values}
         onReorder={props.onChange}
-        className="divide-y divide-zinc-200"
+        className="divide-y divide-zinc-100"
       >
         {props.values.map((v) => (
           <ValueRow
@@ -285,7 +285,7 @@ function ValuesEditor(props: {
       <button
         type="button"
         onClick={add}
-        className="flex w-full items-center gap-3 border-t border-zinc-200 px-3 py-2 text-left text-sm text-zinc-600 hover:bg-zinc-50"
+        className="flex w-full items-center gap-3 border-t border-zinc-100 px-3 py-2 text-left text-sm text-zinc-600 hover:bg-zinc-50"
       >
         <span className="text-lg leading-none">+</span>
         <span>Новое значение</span>

@@ -160,25 +160,26 @@ function ContactsList() {
   const rows = contacts.data ?? [];
 
   return (
-    <div className="mx-auto max-w-6xl p-8 space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Список</h1>
+    <div className="flex h-full flex-col gap-4 overflow-hidden p-6">
+      <div className="flex items-center justify-between gap-3">
+        <ModeSwitcher
+          mode={mode}
+          onSetMode={(m) => setSearch({ mode: m === "list" ? undefined : m })}
+        />
         <Link
           to="/w/$wsId/contacts/new"
           params={{ wsId }}
-          className="rounded bg-zinc-900 px-3 py-1.5 text-sm text-white"
+          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
         >
           + Новый
         </Link>
       </div>
 
       <Toolbar
-        mode={mode}
         q={search.q ?? ""}
         filters={filters}
         properties={props}
         views={views.data ?? []}
-        onSetMode={(m) => setSearch({ mode: m === "list" ? undefined : m })}
         onSetQ={(q) => setSearch({ q: q || undefined })}
         onSetFilters={(f) => setSearch({ filters: stringifyFilters(f) })}
         onApplyView={applyView}
@@ -197,7 +198,9 @@ function ContactsList() {
       )}
 
       {contacts.data && mode === "list" && (
-        <ListView wsId={wsId} rows={rows} properties={props} />
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <ListView wsId={wsId} rows={rows} properties={props} />
+        </div>
       )}
       {contacts.data && mode === "kanban" && (
         <KanbanView wsId={wsId} rows={rows} properties={props} />
@@ -206,13 +209,43 @@ function ContactsList() {
   );
 }
 
-function Toolbar(props: {
+function ModeSwitcher(props: {
   mode: ContactViewMode;
+  onSetMode: (m: ContactViewMode) => void;
+}) {
+  return (
+    <div className="inline-flex rounded-lg border border-zinc-300 bg-white p-0.5 text-sm">
+      <button
+        onClick={() => props.onSetMode("list")}
+        className={
+          "rounded-md px-3 py-1 " +
+          (props.mode === "list"
+            ? "bg-zinc-900 text-white"
+            : "text-zinc-700")
+        }
+      >
+        Список
+      </button>
+      <button
+        onClick={() => props.onSetMode("kanban")}
+        className={
+          "rounded-md px-3 py-1 " +
+          (props.mode === "kanban"
+            ? "bg-zinc-900 text-white"
+            : "text-zinc-700")
+        }
+      >
+        Воронка
+      </button>
+    </div>
+  );
+}
+
+function Toolbar(props: {
   q: string;
   filters: Record<string, string>;
   properties: Property[];
   views: ContactView[];
-  onSetMode: (m: ContactViewMode) => void;
   onSetQ: (q: string) => void;
   onSetFilters: (f: Record<string, string>) => void;
   onApplyView: (v: ContactView) => void;
@@ -239,31 +272,6 @@ function Toolbar(props: {
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="inline-flex rounded border border-zinc-300 bg-white p-0.5 text-sm">
-          <button
-            onClick={() => props.onSetMode("list")}
-            className={
-              "rounded px-3 py-1 " +
-              (props.mode === "list"
-                ? "bg-zinc-900 text-white"
-                : "text-zinc-700")
-            }
-          >
-            Список
-          </button>
-          <button
-            onClick={() => props.onSetMode("kanban")}
-            className={
-              "rounded px-3 py-1 " +
-              (props.mode === "kanban"
-                ? "bg-zinc-900 text-white"
-                : "text-zinc-700")
-            }
-          >
-            Воронка
-          </button>
-        </div>
-
         <input
           value={props.q}
           onChange={(e) => props.onSetQ(e.target.value)}
@@ -304,7 +312,7 @@ function Toolbar(props: {
       </div>
 
       {showFilters && (
-        <div className="rounded border border-zinc-200 bg-white p-3 space-y-2">
+        <div className="rounded-2xl bg-white p-4 shadow-sm space-y-2">
           {Object.entries(props.filters).map(([key, value]) => {
             const def = props.properties.find((p) => p.key === key);
             return (
@@ -479,7 +487,7 @@ function KanbanView(props: {
 
   if (!groupProp || !groupProp.values || groupProp.values.length === 0) {
     return (
-      <div className="rounded border border-dashed border-zinc-300 bg-white p-8 text-center text-sm">
+      <div className="rounded-2xl bg-white p-8 text-center text-sm shadow-sm">
         <p className="mb-2 font-medium">Воронка не настроена</p>
         <p className="mb-4 text-zinc-500">
           Для воронки нужно хотя бы одно свойство типа <code>single_select</code>{" "}
@@ -488,7 +496,7 @@ function KanbanView(props: {
         <Link
           to="/w/$wsId/properties"
           params={{ wsId }}
-          className="inline-block rounded bg-zinc-900 px-3 py-1.5 text-white"
+          className="inline-block rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
         >
           → Кастомные поля
         </Link>
@@ -515,11 +523,11 @@ function KanbanView(props: {
     });
 
   return (
-    <div className="space-y-2">
+    <div className="flex min-h-0 flex-1 flex-col space-y-3">
       <div className="text-xs text-zinc-500">
         Группировка: <strong>{groupProp.name}</strong>
       </div>
-      <div className="flex gap-3 overflow-x-auto pb-2">
+      <div className="flex flex-1 min-h-0 gap-4 overflow-x-auto px-1 pb-3 pt-1">
         {groupProp.values.map((v) => (
           <Column
             key={v.id}
@@ -561,14 +569,14 @@ function Column(props: {
         if (id) props.onDrop(id);
       }}
       className={
-        "w-64 shrink-0 rounded p-2 transition-colors " +
-        (over ? "bg-zinc-200 ring-2 ring-zinc-400" : "bg-zinc-100")
+        "flex min-w-[240px] flex-1 flex-col self-stretch overflow-hidden rounded-xl p-3 transition-colors " +
+        (over ? "bg-zinc-300 ring-2 ring-zinc-400" : "bg-zinc-200")
       }
     >
       <div className="mb-2 px-1 text-sm font-medium">
         {props.title} <span className="text-zinc-500">{props.rows.length}</span>
       </div>
-      <div className="space-y-1">
+      <div className="flex-1 space-y-2 overflow-y-auto">
         {props.rows.map((r) => (
           <div
             key={r.id}
@@ -578,7 +586,7 @@ function Column(props: {
               e.dataTransfer.effectAllowed = "move";
             }}
             onClick={() => props.onOpen(r.id)}
-            className="cursor-pointer rounded border border-zinc-200 bg-white p-2 text-sm hover:bg-zinc-50 active:cursor-grabbing"
+            className="cursor-pointer rounded-md border border-zinc-200 bg-white p-2.5 text-sm shadow-sm hover:bg-zinc-50 active:cursor-grabbing"
           >
             <div className="font-medium">{r.name ?? "—"}</div>
             {r.email && (

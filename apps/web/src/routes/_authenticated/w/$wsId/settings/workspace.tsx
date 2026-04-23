@@ -41,7 +41,7 @@ function WorkspaceSettings() {
   });
 
   return (
-    <div className="mx-auto max-w-2xl p-8 space-y-6">
+    <div className="mx-auto max-w-xl p-6 space-y-6">
       <h1 className="text-2xl font-semibold">Настройки</h1>
 
       {ws.isLoading && <p>Загрузка…</p>}
@@ -69,7 +69,7 @@ function WorkspaceSettings() {
               disabled={
                 save.isPending || !name.trim() || name === ws.data.name
               }
-              className="rounded bg-zinc-900 px-4 py-2 text-white disabled:opacity-50"
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
             >
               Сохранить
             </button>

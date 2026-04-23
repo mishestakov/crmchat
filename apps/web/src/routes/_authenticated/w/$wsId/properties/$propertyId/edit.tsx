@@ -2,6 +2,7 @@ import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
+import { BackButton } from "../../../../../../components/back-button";
 import { PropertyForm } from "../-form";
 
 export const Route = createFileRoute(
@@ -75,33 +76,44 @@ function EditProperty() {
   });
 
   if (list.isLoading) {
-    return <div className="mx-auto max-w-2xl p-8 text-sm">Загрузка…</div>;
+    return (
+      <div className="space-y-3 p-6">
+        <BackButton />
+        <p className="mx-auto max-w-xl text-sm">Загрузка…</p>
+      </div>
+    );
   }
   if (!property) {
     return (
-      <div className="mx-auto max-w-2xl p-8 text-sm text-red-600">
-        Свойство не найдено
+      <div className="space-y-3 p-6">
+        <BackButton />
+        <p className="mx-auto max-w-xl text-red-600">Свойство не найдено</p>
       </div>
     );
   }
 
   return (
-    <PropertyForm
-      mode="edit"
-      initial={property}
-      onCancel={() => router.history.back()}
-      onSave={(input) => update.mutate(input)}
-      onDelete={() => {
-        if (
-          confirm(
-            `Удалить «${property.name}»? Значения у контактов тоже будут стёрты.`,
-          )
-        ) {
-          remove.mutate();
-        }
-      }}
-      saving={update.isPending}
-      error={update.error ? errorMessage(update.error) : null}
-    />
+    <div className="space-y-3 p-6">
+      <BackButton />
+      <div className="mx-auto max-w-xl">
+        <PropertyForm
+          mode="edit"
+          initial={property}
+          onCancel={() => router.history.back()}
+          onSave={(input) => update.mutate(input)}
+          onDelete={() => {
+            if (
+              confirm(
+                `Удалить «${property.name}»? Значения у контактов тоже будут стёрты.`,
+              )
+            ) {
+              remove.mutate();
+            }
+          }}
+          saving={update.isPending}
+          error={update.error ? errorMessage(update.error) : null}
+        />
+      </div>
+    </div>
   );
 }

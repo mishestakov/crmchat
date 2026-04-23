@@ -33,10 +33,10 @@ function AuthLayout() {
   const wsId = params.wsId;
 
   return (
-    <div className="flex min-h-screen bg-zinc-50">
+    <div className="flex h-screen bg-zinc-100">
       <aside className="flex w-60 shrink-0 flex-col border-r border-zinc-200 bg-white">
         <WorkspaceSwitcher currentWsId={wsId} />
-        <nav className="flex-1 space-y-4 p-3 text-sm">
+        <nav className="flex-1 space-y-4 overflow-y-auto p-3 text-sm">
           {wsId && (
             <>
               <SidebarGroup title="Лиды">
@@ -55,7 +55,7 @@ function AuthLayout() {
         </nav>
         <SidebarFooter />
       </aside>
-      <main className="min-w-0 flex-1">
+      <main className="min-w-0 flex-1 overflow-y-auto">
         <Outlet />
       </main>
     </div>
