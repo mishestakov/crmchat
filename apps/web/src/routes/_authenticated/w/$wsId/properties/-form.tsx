@@ -1,5 +1,6 @@
 // Shared form для create/edit property. Не route — префикс `-` игнорится TanStack Router.
 
+import { Reorder, useDragControls } from "motion/react";
 import { useState } from "react";
 import type { Property, PropertyType, PropertyValue } from "@repo/core";
 
@@ -243,16 +244,13 @@ function ValuesEditor(props: {
   protectedIds: Set<string>;
   newId: () => string;
 }) {
-  const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
-  const [overIdx, setOverIdx] = useState<number | null>(null);
-
-  const update = (idx: number, patch: Partial<PropertyValue>) => {
-    const next = [...props.values];
-    next[idx] = { ...next[idx]!, ...patch };
-    props.onChange(next);
+  const update = (id: string, patch: Partial<PropertyValue>) => {
+    props.onChange(
+      props.values.map((v) => (v.id === id ? { ...v, ...patch } : v)),
+    );
   };
-  const remove = (idx: number) => {
-    const v = props.values[idx];
+  const remove = (id: string) => {
+    const v = props.values.find((x) => x.id === id);
     if (!v) return;
     if (props.protectedIds.has(v.id)) {
       const ok = confirm(
@@ -260,96 +258,80 @@ function ValuesEditor(props: {
       );
       if (!ok) return;
     }
-    props.onChange(props.values.filter((_, i) => i !== idx));
+    props.onChange(props.values.filter((x) => x.id !== id));
   };
   const add = () => {
     props.onChange([...props.values, { id: props.newId(), name: "" }]);
   };
-  const moveTo = (fromIdx: number, beforeIdx: number) => {
-    let toIdx = beforeIdx;
-    if (fromIdx < beforeIdx) toIdx = beforeIdx - 1;
-    if (fromIdx === toIdx) return;
-    const next = [...props.values];
-    const [moved] = next.splice(fromIdx, 1);
-    next.splice(toIdx, 0, moved!);
-    props.onChange(next);
-  };
 
   return (
-    <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white divide-y divide-zinc-200">
-      {props.values.map((v, idx) => (
-        <div
-          key={v.id}
-          onDragOver={(e) => {
-            if (draggingIdx === null) return;
-            e.preventDefault();
-            if (overIdx !== idx) setOverIdx(idx);
-          }}
-          onDrop={(e) => {
-            if (draggingIdx === null) return;
-            e.preventDefault();
-            moveTo(draggingIdx, idx);
-            setOverIdx(null);
-          }}
-          className={
-            "flex items-center gap-2 px-3 py-2 transition-colors " +
-            (overIdx === idx && draggingIdx !== idx ? "bg-zinc-100 " : "") +
-            (draggingIdx === idx ? "opacity-40" : "")
-          }
-        >
-          <span
-            draggable
-            onDragStart={(e) => {
-              e.dataTransfer.effectAllowed = "move";
-              setDraggingIdx(idx);
-            }}
-            onDragEnd={() => {
-              setDraggingIdx(null);
-              setOverIdx(null);
-            }}
-            className="cursor-grab select-none text-zinc-400 hover:text-zinc-600 active:cursor-grabbing"
-            title="Перетащите для изменения порядка"
-          >
-            ⠿
-          </span>
-          <input
-            className="flex-1 rounded border border-zinc-300 px-2 py-1 text-sm"
-            value={v.name}
-            onChange={(e) => update(idx, { name: e.target.value })}
-            placeholder="Название значения"
-          />
-          <button
-            type="button"
-            onClick={() => remove(idx)}
-            className="text-zinc-400 hover:text-red-600"
-          >
-            ×
-          </button>
-        </div>
-      ))}
-      <div
-        onDragOver={(e) => {
-          if (draggingIdx === null) return;
-          e.preventDefault();
-          if (overIdx !== props.values.length) setOverIdx(props.values.length);
-        }}
-        onDrop={(e) => {
-          if (draggingIdx === null) return;
-          e.preventDefault();
-          moveTo(draggingIdx, props.values.length);
-          setOverIdx(null);
-        }}
-        className={overIdx === props.values.length ? "bg-zinc-100" : ""}
+    <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+      <Reorder.Group
+        as="ul"
+        axis="y"
+        values={props.values}
+        onReorder={props.onChange}
+        className="divide-y divide-zinc-200"
       >
-        <button
-          type="button"
-          onClick={add}
-          className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm text-zinc-600 hover:bg-zinc-50"
-        >
-          <span className="text-lg leading-none">+</span>
-          <span>Новое значение</span>
-        </button>
-      </div>
+        {props.values.map((v) => (
+          <ValueRow
+            key={v.id}
+            value={v}
+            onChange={(patch) => update(v.id, patch)}
+            onRemove={() => remove(v.id)}
+          />
+        ))}
+      </Reorder.Group>
+      <button
+        type="button"
+        onClick={add}
+        className="flex w-full items-center gap-3 border-t border-zinc-200 px-3 py-2 text-left text-sm text-zinc-600 hover:bg-zinc-50"
+      >
+        <span className="text-lg leading-none">+</span>
+        <span>Новое значение</span>
+      </button>
     </div>
+  );
+}
+
+function ValueRow(props: {
+  value: PropertyValue;
+  onChange: (patch: Partial<PropertyValue>) => void;
+  onRemove: () => void;
+}) {
+  const controls = useDragControls();
+  return (
+    <Reorder.Item
+      value={props.value}
+      as="li"
+      dragListener={false}
+      dragControls={controls}
+      className="flex items-center gap-2 bg-white px-3 py-2"
+    >
+      <span
+        onPointerDown={(e) => {
+          e.stopPropagation();
+          controls.start(e);
+        }}
+        style={{ touchAction: "none" }}
+        className="cursor-grab select-none text-zinc-400 hover:text-zinc-600 active:cursor-grabbing"
+        title="Перетащите для изменения порядка"
+      >
+        ⠿
+      </span>
+      <input
+        className="flex-1 rounded border border-zinc-300 px-2 py-1 text-sm"
+        value={props.value.name}
+        onChange={(e) => props.onChange({ name: e.target.value })}
+        placeholder="Название значения"
+      />
+      <button
+        type="button"
+        onClick={props.onRemove}
+        className="text-zinc-400 hover:text-red-600"
+      >
+        ×
+      </button>
+    </Reorder.Item>
   );
 }
