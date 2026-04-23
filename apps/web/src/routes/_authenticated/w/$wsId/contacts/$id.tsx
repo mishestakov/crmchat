@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import type { Property } from "@repo/core";
 import { api } from "../../../../../lib/api";
+import { errorMessage } from "../../../../../lib/errors";
 
 export const Route = createFileRoute("/_authenticated/w/$wsId/contacts/$id")({
   component: ContactDetail,
@@ -50,6 +51,9 @@ function ContactDetail() {
   const [props, setProps] = useState<Record<string, string>>({});
 
   // Заливаем форму данными контакта один раз при первом успешном fetch.
+  // Зависимость только от contact.data?.id — намеренно: если зависеть от data
+  // целиком, любая инвалидация (например, после save) будет затирать локальные
+  // правки пользователя.
   useEffect(() => {
     if (!contact.data) return;
     setBase({
@@ -123,7 +127,7 @@ function ContactDetail() {
   if (contact.error) {
     return (
       <div className="mx-auto max-w-xl p-8 text-red-600">
-        {String(contact.error)}
+        {errorMessage(contact.error)}
       </div>
     );
   }
@@ -200,7 +204,7 @@ function ContactDetail() {
             <span className="text-sm text-green-700">Сохранено</span>
           )}
           {save.error && (
-            <span className="text-sm text-red-600">{String(save.error)}</span>
+            <span className="text-sm text-red-600">{errorMessage(save.error)}</span>
           )}
         </div>
       </form>

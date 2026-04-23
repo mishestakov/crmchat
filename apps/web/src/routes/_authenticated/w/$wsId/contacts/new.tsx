@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { Property } from "@repo/core";
 import { api } from "../../../../../lib/api";
+import { errorMessage } from "../../../../../lib/errors";
 
 export const Route = createFileRoute("/_authenticated/w/$wsId/contacts/new")({
   component: NewContact,
@@ -131,7 +132,7 @@ function NewContact() {
           Создать
         </button>
         {create.error && (
-          <p className="text-sm text-red-600">{String(create.error)}</p>
+          <p className="text-sm text-red-600">{errorMessage(create.error)}</p>
         )}
       </form>
     </div>

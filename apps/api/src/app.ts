@@ -1,5 +1,6 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { cors } from "hono/cors";
+import { HTTPException } from "hono/http-exception";
 import {
   requireSession,
   type SessionVars,
@@ -38,6 +39,17 @@ wsApp.route("/", properties);
 protectedApp.route("/", wsApp);
 
 app.route("/", protectedApp);
+
+// HTTPException по умолчанию рендерится как application/octet-stream — клиенту
+// не распарсить. Униформ JSON-ответ для всех ошибок, чтобы openapi-fetch и
+// errorMessage() корректно вытягивали .message.
+app.onError((err, c) => {
+  if (err instanceof HTTPException) {
+    return c.json({ message: err.message }, err.status);
+  }
+  console.error(err);
+  return c.json({ message: "internal error" }, 500);
+});
 
 app.doc("/openapi.json", {
   openapi: "3.1.0",

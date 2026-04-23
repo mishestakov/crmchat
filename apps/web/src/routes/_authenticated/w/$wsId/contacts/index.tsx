@@ -6,6 +6,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import type { Property } from "@repo/core";
 import { api } from "../../../../../lib/api";
+import { errorMessage } from "../../../../../lib/errors";
 
 export const Route = createFileRoute("/_authenticated/w/$wsId/contacts/")({
   component: ContactsList,
@@ -46,9 +47,16 @@ function ContactsList() {
     <div className="mx-auto max-w-5xl p-8 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Contacts</h1>
-        <div className="flex gap-3 text-sm">
+        <div className="flex items-center gap-3 text-sm">
           <Link to="/" className="text-zinc-500 hover:text-zinc-900">
             ← Workspaces
+          </Link>
+          <Link
+            to="/w/$wsId/settings/properties"
+            params={{ wsId }}
+            className="text-zinc-500 hover:text-zinc-900"
+          >
+            Properties
           </Link>
           <Link
             to="/w/$wsId/contacts/new"
@@ -61,6 +69,12 @@ function ContactsList() {
       </div>
 
       {(properties.isLoading || contacts.isLoading) && <p>Загрузка…</p>}
+      {properties.error && (
+        <p className="text-red-600">{errorMessage(properties.error)}</p>
+      )}
+      {contacts.error && (
+        <p className="text-red-600">{errorMessage(contacts.error)}</p>
+      )}
 
       {contacts.data && (
         <table className="w-full border-collapse text-sm">
