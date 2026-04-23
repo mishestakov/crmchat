@@ -9,6 +9,7 @@ import {
   assertMember,
   type WorkspaceVars,
 } from "./middleware/assert-member";
+import activities from "./routes/activities";
 import auth from "./routes/auth";
 import contacts from "./routes/contacts";
 import me from "./routes/me";
@@ -36,6 +37,7 @@ const wsApp = new OpenAPIHono<{ Variables: WorkspaceVars }>();
 wsApp.use("/v1/workspaces/:wsId/*", assertMember);
 wsApp.route("/", contacts);
 wsApp.route("/", properties);
+wsApp.route("/", activities);
 protectedApp.route("/", wsApp);
 
 app.route("/", protectedApp);

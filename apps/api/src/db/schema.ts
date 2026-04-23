@@ -102,6 +102,15 @@ export const properties = pgTable(
   }),
 );
 
+export const activityType = pgEnum("activity_type", ["note", "reminder"]);
+export const activityStatus = pgEnum("activity_status", ["open", "completed"]);
+export const activityRepeat = pgEnum("activity_repeat", [
+  "none",
+  "daily",
+  "weekly",
+  "monthly",
+]);
+
 export const contacts = pgTable(
   "contacts",
   {
@@ -126,5 +135,33 @@ export const contacts = pgTable(
   },
   (t) => ({
     workspaceIdx: index("contacts_workspace_id_idx").on(t.workspaceId),
+  }),
+);
+
+export const activities = pgTable(
+  "activities",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    type: activityType("type").notNull(),
+    text: text("text").notNull(),
+    // date актуально только для type='reminder'; для 'note' — null
+    date: timestamp("date", { withTimezone: true }),
+    repeat: activityRepeat("repeat").notNull().default("none"),
+    status: activityStatus("status").notNull().default("open"),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    contactIdx: index("activities_contact_id_idx").on(t.contactId),
   }),
 );

@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import type { Property } from "@repo/core";
 import { api } from "../../../../../lib/api";
 import { errorMessage } from "../../../../../lib/errors";
+import { ActivitiesSection } from "./-activities-section";
 
 export const Route = createFileRoute("/_authenticated/w/$wsId/contacts/$id")({
   component: ContactDetail,
@@ -208,6 +209,10 @@ function ContactDetail() {
           )}
         </div>
       </form>
+
+      <hr className="border-zinc-200" />
+
+      <ActivitiesSection wsId={wsId} contactId={id} />
     </div>
   );
 }
