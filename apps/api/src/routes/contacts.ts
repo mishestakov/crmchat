@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { and, eq, ilike, or, sql, type SQL } from "drizzle-orm";
+import { and, eq, getTableColumns, ilike, or, sql, type SQL } from "drizzle-orm";
 import {
   ContactSchema as BaseContactSchema,
   CreateContactSchema as BaseCreate,
@@ -15,6 +15,26 @@ import {
 } from "../lib/contact-properties";
 import type { WorkspaceVars } from "../middleware/assert-member";
 
+// Subquery: ближайший открытый reminder для контакта. Тащим в каждый GET — чтобы
+// kanban-карточки могли показывать NextStep без N+1 запросов. Возвращает null,
+// если у контакта нет открытых напоминаний с датой.
+const nextStepSql = sql<{
+  date: string;
+  text: string;
+  repeat: "none" | "daily" | "weekly" | "monthly";
+} | null>`(
+  SELECT row_to_json(a) FROM (
+    SELECT date, text, repeat
+    FROM activities
+    WHERE activities.contact_id = contacts.id
+      AND activities.type = 'reminder'
+      AND activities.status = 'open'
+      AND activities.date IS NOT NULL
+    ORDER BY date ASC
+    LIMIT 1
+  ) a
+)`.as("next_step");
+
 const ContactSchema = BaseContactSchema.openapi("Contact");
 const CreateContactSchema = BaseCreate.openapi("CreateContact");
 const UpdateContactSchema = BaseUpdate.openapi("UpdateContact");
@@ -22,17 +42,9 @@ const UpdateContactSchema = BaseUpdate.openapi("UpdateContact");
 const WsParam = z.object({ wsId: z.string().uuid() });
 const WsIdParam = z.object({ wsId: z.string().uuid(), id: z.string().uuid() });
 
-// По каким properties.* ключам делаем поиск через `q`. Только текстовые типы —
-// числа/select-ы фильтруем через `filters`. Совпадает с donor: full-text поиск
-// по identity полям, structured filter — отдельный canal.
-const SEARCHABLE_KEYS = [
-  "full_name",
-  "description",
-  "email",
-  "phone",
-  "telegram_username",
-  "url",
-];
+// Поиск через `q` — только по имени и telegram. У нас TG-CRM, остальные identity
+// поля (email/phone/url) опциональны и редко заполнены — мусор в результатах.
+const SEARCHABLE_KEYS = ["full_name", "telegram_username"];
 
 const app = new OpenAPIHono<{ Variables: WorkspaceVars }>();
 
@@ -107,7 +119,7 @@ app.openapi(
     }
 
     const rows = await db
-      .select()
+      .select({ ...getTableColumns(contacts), nextStep: nextStepSql })
       .from(contacts)
       .where(and(...conditions))
       .orderBy(contacts.createdAt);
@@ -152,14 +164,15 @@ app.openapi(
     }
 
     enforceRequiredProperties(defs, validatedProps);
-    const [row] = await db
+    const [inserted] = await db
       .insert(contacts)
       .values({
         workspaceId: wsId,
         properties: validatedProps,
         createdBy: userId,
       })
-      .returning();
+      .returning({ id: contacts.id });
+    const row = await selectOne(wsId, inserted!.id);
     return c.json(serialize(row!), 201);
   },
 );
@@ -180,11 +193,7 @@ app.openapi(
   async (c) => {
     const wsId = c.get("workspaceId");
     const { id } = c.req.valid("param");
-    const [row] = await db
-      .select()
-      .from(contacts)
-      .where(and(eq(contacts.id, id), eq(contacts.workspaceId, wsId)))
-      .limit(1);
+    const row = await selectOne(wsId, id);
     if (!row) throw new HTTPException(404, { message: "contact not found" });
     return c.json(serialize(row));
   },
@@ -216,11 +225,7 @@ app.openapi(
 
     if (body.properties === undefined) {
       // Нечего обновлять — возвращаем текущий контакт без записи.
-      const [row] = await db
-        .select()
-        .from(contacts)
-        .where(and(eq(contacts.id, id), eq(contacts.workspaceId, wsId)))
-        .limit(1);
+      const row = await selectOne(wsId, id);
       if (!row) throw new HTTPException(404, { message: "contact not found" });
       return c.json(serialize(row));
     }
@@ -246,11 +251,11 @@ app.openapi(
     Object.assign(merged, validated);
     enforceRequiredProperties(defs, merged);
 
-    const [row] = await db
+    await db
       .update(contacts)
       .set({ properties: merged, updatedAt: new Date() })
-      .where(and(eq(contacts.id, id), eq(contacts.workspaceId, wsId)))
-      .returning();
+      .where(and(eq(contacts.id, id), eq(contacts.workspaceId, wsId)));
+    const row = await selectOne(wsId, id);
     if (!row) throw new HTTPException(404, { message: "contact not found" });
     return c.json(serialize(row));
   },
@@ -278,11 +283,27 @@ app.openapi(
   },
 );
 
-function serialize(row: typeof contacts.$inferSelect) {
+async function selectOne(wsId: string, id: string) {
+  const [row] = await db
+    .select({ ...getTableColumns(contacts), nextStep: nextStepSql })
+    .from(contacts)
+    .where(and(eq(contacts.id, id), eq(contacts.workspaceId, wsId)))
+    .limit(1);
+  return row;
+}
+
+type ContactRow = typeof contacts.$inferSelect & {
+  nextStep:
+    | { date: string; text: string; repeat: "none" | "daily" | "weekly" | "monthly" }
+    | null;
+};
+
+function serialize(row: ContactRow) {
   return {
     id: row.id,
     workspaceId: row.workspaceId,
     properties: row.properties,
+    nextStep: row.nextStep,
     createdBy: row.createdBy,
     createdAt: row.createdAt.toISOString(),
   };

@@ -35,6 +35,7 @@ function EditProperty() {
     mutationFn: async (input: {
       name: string;
       required: boolean;
+      showInList: boolean;
       type: PropertyType;
       values: { id: string; name: string }[];
     }) => {
@@ -45,6 +46,7 @@ function EditProperty() {
           body: {
             name: input.name,
             required: input.required,
+            showInList: input.showInList,
             ...(input.type === "single_select" || input.type === "multi_select"
               ? { values: input.values }
               : {}),

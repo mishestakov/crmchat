@@ -1,5 +1,14 @@
 import { z } from "zod";
 
+// Ближайший открытый reminder контакта — рендерится в карточке kanban-а.
+// Бэкенд считает через subquery; null если у контакта нет открытых напоминаний.
+export const ContactNextStepSchema = z.object({
+  date: z.string().datetime(),
+  text: z.string(),
+  repeat: z.enum(["none", "daily", "weekly", "monthly"]),
+});
+export type ContactNextStep = z.infer<typeof ContactNextStepSchema>;
+
 // Все данные контакта живут в `properties` (системные ключи + custom). Required-чек
 // (full_name) делает бэкенд через enforceRequiredProperties, а не Zod — потому что
 // "обязательность" зависит от runtime-определений в workspace.
@@ -7,6 +16,7 @@ export const ContactSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
   properties: z.record(z.string(), z.unknown()),
+  nextStep: ContactNextStepSchema.nullable(),
   createdBy: z.string().uuid(),
   createdAt: z.string().datetime(),
 });
