@@ -47,6 +47,9 @@ function AuthLayout() {
                   Кастомные поля
                 </SidebarLink>
               </SidebarGroup>
+              <SidebarLink to="/w/$wsId/settings/telegram-sync" wsId={wsId}>
+                Telegram
+              </SidebarLink>
               <SidebarLink to="/w/$wsId/settings/workspace" wsId={wsId}>
                 Настройки
               </SidebarLink>
@@ -126,7 +129,8 @@ function SidebarLink(props: {
   to:
     | "/w/$wsId/contacts"
     | "/w/$wsId/properties"
-    | "/w/$wsId/settings/workspace";
+    | "/w/$wsId/settings/workspace"
+    | "/w/$wsId/settings/telegram-sync";
   wsId: string;
   children: ReactNode;
 }) {

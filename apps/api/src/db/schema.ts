@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
   index,
@@ -180,6 +181,60 @@ export const contacts = pgTable(
   },
   (t) => ({
     workspaceIdx: index("contacts_workspace_id_idx").on(t.workspaceId),
+    // Functional-индекс под dedup при TG-импорте: lookup
+    // `properties->>'tg_user_id'` иначе full scan по всей таблице.
+    tgUserIdIdx: index("contacts_tg_user_id_idx").on(
+      sql`(${t.properties} ->> 'tg_user_id')`,
+    ),
+  }),
+);
+
+// Один Telegram-аккаунт привязан к одному нашему user'у. session — long-lived
+// MTProto session-string от gramjs (StringSession.save()), достаточно чтобы
+// восстановить клиента без повторной аутентификации. Хранится plain в dev;
+// в prod-сборке нужно зашифровать (TODO).
+export const telegramAccounts = pgTable("telegram_accounts", {
+  id: text("id").primaryKey().$defaultFn(shortId),
+  userId: text("user_id")
+    .notNull()
+    .unique()
+    .references(() => users.id, { onDelete: "cascade" }),
+  tgUserId: text("tg_user_id").notNull(),
+  tgUsername: text("tg_username"),
+  phoneNumber: text("phone_number"),
+  firstName: text("first_name"),
+  session: text("session").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Привязка «папка Telegram → workspace для импорта контактов». Один user может
+// синкать несколько папок, каждую в свой workspace. Удаление = sync прекращается,
+// уже импортированные контакты остаются.
+export const telegramSyncConfigs = pgTable(
+  "telegram_sync_configs",
+  {
+    id: text("id").primaryKey().$defaultFn(shortId),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    folderId: text("folder_id").notNull(),
+    folderTitle: text("folder_title").notNull(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
+    // Сколько новых контактов импортировано в последнюю синхронизацию (после
+    // дедупа). Помогает юзеру понять «что-то приехало» vs «всё уже было».
+    lastSyncImported: integer("last_sync_imported"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    userFolderUnique: unique("tg_sync_user_folder_unique").on(
+      t.userId,
+      t.folderId,
+    ),
+    userIdx: index("tg_sync_user_id_idx").on(t.userId),
   }),
 );
 

@@ -15,6 +15,7 @@ import contactViews from "./routes/contact-views";
 import contacts from "./routes/contacts";
 import me from "./routes/me";
 import properties from "./routes/properties";
+import telegram from "./routes/telegram";
 import workspaces from "./routes/workspaces";
 
 export const app = new OpenAPIHono<{ Variables: SessionVars }>();
@@ -32,6 +33,7 @@ const protectedApp = new OpenAPIHono<{ Variables: SessionVars }>();
 protectedApp.use("/v1/*", requireSession);
 protectedApp.route("/", me);
 protectedApp.route("/", workspaces);
+protectedApp.route("/", telegram);
 
 // workspace-scoped: requireSession + assertMember
 const wsApp = new OpenAPIHono<{ Variables: WorkspaceVars }>();
