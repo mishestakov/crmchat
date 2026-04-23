@@ -11,6 +11,11 @@ export type WorkspaceVars = SessionVars & { workspaceId: string };
 // к которому у user'а есть доступ. Сейчас правило — `workspaces.createdBy = userId`;
 // при добавлении workspace_members заменится на membership-join.
 //
+// ПОИСК: то же правило `createdBy = userId` дублируется в:
+//   - apps/api/src/routes/workspaces.ts (PATCH /v1/workspaces/:id — путь не под этим middleware)
+//   - apps/api/src/routes/workspaces.ts (GET/POST /v1/workspaces — фильтр списка)
+// При переходе на workspace_members поменять во всех трёх местах синхронно.
+//
 // TODO: per-request DB-roundtrip. Под нагрузкой добавить in-memory кэш
 // (userId, wsId) → role с TTL ~30s. Или вообще убрать middleware и врезать
 // `where workspace_id = ? AND ...member-check...` в каждый основной запрос.

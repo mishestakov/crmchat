@@ -1,9 +1,10 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import {
   WorkspaceSchema as BaseWorkspaceSchema,
   CreateWorkspaceSchema as BaseCreateWorkspaceSchema,
+  UpdateWorkspaceSchema as BaseUpdateWorkspaceSchema,
 } from "@repo/core";
 import { db } from "../db/client";
 import { organizations, workspaces } from "../db/schema";
@@ -11,6 +12,9 @@ import type { SessionVars } from "../middleware/require-session";
 
 const WorkspaceSchema = BaseWorkspaceSchema.openapi("Workspace");
 const CreateWorkspaceSchema = BaseCreateWorkspaceSchema.openapi("CreateWorkspace");
+const UpdateWorkspaceSchema = BaseUpdateWorkspaceSchema.openapi("UpdateWorkspace");
+
+const IdParam = z.object({ id: z.string().uuid() });
 
 const app = new OpenAPIHono<{ Variables: SessionVars }>();
 
@@ -74,6 +78,44 @@ app.openapi(createRouteDef, async (c) => {
     .returning();
   return c.json(serialize(row!), 201);
 });
+
+// PATCH /v1/workspaces/:id — путь не матчится assertMember (тот ждёт /:id/*),
+// поэтому сверяем `createdBy = userId` руками. Когда появится workspace_members,
+// эта проверка переедет в общий middleware.
+app.openapi(
+  createRoute({
+    method: "patch",
+    path: "/v1/workspaces/{id}",
+    request: {
+      params: IdParam,
+      body: {
+        content: { "application/json": { schema: UpdateWorkspaceSchema } },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: { "application/json": { schema: WorkspaceSchema } },
+        description: "Updated",
+      },
+    },
+  }),
+  async (c) => {
+    const userId = c.get("userId");
+    const { id } = c.req.valid("param");
+    const body = c.req.valid("json");
+    const [row] = await db
+      .update(workspaces)
+      .set({ ...body, updatedAt: new Date() })
+      .where(and(eq(workspaces.id, id), eq(workspaces.createdBy, userId)))
+      .returning();
+    if (!row) {
+      // 404 для consistency с assertMember (не различаем "не существует" / "не ваш")
+      throw new HTTPException(404, { message: "workspace not found" });
+    }
+    return c.json(serialize(row));
+  },
+);
 
 function serialize(row: typeof workspaces.$inferSelect) {
   return {

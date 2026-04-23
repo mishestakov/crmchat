@@ -12,3 +12,6 @@ export type Workspace = z.infer<typeof WorkspaceSchema>;
 
 export const CreateWorkspaceSchema = WorkspaceSchema.pick({ name: true });
 export type CreateWorkspaceInput = z.infer<typeof CreateWorkspaceSchema>;
+
+export const UpdateWorkspaceSchema = WorkspaceSchema.pick({ name: true }).partial();
+export type UpdateWorkspaceInput = z.infer<typeof UpdateWorkspaceSchema>;

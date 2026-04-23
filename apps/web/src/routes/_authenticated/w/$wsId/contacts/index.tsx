@@ -52,6 +52,13 @@ function ContactsList() {
             ← Workspaces
           </Link>
           <Link
+            to="/w/$wsId/settings/workspace"
+            params={{ wsId }}
+            className="text-zinc-500 hover:text-zinc-900"
+          >
+            Settings
+          </Link>
+          <Link
             to="/w/$wsId/settings/properties"
             params={{ wsId }}
             className="text-zinc-500 hover:text-zinc-900"
