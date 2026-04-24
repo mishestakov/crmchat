@@ -3,6 +3,7 @@ import { StringSession } from "telegram/sessions";
 import { eq } from "drizzle-orm";
 import { db } from "../db/client";
 import { telegramAccounts } from "../db/schema";
+import { encrypt, tryDecrypt } from "./crypto";
 
 // Один TelegramClient на user — gramjs клиент thread-unsafe для одной session,
 // плюс открытое соединение даёт серверу запоминать seen-updates. Кэшируем in-memory
@@ -56,6 +57,18 @@ if (!apiId || !apiHash) {
 
 export type AuthorizedClient = TelegramClient & { __authorized: true };
 
+// gramjs не экспортит DC-switch как public API, но у него есть internal `_switchDC`.
+// Нужен для QR-flow: когда сервер возвращает LoginTokenMigrateTo, надо
+// переключить наш клиент на DC того аккаунта прежде чем ImportLoginToken.
+export async function switchDc(
+  client: TelegramClient,
+  dcId: number,
+): Promise<void> {
+  await (
+    client as unknown as { _switchDC: (dc: number) => Promise<void> }
+  )._switchDC(dcId);
+}
+
 // Создаёт клиента с пустой session — для первичной аутентификации (QR/phone).
 // session-string получим через `client.session.save()` после успешного auth.
 export function newAnonymousClient(): TelegramClient {
@@ -67,7 +80,9 @@ export function newAnonymousClient(): TelegramClient {
 }
 
 // Достаёт authorized-клиента для user'а (восстанавливает по session из БД).
-// Возвращает null если у юзера нет сохранённого telegram_accounts.
+// Возвращает null если у юзера нет сохранённого telegram_accounts ИЛИ session
+// не расшифровывается (legacy plain row после введения encryption — дропаем
+// и юзер пере-залогинится).
 export async function getUserClient(
   userId: string,
 ): Promise<TelegramClient | null> {
@@ -81,8 +96,15 @@ export async function getUserClient(
     .limit(1);
   if (!acc) return null;
 
+  const session = tryDecrypt(acc.session);
+  if (!session) {
+    // Legacy plain или corrupted ciphertext — дропаем, status вернёт unauthorized.
+    await db.delete(telegramAccounts).where(eq(telegramAccounts.userId, userId));
+    return null;
+  }
+
   const client = new TelegramClient(
-    new StringSession(acc.session),
+    new StringSession(session),
     apiId,
     apiHash,
     { connectionRetries: 3, baseLogger: silentLogger() },
@@ -103,12 +125,12 @@ export async function persistSession(
     firstName?: string | null;
   },
 ) {
-  const session = (client.session as StringSession).save() ?? "";
+  const sessionEnc = encrypt((client.session as StringSession).save() ?? "");
   await db
     .insert(telegramAccounts)
     .values({
       userId,
-      session,
+      session: sessionEnc,
       tgUserId: profile.tgUserId,
       tgUsername: profile.tgUsername ?? null,
       phoneNumber: profile.phoneNumber ?? null,
@@ -117,7 +139,7 @@ export async function persistSession(
     .onConflictDoUpdate({
       target: telegramAccounts.userId,
       set: {
-        session,
+        session: sessionEnc,
         tgUserId: profile.tgUserId,
         tgUsername: profile.tgUsername ?? null,
         phoneNumber: profile.phoneNumber ?? null,

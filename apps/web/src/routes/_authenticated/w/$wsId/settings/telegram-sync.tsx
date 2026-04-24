@@ -166,6 +166,9 @@ function ScanQrStep(props: {
     },
     refetchInterval: POLL_MS,
     refetchIntervalInBackground: false,
+    // Свежий кэш на каждый mount — иначе stale `password_needed` от прошлой
+    // сессии моментально переключит state до первого полла.
+    gcTime: 0,
   });
 
   useEffect(() => {
@@ -554,6 +557,11 @@ function SyncSettings(props: {
           {props.user.tgUsername && (
             <p className="text-sm text-zinc-500">@{props.user.tgUsername}</p>
           )}
+          <p className="mt-1 text-xs text-zinc-500">
+            Личный аккаунт CRM — для импорта существующих чатов и работы из
+            интерфейса. Для холодных рассылок заводите отдельные аккаунты в
+            «Рассылках».
+          </p>
         </div>
       </Card>
 

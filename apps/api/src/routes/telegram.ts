@@ -11,12 +11,15 @@ import {
   telegramSyncConfigs,
   workspaces,
 } from "../db/schema";
+import { tryDecrypt } from "../lib/crypto";
+import { errMsg } from "../lib/errors";
 import {
   clearPendingClient,
   dropUserClient,
   getOrCreatePendingClient,
   getUserClient,
   persistSession,
+  switchDc,
 } from "../lib/telegram-client";
 import type { SessionVars } from "../middleware/require-session";
 
@@ -30,12 +33,6 @@ import type { SessionVars } from "../middleware/require-session";
 
 const apiId = Number(process.env.TELEGRAM_API_ID ?? 0);
 const apiHash = process.env.TELEGRAM_API_HASH ?? "";
-
-// gramjs кидает Error с понятным `.message` (типа "PHONE_CODE_INVALID"); прочее
-// бросает строкой. Универсальный extractor под match'инг по содержимому.
-function errMsg(e: unknown): string {
-  return String((e as Error)?.message ?? e);
-}
 
 const TgUserSchema = z.object({
   tgUserId: z.string(),
@@ -94,6 +91,11 @@ app.openapi(
       .where(eq(telegramAccounts.userId, userId))
       .limit(1);
     if (!acc) return c.json({ status: "unauthorized" as const });
+    // Legacy plain или corrupted row → дропаем, юзер пере-залогинится.
+    if (tryDecrypt(acc.session) === null) {
+      await db.delete(telegramAccounts).where(eq(telegramAccounts.userId, userId));
+      return c.json({ status: "unauthorized" as const });
+    }
     return c.json({
       status: "authorized" as const,
       user: {
@@ -284,9 +286,7 @@ app.openapi(
       // Переключаем pending-клиента на нужный DC и доимпортируем там же. После
       // ImportLoginToken прилетает уже LoginTokenSuccess с authorization.
       while (result instanceof Api.auth.LoginTokenMigrateTo) {
-        // _switchDC — internal gramjs method; в типах не торчит, но работает.
-        await (client as unknown as { _switchDC: (dc: number) => Promise<void> })
-          ._switchDC(result.dcId);
+        await switchDc(client, result.dcId);
         result = await client.invoke(
           new Api.auth.ImportLoginToken({ token: result.token }),
         );
@@ -339,9 +339,14 @@ async function afterSuccessfulAuth(
   client: import("telegram").TelegramClient,
 ) {
   const user = (await client.getMe()) as Api.User;
+  // legacy `username` пустует у юзеров с новым multi-username — fallback на active.
+  const tgUsername =
+    user.username ||
+    user.usernames?.find((u) => u.active)?.username ||
+    null;
   await persistSession(userId, client, {
     tgUserId: String(user.id),
-    tgUsername: user.username ?? null,
+    tgUsername,
     phoneNumber: user.phone ?? null,
     firstName: user.firstName ?? null,
   });
@@ -685,15 +690,22 @@ async function runSync(userId: string, folderId: number, workspaceId: string) {
   const toInsert = candidates
     .filter((u) => !existingSet.has(String(u.id)))
     .map((entity) => {
+      // У TG двойная модель username: legacy `username` (string) + новый
+      // `usernames[]` (с флагами active/editable). У юзеров с новым multi-username
+      // legacy поле бывает пустым → берём active из массива как fallback.
+      const username =
+        entity.username ||
+        entity.usernames?.find((u) => u.active)?.username ||
+        null;
       const fullName =
         [entity.firstName, entity.lastName].filter(Boolean).join(" ").trim() ||
-        entity.username ||
+        username ||
         "Без имени";
       const properties: Record<string, unknown> = {
         tg_user_id: String(entity.id),
         full_name: fullName,
       };
-      if (entity.username) properties.telegram_username = entity.username;
+      if (username) properties.telegram_username = username;
       if (entity.phone) properties.phone = `+${entity.phone}`;
       if (defaultStageId) properties.stage = defaultStageId;
       return { workspaceId, properties, createdBy: userId };
