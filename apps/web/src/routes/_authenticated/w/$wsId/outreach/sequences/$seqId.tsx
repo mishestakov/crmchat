@@ -80,9 +80,36 @@ function SequenceDetailPage() {
       if (error) throw error;
       return data;
     },
-    // Polling прогресса при активной рассылке: по 5 сек обновляем счётчики.
-    refetchInterval: seq.data?.status === "active" ? 5000 : false,
   });
+
+  // SSE-канал апдейтов sequence: воркер/listener эмитят на каждое
+  // sent/failed/cancelled/replied — фронт инвалидирует кэш, TanStack
+  // перетягивает leads endpoint. Ноль-секундная реакция вместо 5s polling'а.
+  // EventSource сам ре-коннектит на close, ничего не нужно дополнительно.
+  //
+  // Открываем только для active/paused — в draft и completed события не
+  // прилетят, незачем держать idle-коннект (реверс-проксям/серверу всё
+  // равно лишняя работа).
+  const seqStatus = seq.data?.status;
+  const needsLiveUpdates = seqStatus === "active" || seqStatus === "paused";
+  useEffect(() => {
+    if (!needsLiveUpdates) return;
+    const url = `/v1/workspaces/${wsId}/outreach/sequences/${seqId}/stream`;
+    const es = new EventSource(url, { withCredentials: true });
+    const onChange = () => {
+      qc.invalidateQueries({
+        queryKey: OUTREACH_QK.sequenceLeads(wsId, seqId),
+      });
+      qc.invalidateQueries({
+        queryKey: OUTREACH_QK.sequence(wsId, seqId),
+      });
+    };
+    es.addEventListener("changed", onChange);
+    return () => {
+      es.removeEventListener("changed", onChange);
+      es.close();
+    };
+  }, [wsId, seqId, qc, needsLiveUpdates]);
 
   const [name, setName] = useState("");
   const [accountsMode, setAccountsMode] = useState<"all" | "selected">("all");

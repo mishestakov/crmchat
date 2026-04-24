@@ -1,5 +1,6 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
+import { streamSSE } from "hono/streaming";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import {
@@ -10,6 +11,7 @@ import {
   scheduledMessages,
   type OutreachSequenceMessage,
 } from "../db/schema";
+import { subscribeSequence } from "../lib/outreach-events";
 import { substituteVariables } from "../lib/substitute-variables";
 import type { WorkspaceVars } from "../middleware/assert-member";
 
@@ -601,5 +603,64 @@ function delayToMs(delay: { period: string; value: number }): number {
       return 0;
   }
 }
+
+// SSE-стрим обновлений sequence — фронт открывает EventSource, на каждое
+// изменение в scheduled_messages этой sequence (sent/failed/cancelled +
+// reply от listener'а) приходит уведомление, фронт инвалидирует кэш и
+// перетягивает leads endpoint. Не openapi — EventSource не работает с
+// типизированным клиентом, и schema особо не нужна.
+//
+// Auth работает через assertMember на /v1/workspaces/{wsId}/* (тот же middleware
+// что у openapi-роутов). EventSource шлёт cookie если withCredentials:true +
+// CORS allow-credentials в app.ts.
+app.get(
+  "/v1/workspaces/:wsId/outreach/sequences/:seqId/stream",
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const seqId = c.req.param("seqId");
+    if (!seqId) throw new HTTPException(400, { message: "seqId required" });
+    // Verify sequence принадлежит workspace до открытия стрима.
+    const [row] = await db
+      .select({ id: outreachSequences.id })
+      .from(outreachSequences)
+      .where(
+        and(
+          eq(outreachSequences.id, seqId),
+          eq(outreachSequences.workspaceId, wsId),
+        ),
+      )
+      .limit(1);
+    if (!row) throw new HTTPException(404, { message: "sequence not found" });
+
+    return streamSSE(c, async (stream) => {
+      let unsub = () => {};
+      stream.onAbort(() => {
+        unsub();
+      });
+      // События от пуш-шины — отправляем «changed» сигнал, фронт сам решает что
+      // перетягивать. Можно было бы слать payload, но тогда сервер должен знать
+      // полную форму lead-progress'а — лишнее связывание; пусть фронт читает свой
+      // же endpoint.
+      unsub = subscribeSequence(seqId, () => {
+        // writeSSE может бросить если клиент уже отключился между abort'ом и
+        // emit'ом — глушим, иначе unhandled rejection.
+        stream.writeSSE({ event: "changed", data: "1" }).catch(() => {});
+      });
+      // Heartbeat: иначе reverse-proxies (nginx 60s, cloudflare 100s) идлят
+      // соединение. Браузер на close сам реконнектит, но между переподключениями
+      // юзер увидит лаг 5-30 секунд. try/catch обязательно — sleep НЕ
+      // отменяется на abort, после wake-up можем оказаться в закрытом stream
+      // → writeSSE throws → unhandled rejection → Bun уронит процесс.
+      try {
+        while (!stream.aborted) {
+          await stream.writeSSE({ event: "ping", data: "" });
+          await stream.sleep(25_000);
+        }
+      } catch {
+        // stream закрылся, выходим тихо
+      }
+    });
+  },
+);
 
 export default app;

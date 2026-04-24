@@ -11,6 +11,7 @@ import {
 } from "../db/schema";
 import { validateContactProperties } from "./contact-properties";
 import { errMsg } from "./errors";
+import { emitSequenceChanged } from "./outreach-events";
 
 // Из всех типов property только эти безопасно копируются «как есть» из
 // raw CSV-string без рисков для validateContactProperties:
@@ -76,7 +77,7 @@ export function attachListener(
       if (updated.length === 0) return;
 
       const leadIds = updated.map((u) => u.id);
-      await db
+      const cancelled = await db
         .update(scheduledMessages)
         .set({ status: "cancelled", error: "lead replied" })
         .where(
@@ -84,7 +85,13 @@ export function attachListener(
             eq(scheduledMessages.status, "pending"),
             inArray(scheduledMessages.leadId, leadIds),
           ),
-        );
+        )
+        .returning({ sequenceId: scheduledMessages.sequenceId });
+      // Push на все sequence detail-страницы которые в этот момент открыты —
+      // чтобы зелёная подсветка появилась мгновенно, а не через 5s polling.
+      for (const seqId of new Set(cancelled.map((r) => r.sequenceId))) {
+        emitSequenceChanged(seqId);
+      }
 
       // Конвертируем каждый только-что-ответивший лид в контакта. Дедуп по
       // tg_user_id внутри workspace: если контакт уже существует — просто

@@ -15,6 +15,7 @@ import {
   evictWorkerClient,
   getOutreachWorkerClient,
 } from "./outreach-account-client";
+import { emitSequenceChanged } from "./outreach-events";
 import { isNowInWindow, startOfDayInTz } from "./outreach-schedule";
 
 // Outbound worker для холодных рассылок. Каждый tick:
@@ -246,6 +247,7 @@ async function processAccount(accountId: string, items: DueItem[]) {
         .update(scheduledMessages)
         .set({ status: "cancelled", error: "lead deleted" })
         .where(eq(scheduledMessages.id, item.id));
+      emitSequenceChanged(item.sequenceId);
       continue;
     }
 
@@ -256,7 +258,7 @@ async function processAccount(accountId: string, items: DueItem[]) {
     // мы уже взяли scheduled_message в работу. Без перепроверки можем послать
     // лишнее. Не удалять как «дубликат listener'а».
     if (lead.repliedAt) {
-      await db
+      const cancelled = await db
         .update(scheduledMessages)
         .set({ status: "cancelled", error: "lead replied" })
         .where(
@@ -264,7 +266,11 @@ async function processAccount(accountId: string, items: DueItem[]) {
             eq(scheduledMessages.leadId, item.leadId),
             eq(scheduledMessages.status, "pending"),
           ),
-        );
+        )
+        .returning({ sequenceId: scheduledMessages.sequenceId });
+      for (const seqId of new Set(cancelled.map((r) => r.sequenceId))) {
+        emitSequenceChanged(seqId);
+      }
       continue;
     }
 
@@ -280,6 +286,7 @@ async function processAccount(accountId: string, items: DueItem[]) {
           .set({ tgUserId })
           .where(eq(outreachLeads.id, lead.id));
       }
+      emitSequenceChanged(item.sequenceId);
       remaining--;
     } catch (e) {
       if (e instanceof FloodWaitError || e instanceof SlowModeWaitError) {
@@ -295,6 +302,9 @@ async function processAccount(accountId: string, items: DueItem[]) {
           .update(scheduledMessages)
           .set({ sendAt: new Date(Date.now() + waitMs) })
           .where(eq(scheduledMessages.id, item.id));
+        // sendAt в UI колонке «Дальше» сдвинулся — push фронту чтобы он
+        // увидел новую дату без ожидания следующего sent/failed.
+        emitSequenceChanged(item.sequenceId);
         console.warn(
           `[outreach-worker] FloodWait on account ${accountId}: ${e.seconds}s`,
         );
@@ -318,6 +328,7 @@ async function processAccount(accountId: string, items: DueItem[]) {
           .update(scheduledMessages)
           .set({ status: "failed", error: msg })
           .where(eq(scheduledMessages.id, item.id));
+        emitSequenceChanged(item.sequenceId);
       }
       // Иначе (SERVER_ERROR, transient network) — оставляем pending.
     }
@@ -348,17 +359,14 @@ async function sendOne(
     );
   }
 
-  await client.sendMessage(lead.username, { message: text });
+  const sent = await client.sendMessage(lead.username, { message: text });
 
-  // Попробуем извлечь tgUserId из gramjs-кэша (после sendMessage уже есть).
+  // tgUserId извлекаем из самого Message-результата, БЕЗ дополнительного
+  // getEntity — иначе на каждое первое сообщение лиду уходит лишний
+  // resolveUsername RPC. У DM peerId всегда PeerUser с userId получателя.
   let tgUserId: string | null = null;
-  try {
-    const ent = await client.getEntity(lead.username);
-    if (ent instanceof Api.User) {
-      tgUserId = String(ent.id);
-    }
-  } catch {
-    // не критично — отправили успешно, просто не закэшируем id
+  if (sent.peerId instanceof Api.PeerUser) {
+    tgUserId = String(sent.peerId.userId);
   }
   return { tgUserId };
 }
