@@ -1,0 +1,630 @@
+diff (CRMchat patch)
+--- a/src/components/App.tsx	2026-04-24 15:10:57.064469546 +0300
++++ b/src/components/App.tsx	2026-04-24 15:08:12.350390091 +0300
+@@ -242,6 +242,11 @@
+     }, document.body);
+   }, [getIsInBackgroundLocal]);
+ 
++  // [CRMchat] iframe-only guard
++  if (window.parent === window) {
++    return <div style="display:flex;align-items:center;justify-content:center;height:100vh">Открой через CRMchat</div>;
++  }
++
+   return (
+     <UiLoader page={page} isMobile={isMobile}>
+       <Transition
+diff (CRMchat patch)
+--- a/src/config.ts	2026-04-24 15:10:57.102547009 +0300
++++ b/src/config.ts	2026-04-24 14:56:04.530370574 +0300
+@@ -6,11 +6,17 @@
+   ResaleGiftsFilterOptions,
+ } from './types';
+ 
++// [CRMchat] id outreach-аккаунта из URL — префиксует все storage/cache keys
++// чтобы изолировать TG-аккаунты в одном браузере между разными CRM-юзерами.
++// eslint-disable-next-line no-restricted-globals, max-len
++export const CRM_ACCOUNT_ID = typeof location !== 'undefined' ? (new URLSearchParams(location?.search ?? '').get('accountId') ?? '') : '';
++
+ export const APP_CODE_NAME = 'A';
+ export const APP_NAME = process.env.APP_NAME || `Telegram Web ${APP_CODE_NAME}`;
+ 
+-export const PRODUCTION_HOSTNAME = 'web.telegram.org';
+-export const PRODUCTION_URL = 'https://web.telegram.org/a';
++// [CRMchat] placeholder, заменить когда определимся с prod-доменом
++export const PRODUCTION_HOSTNAME = 'tg.crmchat.local';
++export const PRODUCTION_URL = 'https://tg.crmchat.local/';
+ export const WEB_VERSION_BASE = 'https://web.telegram.org/'; // Used to redirect to other versions
+ export const BASE_URL = process.env.BASE_URL;
+ export const ACCOUNT_QUERY = 'account';
+diff (CRMchat patch)
+--- a/src/global/actions/api/initial.ts	2026-04-24 15:10:57.102871860 +0300
++++ b/src/global/actions/api/initial.ts	2026-04-24 14:56:04.530561659 +0300
+@@ -43,7 +43,8 @@
+ import { selectSharedSettings } from '../../selectors/sharedState';
+ import { destroySharedStatePort } from '../../shared/sharedStateConnector';
+ 
+-addActionHandler('initApi', (global, actions): ActionReturnType => {
++// [CRMchat] async — loadStoredSession ждёт sessionResponse от CRM-родителя
++addActionHandler('initApi', async (global, actions): Promise<void> => {
+   const initialLocationHash = parseInitialLocationHash();
+   const {
+     shouldAllowHttpTransport,
+@@ -65,7 +66,7 @@
+   void initApi(actions.apiUpdate, {
+     userAgent: navigator.userAgent,
+     platform: PLATFORM_ENV,
+-    sessionData: loadStoredSession(),
++    sessionData: await loadStoredSession(),
+     isWebmSupported: IS_WEBM_SUPPORTED,
+     maxBufferSize: MAX_BUFFER_SIZE,
+     webAuthToken: initialLocationHash?.tgWebAuthToken,
+@@ -298,7 +299,7 @@
+ });
+ 
+ addActionHandler('lockScreen', async (global): Promise<void> => {
+-  const sessionJson = JSON.stringify({ ...loadStoredSession(), userId: global.currentUserId });
++  const sessionJson = JSON.stringify({ ...(await loadStoredSession()), userId: global.currentUserId });
+   const globalJson = serializeGlobal(global);
+ 
+   await encryptSession(sessionJson, globalJson);
+diff (CRMchat patch)
+--- a/src/global/actions/ui/initial.ts	2026-04-24 15:10:57.104861632 +0300
++++ b/src/global/actions/ui/initial.ts	2026-04-24 14:56:04.530712550 +0300
+@@ -143,9 +143,11 @@
+     messageTextSize, language, shouldUseSystemTheme, timeFormat,
+   } = selectSharedSettings(global);
+ 
++  // [CRMchat] тема приходит из URL `?theme=` — родительский CRM прокидывает свою.
++  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   const globalTheme = selectTheme(global);
+   const systemTheme = getSystemTheme();
+-  const theme = shouldUseSystemTheme ? systemTheme : globalTheme;
++  const theme = (new URLSearchParams(window.location.search).get('theme') as typeof globalTheme) ?? systemTheme;
+ 
+   const performanceType = selectPerformanceSettings(global);
+ 
+diff (CRMchat patch)
+--- a/src/util/browser/globalEnvironment.ts	2026-04-24 15:10:57.127442768 +0300
++++ b/src/util/browser/globalEnvironment.ts	2026-04-24 14:56:04.530846499 +0300
+@@ -3,7 +3,10 @@
+ // eslint-disable-next-line no-shadow-restricted-names
+ declare const globalThis: ServiceWorkerGlobalScope & WorkerGlobalScope & SharedWorkerGlobalScope & Window;
+ 
+-export const IS_MULTIACCOUNT_SUPPORTED = 'SharedWorker' in globalThis;
++// [CRMchat] выключаем встроенный SharedWorker multi-account TWA — у нас свой
++// механизм изоляции через CRM_ACCOUNT_ID-префикс. Два механизма конфликтовали бы.
++// eslint-disable-next-line no-constant-condition, no-constant-binary-expression
++export const IS_MULTIACCOUNT_SUPPORTED = false && 'SharedWorker' in globalThis;
+ export const IS_INTL_LIST_FORMAT_SUPPORTED = 'ListFormat' in Intl;
+ export const IS_BAD_URL_PARSER = new URL('tg://host').host !== 'host';
+ 
+diff (CRMchat patch)
+--- a/src/util/browser/windowEnvironment.ts	2026-04-24 15:10:57.127612601 +0300
++++ b/src/util/browser/windowEnvironment.ts	2026-04-24 14:56:04.530963477 +0300
+@@ -105,7 +105,9 @@
+ export const IS_BACKDROP_BLUR_SUPPORTED = CSS.supports('backdrop-filter: blur()')
+   || CSS.supports('-webkit-backdrop-filter: blur()');
+ export const IS_INSTALL_PROMPT_SUPPORTED = 'onbeforeinstallprompt' in window;
+-export const IS_OPEN_IN_NEW_TAB_SUPPORTED = !(IS_PWA && IS_MOBILE);
++// [CRMchat] запрещаем «открыть в новой вкладке» — вкладка без ?accountId= не получит сессию
++// eslint-disable-next-line no-constant-condition, no-constant-binary-expression
++export const IS_OPEN_IN_NEW_TAB_SUPPORTED = false && !(IS_PWA && IS_MOBILE);
+ export const IS_TRANSLATION_SUPPORTED = !IS_TEST;
+ export const IS_TRANSLATION_DETECTOR_SUPPORTED = 'LanguageDetector' in window;
+ export const IS_VIEW_TRANSITION_SUPPORTED = CSS.supports('view-transition-class: test')
+diff (CRMchat patch)
+--- a/src/util/cacheApi.ts	2026-04-24 15:10:57.127612601 +0300
++++ b/src/util/cacheApi.ts	2026-04-24 14:56:04.531100078 +0300
+@@ -1,4 +1,6 @@
+-import { LANG_CACHE_NAME, MEDIA_CACHE_NAME, MEDIA_CACHE_NAME_AVATARS, MEDIA_PROGRESSIVE_CACHE_NAME } from '../config';
++import {
++  CRM_ACCOUNT_ID, LANG_CACHE_NAME, MEDIA_CACHE_NAME, MEDIA_CACHE_NAME_AVATARS, MEDIA_PROGRESSIVE_CACHE_NAME,
++} from '../config';
+ import { yieldToMain } from './browser/scheduler';
+ import { ACCOUNT_SLOT } from './multiaccount';
+ 
+@@ -35,7 +37,8 @@
+ function getCacheName(cacheName: string) {
+   if (cacheName === LANG_CACHE_NAME) return cacheName;
+ 
+-  const suffix = ACCOUNT_SLOT ? `_${ACCOUNT_SLOT}` : '';
++  // [CRMchat] префикс CRM_ACCOUNT_ID — изоляция Cache API между TG-аккаунтами одного браузера
++  const suffix = `_${CRM_ACCOUNT_ID}` + (ACCOUNT_SLOT ? `_${ACCOUNT_SLOT}` : '');
+   return `${cacheName}${suffix}`;
+ }
+ 
+diff (CRMchat patch)
+--- a/src/util/crmchat.ts	1970-01-01 03:00:00.000000000 +0300
++++ b/src/util/crmchat.ts	2026-04-24 15:07:48.635661409 +0300
+@@ -0,0 +1,219 @@
++/* eslint-disable no-console */
++/**
++ * [CRMchat] postMessage-мост между TWA-iframe и нашим CRM-родителем.
++ *
++ * URL-контракт: ?accountId=...&theme=...&parentOrigin=https://crm.example.com
++ *
++ * Контракт сообщений:
++ *   PARENT → IFRAME:
++ *     { type: 'sessionResponse', session: ApiSessionData }
++ *     { type: 'openChat', id: string }
++ *     { type: 'openChatByUsername', username: string }
++ *
++ *   IFRAME → PARENT:
++ *     { type: 'sessionRequest' }              — на старте, ждём sessionResponse
++ *     { type: 'sessionRequestFailed' }        — таймаут получения сессии
++ *     { type: 'authState', state: ... }       — apiUpdate.updateAuthorizationState
++ *     { type: 'authStateLegacy', state: ... } — global.auth.state
++ *     { type: 'connectionState', state: ... } — apiUpdate.updateConnectionState
++ *     { type: 'chatOpened', chat, info, userId, username } — юзер открыл чат
++ *     { type: 'chatUnreadState', peerId, username, unreadCount, synced }
++ */
++import { addCallback } from '../lib/teact/teactn';
++import {
++  addActionHandler, getActions, getGlobal,
++} from '../global';
++
++import type { ApiChatFullInfo, ApiSessionData, ApiUserFullInfo } from '../api/types';
++import type { ActionPayloads, GlobalState } from '../global/types';
++import { MAIN_THREAD_ID } from '../api/types';
++
++import { selectThreadReadState } from '../global/selectors/threads';
++import { getCurrentTabId } from './establishMultitabRole';
++
++const SESSION_REQUEST_TIMEOUT_MS = 20_000;
++const ACTION_AVAILABILITY_POLL_MS = 100;
++const ACTION_AVAILABILITY_MAX_TRIES = 100;
++
++// Origin родительского CRM — приходит URL-параметром при mount'е iframe'а.
++// Используется и как whitelist для входящих postMessage, и как targetOrigin
++// для исходящих. Без него iframe не работает: фейлим safe (ничего не шлём,
++// ничего не принимаем).
++const PARENT_ORIGIN = new URLSearchParams(self.location.search).get('parentOrigin') || '';
++if (!PARENT_ORIGIN) {
++  console.error('[CRMchat] parentOrigin URL param отсутствует — мост работать не будет');
++}
++
++function isAllowedOrigin(origin: string): boolean {
++  return Boolean(PARENT_ORIGIN) && origin === PARENT_ORIGIN;
++}
++
++function crmChatLog(...args: any[]) {
++  console.info('\x1b[44m\x1b[37m[ CRMCHAT ]\x1b[0m', ...args);
++}
++
++function sendToCrm(data: any) {
++  if (!PARENT_ORIGIN) return;
++  crmChatLog('→ CRM', data);
++  window.parent.postMessage(data, PARENT_ORIGIN);
++}
++
++// === sessionResponse: ждём pre-fetched session от родителя ===
++let resolveSession: (session: ApiSessionData) => void;
++const sessionPromise = new Promise<ApiSessionData>((resolve) => {
++  resolveSession = resolve;
++});
++
++export async function requestSessionFromCrmChat(): Promise<ApiSessionData> {
++  sendToCrm({ type: 'sessionRequest' });
++  try {
++    return await Promise.race([
++      sessionPromise,
++      new Promise<never>((_, reject) => {
++        setTimeout(() => reject(new Error('Session request timed out')), SESSION_REQUEST_TIMEOUT_MS);
++      }),
++    ]);
++  } catch (e) {
++    sendToCrm({ type: 'sessionRequestFailed' });
++    throw e;
++  }
++}
++
++// === openChat / openChatByUsername: ждём пока action доступен ===
++async function callActionWhenAvailable<A extends keyof ActionPayloads>(
++  action: A,
++  data: ActionPayloads[A],
++) {
++  for (let i = 0; i < ACTION_AVAILABILITY_MAX_TRIES; i++) {
++    if (typeof getActions()[action] === 'function') {
++      getActions()[action](data as any);
++      return;
++    }
++    await new Promise((resolve) => setTimeout(resolve, ACTION_AVAILABILITY_POLL_MS));
++  }
++}
++
++window.addEventListener('message', (event) => {
++  if (!isAllowedOrigin(event.origin)) return;
++
++  crmChatLog('← CRM', event.data);
++
++  const { type } = event.data;
++
++  if (type === 'sessionResponse') {
++    resolveSession(event.data.session);
++    return;
++  }
++  if (type === 'openChat') {
++    callActionWhenAvailable('openChat', { id: String(event.data.id) });
++    return;
++  }
++  if (type === 'openChatByUsername') {
++    callActionWhenAvailable('openChatByUsername', { username: event.data.username });
++  }
++});
++
++// === Эмиты в родителя по изменениям global state ===
++type CurrentState = {
++  authState: GlobalState['auth']['state'];
++  currentChatId?: string;
++  currentChatUnreadCount?: number;
++};
++const current: CurrentState = {
++  authState: undefined,
++  currentChatId: undefined,
++  currentChatUnreadCount: undefined,
++};
++
++addCallback(() => {
++  const global = getGlobal();
++
++  // authStateLegacy — глобальный auth flow (готов / не готов)
++  if (global.auth.state !== current.authState) {
++    current.authState = global.auth.state;
++    sendToCrm({ type: 'authStateLegacy', state: current.authState });
++  }
++
++  const messageLists = global.byTabId[getCurrentTabId()]?.messageLists;
++  const chatId = messageLists?.[messageLists.length - 1]?.chatId;
++  const chat = chatId ? global.chats.byId[chatId] : undefined;
++
++  // Unread-counter текущего чата
++  const unreadCount = chat
++    ? selectThreadReadState(global, chat.id, MAIN_THREAD_ID)?.unreadCount
++    : undefined;
++  if (unreadCount !== current.currentChatUnreadCount) {
++    current.currentChatUnreadCount = unreadCount;
++    sendToCrm({
++      type: 'chatUnreadState',
++      peerId: chat?.id,
++      username: chat?.usernames?.[0]?.username,
++      unreadCount,
++      synced: global.isSynced,
++    });
++  }
++
++  // ChatOpened — юзер переключил чат. Не шлём avatar (CRM сам подтягивает
++  // из своих данных), не делаем async fetch — callback синхронный, нет race.
++  if (chat?.id !== current.currentChatId) {
++    current.currentChatId = chat?.id;
++    const fullInfo: ApiUserFullInfo | ApiChatFullInfo | undefined = chat
++      ? global.users.fullInfoById[chat.id] ?? global.chats.fullInfoById[chat.id]
++      : undefined;
++
++    let peerType: 'user' | 'group' | 'other' = 'other';
++    switch (chat?.type) {
++      case 'chatTypePrivate':
++        peerType = 'user';
++        break;
++      case 'chatTypeBasicGroup':
++      case 'chatTypeSuperGroup':
++        peerType = 'group';
++        break;
++    }
++
++    const info = chat ? {
++      type: peerType,
++      peerId: chat.id,
++      username: chat.usernames?.[0]?.username,
++      fullName: chat.title,
++      description: fullInfo && 'bio' in fullInfo
++        ? fullInfo.bio
++        : (fullInfo && 'about' in fullInfo ? fullInfo.about : undefined),
++    } : undefined;
++
++    sendToCrm({
++      type: 'chatOpened',
++      chat,
++      info,
++      userId: chat?.id,
++      username: chat?.usernames?.[0]?.username,
++    });
++  }
++});
++
++// apiUpdate handler — авто-форвард authState/connectionState родителю
++addActionHandler('apiUpdate', (global, actions, update): void => {
++  switch (update['@type']) {
++    case 'updateAuthorizationState':
++      sendToCrm({ type: 'authState', state: update.authorizationState });
++      break;
++    case 'updateConnectionState':
++      sendToCrm({ type: 'connectionState', state: update.connectionState });
++      break;
++  }
++});
++
++// === Worker patch: пробрасываем accountId в воркеры (для storage-префиксов) ===
++// _dcAuth/_dcDomain (donor) НЕ добавляем — у нас нет MTProto-прокси.
++const accountIdParam = new URLSearchParams(self.location.search).get('accountId') ?? '';
++
++const OriginalWorker = window.Worker;
++window.Worker = class PatchedWorker extends OriginalWorker {
++  constructor(url: string | URL, options?: WorkerOptions) {
++    const newUrl = url instanceof URL ? url : new URL(url, self.location.href);
++    newUrl.searchParams.set('accountId', accountIdParam);
++    super(newUrl, options);
++  }
++} satisfies typeof Worker;
++
+diff (CRMchat patch)
+--- a/src/util/multiaccount.ts	2026-04-24 15:10:57.129776043 +0300
++++ b/src/util/multiaccount.ts	2026-04-24 14:56:04.531423233 +0300
+@@ -2,6 +2,7 @@
+ 
+ import {
+   ACCOUNT_QUERY,
++  CRM_ACCOUNT_ID,
+   DATA_BROADCAST_CHANNEL_PREFIX,
+   ESTABLISH_BROADCAST_CHANNEL_PREFIX,
+   GLOBAL_STATE_CACHE_PREFIX,
+@@ -18,11 +19,14 @@
+   IS_MULTIACCOUNT_SUPPORTED ? getAccountSlot(globalThis.location.href) : undefined
+ );
+ 
+-export const DATA_BROADCAST_CHANNEL_NAME = `${DATA_BROADCAST_CHANNEL_PREFIX}_${ACCOUNT_SLOT || 1}`;
+-export const ESTABLISH_BROADCAST_CHANNEL_NAME = `${ESTABLISH_BROADCAST_CHANNEL_PREFIX}_${ACCOUNT_SLOT || 1}`;
+-export const MULTITAB_STORAGE_KEY = `${MULTITAB_LOCALSTORAGE_KEY_PREFIX}_${ACCOUNT_SLOT || 1}`;
++// [CRMchat] Префикс CRM_ACCOUNT_ID ко всем ключам — изоляция нескольких CRM-юзеров
++// и нескольких outreach-аккаунтов в одном браузере.
++export const DATA_BROADCAST_CHANNEL_NAME = `${DATA_BROADCAST_CHANNEL_PREFIX}_${CRM_ACCOUNT_ID}_${ACCOUNT_SLOT || 1}`;
++export const ESTABLISH_BROADCAST_CHANNEL_NAME = `${ESTABLISH_BROADCAST_CHANNEL_PREFIX}_${CRM_ACCOUNT_ID}_${ACCOUNT_SLOT || 1}`;
++export const MULTITAB_STORAGE_KEY = `${MULTITAB_LOCALSTORAGE_KEY_PREFIX}_${CRM_ACCOUNT_ID}_${ACCOUNT_SLOT || 1}`;
+ export const GLOBAL_STATE_CACHE_KEY = ACCOUNT_SLOT
+-  ? `${GLOBAL_STATE_CACHE_PREFIX}_${ACCOUNT_SLOT}` : GLOBAL_STATE_CACHE_PREFIX;
++  ? `${GLOBAL_STATE_CACHE_PREFIX}_${CRM_ACCOUNT_ID}_${ACCOUNT_SLOT}`
++  : `${GLOBAL_STATE_CACHE_PREFIX}_${CRM_ACCOUNT_ID}`;
+ 
+ export function getAccountSlot(url: string) {
+   const params = new URL(url).searchParams;
+@@ -70,7 +74,9 @@
+ 
+ export function loadSlotSession(slot: number | undefined): SharedSessionData | undefined {
+   try {
+-    const data = JSON.parse(localStorage.getItem(`${SESSION_ACCOUNT_PREFIX}${slot || 1}`) || '{}') as SharedSessionData;
++    const data = JSON.parse(
++      localStorage.getItem(`${CRM_ACCOUNT_ID}_${SESSION_ACCOUNT_PREFIX}${slot || 1}`) || '{}',
++    ) as SharedSessionData;
+     if (!data.dcId) return undefined;
+     return data;
+   } catch (e) {
+@@ -94,7 +100,7 @@
+ }
+ 
+ export function writeSlotSession(slot: number | undefined, data: SharedSessionData) {
+-  localStorage.setItem(`${SESSION_ACCOUNT_PREFIX}${slot || 1}`, JSON.stringify(data));
++  localStorage.setItem(`${CRM_ACCOUNT_ID}_${SESSION_ACCOUNT_PREFIX}${slot || 1}`, JSON.stringify(data));
+ }
+ 
+ export function getAccountSlotUrl(slot: number, forLogin?: boolean, isTest?: boolean) {
+diff (CRMchat patch)
+--- a/src/util/sessions.ts	2026-04-24 15:10:57.130014825 +0300
++++ b/src/util/sessions.ts	2026-04-24 15:09:22.700023515 +0300
+@@ -1,159 +1,30 @@
++// [CRMchat] Сессия НЕ хранится в localStorage. Источник истины — родительский
++// CRM, передаёт session через postMessage (см. crmchat.ts). Все store/clear —
++// no-op stubs. loadStoredSession делегирует в crmchat-мост.
+ import type { ApiSessionData } from '../api/types';
+-import type { DcId, SharedSessionData } from '../types';
++import type { SharedSessionData } from '../types';
+ 
+ import {
+-  DC_IDS,
+-  DEBUG, IS_SCREEN_LOCKED_CACHE_KEY,
++  IS_SCREEN_LOCKED_CACHE_KEY,
+   SESSION_ACCOUNT_PREFIX,
+-  SESSION_LEGACY_USER_KEY,
+ } from '../config';
+-import { ACCOUNT_SLOT, storeAccountData, writeSlotSession } from './multiaccount';
++import { requestSessionFromCrmChat } from './crmchat';
++import { ACCOUNT_SLOT, storeAccountData } from './multiaccount';
+ 
+ export function hasStoredSession() {
+-  if (checkSessionLocked()) {
+-    return true;
+-  }
+-
+-  const slotData = loadSlotSession(ACCOUNT_SLOT);
+-  if (slotData) return Boolean(slotData.dcId);
+-
+-  if (!ACCOUNT_SLOT) {
+-    const legacyAuthJson = localStorage.getItem(SESSION_LEGACY_USER_KEY);
+-    if (legacyAuthJson) {
+-      try {
+-        const userAuth = JSON.parse(legacyAuthJson);
+-        return Boolean(userAuth && userAuth.id && userAuth.dcID);
+-      } catch (err) {
+-        // Do nothing.
+-        return false;
+-      }
+-    }
+-  }
+-
+-  return false;
+-}
+-
+-export function storeSession(sessionData: ApiSessionData) {
+-  const {
+-    mainDcId, keys, isTest,
+-  } = sessionData;
+-
+-  const currentSlotData = loadSlotSession(ACCOUNT_SLOT);
+-  const newSlotData: SharedSessionData = {
+-    ...currentSlotData,
+-    dcId: mainDcId,
+-    isTest,
+-  };
+-
+-  Object.keys(keys).map(Number).forEach((dcId) => {
+-    newSlotData[`dc${dcId as DcId}_auth_key`] = keys[dcId];
+-  });
+-
+-  if (!ACCOUNT_SLOT) {
+-    storeLegacySession(sessionData, currentSlotData?.userId);
+-  }
+-
+-  writeSlotSession(ACCOUNT_SLOT, newSlotData);
+-}
+-
+-function storeLegacySession(sessionData: ApiSessionData, currentUserId?: string) {
+-  const {
+-    mainDcId, keys, isTest,
+-  } = sessionData;
+-
+-  localStorage.setItem(SESSION_LEGACY_USER_KEY, JSON.stringify({
+-    dcID: mainDcId,
+-    id: currentUserId,
+-    test: isTest,
+-  }));
+-  localStorage.setItem('dc', String(mainDcId));
+-  Object.keys(keys).map(Number).forEach((dcId) => {
+-    localStorage.setItem(`dc${dcId}_auth_key`, JSON.stringify(keys[dcId]));
+-  });
+-}
+-
+-export function clearStoredSession(slot?: number) {
+-  if (!slot) {
+-    clearStoredLegacySession();
+-  }
+-
+-  localStorage.removeItem(`${SESSION_ACCOUNT_PREFIX}${slot || 1}`);
++  return true;
+ }
+ 
+-function clearStoredLegacySession() {
+-  [
+-    SESSION_LEGACY_USER_KEY,
+-    'dc',
+-    ...DC_IDS.map((dcId) => `dc${dcId}_auth_key`),
+-    ...DC_IDS.map((dcId) => `dc${dcId}_hash`),
+-    ...DC_IDS.map((dcId) => `dc${dcId}_server_salt`),
+-  ].forEach((key) => {
+-    localStorage.removeItem(key);
+-  });
++export function storeSession(_sessionData: ApiSessionData) {
++  // no-op
+ }
+ 
+-export function loadStoredSession(): ApiSessionData | undefined {
+-  if (!hasStoredSession()) {
+-    return undefined;
+-  }
+-
+-  const slotData = loadSlotSession(ACCOUNT_SLOT);
+-
+-  if (!slotData) {
+-    if (ACCOUNT_SLOT) return undefined;
+-    return loadStoredLegacySession();
+-  }
+-
+-  const sessionData: ApiSessionData = {
+-    mainDcId: slotData.dcId,
+-    keys: DC_IDS.reduce((acc, dcId) => {
+-      const key = slotData[`dc${dcId}_auth_key` as const];
+-      if (key) {
+-        acc[dcId] = key;
+-      }
+-      return acc;
+-    }, {} as Record<number, string>),
+-    isTest: slotData.isTest || undefined,
+-  };
+-
+-  return sessionData;
++export function clearStoredSession(_slot?: number) {
++  // no-op
+ }
+ 
+-function loadStoredLegacySession(): ApiSessionData | undefined {
+-  if (!hasStoredSession()) {
+-    return undefined;
+-  }
+-
+-  const userAuth = JSON.parse(localStorage.getItem(SESSION_LEGACY_USER_KEY) || 'null');
+-  if (!userAuth) {
+-    return undefined;
+-  }
+-  const mainDcId = Number(userAuth.dcID);
+-  const isTest = userAuth.test;
+-  const keys: Record<number, string> = {};
+-
+-  DC_IDS.forEach((dcId) => {
+-    try {
+-      const key = localStorage.getItem(`dc${dcId}_auth_key`);
+-      if (key) {
+-        keys[dcId] = JSON.parse(key);
+-      }
+-    } catch (err) {
+-      if (DEBUG) {
+-        // eslint-disable-next-line no-console
+-        console.warn('Failed to load stored session', err);
+-      }
+-      // Do nothing.
+-    }
+-  });
+-
+-  if (!Object.keys(keys).length) return undefined;
+-
+-  return {
+-    mainDcId,
+-    keys,
+-    isTest,
+-  };
++export function loadStoredSession(): Promise<ApiSessionData | undefined> {
++  return requestSessionFromCrmChat();
+ }
+ 
+ export function loadSlotSession(slot: number | undefined): SharedSessionData | undefined {
+@@ -173,16 +44,7 @@
+ }
+ 
+ export function importTestSession() {
+-  const sessionJson = process.env.TEST_SESSION!;
+-  try {
+-    const sessionData = JSON.parse(sessionJson) as ApiSessionData & { userId: string };
+-    storeLegacySession(sessionData, sessionData.userId);
+-  } catch (err) {
+-    if (DEBUG) {
+-      // eslint-disable-next-line no-console
+-      console.warn('Failed to load test session', err);
+-    }
+-  }
++  // no-op — test sessions раньше клали в localStorage; для CRM-iframe не нужно.
+ }
+ 
+ export function checkSessionLocked() {
+diff (CRMchat patch)
+--- a/src/util/setupServiceWorker.ts	2026-04-24 15:10:57.130014825 +0300
++++ b/src/util/setupServiceWorker.ts	2026-04-24 14:56:04.531745141 +0300
+@@ -86,7 +86,8 @@
+         }
+ 
+         if (!IS_IOS && !IS_ANDROID && !IS_TEST) {
+-          getActions().showDialog?.({ data: { type: 'error', message: 'SERVICE_WORKER_DISABLED', hasErrorKey: true } });
++          // [CRMchat] в iframe SW часто не поднимается — не пугаем юзера диалогом
++          // getActions().showDialog?.({ data: { type: 'error', message: 'SERVICE_WORKER_DISABLED', hasErrorKey: true } });
+         }
+       }
+     } catch (err) {
+diff (CRMchat patch)
+--- a/src/util/websync.ts	2026-04-24 15:10:57.131260551 +0300
++++ b/src/util/websync.ts	2026-04-24 14:56:04.531801537 +0300
+@@ -30,7 +30,9 @@
+ let lastTimeout: NodeJS.Timeout | undefined;
+ 
+ export const forceWebsync = (authed: boolean) => {
+-  if (IS_MOCKED_CLIENT || IS_TAURI) return undefined;
++  // [CRMchat] кросс-синк web.telegram.org/a ↔ /k бессмыслен в iframe-режиме
++  // eslint-disable-next-line no-constant-condition, no-constant-binary-expression
++  if (true || IS_MOCKED_CLIENT || IS_TAURI) return undefined;
+   const currentTs = getTs();
+ 
+   const { canRedirect, ts } = JSON.parse(localStorage.getItem(WEBSYNC_KEY) || '{}');

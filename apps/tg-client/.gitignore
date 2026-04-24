@@ -1,0 +1,14 @@
+# [CRMchat] Игнорируем ВСЁ кроме нашего custom-set.
+# В git летят только setup.sh, teardown.sh, patches/, UPSTREAM.md, CRMCHAT.md,
+# README.md, .gitignore. Вся upstream-кодовая база подтягивается setup.sh и не
+# коммитится — нет 100MB+ чужого кода в нашей репе.
+*
+
+!.gitignore
+!setup.sh
+!teardown.sh
+!patches
+!patches/**
+!UPSTREAM.md
+!CRMCHAT.md
+!README.md
