@@ -1,6 +1,6 @@
-import { Link, createFileRoute } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Send } from "lucide-react";
+import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
+import { ChevronRight, Plus, Send, Star } from "lucide-react";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
 import { OUTREACH_QK } from "../../../../../../lib/query-keys";
@@ -29,7 +29,7 @@ const STATUS_COLOR: Record<string, string> = {
 
 function OutreachAccountsList() {
   const { wsId } = Route.useParams();
-  const qc = useQueryClient();
+  const navigate = useNavigate();
   const accounts = useQuery({
     queryKey: OUTREACH_QK.accounts(wsId),
     queryFn: async () => {
@@ -40,18 +40,6 @@ function OutreachAccountsList() {
       if (error) throw error;
       return data;
     },
-  });
-
-  const remove = useMutation({
-    mutationFn: async (accountId: string) => {
-      const { error } = await api.DELETE(
-        "/v1/workspaces/{wsId}/outreach/accounts/{accountId}",
-        { params: { path: { wsId, accountId } } },
-      );
-      if (error) throw error;
-    },
-    onSuccess: () =>
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.accounts(wsId) }),
   });
 
   return (
@@ -103,7 +91,16 @@ function OutreachAccountsList() {
         <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
           <ul className="divide-y divide-zinc-100">
             {accounts.data.map((acc) => (
-              <li key={acc.id} className="flex items-center gap-3 px-5 py-3">
+              <li
+                key={acc.id}
+                className="flex cursor-pointer items-center gap-3 px-5 py-3 hover:bg-zinc-50"
+                onClick={() =>
+                  navigate({
+                    to: "/w/$wsId/outreach/accounts/$accountId",
+                    params: { wsId, accountId: acc.id },
+                  })
+                }
+              >
                 <span
                   className={
                     "h-2.5 w-2.5 shrink-0 rounded-full " +
@@ -112,40 +109,24 @@ function OutreachAccountsList() {
                   title={STATUS_LABEL[acc.status] ?? acc.status}
                 />
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 text-sm">
-                    <span className="font-medium">
+                  <div className="flex items-center gap-1.5 text-sm">
+                    <span className="truncate font-medium">
                       {acc.firstName || acc.tgUsername || "Без имени"}
                     </span>
                     {acc.hasPremium && (
-                      <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700">
-                        premium
-                      </span>
+                      <Star
+                        size={12}
+                        className="shrink-0 fill-amber-400 text-amber-400"
+                      />
                     )}
                   </div>
-                  <div className="text-xs text-zinc-500">
-                    {acc.tgUsername ? `@${acc.tgUsername}` : null}
-                    {acc.tgUsername && acc.phoneNumber ? " · " : null}
+                  <div className="truncate text-xs text-zinc-500">
                     {acc.phoneNumber ?? null}
+                    {acc.phoneNumber && acc.tgUsername ? " · " : null}
+                    {acc.tgUsername ? `@${acc.tgUsername}` : null}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (
-                      confirm(
-                        `Отключить аккаунт ${
-                          acc.firstName || acc.tgUsername || acc.phoneNumber || ""
-                        }? Сессия будет удалена.`,
-                      )
-                    ) {
-                      remove.mutate(acc.id);
-                    }
-                  }}
-                  disabled={remove.isPending}
-                  className="text-xs text-zinc-400 hover:text-red-600 disabled:opacity-50"
-                >
-                  Удалить
-                </button>
+                <ChevronRight size={16} className="shrink-0 text-zinc-400" />
               </li>
             ))}
           </ul>

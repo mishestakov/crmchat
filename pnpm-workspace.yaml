@@ -1,3 +1,6 @@
 packages:
   - "apps/*"
+  # tg-client — vendored TWA-форк со своей npm-сборкой (cross-env/webpack),
+  # не pnpm-workspace. Запускается отдельно: cd apps/tg-client && npm install && npm run dev
+  - "!apps/tg-client"
   - "packages/*"

@@ -13,6 +13,7 @@ import {
   persistOutreachAccount,
 } from "../lib/outreach-account-client";
 import { switchDc } from "../lib/telegram-client";
+import { toTwaSession } from "../lib/twa-session";
 import type { WorkspaceVars } from "../middleware/assert-member";
 
 // Outreach-аккаунты: ОТПРАВЛЯЮЩИЕ TG-аккаунты для холодных рассылок (multi per
@@ -41,8 +42,38 @@ const AccountSchema = z.object({
   phoneNumber: z.string().nullable(),
   firstName: z.string().nullable(),
   hasPremium: z.boolean(),
+  newLeadsDailyLimit: z.number().int(),
   createdAt: z.string().datetime(),
 });
+
+const PatchAccountBody = z.object({
+  newLeadsDailyLimit: z.number().int().min(0).max(1000).optional(),
+});
+
+// Session в формате который ждёт TG-клиент (apps/tg-client). Это фактически
+// authKey + dcId из gramjs StringSession в hex-формате. Передаётся фронту →
+// фронт через postMessage инжектит в iframe.
+const TwaSessionResponseSchema = z.object({
+  session: z.object({
+    mainDcId: z.number().int(),
+    keys: z.record(z.string(), z.string()),
+    isTest: z.literal(true).optional(),
+  }),
+});
+
+function serializeAccount(r: typeof outreachAccounts.$inferSelect) {
+  return {
+    id: r.id,
+    status: r.status,
+    tgUserId: r.tgUserId,
+    tgUsername: r.tgUsername,
+    phoneNumber: r.phoneNumber,
+    firstName: r.firstName,
+    hasPremium: r.hasPremium,
+    newLeadsDailyLimit: r.newLeadsDailyLimit,
+    createdAt: r.createdAt.toISOString(),
+  };
+}
 
 const SendCodeRespSchema = z.object({
   phoneCodeHash: z.string(),
@@ -92,18 +123,121 @@ app.openapi(
       .from(outreachAccounts)
       .where(eq(outreachAccounts.workspaceId, wsId))
       .orderBy(outreachAccounts.createdAt);
-    return c.json(
-      rows.map((r) => ({
-        id: r.id,
-        status: r.status,
-        tgUserId: r.tgUserId,
-        tgUsername: r.tgUsername,
-        phoneNumber: r.phoneNumber,
-        firstName: r.firstName,
-        hasPremium: r.hasPremium,
-        createdAt: r.createdAt.toISOString(),
-      })),
-    );
+    return c.json(rows.map(serializeAccount));
+  },
+);
+
+app.openapi(
+  createRoute({
+    method: "get",
+    path: "/v1/workspaces/{wsId}/outreach/accounts/{accountId}",
+    tags: ["outreach"],
+    request: { params: WsAccountParam },
+    responses: {
+      200: {
+        content: { "application/json": { schema: AccountSchema } },
+        description: "Account",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const { accountId } = c.req.valid("param");
+    const [row] = await db
+      .select()
+      .from(outreachAccounts)
+      .where(
+        and(
+          eq(outreachAccounts.id, accountId),
+          eq(outreachAccounts.workspaceId, wsId),
+        ),
+      )
+      .limit(1);
+    if (!row) throw new HTTPException(404, { message: "account not found" });
+    return c.json(serializeAccount(row));
+  },
+);
+
+app.openapi(
+  createRoute({
+    method: "patch",
+    path: "/v1/workspaces/{wsId}/outreach/accounts/{accountId}",
+    tags: ["outreach"],
+    request: {
+      params: WsAccountParam,
+      body: {
+        content: { "application/json": { schema: PatchAccountBody } },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: { "application/json": { schema: AccountSchema } },
+        description: "Updated",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const { accountId } = c.req.valid("param");
+    const body = c.req.valid("json");
+    const [row] = await db
+      .update(outreachAccounts)
+      .set({
+        // Drizzle игнорит undefined-поля, не пишет их в SET. Если body пустой —
+        // фактически апдейтится только updatedAt (idempotent ping).
+        newLeadsDailyLimit: body.newLeadsDailyLimit,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(outreachAccounts.id, accountId),
+          eq(outreachAccounts.workspaceId, wsId),
+        ),
+      )
+      .returning();
+    if (!row) throw new HTTPException(404, { message: "account not found" });
+    return c.json(serializeAccount(row));
+  },
+);
+
+app.openapi(
+  createRoute({
+    method: "get",
+    path: "/v1/workspaces/{wsId}/outreach/accounts/{accountId}/twa-session",
+    tags: ["outreach"],
+    request: { params: WsAccountParam },
+    responses: {
+      200: {
+        content: { "application/json": { schema: TwaSessionResponseSchema } },
+        description: "Session in TWA format for iframe injection",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const { accountId } = c.req.valid("param");
+    const [row] = await db
+      .select({ session: outreachAccounts.session })
+      .from(outreachAccounts)
+      .where(
+        and(
+          eq(outreachAccounts.id, accountId),
+          eq(outreachAccounts.workspaceId, wsId),
+        ),
+      )
+      .limit(1);
+    if (!row) throw new HTTPException(404, { message: "account not found" });
+    const session = await toTwaSession(row.session);
+    if (!session) {
+      throw new HTTPException(409, {
+        message: "session corrupted or unauthorized",
+      });
+    }
+    // no-store: response содержит MTProto authKey — это полный контроль над
+    // TG-аккаунтом. Запрещаем любой кэш (browser disk, прокси, CDN).
+    c.header("Cache-Control", "no-store, private");
+    return c.json({ session });
   },
 );
 

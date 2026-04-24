@@ -50,6 +50,29 @@ if ! patch -p1 --no-backup-if-mismatch < "$PATCH"; then
   exit 1
 fi
 
+# Создаём apps/tg-client/.env из корневого .env (только нужные ключи).
+# TG-клиент webpack читает свой .env, а не наш бэковский. Дублировать
+# secrets руками = легко рассинхрониться.
+ROOT_ENV="$DIR/../../.env"
+TG_ENV="$DIR/.env"
+if [ -f "$ROOT_ENV" ] && [ ! -f "$TG_ENV" ]; then
+  API_ID=$(grep -E '^TELEGRAM_API_ID=' "$ROOT_ENV" | cut -d'=' -f2-)
+  API_HASH=$(grep -E '^TELEGRAM_API_HASH=' "$ROOT_ENV" | cut -d'=' -f2-)
+  if [ -n "$API_ID" ] && [ -n "$API_HASH" ]; then
+    cat > "$TG_ENV" <<EOF
+NODE_ENV=development
+
+TELEGRAM_API_ID=$API_ID
+TELEGRAM_API_HASH=$API_HASH
+
+BASE_URL=https://web.telegram.org/a/
+EOF
+    echo "[setup] .env создан из корневого."
+  else
+    echo "[setup] WARN: TELEGRAM_API_ID/HASH не найдены в $ROOT_ENV — заполни $TG_ENV руками."
+  fi
+fi
+
 touch "$MARKER"
 echo ""
 echo "[setup] Готово."

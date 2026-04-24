@@ -21,6 +21,7 @@ import {
   NoteModal,
   ReminderModal,
 } from "../-activities-section";
+import { useOpenChat } from "../../../../../../components/tg-chat-host";
 
 export const Route = createFileRoute("/_authenticated/w/$wsId/contacts/$id/")({
   component: ContactDetail,
@@ -82,6 +83,7 @@ function ContactDetail() {
   });
 
   const [adding, setAdding] = useState<"note" | "reminder" | null>(null);
+  const chat = useOpenChat(wsId);
 
   // Inline-сохранение одного property из view (Сумма / Стадия / custom). PATCH с
   // { properties: { key: value } } → бэк merge'ит поверх существующего. Пустое
@@ -145,6 +147,14 @@ function ContactDetail() {
           onPatch={(key, value) => patchProperty.mutate({ key, value })}
           onAddNote={() => setAdding("note")}
           onAddReminder={() => setAdding("reminder")}
+          onOpenChat={() => {
+            const values = (contact.data!.properties as Record<string, unknown>);
+            chat.openChat({
+              username: stringValue(values.telegram_username) ?? null,
+              tgUserId: stringValue(values.tg_user_id) ?? null,
+            });
+          }}
+          canOpenChat={!!chat.activeAccount}
         />
 
         <ActivitiesList wsId={wsId} contactId={id} />
@@ -176,6 +186,8 @@ function ContactView(props: {
   onPatch: (key: string, value: unknown) => void;
   onAddNote: () => void;
   onAddReminder: () => void;
+  onOpenChat: () => void;
+  canOpenChat: boolean;
 }) {
   const { contact, properties } = props;
   const values = contact.properties as Record<string, unknown>;
@@ -239,7 +251,11 @@ function ContactView(props: {
         <ActionButton
           icon={<MessageCircle size={20} />}
           label="Открыть чат"
-          disabled
+          disabled={
+            !props.canOpenChat
+            || (!values.telegram_username && !values.tg_user_id)
+          }
+          onClick={props.onOpenChat}
         />
       </div>
     </>
