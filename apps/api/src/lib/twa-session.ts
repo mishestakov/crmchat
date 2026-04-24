@@ -1,14 +1,13 @@
 import { StringSession } from "telegram/sessions";
 import { tryDecrypt } from "./crypto";
 
-// Конвертит наш зашифрованный gramjs StringSession в формат который ожидает
-// Telegram Web A (см. apps/tg-client/src/api/types/misc.ts → ApiSessionData).
+// Конвертит наш зашифрованный gramjs StringSession в формат TWA ApiSessionData
+// (см. apps/tg-client/src/api/types/misc.ts → ApiSessionData).
 //
-// gramjs StringSession.load() парсит base64 в поля dcId/serverAddress/port +
-// authKey (Buffer). TWA ждёт keys как `{[dcId]: hexString}` где hexString —
-// authKey байты в hex.
+// gramjs StringSession.load() парсит base64 в dcId/serverAddress/port + authKey.
+// TWA ждёт keys как `{[dcId]: hexString}` где hexString — authKey bytes hex.
 //
-// Возвращает null если session не расшифровался (corrupted/legacy plain).
+// Возвращает null если session не расшифровался (corrupted ciphertext).
 export async function toTwaSession(encryptedSession: string): Promise<{
   mainDcId: number;
   keys: Record<number, string>;

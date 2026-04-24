@@ -218,7 +218,7 @@ app.openapi(
     const wsId = c.get("workspaceId");
     const { accountId } = c.req.valid("param");
     const [row] = await db
-      .select({ session: outreachAccounts.session })
+      .select({ iframeSession: outreachAccounts.iframeSession })
       .from(outreachAccounts)
       .where(
         and(
@@ -228,14 +228,16 @@ app.openapi(
       )
       .limit(1);
     if (!row) throw new HTTPException(404, { message: "account not found" });
-    const session = await toTwaSession(row.session);
+
+    const session = await toTwaSession(row.iframeSession);
     if (!session) {
       throw new HTTPException(409, {
-        message: "session corrupted or unauthorized",
+        message: "iframe session corrupted, re-auth required",
       });
     }
-    // no-store: response содержит MTProto authKey — это полный контроль над
-    // TG-аккаунтом. Запрещаем любой кэш (browser disk, прокси, CDN).
+
+    // no-store: response содержит MTProto authKey — полный контроль над TG-
+    // аккаунтом. Запрещаем кэш (browser disk, прокси, CDN).
     c.header("Cache-Control", "no-store, private");
     return c.json({ session });
   },

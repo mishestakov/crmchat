@@ -195,9 +195,9 @@ function AccountDetailPage() {
           onClick={() => {
             if (
               confirm(
-                `Удалить аккаунт ${
+                `Выйти из аккаунта ${
                   acc.firstName || acc.tgUsername || acc.phoneNumber || ""
-                }? Сессия будет удалена.`,
+                }? Обе сессии (worker и iframe-чат) будут разлогинены в Telegram.`,
               )
             ) {
               remove.mutate();
@@ -206,7 +206,7 @@ function AccountDetailPage() {
           disabled={remove.isPending}
           className="w-full rounded-lg border border-red-300 px-3 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
         >
-          Удалить аккаунт
+          Выйти из аккаунта
         </button>
       </div>
     </div>

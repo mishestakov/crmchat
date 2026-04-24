@@ -1,9 +1,7 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, Plus, Send, Star } from "lucide-react";
-import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
-import { OUTREACH_QK } from "../../../../../../lib/query-keys";
+import { useOutreachAccounts } from "../../../../../../lib/outreach-queries";
 
 export const Route = createFileRoute(
   "/_authenticated/w/$wsId/outreach/accounts/",
@@ -30,17 +28,7 @@ const STATUS_COLOR: Record<string, string> = {
 function OutreachAccountsList() {
   const { wsId } = Route.useParams();
   const navigate = useNavigate();
-  const accounts = useQuery({
-    queryKey: OUTREACH_QK.accounts(wsId),
-    queryFn: async () => {
-      const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/outreach/accounts",
-        { params: { path: { wsId } } },
-      );
-      if (error) throw error;
-      return data;
-    },
-  });
+  const accounts = useOutreachAccounts(wsId);
 
   return (
     <div className="mx-auto max-w-xl space-y-4 p-6">

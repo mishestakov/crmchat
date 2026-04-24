@@ -1,5 +1,6 @@
 import { app } from "./app";
 import { startOutreachWorker } from "./lib/outreach-worker";
+import { syncPresetsForAllWorkspaces } from "./lib/workspace-presets";
 
 const port = Number(process.env.PORT ?? 3000);
 
@@ -11,6 +12,7 @@ console.log(`api: http://localhost:${port}`);
 // чтобы две реплики не выбирали одни и те же scheduled_messages.
 if (process.env.NODE_ENV !== "test") {
   startOutreachWorker();
+  void syncPresetsForAllWorkspaces();
 }
 
 export default {

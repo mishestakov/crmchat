@@ -15,6 +15,7 @@ import type { paths } from "@repo/api-client";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
 import { BackButton } from "../../../../../../components/back-button";
+import { useOutreachAccounts } from "../../../../../../lib/outreach-queries";
 import { OUTREACH_QK } from "../../../../../../lib/query-keys";
 
 export const Route = createFileRoute(
@@ -53,17 +54,7 @@ function SequenceDetailPage() {
     },
   });
 
-  const accounts = useQuery({
-    queryKey: OUTREACH_QK.accounts(wsId),
-    queryFn: async () => {
-      const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/outreach/accounts",
-        { params: { path: { wsId } } },
-      );
-      if (error) throw error;
-      return data;
-    },
-  });
+  const accounts = useOutreachAccounts(wsId);
 
   const leadsQ = useQuery({
     queryKey: OUTREACH_QK.sequenceLeads(wsId, seqId),

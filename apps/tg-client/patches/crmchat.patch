@@ -1,6 +1,6 @@
 diff (CRMchat patch)
---- a/src/components/App.tsx	2026-04-24 15:10:57.064469546 +0300
-+++ b/src/components/App.tsx	2026-04-24 15:08:12.350390091 +0300
+--- a/src/components/App.tsx	2026-04-25 02:28:56.415812625 +0300
++++ b/src/components/App.tsx	2026-04-24 15:14:07.187443146 +0300
 @@ -242,6 +242,11 @@
      }, document.body);
    }, [getIsInBackgroundLocal]);
@@ -14,8 +14,8 @@ diff (CRMchat patch)
      <UiLoader page={page} isMobile={isMobile}>
        <Transition
 diff (CRMchat patch)
---- a/src/config.ts	2026-04-24 15:10:57.102547009 +0300
-+++ b/src/config.ts	2026-04-24 14:56:04.530370574 +0300
+--- a/src/config.ts	2026-04-25 02:28:56.484572027 +0300
++++ b/src/config.ts	2026-04-24 15:14:07.187727590 +0300
 @@ -6,11 +6,17 @@
    ResaleGiftsFilterOptions,
  } from './types';
@@ -37,8 +37,8 @@ diff (CRMchat patch)
  export const BASE_URL = process.env.BASE_URL;
  export const ACCOUNT_QUERY = 'account';
 diff (CRMchat patch)
---- a/src/global/actions/api/initial.ts	2026-04-24 15:10:57.102871860 +0300
-+++ b/src/global/actions/api/initial.ts	2026-04-24 14:56:04.530561659 +0300
+--- a/src/global/actions/api/initial.ts	2026-04-25 02:28:56.485405489 +0300
++++ b/src/global/actions/api/initial.ts	2026-04-24 15:14:07.187903023 +0300
 @@ -43,7 +43,8 @@
  import { selectSharedSettings } from '../../selectors/sharedState';
  import { destroySharedStatePort } from '../../shared/sharedStateConnector';
@@ -68,8 +68,8 @@ diff (CRMchat patch)
  
    await encryptSession(sessionJson, globalJson);
 diff (CRMchat patch)
---- a/src/global/actions/ui/initial.ts	2026-04-24 15:10:57.104861632 +0300
-+++ b/src/global/actions/ui/initial.ts	2026-04-24 14:56:04.530712550 +0300
+--- a/src/global/actions/ui/initial.ts	2026-04-25 02:28:56.488773562 +0300
++++ b/src/global/actions/ui/initial.ts	2026-04-24 15:14:07.188053057 +0300
 @@ -143,9 +143,11 @@
      messageTextSize, language, shouldUseSystemTheme, timeFormat,
    } = selectSharedSettings(global);
@@ -84,8 +84,8 @@ diff (CRMchat patch)
    const performanceType = selectPerformanceSettings(global);
  
 diff (CRMchat patch)
---- a/src/util/browser/globalEnvironment.ts	2026-04-24 15:10:57.127442768 +0300
-+++ b/src/util/browser/globalEnvironment.ts	2026-04-24 14:56:04.530846499 +0300
+--- a/src/util/browser/globalEnvironment.ts	2026-04-25 02:28:56.528165787 +0300
++++ b/src/util/browser/globalEnvironment.ts	2026-04-24 15:14:07.188187072 +0300
 @@ -3,7 +3,10 @@
  // eslint-disable-next-line no-shadow-restricted-names
  declare const globalThis: ServiceWorkerGlobalScope & WorkerGlobalScope & SharedWorkerGlobalScope & Window;
@@ -99,8 +99,8 @@ diff (CRMchat patch)
  export const IS_BAD_URL_PARSER = new URL('tg://host').host !== 'host';
  
 diff (CRMchat patch)
---- a/src/util/browser/windowEnvironment.ts	2026-04-24 15:10:57.127612601 +0300
-+++ b/src/util/browser/windowEnvironment.ts	2026-04-24 14:56:04.530963477 +0300
+--- a/src/util/browser/windowEnvironment.ts	2026-04-25 02:28:56.528448168 +0300
++++ b/src/util/browser/windowEnvironment.ts	2026-04-24 15:14:07.188305341 +0300
 @@ -105,7 +105,9 @@
  export const IS_BACKDROP_BLUR_SUPPORTED = CSS.supports('backdrop-filter: blur()')
    || CSS.supports('-webkit-backdrop-filter: blur()');
@@ -113,8 +113,8 @@ diff (CRMchat patch)
  export const IS_TRANSLATION_DETECTOR_SUPPORTED = 'LanguageDetector' in window;
  export const IS_VIEW_TRANSITION_SUPPORTED = CSS.supports('view-transition-class: test')
 diff (CRMchat patch)
---- a/src/util/cacheApi.ts	2026-04-24 15:10:57.127612601 +0300
-+++ b/src/util/cacheApi.ts	2026-04-24 14:56:04.531100078 +0300
+--- a/src/util/cacheApi.ts	2026-04-25 02:28:56.528448168 +0300
++++ b/src/util/cacheApi.ts	2026-04-24 15:14:07.188437109 +0300
 @@ -1,4 +1,6 @@
 -import { LANG_CACHE_NAME, MEDIA_CACHE_NAME, MEDIA_CACHE_NAME_AVATARS, MEDIA_PROGRESSIVE_CACHE_NAME } from '../config';
 +import {
@@ -135,8 +135,8 @@ diff (CRMchat patch)
  
 diff (CRMchat patch)
 --- a/src/util/crmchat.ts	1970-01-01 03:00:00.000000000 +0300
-+++ b/src/util/crmchat.ts	2026-04-24 15:07:48.635661409 +0300
-@@ -0,0 +1,231 @@
++++ b/src/util/crmchat.ts	2026-04-25 01:49:46.878939044 +0300
+@@ -0,0 +1,237 @@
 +/* eslint-disable no-console */
 +/**
 + * [CRMchat] postMessage-мост между TWA-iframe и нашим CRM-родителем.
@@ -155,7 +155,6 @@ diff (CRMchat patch)
 + *     { type: 'authState', state: ... }       — apiUpdate.updateAuthorizationState
 + *     { type: 'authStateLegacy', state: ... } — global.auth.state
 + *     { type: 'connectionState', state: ... } — apiUpdate.updateConnectionState
-+ *     { type: 'syncState', isSynced: boolean } — chat list загружен (можно openChat)
 + *     { type: 'chatOpened', chat, info, userId, username } — юзер открыл чат
 + *     { type: 'chatUnreadState', peerId, username, unreadCount, synced }
 + */
@@ -219,15 +218,23 @@ diff (CRMchat patch)
 +  }
 +}
 +
-+// === openChat / openChatByUsername: ждём пока action доступен ===
++// === openChat / openChatByUsername: ждём пока action доступен + retry на throw ===
++// TWA после `auth=ready` поднимает state по фазам (chats, stories, dialogs).
++// Слишком ранний openChat падает на undefined в `threadsById` / `storyData` /
++// и т.п. — internal race в TWA. Ловим throw, ждём, retry.
 +async function callActionWhenAvailable<A extends keyof ActionPayloads>(
 +  action: A,
 +  data: ActionPayloads[A],
 +) {
 +  for (let i = 0; i < ACTION_AVAILABILITY_MAX_TRIES; i++) {
 +    if (typeof getActions()[action] === 'function') {
-+      getActions()[action](data as any);
-+      return;
++      try {
++        getActions()[action](data as any);
++        return;
++      } catch (e) {
++        // TWA-internal race — глобальный state ещё не догружен. Подождём и retry.
++        crmChatLog(`action ${action} threw, will retry: ${(e as Error)?.message}`);
++      }
 +    }
 +    await new Promise((resolve) => setTimeout(resolve, ACTION_AVAILABILITY_POLL_MS));
 +  }
@@ -368,8 +375,8 @@ diff (CRMchat patch)
 +} satisfies typeof Worker;
 +
 diff (CRMchat patch)
---- a/src/util/multiaccount.ts	2026-04-24 15:10:57.129776043 +0300
-+++ b/src/util/multiaccount.ts	2026-04-24 14:56:04.531423233 +0300
+--- a/src/util/multiaccount.ts	2026-04-25 02:28:56.532206254 +0300
++++ b/src/util/multiaccount.ts	2026-04-24 15:14:07.188757491 +0300
 @@ -2,6 +2,7 @@
  
  import {
@@ -418,8 +425,8 @@ diff (CRMchat patch)
  
  export function getAccountSlotUrl(slot: number, forLogin?: boolean, isTest?: boolean) {
 diff (CRMchat patch)
---- a/src/util/sessions.ts	2026-04-24 15:10:57.130014825 +0300
-+++ b/src/util/sessions.ts	2026-04-24 15:09:22.700023515 +0300
+--- a/src/util/sessions.ts	2026-04-25 02:28:56.533407194 +0300
++++ b/src/util/sessions.ts	2026-04-24 15:14:07.188932860 +0300
 @@ -1,159 +1,30 @@
 +// [CRMchat] Сессия НЕ хранится в localStorage. Источник истины — родительский
 +// CRM, передаёт session через postMessage (см. crmchat.ts). Все store/clear —
@@ -613,8 +620,8 @@ diff (CRMchat patch)
  
  export function checkSessionLocked() {
 diff (CRMchat patch)
---- a/src/util/setupServiceWorker.ts	2026-04-24 15:10:57.130014825 +0300
-+++ b/src/util/setupServiceWorker.ts	2026-04-24 14:56:04.531745141 +0300
+--- a/src/util/setupServiceWorker.ts	2026-04-25 02:28:56.533407194 +0300
++++ b/src/util/setupServiceWorker.ts	2026-04-24 15:14:07.189084780 +0300
 @@ -86,7 +86,8 @@
          }
  
@@ -626,8 +633,8 @@ diff (CRMchat patch)
        }
      } catch (err) {
 diff (CRMchat patch)
---- a/src/util/websync.ts	2026-04-24 15:10:57.131260551 +0300
-+++ b/src/util/websync.ts	2026-04-24 14:56:04.531801537 +0300
+--- a/src/util/websync.ts	2026-04-25 02:28:56.534799573 +0300
++++ b/src/util/websync.ts	2026-04-24 15:14:07.189217681 +0300
 @@ -30,7 +30,9 @@
  let lastTimeout: NodeJS.Timeout | undefined;
  

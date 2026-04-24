@@ -13,7 +13,8 @@ type Props = {
   wsId: string;
   accountId: string;
   // Identifier лида в TG. Меняется при переключении контакта без ремонта iframe.
-  peer: ChatPeer;
+  // null/undefined — iframe запускается без auto-открытия чата (full-page mode).
+  peer?: ChatPeer | null;
 };
 
 export function TgChatIframe({ wsId, accountId, peer }: Props) {
@@ -91,11 +92,10 @@ export function TgChatIframe({ wsId, accountId, peer }: Props) {
     setSessionRequested(false);
   }, [sessionRequested, sessionQ.data]);
 
-  // openChat диспатчится при каждой смене peer (не один раз). Iframe alive,
-  // переключаемся между лидами через postMessage без перезагрузки клиента.
-  // Ждём ОБА условия: auth=ready (юзер авторизован) И sync=true (chat list
-  // загружен). Без второго TWA падает на threadsById undefined.
+  // openChat шлём только когда iframe полностью готов: auth=ready + chat list
+  // загружен. Без isSynced TWA падает на threadsById undefined.
   useEffect(() => {
+    if (!peer) return;
     if (authState !== "authorizationStateReady") return;
     if (!isSynced) return;
     if (!iframeRef.current?.contentWindow) return;

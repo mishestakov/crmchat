@@ -44,29 +44,26 @@ function AuthLayout() {
             <>
               <SidebarGroup title="Лиды">
                 <SidebarLink to="/w/$wsId/contacts" wsId={wsId}>
-                  Список
+                  Воронка
                 </SidebarLink>
                 <SidebarLink to="/w/$wsId/properties" wsId={wsId}>
                   Кастомные поля
                 </SidebarLink>
+                <SidebarLink to="/w/$wsId/settings/telegram-sync" wsId={wsId}>
+                  Синк ТГ-папок
+                </SidebarLink>
               </SidebarGroup>
               <SidebarGroup title="Рассылки">
-                <SidebarLink to="/w/$wsId/outreach/sequences" wsId={wsId}>
-                  Рассылки
+                <SidebarLink to="/w/$wsId/outreach/chat" wsId={wsId}>
+                  Чат
                 </SidebarLink>
-                <SidebarLink to="/w/$wsId/outreach/lists" wsId={wsId}>
-                  Списки
+                <SidebarLink to="/w/$wsId/outreach/sequences" wsId={wsId}>
+                  Кампании
                 </SidebarLink>
                 <SidebarLink to="/w/$wsId/outreach/accounts" wsId={wsId}>
-                  Аккаунты
-                </SidebarLink>
-                <SidebarLink to="/w/$wsId/outreach/schedule" wsId={wsId}>
-                  Расписание
+                  Telegram-аккаунты
                 </SidebarLink>
               </SidebarGroup>
-              <SidebarLink to="/w/$wsId/settings/telegram-sync" wsId={wsId}>
-                Telegram
-              </SidebarLink>
               <SidebarLink to="/w/$wsId/settings/workspace" wsId={wsId}>
                 Настройки
               </SidebarLink>
@@ -151,9 +148,8 @@ function SidebarLink(props: {
     | "/w/$wsId/settings/workspace"
     | "/w/$wsId/settings/telegram-sync"
     | "/w/$wsId/outreach/accounts"
-    | "/w/$wsId/outreach/lists"
     | "/w/$wsId/outreach/sequences"
-    | "/w/$wsId/outreach/schedule";
+    | "/w/$wsId/outreach/chat";
   wsId: string;
   children: ReactNode;
 }) {

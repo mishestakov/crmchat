@@ -1,6 +1,10 @@
 import type { PropertyType } from "@repo/core";
 import { db } from "../db/client";
-import { properties as propsTable, type PropertyValue } from "../db/schema";
+import {
+  properties as propsTable,
+  workspaces,
+  type PropertyValue,
+} from "../db/schema";
 
 // Preset-properties, которые сидятся в каждый workspace при его создании.
 // 1:1 структура с donor (за вычетом avatarUrl) — см. PROPERTY_METADATA в
@@ -29,6 +33,10 @@ const PRESETS: PresetSpec[] = [
   { key: "email", name: "Email", type: "email", showInList: true },
   { key: "phone", name: "Телефон", type: "tel", showInList: true },
   { key: "telegram_username", name: "Telegram", type: "text", showInList: true },
+  // tg_user_id — служебное поле, не показываем в списке. Заполняется системно
+  // (TG-импорт, outreach worker, listener, lead→contact конверсия). Юзер не
+  // редактирует, но валидатору нужно знать что ключ существует.
+  { key: "tg_user_id", name: "TG ID", type: "text", showInList: false },
   { key: "url", name: "Ссылка", type: "url", showInList: false },
   { key: "amount", name: "Сумма", type: "number", showInList: true },
   {
@@ -60,4 +68,27 @@ export async function seedDefaultProperties(workspaceId: string) {
     .onConflictDoNothing({
       target: [propsTable.workspaceId, propsTable.key],
     });
+}
+
+// Досыпает новые preset-properties в каждый существующий workspace. Идемпотентно
+// через onConflictDoNothing. Запускается на boot — когда добавляем новый preset
+// (например tg_user_id), старые workspace получают его без миграций.
+export async function syncPresetsForAllWorkspaces() {
+  const ws = await db.select({ id: workspaces.id }).from(workspaces);
+  const results = await Promise.allSettled(
+    ws.map((w) => seedDefaultProperties(w.id)),
+  );
+  const failed = results.filter((r) => r.status === "rejected").length;
+  if (ws.length > 0) {
+    console.log(
+      `[boot] preset-properties re-synced: ${ws.length - failed}/${ws.length} workspace(s)`,
+    );
+  }
+  if (failed > 0) {
+    for (const r of results) {
+      if (r.status === "rejected") {
+        console.error(`[boot] preset re-sync failed:`, r.reason);
+      }
+    }
+  }
 }

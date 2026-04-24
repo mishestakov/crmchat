@@ -279,6 +279,9 @@ export const outreachAccounts = pgTable(
       .references(() => workspaces.id, { onDelete: "cascade" }),
     status: outreachAccountStatus("status").notNull().default("active"),
     session: text("session").notNull(),
+    // Отдельный auth_key для iframe-чата. Шаринг с worker'ской session
+    // триггерит TG force-logout (один auth_key = один consumer).
+    iframeSession: text("iframe_session").notNull(),
     tgUserId: text("tg_user_id").notNull(),
     tgUsername: text("tg_username"),
     phoneNumber: text("phone_number"),

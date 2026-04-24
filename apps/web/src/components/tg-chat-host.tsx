@@ -1,11 +1,9 @@
 import { useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { X } from "lucide-react";
 import { useTgChat } from "../lib/chat-store";
-import { OUTREACH_QK } from "../lib/query-keys";
-import { api } from "../lib/api";
 import { errorMessage } from "../lib/errors";
+import { useOutreachAccounts } from "../lib/outreach-queries";
 import { TgChatIframe } from "./tg-chat-iframe";
 
 // Глобально-смонтированный TG-чат. Один на всю CRM-сессию пока живёт layout.
@@ -35,6 +33,10 @@ export function TgChatHost() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [visible, close]);
+
+  // Не рендерим overlay пока iframe не открывали ни разу — ноль DOM, ноль
+  // listener'ов, ноль шансов сломаться при HMR/Fast Refresh.
+  if (!mounted) return null;
 
   return (
     <div
@@ -77,17 +79,7 @@ export function TgChatHost() {
 // писал лиду первым) — следующим заходом, нужен link contact ↔ outreach_lead.
 export function useOpenChat(wsId: string) {
   const { open } = useTgChat();
-  const accounts = useQuery({
-    queryKey: OUTREACH_QK.accounts(wsId),
-    queryFn: async () => {
-      const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/outreach/accounts",
-        { params: { path: { wsId } } },
-      );
-      if (error) throw error;
-      return data;
-    },
-  });
+  const accounts = useOutreachAccounts(wsId);
   const activeAccount = accounts.data?.find((a) => a.status === "active");
 
   return {
