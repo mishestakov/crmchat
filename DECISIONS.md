@@ -140,6 +140,13 @@
 - Prod-деплой: где запускается, как конфигурится, где `NODE_ENV=production` — описать в specs перед staging.
 - `drizzle-kit --env-file=...` вместо ручного парсера в drizzle.config.ts — рефакторинг ради рефакторинга, текущий работает.
 
+**Outreach:**
+- **Phone-only лиды (отложено, не известно нужно ли).** `outreach-worker.ts:sendOne` бросает `PHONE_NOT_SUPPORTED` для лидов без `username`. Путь через `Api.contacts.ImportContacts` написан не был — юзер сам сказал «пока непонятно надо ли это вообще». Direct dep `big-integer` УЖЕ установлен (на случай если возьмёмся). Будет реактивно, когда упрёмся в реальный CSV без username.
+- **Multi-instance worker.** В `apps/api/src/index.ts` worker крутится в HTTP-процессе. На двух репликах оба будут выбирать одни и те же `pending` scheduled_messages → дубль-отправка. Pre-prod: либо advisory-lock (`pg_try_advisory_lock` на хеш от `scheduledMessages.id`), либо запускать worker только на одной реплике (sticky-route / отдельный процесс).
+- **FloodWait уже уважаем** (`outreach-worker.ts` ловит `FloodWaitError`/`SlowModeWaitError`, ставит per-account cooldown в памяти + двигает `sendAt`). На рестарте процесса cooldown теряется — первая попытка снова словит тот же flood и заново уснёт.
+- **Inbound listener: реализован для остановки sequence на ответ, не для UI чата.** `outreach-listener.ts` ловит `NewMessage incoming:true isPrivate:true`, матчит `senderId` против `outreach_leads.tg_user_id` в workspace, ставит `replied_at` и cancel'ит pending во ВСЕХ sequences этого лида. Listener подключается eager на старте воркера + при сразу после успешной auth (см. `outreach-account-client.ts:persistOutreachAccount`). НЕ закрывает: лид ответил ДО того как мы получили его tg_user_id (мы его получаем только после первой успешной отправки через `client.getEntity`). Если кто-то сначала ответил юзеру вне CRM, потом мы запустили sequence — match'а не будет, sequence пойдёт. Это закроется когда добавим CRM-side resolve username→tgUserId на этапе CSV-импорта (TODO без приоритета).
+- **Полноценный UI ответов (чат внутри CRM, история переписки) — НЕ делаем.** Это отдельная фича уровня donor's «embedded TG-chat», большая. Сейчас в карточке лида только зелёная подсветка строки + relative «ответил X мин назад». Юзер уходит читать ответ в TG-клиент.
+
 ---
 
 ## Property type enum: number → multi_select без миграции

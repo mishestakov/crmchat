@@ -48,11 +48,17 @@ function AuthLayout() {
                 </SidebarLink>
               </SidebarGroup>
               <SidebarGroup title="Рассылки">
+                <SidebarLink to="/w/$wsId/outreach/sequences" wsId={wsId}>
+                  Рассылки
+                </SidebarLink>
                 <SidebarLink to="/w/$wsId/outreach/lists" wsId={wsId}>
                   Списки
                 </SidebarLink>
                 <SidebarLink to="/w/$wsId/outreach/accounts" wsId={wsId}>
                   Аккаунты
+                </SidebarLink>
+                <SidebarLink to="/w/$wsId/outreach/schedule" wsId={wsId}>
+                  Расписание
                 </SidebarLink>
               </SidebarGroup>
               <SidebarLink to="/w/$wsId/settings/telegram-sync" wsId={wsId}>
@@ -140,7 +146,9 @@ function SidebarLink(props: {
     | "/w/$wsId/settings/workspace"
     | "/w/$wsId/settings/telegram-sync"
     | "/w/$wsId/outreach/accounts"
-    | "/w/$wsId/outreach/lists";
+    | "/w/$wsId/outreach/lists"
+    | "/w/$wsId/outreach/sequences"
+    | "/w/$wsId/outreach/schedule";
   wsId: string;
   children: ReactNode;
 }) {

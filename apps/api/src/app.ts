@@ -16,6 +16,8 @@ import contacts from "./routes/contacts";
 import me from "./routes/me";
 import outreachAccounts from "./routes/outreach-accounts";
 import outreachLists from "./routes/outreach-lists";
+import outreachSchedule from "./routes/outreach-schedule";
+import outreachSequences from "./routes/outreach-sequences";
 import properties from "./routes/properties";
 import telegram from "./routes/telegram";
 import workspaces from "./routes/workspaces";
@@ -46,6 +48,8 @@ wsApp.route("/", properties);
 wsApp.route("/", activities);
 wsApp.route("/", outreachAccounts);
 wsApp.route("/", outreachLists);
+wsApp.route("/", outreachSequences);
+wsApp.route("/", outreachSchedule);
 protectedApp.route("/", wsApp);
 
 app.route("/", protectedApp);

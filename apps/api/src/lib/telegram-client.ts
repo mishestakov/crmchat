@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/client";
 import { telegramAccounts } from "../db/schema";
 import { encrypt, tryDecrypt } from "./crypto";
+import { silentLogger } from "./silent-logger";
 
 // Один TelegramClient на user — gramjs клиент thread-unsafe для одной session,
 // плюс открытое соединение даёт серверу запоминать seen-updates. Кэшируем in-memory
@@ -163,23 +164,3 @@ export async function dropUserClient(userId: string): Promise<void> {
   await db.delete(telegramAccounts).where(eq(telegramAccounts.userId, userId));
 }
 
-// gramjs логирует всё подряд через console — заглушаем для prod-quietness.
-// Для дебага можно вернуть стандартный `new Logger("info")`.
-function silentLogger() {
-  return {
-    canSend: () => false,
-    setLevel: () => {},
-    log: () => {},
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-    debug: () => {},
-    format: () => "",
-    getDateTime: () => "",
-    levels: ["error", "warn", "info", "debug"],
-    messageFormat: "",
-    tzOffset: 0,
-    colors: {},
-    isBrowser: false,
-  } as unknown as ConstructorParameters<typeof TelegramClient>[3]["baseLogger"];
-}

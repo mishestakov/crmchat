@@ -9,4 +9,10 @@ export const OUTREACH_QK = {
     ["outreach-list", wsId, listId] as const,
   leads: (wsId: string, listId: string) =>
     ["outreach-leads", wsId, listId] as const,
+  sequences: (wsId: string) => ["outreach-sequences", wsId] as const,
+  sequence: (wsId: string, seqId: string) =>
+    ["outreach-sequence", wsId, seqId] as const,
+  sequenceLeads: (wsId: string, seqId: string) =>
+    ["outreach-sequence-leads", wsId, seqId] as const,
+  schedule: (wsId: string) => ["outreach-schedule", wsId] as const,
 };

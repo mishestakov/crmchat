@@ -9,6 +9,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { shortId } from "./short-id";
 
@@ -50,6 +51,37 @@ export const sessions = pgTable(
   }),
 );
 
+// Расписание окон отправки для outreach-воркера. Хранится на workspace, потому
+// что одно на все sequences. `false` = в этот день не шлём; `{startHour,endHour}` —
+// окно в часах локального tz (0..24, end эксклюзивный). Worker (фаза 3b) применяет
+// его при выборе scheduled_messages для отправки в текущий момент.
+export type OutreachScheduleDay = { startHour: number; endHour: number } | false;
+export type OutreachSchedule = {
+  timezone: string;
+  dailySchedule: {
+    mon: OutreachScheduleDay;
+    tue: OutreachScheduleDay;
+    wed: OutreachScheduleDay;
+    thu: OutreachScheduleDay;
+    fri: OutreachScheduleDay;
+    sat: OutreachScheduleDay;
+    sun: OutreachScheduleDay;
+  };
+};
+
+export const DEFAULT_OUTREACH_SCHEDULE: OutreachSchedule = {
+  timezone: "Europe/Moscow",
+  dailySchedule: {
+    mon: { startHour: 10, endHour: 20 },
+    tue: { startHour: 10, endHour: 20 },
+    wed: { startHour: 10, endHour: 20 },
+    thu: { startHour: 10, endHour: 20 },
+    fri: { startHour: 10, endHour: 20 },
+    sat: false,
+    sun: false,
+  },
+};
+
 export const workspaces = pgTable(
   "workspaces",
   {
@@ -58,6 +90,10 @@ export const workspaces = pgTable(
       .notNull()
       .references(() => organizations.id, { onDelete: "restrict" }),
     name: text("name").notNull(),
+    outreachSchedule: jsonb("outreach_schedule")
+      .$type<OutreachSchedule>()
+      .notNull()
+      .default(DEFAULT_OUTREACH_SCHEDULE),
     createdBy: text("created_by")
       .notNull()
       .references(() => users.id),
@@ -186,6 +222,13 @@ export const contacts = pgTable(
     tgUserIdIdx: index("contacts_tg_user_id_idx").on(
       sql`(${t.properties} ->> 'tg_user_id')`,
     ),
+    // UNIQUE на пару (workspace, tg_user_id) — закрывает race в outreach
+    // listener'е: два concurrent NewMessage events могли создать двух контактов
+    // для одного TG-юзера (find-or-create в разных запросах). Partial index:
+    // контакты без tg_user_id (созданные руками) не попадают под constraint.
+    tgUserIdUnique: uniqueIndex("contacts_workspace_tg_user_id_unique")
+      .on(t.workspaceId, sql`(${t.properties} ->> 'tg_user_id')`)
+      .where(sql`(${t.properties} ->> 'tg_user_id') IS NOT NULL`),
   }),
 );
 
@@ -241,6 +284,10 @@ export const outreachAccounts = pgTable(
     phoneNumber: text("phone_number"),
     firstName: text("first_name"),
     hasPremium: boolean("has_premium").notNull().default(false),
+    // Лимит исходящих сообщений в сутки на этот аккаунт. Worker (фаза 3b)
+    // считает sent-за-сегодня и пропускает аккаунт когда упёрлись. Дефолт 30 —
+    // безопасно для не-Premium аккаунта без warmup. Юзер может крутить.
+    newLeadsDailyLimit: integer("new_leads_daily_limit").notNull().default(30),
     createdBy: text("created_by")
       .notNull()
       .references(() => users.id),
@@ -331,6 +378,19 @@ export const outreachLeads = pgTable(
     username: text("username"),
     phone: text("phone"),
     tgUserId: text("tg_user_id"),
+    // Когда лид впервые ответил нам (любой incoming от него после того как мы
+    // ему написали). Заполняется outreach-listener'ом при NewMessage event.
+    // Триггер для воркера: «не слать больше ничего этому лиду, в любой
+    // sequence». Хранение момента (а не bool) — чтобы UI мог показать «ответил
+    // 12 минут назад» и для будущих метрик «time-to-reply».
+    repliedAt: timestamp("replied_at", { withTimezone: true }),
+    // Контакт, в который сконвертировался лид при первом ответе. Listener
+    // создаёт contact (или находит дедуп по tg_user_id) и проставляет сюда.
+    // ON DELETE SET NULL: удалили контакта руками — лид остаётся в outreach
+    // для метрик, contactId просто очищается.
+    contactId: text("contact_id").references(() => contacts.id, {
+      onDelete: "set null",
+    }),
     properties: jsonb("properties")
       .$type<Record<string, string>>()
       .notNull()
@@ -340,6 +400,129 @@ export const outreachLeads = pgTable(
   (t) => ({
     listIdx: index("outreach_leads_list_id_idx").on(t.listId),
     workspaceIdx: index("outreach_leads_workspace_id_idx").on(t.workspaceId),
+    // Composite-индекс для inbound-listener: на каждое incoming TG-сообщение
+    // делаем lookup `WHERE workspace_id = ? AND tg_user_id = ?`. Без индекса
+    // — full scan по всем лидам workspace.
+    workspaceTgUserIdx: index("outreach_leads_workspace_tg_user_id_idx").on(
+      t.workspaceId,
+      t.tgUserId,
+    ),
+  }),
+);
+
+// Outreach-sequence: рассылка по одному списку лидов с N сообщениями и задержками.
+// На активации (status: draft → active) воркер пресчитывает scheduled_messages
+// для каждого лида × каждого сообщения. Изменения текста после активации НЕ
+// влияют на уже распланированные — они snapshot-нуты в scheduled_messages.text.
+//   - accountsMode 'all'      — использовать все active outreach-аккаунты workspace
+//   - accountsMode 'selected' — только перечисленные в accountsSelected
+// Аккаунт лиду назначается round-robin при активации и фиксируется в
+// scheduled_messages.accountId — continuity-of-identity (один лид всегда от
+// одного аккаунта).
+export const outreachSequenceStatus = pgEnum("outreach_sequence_status", [
+  "draft",
+  "active",
+  "paused",
+  "completed",
+]);
+export const outreachAccountsMode = pgEnum("outreach_accounts_mode", [
+  "all",
+  "selected",
+]);
+
+export type OutreachSequenceMessageDelay = {
+  // 'minutes' нужен для тестов/демо; в проде разумно 'hours'/'days'.
+  period: "minutes" | "hours" | "days";
+  value: number;
+};
+export type OutreachSequenceMessage = {
+  id: string;
+  text: string;
+  // Задержка ОТНОСИТЕЛЬНО предыдущего сообщения этой же sequence для этого лида.
+  // Для первого сообщения (idx=0) применяется относительно момента активации.
+  delay: OutreachSequenceMessageDelay;
+};
+
+export const outreachSequences = pgTable(
+  "outreach_sequences",
+  {
+    id: text("id").primaryKey().$defaultFn(shortId),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    listId: text("list_id")
+      .notNull()
+      .references(() => outreachLists.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    status: outreachSequenceStatus("status").notNull().default("draft"),
+    accountsMode: outreachAccountsMode("accounts_mode").notNull().default("all"),
+    accountsSelected: jsonb("accounts_selected")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    messages: jsonb("messages")
+      .$type<OutreachSequenceMessage[]>()
+      .notNull()
+      .default([]),
+    activatedAt: timestamp("activated_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    workspaceIdx: index("outreach_sequences_workspace_id_idx").on(t.workspaceId),
+    listIdx: index("outreach_sequences_list_id_idx").on(t.listId),
+  }),
+);
+
+// Запланированное сообщение: одна строка = одна предстоящая отправка. Создаётся
+// пачкой при активации sequence (lead × message_idx). text — snapshot ПОСЛЕ
+// подстановки {{key}} переменных, чтобы редактирование sequence не порвало
+// уже запланированное.
+//   pending → sent | failed | cancelled
+// Worker (фаза 3b) выбирает pending где sendAt <= now AND respect schedule.
+export const scheduledMessageStatus = pgEnum("scheduled_message_status", [
+  "pending",
+  "sent",
+  "failed",
+  "cancelled",
+]);
+
+export const scheduledMessages = pgTable(
+  "scheduled_messages",
+  {
+    id: text("id").primaryKey().$defaultFn(shortId),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    sequenceId: text("sequence_id")
+      .notNull()
+      .references(() => outreachSequences.id, { onDelete: "cascade" }),
+    leadId: text("lead_id")
+      .notNull()
+      .references(() => outreachLeads.id, { onDelete: "cascade" }),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => outreachAccounts.id, { onDelete: "restrict" }),
+    messageIdx: integer("message_idx").notNull(),
+    text: text("text").notNull(),
+    sendAt: timestamp("send_at", { withTimezone: true }).notNull(),
+    status: scheduledMessageStatus("status").notNull().default("pending"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    sequenceIdx: index("scheduled_messages_sequence_id_idx").on(t.sequenceId),
+    leadIdx: index("scheduled_messages_lead_id_idx").on(t.leadId),
+    // Composite-индекс под главный запрос воркера: pending по sendAt asc.
+    workerPickIdx: index("scheduled_messages_worker_pick_idx").on(
+      t.status,
+      t.sendAt,
+    ),
   }),
 );
 
