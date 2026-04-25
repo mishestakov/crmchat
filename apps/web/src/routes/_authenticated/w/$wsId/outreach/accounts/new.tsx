@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { Send } from "lucide-react";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
@@ -17,7 +17,10 @@ export const Route = createFileRoute(
   component: NewOutreachAccountPage,
 });
 
-const POLL_MS = 2000;
+type QrState =
+  | { status: "scan-qr-code"; token: string }
+  | { status: "password_needed" }
+  | { status: "success" };
 
 type AuthState =
   | { step: "scan-qr" }
@@ -77,30 +80,28 @@ function ScanQrStep(props: {
   setState: (s: AuthState) => void;
   onComplete: () => void;
 }) {
-  const qr = useQuery({
-    queryKey: OUTREACH_QK.qr(props.wsId),
-    queryFn: async () => {
-      const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/outreach/accounts/auth/qr-state",
-        { params: { path: { wsId: props.wsId } } },
-      );
-      if (error) throw error;
-      return data;
-    },
-    refetchInterval: POLL_MS,
-    refetchIntervalInBackground: false,
-    // Сбрасываем кэш при unmount: иначе при добавлении 2-го аккаунта useQuery
-    // отдаст stale `password_needed` от прошлой сессии → useEffect моментально
-    // переключит state на PasswordStep ещё до первого свежего polling-fetch'а.
-    gcTime: 0,
-  });
+  const [state, setQrState] = useState<QrState | null>(null);
 
   useEffect(() => {
-    if (qr.data?.status === "success") props.onComplete();
-    if (qr.data?.status === "password_needed") {
-      props.setState({ step: "enter-password" });
+    const url = `/v1/workspaces/${props.wsId}/outreach/accounts/auth/qr-stream`;
+    const es = new EventSource(url, { withCredentials: true });
+    const onState = (e: MessageEvent) => {
+      setQrState(JSON.parse(e.data) as QrState);
+    };
+    es.addEventListener("state", onState);
+    return () => {
+      es.removeEventListener("state", onState);
+      es.close();
+    };
+  }, [props.wsId]);
+
+  const { onComplete, setState } = props;
+  useEffect(() => {
+    if (state?.status === "success") onComplete();
+    if (state?.status === "password_needed") {
+      setState({ step: "enter-password" });
     }
-  }, [qr.data?.status, props]);
+  }, [state?.status, onComplete, setState]);
 
   return (
     <Card>
@@ -109,8 +110,8 @@ function ScanQrStep(props: {
         <h1 className="text-lg font-semibold">Подключить аккаунт</h1>
 
         <div className="flex h-60 w-60 items-center justify-center rounded-lg border border-zinc-200 bg-white">
-          {qr.data?.status === "scan-qr-code" ? (
-            <QrImage token={qr.data.token} />
+          {state?.status === "scan-qr-code" ? (
+            <QrImage token={state.token} />
           ) : (
             <div className="text-sm text-zinc-400">Загрузка QR…</div>
           )}

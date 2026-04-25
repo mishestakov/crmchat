@@ -12,7 +12,12 @@ import {
   getOrCreatePendingOutreachClient,
   persistOutreachAccount,
 } from "../lib/outreach-account-client";
-import { switchDc } from "../lib/telegram-client";
+import {
+  dropQrTokenCache,
+  exportLoginTokenCached,
+  qrKey,
+  streamQrState,
+} from "../lib/qr-token-cache";
 import { toTwaSession } from "../lib/twa-session";
 import type { WorkspaceVars } from "../middleware/assert-member";
 
@@ -92,14 +97,6 @@ const SignInPasswordRespSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("password_invalid") }),
 ]);
 
-const QrStateSchema = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("scan-qr-code"), token: z.string() }),
-  z.object({ status: z.literal("password_needed") }),
-  z.object({
-    status: z.literal("success"),
-    accountId: z.string(),
-  }),
-]);
 
 const app = new OpenAPIHono<{ Variables: WorkspaceVars }>();
 
@@ -404,56 +401,47 @@ app.openapi(
   },
 );
 
-app.openapi(
-  createRoute({
-    method: "get",
-    path: "/v1/workspaces/{wsId}/outreach/accounts/auth/qr-state",
-    tags: ["outreach"],
-    request: { params: WsParam },
-    responses: {
-      200: {
-        content: { "application/json": { schema: QrStateSchema } },
-        description: "QR-login poll state",
-      },
-    },
-  }),
-  async (c) => {
+// Считывает текущее QR-состояние pending-клиента. На LoginTokenSuccess сразу
+// делает afterAuth (сохраняет account, чистит кэш). Используется и HTTP-ручкой
+// (legacy fallback), и SSE-стримом ниже.
+type QrState =
+  | { status: "scan-qr-code"; token: string }
+  | { status: "password_needed" }
+  | { status: "success"; accountId: string };
+
+async function readOutreachQrState(
+  wsId: string,
+  userId: string,
+): Promise<QrState> {
+  const cacheKey = qrKey.outreach(wsId);
+  const client = await getOrCreatePendingOutreachClient(wsId);
+  try {
+    const result = await exportLoginTokenCached(cacheKey, client, apiId, apiHash);
+    if (result instanceof Api.auth.LoginTokenSuccess) {
+      dropQrTokenCache(cacheKey);
+      const acc = await afterAuth(wsId, userId, client);
+      return { status: "success", accountId: acc.id };
+    }
+    const tokenB64 = Buffer.from(result.token).toString("base64url");
+    return { status: "scan-qr-code", token: tokenB64 };
+  } catch (e) {
+    const msg = errMsg(e);
+    if (msg.includes("SESSION_PASSWORD_NEEDED")) {
+      dropQrTokenCache(cacheKey);
+      return { status: "password_needed" };
+    }
+    throw e;
+  }
+}
+
+app.get(
+  "/v1/workspaces/:wsId/outreach/accounts/auth/qr-stream",
+  (c) => {
     const wsId = c.get("workspaceId");
     const userId = c.get("userId");
-    const client = await getOrCreatePendingOutreachClient(wsId);
-    try {
-      let result: unknown = await client.invoke(
-        new Api.auth.ExportLoginToken({ apiId, apiHash, exceptIds: [] }),
-      );
-      while (result instanceof Api.auth.LoginTokenMigrateTo) {
-        await switchDc(client, result.dcId);
-        result = await client.invoke(
-          new Api.auth.ImportLoginToken({ token: result.token }),
-        );
-      }
-
-      if (result instanceof Api.auth.LoginTokenSuccess) {
-        const acc = await afterAuth(wsId, userId, client);
-        return c.json({
-          status: "success" as const,
-          accountId: acc.id,
-        });
-      }
-      if (result instanceof Api.auth.LoginToken) {
-        const tokenB64 = Buffer.from(result.token).toString("base64url");
-        return c.json({ status: "scan-qr-code" as const, token: tokenB64 });
-      }
-      throw new HTTPException(500, {
-        message: `unexpected QR result: ${result?.constructor?.name}`,
-      });
-    } catch (e) {
-      const msg = errMsg(e);
-      if (msg.includes("SESSION_PASSWORD_NEEDED")) {
-        return c.json({ status: "password_needed" as const });
-      }
-      console.error("[outreach/qr]", msg);
-      throw new HTTPException(400, { message: msg });
-    }
+    return streamQrState(c, qrKey.outreach(wsId), () =>
+      readOutreachQrState(wsId, userId),
+    );
   },
 );
 

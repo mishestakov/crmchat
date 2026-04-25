@@ -1,10 +1,12 @@
 import { Api, TelegramClient } from "telegram";
+import { Raw } from "telegram/events";
 import { StringSession } from "telegram/sessions";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db/client";
 import { outreachAccounts } from "../db/schema";
 import { encrypt, tryDecrypt } from "./crypto";
 import { attachListener, detachListener } from "./outreach-listener";
+import { dropQrTokenCache, qrKey } from "./qr-token-cache";
 import { silentLogger } from "./silent-logger";
 import { newAnonymousClient, switchDc } from "./telegram-client";
 
@@ -22,32 +24,48 @@ const workerClients = new Map<string, TelegramClient>();
 // Если юзер начнёт второй до окончания первого — старый сбрасываем (новый
 // sendCode/getQrState создаст fresh client). Multi-instance prod: см. TODO про
 // sticky-routing в telegram-client.ts.
-const pending = new Map<string, TelegramClient>();
+type PendingEntry = {
+  client: TelegramClient;
+  qrHandler: (update: Api.TypeUpdate) => void;
+  qrEvent: Raw;
+};
+const pending = new Map<string, PendingEntry>();
 
 export async function getOrCreatePendingOutreachClient(
   workspaceId: string,
 ): Promise<TelegramClient> {
   const existing = pending.get(workspaceId);
-  if (existing) return existing;
+  if (existing) return existing.client;
   const client = newAnonymousClient();
   await client.connect();
-  pending.set(workspaceId, client);
+  const qrEvent = new Raw({ types: [Api.UpdateLoginToken] });
+  const qrHandler = (update: Api.TypeUpdate) => {
+    if (update instanceof Api.UpdateLoginToken) {
+      dropQrTokenCache(qrKey.outreach(workspaceId));
+    }
+  };
+  client.addEventHandler(qrHandler, qrEvent);
+  pending.set(workspaceId, { client, qrHandler, qrEvent });
   return client;
 }
 
 export async function clearPendingOutreachClient(
   workspaceId: string,
 ): Promise<void> {
-  const client = pending.get(workspaceId);
-  if (!client) return;
+  const entry = pending.get(workspaceId);
+  if (!entry) return;
   pending.delete(workspaceId);
-  // Если этого же клиента уже промоутили в workerClients (после успешной auth)
-  // — НЕ отключаем: он держит inbound listener и будет дальше использоваться
-  // воркером. Только убираем из pending map.
-  const promoted = [...workerClients.values()].includes(client);
+  dropQrTokenCache(qrKey.outreach(workspaceId));
+  // QR-handler привязан к pending-flow и больше не нужен (cache-key всё равно
+  // сейчас инвалидируется этим вызовом). Снимаем независимо от того, ушёл
+  // клиент в worker или умирает.
+  entry.client.removeEventHandler(entry.qrHandler, entry.qrEvent);
+  // Если этого же клиента уже промоутили в workerClients — НЕ отключаем:
+  // он держит inbound NewMessage-listener для воркера.
+  const promoted = [...workerClients.values()].includes(entry.client);
   if (promoted) return;
   try {
-    await client.disconnect();
+    await entry.client.disconnect();
   } catch {
     // ignore
   }

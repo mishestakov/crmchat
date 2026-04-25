@@ -9,13 +9,18 @@ import { errorMessage } from "../../../../../lib/errors";
 //   initial → (scan-qr | enter-phone → enter-code) → [enter-password] → complete
 // После complete → SyncSettings: список папок + toggle/sync.
 
-const POLL_MS = 2000;
+// Polling под sync-configs: ждём момент когда worker допишет lastSyncAt.
+const POLL_MS = 1000;
 const QK = {
   status: ["telegram-status"] as const,
-  qr: ["telegram-qr"] as const,
   folders: ["telegram-folders"] as const,
   configs: ["telegram-sync-configs"] as const,
 };
+
+type QrState =
+  | { status: "scan-qr-code"; token: string }
+  | { status: "password_needed" }
+  | { status: "success" };
 
 export const Route = createFileRoute(
   "/_authenticated/w/$wsId/settings/telegram-sync",
@@ -155,28 +160,29 @@ function ScanQrStep(props: {
   setState: (s: AuthState) => void;
   onComplete: () => void;
 }) {
-  // Поллим раз в 2 сек: бэк дёргает Api.auth.ExportLoginToken, возвращает свежий
-  // token (если ещё не сканировано) или success/password_needed.
-  const qr = useQuery({
-    queryKey: QK.qr,
-    queryFn: async () => {
-      const { data, error } = await api.GET("/v1/telegram/qr/state");
-      if (error) throw error;
-      return data;
-    },
-    refetchInterval: POLL_MS,
-    refetchIntervalInBackground: false,
-    // Свежий кэш на каждый mount — иначе stale `password_needed` от прошлой
-    // сессии моментально переключит state до первого полла.
-    gcTime: 0,
-  });
+  const [state, setQrState] = useState<QrState | null>(null);
 
   useEffect(() => {
-    if (qr.data?.status === "success") props.onComplete();
-    if (qr.data?.status === "password_needed") {
-      props.setState({ step: "enter-password", password: "" });
+    const es = new EventSource("/v1/telegram/qr/stream", {
+      withCredentials: true,
+    });
+    const onState = (e: MessageEvent) => {
+      setQrState(JSON.parse(e.data) as QrState);
+    };
+    es.addEventListener("state", onState);
+    return () => {
+      es.removeEventListener("state", onState);
+      es.close();
+    };
+  }, []);
+
+  const { onComplete, setState } = props;
+  useEffect(() => {
+    if (state?.status === "success") onComplete();
+    if (state?.status === "password_needed") {
+      setState({ step: "enter-password", password: "" });
     }
-  }, [qr.data?.status, props]);
+  }, [state?.status, onComplete, setState]);
 
   return (
     <Card>
@@ -185,8 +191,8 @@ function ScanQrStep(props: {
         <h1 className="text-lg font-semibold">Войти в Telegram</h1>
 
         <div className="flex h-60 w-60 items-center justify-center rounded-lg border border-zinc-200 bg-white">
-          {qr.data?.status === "scan-qr-code" ? (
-            <QrImage token={qr.data.token} />
+          {state?.status === "scan-qr-code" ? (
+            <QrImage token={state.token} />
           ) : (
             <div className="text-sm text-zinc-400">Загрузка QR…</div>
           )}

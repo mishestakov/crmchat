@@ -14,12 +14,17 @@ import {
 import { tryDecrypt } from "../lib/crypto";
 import { errMsg } from "../lib/errors";
 import {
+  dropQrTokenCache,
+  exportLoginTokenCached,
+  qrKey,
+  streamQrState,
+} from "../lib/qr-token-cache";
+import {
   clearPendingClient,
   dropUserClient,
   getOrCreatePendingClient,
   getUserClient,
   persistSession,
-  switchDc,
 } from "../lib/telegram-client";
 import type { SessionVars } from "../middleware/require-session";
 
@@ -61,12 +66,6 @@ const SignInRespSchema = z.discriminatedUnion("status", [
 const SignInPasswordRespSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("sign_in_complete") }),
   z.object({ status: z.literal("password_invalid") }),
-]);
-
-const QrStateSchema = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("scan-qr-code"), token: z.string() }),
-  z.object({ status: z.literal("password_needed") }),
-  z.object({ status: z.literal("success") }),
 ]);
 
 const app = new OpenAPIHono<{ Variables: SessionVars }>();
@@ -261,59 +260,39 @@ app.openapi(
   },
 );
 
-app.openapi(
-  createRoute({
-    method: "get",
-    path: "/v1/telegram/qr/state",
-    tags: ["telegram"],
-    responses: {
-      200: {
-        content: { "application/json": { schema: QrStateSchema } },
-        description: "QR-login poll state",
-      },
-    },
-  }),
-  async (c) => {
-    const userId = c.get("userId");
-    const client = await getOrCreatePendingClient(userId);
-    try {
-      let result: unknown = await client.invoke(
-        new Api.auth.ExportLoginToken({ apiId, apiHash, exceptIds: [] }),
-      );
+type TgQrState =
+  | { status: "scan-qr-code"; token: string }
+  | { status: "password_needed" }
+  | { status: "success" };
 
-      // Migrate-loop: если scanned token принадлежит другому DC (типичный случай —
-      // юзер на DC2, мы по умолчанию на DC4), сервер возвращает LoginTokenMigrateTo.
-      // Переключаем pending-клиента на нужный DC и доимпортируем там же. После
-      // ImportLoginToken прилетает уже LoginTokenSuccess с authorization.
-      while (result instanceof Api.auth.LoginTokenMigrateTo) {
-        await switchDc(client, result.dcId);
-        result = await client.invoke(
-          new Api.auth.ImportLoginToken({ token: result.token }),
-        );
-      }
-
-      if (result instanceof Api.auth.LoginTokenSuccess) {
-        await afterSuccessfulAuth(userId, client);
-        return c.json({ status: "success" as const });
-      }
-      if (result instanceof Api.auth.LoginToken) {
-        // Ещё не сканировано — вернём текущий QR-token клиенту.
-        const tokenB64 = Buffer.from(result.token).toString("base64url");
-        return c.json({ status: "scan-qr-code" as const, token: tokenB64 });
-      }
-      throw new HTTPException(500, {
-        message: `unexpected QR result: ${result?.constructor?.name}`,
-      });
-    } catch (e) {
-      const msg = errMsg(e);
-      if (msg.includes("SESSION_PASSWORD_NEEDED")) {
-        return c.json({ status: "password_needed" as const });
-      }
-      console.error("[telegram/qr]", msg);
-      throw new HTTPException(400, { message: msg });
+async function readTelegramQrState(userId: string): Promise<TgQrState> {
+  const cacheKey = qrKey.telegram(userId);
+  const client = await getOrCreatePendingClient(userId);
+  try {
+    const result = await exportLoginTokenCached(cacheKey, client, apiId, apiHash);
+    if (result instanceof Api.auth.LoginTokenSuccess) {
+      dropQrTokenCache(cacheKey);
+      await afterSuccessfulAuth(userId, client);
+      return { status: "success" };
     }
-  },
-);
+    const tokenB64 = Buffer.from(result.token).toString("base64url");
+    return { status: "scan-qr-code", token: tokenB64 };
+  } catch (e) {
+    const msg = errMsg(e);
+    if (msg.includes("SESSION_PASSWORD_NEEDED")) {
+      dropQrTokenCache(cacheKey);
+      return { status: "password_needed" };
+    }
+    throw e;
+  }
+}
+
+app.get("/v1/telegram/qr/stream", (c) => {
+  const userId = c.get("userId");
+  return streamQrState(c, qrKey.telegram(userId), () =>
+    readTelegramQrState(userId),
+  );
+});
 
 app.openapi(
   createRoute({

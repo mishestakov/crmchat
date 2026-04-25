@@ -1,9 +1,11 @@
-import { TelegramClient } from "telegram";
+import { Api, TelegramClient } from "telegram";
+import { Raw } from "telegram/events";
 import { StringSession } from "telegram/sessions";
 import { eq } from "drizzle-orm";
 import { db } from "../db/client";
 import { telegramAccounts } from "../db/schema";
 import { encrypt, tryDecrypt } from "./crypto";
+import { dropQrTokenCache, qrKey } from "./qr-token-cache";
 import { silentLogger } from "./silent-logger";
 
 // Один TelegramClient на user — gramjs клиент thread-unsafe для одной session,
@@ -19,27 +21,41 @@ const clients = new Map<string, TelegramClient>();
 // должен жить — он держит MTProto-state (phoneCodeHash проверяется на сервере TG
 // относительно той же session). После успеха перетекает в `clients` через
 // persistSession; при ошибках/sign-out — clearPending.
-const pendingClients = new Map<string, TelegramClient>();
+type PendingEntry = {
+  client: TelegramClient;
+  qrHandler: (update: Api.TypeUpdate) => void;
+  qrEvent: Raw;
+};
+const pendingClients = new Map<string, PendingEntry>();
 
 export async function getOrCreatePendingClient(
   userId: string,
 ): Promise<TelegramClient> {
-  // Просто проверяем наличие — не лезем в .connected (getter может вернуть
-  // undefined и мы будем создавать новый клиент на каждый poll → каждая итерация
-  // получает новую session → QR из poll N невидим для poll N+1).
+  // Не лезем в .connected — getter возвращает undefined для свежего клиента,
+  // и мы бы пересоздавали его на каждый poll → новая session → QR из poll N
+  // невидим для poll N+1.
   const existing = pendingClients.get(userId);
-  if (existing) return existing;
+  if (existing) return existing.client;
   const client = newAnonymousClient();
   await client.connect();
-  pendingClients.set(userId, client);
+  const qrEvent = new Raw({ types: [Api.UpdateLoginToken] });
+  const qrHandler = (update: Api.TypeUpdate) => {
+    if (update instanceof Api.UpdateLoginToken) {
+      dropQrTokenCache(qrKey.telegram(userId));
+    }
+  };
+  client.addEventHandler(qrHandler, qrEvent);
+  pendingClients.set(userId, { client, qrHandler, qrEvent });
   return client;
 }
 
 export async function clearPendingClient(userId: string): Promise<void> {
-  const client = pendingClients.get(userId);
-  if (client) {
+  dropQrTokenCache(qrKey.telegram(userId));
+  const entry = pendingClients.get(userId);
+  if (entry) {
+    entry.client.removeEventHandler(entry.qrHandler, entry.qrEvent);
     try {
-      await client.disconnect();
+      await entry.client.disconnect();
     } catch {
       // ignore
     }

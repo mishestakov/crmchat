@@ -3,7 +3,6 @@
 // легко рассинхронизировать invalidate-цели и cache-hits.
 export const OUTREACH_QK = {
   accounts: (wsId: string) => ["outreach-accounts", wsId] as const,
-  qr: (wsId: string) => ["outreach-qr", wsId] as const,
   lists: (wsId: string) => ["outreach-lists", wsId] as const,
   list: (wsId: string, listId: string) =>
     ["outreach-list", wsId, listId] as const,
