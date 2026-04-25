@@ -42,7 +42,18 @@ function AuthLayout() {
         <nav className="flex-1 space-y-4 overflow-y-auto p-3 text-sm">
           {wsId && (
             <>
-              <SidebarGroup title="Лиды">
+              <SidebarGroup title="Агентство">
+                <SidebarLink to="/w/$wsId/agency/clients" wsId={wsId}>
+                  Клиенты
+                </SidebarLink>
+                <SidebarLink to="/w/$wsId/agency/bloggers" wsId={wsId}>
+                  Блогеры
+                </SidebarLink>
+                <SidebarLink to="/w/$wsId/agency/channels" wsId={wsId}>
+                  Каналы
+                </SidebarLink>
+              </SidebarGroup>
+              <SidebarGroup title="Лиды" v1>
                 <SidebarLink to="/w/$wsId/contacts" wsId={wsId}>
                   Воронка
                 </SidebarLink>
@@ -53,7 +64,7 @@ function AuthLayout() {
                   Синк ТГ-папок
                 </SidebarLink>
               </SidebarGroup>
-              <SidebarGroup title="Рассылки">
+              <SidebarGroup title="Рассылки" v1>
                 <SidebarLink to="/w/$wsId/outreach/chat" wsId={wsId}>
                   Чат
                 </SidebarLink>
@@ -126,15 +137,22 @@ function WorkspaceSwitcher({ currentWsId }: { currentWsId?: string }) {
 
 function SidebarGroup({
   title,
+  v1,
   children,
 }: {
   title: string;
+  v1?: boolean;
   children: ReactNode;
 }) {
   return (
     <div className="space-y-0.5">
-      <div className="mb-1 px-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
-        {title}
+      <div className="mb-1 flex items-center gap-1.5 px-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
+        <span>{title}</span>
+        {v1 && (
+          <span className="rounded bg-zinc-200 px-1 py-0.5 text-[10px] tracking-normal text-zinc-600">
+            v1
+          </span>
+        )}
       </div>
       {children}
     </div>
@@ -149,7 +167,10 @@ function SidebarLink(props: {
     | "/w/$wsId/settings/telegram-sync"
     | "/w/$wsId/outreach/accounts"
     | "/w/$wsId/outreach/sequences"
-    | "/w/$wsId/outreach/chat";
+    | "/w/$wsId/outreach/chat"
+    | "/w/$wsId/agency/clients"
+    | "/w/$wsId/agency/bloggers"
+    | "/w/$wsId/agency/channels";
   wsId: string;
   children: ReactNode;
 }) {
