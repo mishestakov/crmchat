@@ -1,7 +1,6 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { Api } from "telegram";
-import { computeCheck } from "telegram/Password";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import {
@@ -13,12 +12,7 @@ import {
 } from "../db/schema";
 import { tryDecrypt } from "../lib/crypto";
 import { errMsg } from "../lib/errors";
-import {
-  dropQrTokenCache,
-  exportLoginTokenCached,
-  qrKey,
-  streamQrState,
-} from "../lib/qr-token-cache";
+import { qrKey, streamQrState } from "../lib/qr-token-cache";
 import {
   clearPendingClient,
   dropUserClient,
@@ -26,18 +20,26 @@ import {
   getUserClient,
   persistSession,
 } from "../lib/telegram-client";
+import {
+  type TgPendingHelpers,
+  tgReadQrState,
+  tgSendCode,
+  tgSignIn,
+  tgSignInPassword,
+} from "../lib/tg-auth";
 import type { SessionVars } from "../middleware/require-session";
 
-// Авторизация в Telegram через MTProto. State-машина по донор-флоу:
-//   initial → (qr-poll | sendCode → signIn) → [signInWithPassword] → success
-//
-// gramjs предоставляет all-in-one методы (signInUser, signInUserWithQrCode) с
-// async-callbacks, но они блокируются до ввода кода/QR-скана. Для stateless HTTP
-// API этого мало — поэтому работаем низкоуровневыми Api.auth.* вызовами и
-// держим один pending-клиент per userId между запросами (см. lib/telegram-client).
+// User-scoped TG-аккаунт (один на user) — для импорта папок-чатов в контакты.
+// Auth-флоу делит реализацию с outreach-account auth через lib/tg-auth.
 
 const apiId = Number(process.env.TELEGRAM_API_ID ?? 0);
 const apiHash = process.env.TELEGRAM_API_HASH ?? "";
+
+const helpers = (userId: string): TgPendingHelpers => ({
+  getPending: () => getOrCreatePendingClient(userId),
+  clearPending: () => clearPendingClient(userId),
+  cacheKey: qrKey.telegram(userId),
+});
 
 const TgUserSchema = z.object({
   tgUserId: z.string(),
@@ -132,30 +134,12 @@ app.openapi(
   async (c) => {
     const userId = c.get("userId");
     const { phoneNumber } = c.req.valid("json");
-    // Свежий клиент: предыдущая попытка (если была) могла оставить устаревший
-    // phoneCodeHash. Перезапускаем pending-сессию.
-    await clearPendingClient(userId);
-    const client = await getOrCreatePendingClient(userId);
     try {
-      const result = await client.invoke(
-        new Api.auth.SendCode({
-          phoneNumber,
-          apiId,
-          apiHash,
-          settings: new Api.CodeSettings({}),
-        }),
+      return c.json(
+        await tgSendCode(helpers(userId), apiId, apiHash, phoneNumber),
       );
-      // Тип ответа: SentCode | SentCodeSuccess. Нас интересует только SentCode.
-      if (!(result instanceof Api.auth.SentCode)) {
-        throw new HTTPException(500, { message: "unexpected sendCode response" });
-      }
-      return c.json({
-        phoneCodeHash: result.phoneCodeHash,
-        isCodeViaApp: result.type instanceof Api.auth.SentCodeTypeApp,
-      });
     } catch (e) {
-      const msg = errMsg(e);
-      throw new HTTPException(400, { message: msg });
+      throw new HTTPException(400, { message: errMsg(e) });
     }
   },
 );
@@ -188,26 +172,19 @@ app.openapi(
   }),
   async (c) => {
     const userId = c.get("userId");
-    const { phoneNumber, phoneCode, phoneCodeHash } = c.req.valid("json");
-    const client = await getOrCreatePendingClient(userId);
+    const args = c.req.valid("json");
     try {
-      const result = await client.invoke(
-        new Api.auth.SignIn({ phoneNumber, phoneCodeHash, phoneCode }),
-      );
-      if (result instanceof Api.auth.AuthorizationSignUpRequired) {
+      const r = await tgSignIn(helpers(userId), args);
+      if (r.kind === "user_not_found")
         return c.json({ status: "user_not_found" as const });
-      }
-      await afterSuccessfulAuth(userId, client);
+      if (r.kind === "password_needed")
+        return c.json({ status: "password_needed" as const });
+      if (r.kind === "phone_code_invalid")
+        return c.json({ status: "phone_code_invalid" as const });
+      await afterSuccessfulAuth(userId, r.client);
       return c.json({ status: "sign_in_complete" as const });
     } catch (e) {
-      const msg = errMsg(e);
-      if (msg.includes("SESSION_PASSWORD_NEEDED")) {
-        return c.json({ status: "password_needed" as const });
-      }
-      if (msg.includes("PHONE_CODE_INVALID") || msg.includes("PHONE_CODE_EXPIRED")) {
-        return c.json({ status: "phone_code_invalid" as const });
-      }
-      throw new HTTPException(400, { message: msg });
+      throw new HTTPException(400, { message: errMsg(e) });
     }
   },
 );
@@ -237,60 +214,32 @@ app.openapi(
   async (c) => {
     const userId = c.get("userId");
     const { password } = c.req.valid("json");
-    const client = await getOrCreatePendingClient(userId);
     try {
-      // 2FA через SRP: тащим параметры с TG, считаем proof, отправляем check.
-      const passwordParams = await client.invoke(new Api.account.GetPassword());
-      const check = await computeCheck(passwordParams, password);
-      const result = await client.invoke(
-        new Api.auth.CheckPassword({ password: check }),
-      );
-      if (result instanceof Api.auth.AuthorizationSignUpRequired) {
-        throw new HTTPException(400, { message: "user not found" });
-      }
-      await afterSuccessfulAuth(userId, client);
+      const r = await tgSignInPassword(helpers(userId), password);
+      if (r.kind === "password_invalid")
+        return c.json({ status: "password_invalid" as const });
+      await afterSuccessfulAuth(userId, r.client);
       return c.json({ status: "sign_in_complete" as const });
     } catch (e) {
-      const msg = errMsg(e);
-      if (msg.includes("PASSWORD_HASH_INVALID")) {
-        return c.json({ status: "password_invalid" as const });
-      }
-      throw new HTTPException(400, { message: msg });
+      throw new HTTPException(400, { message: errMsg(e) });
     }
   },
 );
 
-type TgQrState =
-  | { status: "scan-qr-code"; token: string }
-  | { status: "password_needed" }
-  | { status: "success" };
-
-async function readTelegramQrState(userId: string): Promise<TgQrState> {
-  const cacheKey = qrKey.telegram(userId);
-  const client = await getOrCreatePendingClient(userId);
-  try {
-    const result = await exportLoginTokenCached(cacheKey, client, apiId, apiHash);
-    if (result instanceof Api.auth.LoginTokenSuccess) {
-      dropQrTokenCache(cacheKey);
-      await afterSuccessfulAuth(userId, client);
-      return { status: "success" };
-    }
-    const tokenB64 = Buffer.from(result.token).toString("base64url");
-    return { status: "scan-qr-code", token: tokenB64 };
-  } catch (e) {
-    const msg = errMsg(e);
-    if (msg.includes("SESSION_PASSWORD_NEEDED")) {
-      dropQrTokenCache(cacheKey);
-      return { status: "password_needed" };
-    }
-    throw e;
-  }
-}
-
 app.get("/v1/telegram/qr/stream", (c) => {
   const userId = c.get("userId");
-  return streamQrState(c, qrKey.telegram(userId), () =>
-    readTelegramQrState(userId),
+  return streamQrState(
+    c,
+    qrKey.telegram(userId),
+    async () => {
+      const r = await tgReadQrState(helpers(userId), apiId, apiHash, async (client) => {
+        await afterSuccessfulAuth(userId, client);
+      });
+      // Нормализуем к фронтовому shape: success без data.
+      if (r.status === "success") return { status: "success" as const };
+      return r;
+    },
+    (s) => s.status !== "scan-qr-code",
   );
 });
 

@@ -8,7 +8,7 @@ import { encrypt, tryDecrypt } from "./crypto";
 import { attachListener, detachListener } from "./outreach-listener";
 import { dropQrTokenCache, qrKey } from "./qr-token-cache";
 import { silentLogger } from "./silent-logger";
-import { newAnonymousClient, switchDc } from "./telegram-client";
+import { logoutTgSession, newAnonymousClient } from "./telegram-client";
 
 const apiId = Number(process.env.TELEGRAM_API_ID ?? 0);
 const apiHash = process.env.TELEGRAM_API_HASH ?? "";
@@ -83,16 +83,20 @@ export async function persistOutreachAccount(
     hasPremium: boolean;
   },
 ): Promise<{ id: string }> {
+  // Worker (gramjs в Node) и iframe (TWA в браузере) делят один authKey: TG
+  // спокойно держит несколько одновременных connection'ов с одной session
+  // (типичный кейс — несколько вкладок web.telegram.org). Раньше отдельный
+  // iframe-session генерили через auth.ExportAuthorization → ImportAuthorization,
+  // но это (а) лишний handshake +3-5с после auth, (б) ExportAuthorization
+  // отказывается работать на тот же DC (DC_ID_INVALID) и валило 2FA-флоу.
   const sessionEnc = encrypt((client.session as StringSession).save() ?? "");
-  const iframeSessionStr = await provisionIframeSessionStr(client);
-  const iframeSessionEnc = encrypt(iframeSessionStr);
 
   const [row] = await db
     .insert(outreachAccounts)
     .values({
       workspaceId,
       session: sessionEnc,
-      iframeSession: iframeSessionEnc,
+      iframeSession: sessionEnc,
       tgUserId: profile.tgUserId,
       tgUsername: profile.tgUsername ?? null,
       phoneNumber: profile.phoneNumber ?? null,
@@ -104,7 +108,7 @@ export async function persistOutreachAccount(
       target: [outreachAccounts.workspaceId, outreachAccounts.tgUserId],
       set: {
         session: sessionEnc,
-        iframeSession: iframeSessionEnc,
+        iframeSession: sessionEnc,
         tgUsername: profile.tgUsername ?? null,
         phoneNumber: profile.phoneNumber ?? null,
         firstName: profile.firstName ?? null,
@@ -120,71 +124,6 @@ export async function persistOutreachAccount(
   workerClients.set(row!.id, client);
   attachListener(row!.id, workspaceId, client);
   return row!;
-}
-
-// Создаёт второй TG-сессию через login-token flow (как у QR-логина нового
-// устройства). Worker одобряет invitation-token от анонимного клиента —
-// тот авторизуется под тем же user'ом со своим auth_key. См. td_api.tl:
-// requestQrCodeAuth + confirmQrCodeAuth (тот же flow на MTProto-уровне).
-async function provisionIframeSessionStr(
-  workerClient: TelegramClient,
-): Promise<string> {
-  const iframeClient = newAnonymousClient();
-  await iframeClient.connect();
-  try {
-    const initial = (await iframeClient.invoke(
-      new Api.auth.ExportLoginToken({ apiId, apiHash, exceptIds: [] }),
-    )) as Api.auth.LoginToken;
-
-    await workerClient.invoke(
-      new Api.auth.AcceptLoginToken({ token: initial.token }),
-    );
-
-    const finalized = (await iframeClient.invoke(
-      new Api.auth.ExportLoginToken({ apiId, apiHash, exceptIds: [] }),
-    )) as Api.auth.LoginToken | Api.auth.LoginTokenSuccess | Api.auth.LoginTokenMigrateTo;
-
-    if (finalized instanceof Api.auth.LoginTokenMigrateTo) {
-      await switchDc(iframeClient, finalized.dcId);
-      await iframeClient.invoke(
-        new Api.auth.ImportLoginToken({ token: finalized.token }),
-      );
-    }
-
-    return (iframeClient.session as StringSession).save() ?? "";
-  } finally {
-    try {
-      await iframeClient.disconnect();
-    } catch {
-      // ignore
-    }
-  }
-}
-
-// Разлогинивает одну encrypted-session на TG-стороне. Ошибки глотаем: если TG
-// уже выкинул session (устарела / force-logout) — это не должно блокировать
-// удаление из БД.
-async function logoutSession(encryptedSession: string): Promise<void> {
-  const decoded = tryDecrypt(encryptedSession);
-  if (!decoded) return;
-  const client = new TelegramClient(
-    new StringSession(decoded),
-    apiId,
-    apiHash,
-    { connectionRetries: 1, baseLogger: silentLogger() },
-  );
-  try {
-    await client.connect();
-    await client.invoke(new Api.auth.LogOut());
-  } catch {
-    // ignore
-  } finally {
-    try {
-      await client.disconnect();
-    } catch {
-      // ignore
-    }
-  }
 }
 
 export async function deleteOutreachAccount(
@@ -203,12 +142,9 @@ export async function deleteOutreachAccount(
     .limit(1);
 
   if (row) {
-    // Logout на TG-стороне обеих сессий параллельно, иначе они остаются в
-    // юзерских «активных устройствах» после удаления из CRM.
-    await Promise.allSettled([
-      logoutSession(row.session),
-      logoutSession(row.iframeSession),
-    ]);
+    // worker и iframe делят одну session — один logout снимает «активное
+    // устройство» в TG.
+    await logoutTgSession(row.session);
   }
 
   await evictWorkerClient(accountId);

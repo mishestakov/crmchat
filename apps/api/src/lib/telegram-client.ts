@@ -96,6 +96,34 @@ export function newAnonymousClient(): TelegramClient {
   });
 }
 
+// Зовёт Api.auth.LogOut() для encrypted-session, чтобы удалить «активное
+// устройство» из TG. Без этого session остаётся жить на TG-стороне даже после
+// того, как мы удалили её из БД и закрыли локальный сокет. Ошибки глотаем:
+// если TG уже выкинул session (force-logout / истекла) — это не должно
+// блокировать удаление.
+export async function logoutTgSession(encryptedSession: string): Promise<void> {
+  const decoded = tryDecrypt(encryptedSession);
+  if (!decoded) return;
+  const client = new TelegramClient(
+    new StringSession(decoded),
+    apiId,
+    apiHash,
+    { connectionRetries: 1, baseLogger: silentLogger() },
+  );
+  try {
+    await client.connect();
+    await client.invoke(new Api.auth.LogOut());
+  } catch {
+    // ignore
+  } finally {
+    try {
+      await client.disconnect();
+    } catch {
+      // ignore
+    }
+  }
+}
+
 // Достаёт authorized-клиента для user'а (восстанавливает по session из БД).
 // Возвращает null если у юзера нет сохранённого telegram_accounts ИЛИ session
 // не расшифровывается (legacy plain row после введения encryption — дропаем
@@ -168,6 +196,14 @@ export async function persistSession(
 }
 
 export async function dropUserClient(userId: string): Promise<void> {
+  // Сначала вытаскиваем session ДО удаления row — чтобы вызвать TG-side logout
+  // (иначе «активное устройство» останется висеть в TG).
+  const [acc] = await db
+    .select({ session: telegramAccounts.session })
+    .from(telegramAccounts)
+    .where(eq(telegramAccounts.userId, userId))
+    .limit(1);
+
   const client = clients.get(userId);
   if (client) {
     try {
@@ -177,6 +213,8 @@ export async function dropUserClient(userId: string): Promise<void> {
     }
     clients.delete(userId);
   }
+
+  if (acc) await logoutTgSession(acc.session);
   await db.delete(telegramAccounts).where(eq(telegramAccounts.userId, userId));
 }
 

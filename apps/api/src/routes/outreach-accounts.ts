@@ -1,7 +1,6 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { Api } from "telegram";
-import { computeCheck } from "telegram/Password";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db/client";
 import { outreachAccounts } from "../db/schema";
@@ -12,26 +11,30 @@ import {
   getOrCreatePendingOutreachClient,
   persistOutreachAccount,
 } from "../lib/outreach-account-client";
+import { qrKey, streamQrState } from "../lib/qr-token-cache";
 import {
-  dropQrTokenCache,
-  exportLoginTokenCached,
-  qrKey,
-  streamQrState,
-} from "../lib/qr-token-cache";
+  type TgPendingHelpers,
+  tgReadQrState,
+  tgSendCode,
+  tgSignIn,
+  tgSignInPassword,
+} from "../lib/tg-auth";
 import { toTwaSession } from "../lib/twa-session";
 import type { WorkspaceVars } from "../middleware/assert-member";
 
 // Outreach-аккаунты: ОТПРАВЛЯЮЩИЕ TG-аккаунты для холодных рассылок (multi per
-// workspace). Auth-флоу зеркалит /v1/telegram/* (см. routes/telegram.ts), но:
-//   - workspace-scoped (а не user-scoped)
-//   - один pending-client per workspace, не per-user
-//   - после успеха создаётся новый row в outreach_accounts
-//
-// Для DRY можно было бы вынести шаги в общий helper, но пока 2-й use-case
-// — не время для абстракции (см. CLAUDE.md «третий повтор»). Оставляем copy.
+// workspace). Auth-флоу делит реализацию с user-scoped /v1/telegram/* через
+// lib/tg-auth; разница только в pending-кэше (per workspace) и postauth-логике
+// (persistOutreachAccount возвращает accountId, плюс держит worker+iframe).
 
 const apiId = Number(process.env.TELEGRAM_API_ID ?? 0);
 const apiHash = process.env.TELEGRAM_API_HASH ?? "";
+
+const helpers = (wsId: string): TgPendingHelpers => ({
+  getPending: () => getOrCreatePendingOutreachClient(wsId),
+  clearPending: () => clearPendingOutreachClient(wsId),
+  cacheKey: qrKey.outreach(wsId),
+});
 
 const WsParam = z.object({ wsId: z.string().min(1).max(64) });
 const WsAccountParam = z.object({
@@ -266,24 +269,10 @@ app.openapi(
   async (c) => {
     const wsId = c.get("workspaceId");
     const { phoneNumber } = c.req.valid("json");
-    await clearPendingOutreachClient(wsId);
-    const client = await getOrCreatePendingOutreachClient(wsId);
     try {
-      const result = await client.invoke(
-        new Api.auth.SendCode({
-          phoneNumber,
-          apiId,
-          apiHash,
-          settings: new Api.CodeSettings({}),
-        }),
+      return c.json(
+        await tgSendCode(helpers(wsId), apiId, apiHash, phoneNumber),
       );
-      if (!(result instanceof Api.auth.SentCode)) {
-        throw new HTTPException(500, { message: "unexpected sendCode response" });
-      }
-      return c.json({
-        phoneCodeHash: result.phoneCodeHash,
-        isCodeViaApp: result.type instanceof Api.auth.SentCodeTypeApp,
-      });
     } catch (e) {
       throw new HTTPException(400, { message: errMsg(e) });
     }
@@ -320,29 +309,22 @@ app.openapi(
   async (c) => {
     const wsId = c.get("workspaceId");
     const userId = c.get("userId");
-    const { phoneNumber, phoneCode, phoneCodeHash } = c.req.valid("json");
-    const client = await getOrCreatePendingOutreachClient(wsId);
+    const args = c.req.valid("json");
     try {
-      const result = await client.invoke(
-        new Api.auth.SignIn({ phoneNumber, phoneCodeHash, phoneCode }),
-      );
-      if (result instanceof Api.auth.AuthorizationSignUpRequired) {
+      const r = await tgSignIn(helpers(wsId), args);
+      if (r.kind === "user_not_found")
         return c.json({ status: "user_not_found" as const });
-      }
-      const acc = await afterAuth(wsId, userId, client);
+      if (r.kind === "password_needed")
+        return c.json({ status: "password_needed" as const });
+      if (r.kind === "phone_code_invalid")
+        return c.json({ status: "phone_code_invalid" as const });
+      const acc = await afterAuth(wsId, userId, r.client);
       return c.json({
         status: "sign_in_complete" as const,
         accountId: acc.id,
       });
     } catch (e) {
-      const msg = errMsg(e);
-      if (msg.includes("SESSION_PASSWORD_NEEDED")) {
-        return c.json({ status: "password_needed" as const });
-      }
-      if (msg.includes("PHONE_CODE_INVALID") || msg.includes("PHONE_CODE_EXPIRED")) {
-        return c.json({ status: "phone_code_invalid" as const });
-      }
-      throw new HTTPException(400, { message: msg });
+      throw new HTTPException(400, { message: errMsg(e) });
     }
   },
 );
@@ -376,71 +358,42 @@ app.openapi(
     const wsId = c.get("workspaceId");
     const userId = c.get("userId");
     const { password } = c.req.valid("json");
-    const client = await getOrCreatePendingOutreachClient(wsId);
     try {
-      const passwordParams = await client.invoke(new Api.account.GetPassword());
-      const check = await computeCheck(passwordParams, password);
-      const result = await client.invoke(
-        new Api.auth.CheckPassword({ password: check }),
-      );
-      if (result instanceof Api.auth.AuthorizationSignUpRequired) {
-        throw new HTTPException(400, { message: "user not found" });
-      }
-      const acc = await afterAuth(wsId, userId, client);
+      const r = await tgSignInPassword(helpers(wsId), password);
+      if (r.kind === "password_invalid")
+        return c.json({ status: "password_invalid" as const });
+      const acc = await afterAuth(wsId, userId, r.client);
       return c.json({
         status: "sign_in_complete" as const,
         accountId: acc.id,
       });
     } catch (e) {
-      const msg = errMsg(e);
-      if (msg.includes("PASSWORD_HASH_INVALID")) {
-        return c.json({ status: "password_invalid" as const });
-      }
-      throw new HTTPException(400, { message: msg });
+      throw new HTTPException(400, { message: errMsg(e) });
     }
   },
 );
-
-// Считывает текущее QR-состояние pending-клиента. На LoginTokenSuccess сразу
-// делает afterAuth (сохраняет account, чистит кэш). Используется и HTTP-ручкой
-// (legacy fallback), и SSE-стримом ниже.
-type QrState =
-  | { status: "scan-qr-code"; token: string }
-  | { status: "password_needed" }
-  | { status: "success"; accountId: string };
-
-async function readOutreachQrState(
-  wsId: string,
-  userId: string,
-): Promise<QrState> {
-  const cacheKey = qrKey.outreach(wsId);
-  const client = await getOrCreatePendingOutreachClient(wsId);
-  try {
-    const result = await exportLoginTokenCached(cacheKey, client, apiId, apiHash);
-    if (result instanceof Api.auth.LoginTokenSuccess) {
-      dropQrTokenCache(cacheKey);
-      const acc = await afterAuth(wsId, userId, client);
-      return { status: "success", accountId: acc.id };
-    }
-    const tokenB64 = Buffer.from(result.token).toString("base64url");
-    return { status: "scan-qr-code", token: tokenB64 };
-  } catch (e) {
-    const msg = errMsg(e);
-    if (msg.includes("SESSION_PASSWORD_NEEDED")) {
-      dropQrTokenCache(cacheKey);
-      return { status: "password_needed" };
-    }
-    throw e;
-  }
-}
 
 app.get(
   "/v1/workspaces/:wsId/outreach/accounts/auth/qr-stream",
   (c) => {
     const wsId = c.get("workspaceId");
     const userId = c.get("userId");
-    return streamQrState(c, qrKey.outreach(wsId), () =>
-      readOutreachQrState(wsId, userId),
+    return streamQrState(
+      c,
+      qrKey.outreach(wsId),
+      async () => {
+        const r = await tgReadQrState(
+          helpers(wsId),
+          apiId,
+          apiHash,
+          (client) => afterAuth(wsId, userId, client),
+        );
+        if (r.status === "success") {
+          return { status: "success" as const, accountId: r.data.id };
+        }
+        return r;
+      },
+      (s) => s.status !== "scan-qr-code",
     );
   },
 );
