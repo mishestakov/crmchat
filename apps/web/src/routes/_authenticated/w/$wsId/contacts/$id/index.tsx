@@ -263,7 +263,6 @@ function ContactDetail() {
                 wsId={wsId}
                 accountId={chat.activeAccount.id}
                 peer={peer}
-                onChatRead={() => markRead.mutate(chat.activeAccount!.id)}
               />
             </div>
           </div>

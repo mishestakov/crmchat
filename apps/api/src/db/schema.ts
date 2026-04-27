@@ -293,7 +293,8 @@ export const outreachAccounts = pgTable(
     // MTProto-клиенты без shared update-state. TG распределяет updates на
     // активную сессию (TWA в открытой вкладке), а worker молчит и теряет
     // NewMessage / UpdateReadHistoryInbox. iframeSession генерится через
-    // auth.ExportAuthorization на другой DC (см. provisionIframeSession).
+    // canonical multi-device flow (auth.ExportLoginToken на iframe-клиенте +
+    // auth.AcceptLoginToken через worker — см. provisionIframeSession).
     session: text("session").notNull(),
     iframeSession: text("iframe_session").notNull(),
     tgUserId: text("tg_user_id").notNull(),

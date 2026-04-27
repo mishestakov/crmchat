@@ -190,3 +190,33 @@
 
 **Почему.** {{основные причины}}
 ```
+
+---
+
+## Pre-prod TODO (TG-unread mirror)
+
+Зафиксировано после серии правок `feat(unread)` — рабочее в MVP, требует
+доработки до прод-нагрузки.
+
+- **N+1 RPC риск в `outreach-listener.ts` fallback'е**. Если на outreach-аккаунт
+  массово пишут не-known TG-юзеры, `event.message.getSender()` уходит в TG за
+  каждым уникальным sender'ом. Сейчас not-hot-path (срабатывает один раз на
+  контакт, потом инжектируется `tg_user_id` и идёт быстрый путь). Решения:
+  in-memory `Map<senderId, username>` как кэш, либо запрет создания контактов
+  без `tg_user_id` через UI (использовать `/contacts/lookup/by-tg`-резолв).
+- **`provisionIframeSession` блокирует auth-флоу**. Если генерация
+  iframe-session упадёт после авторизации worker'а — юзер не может закончить
+  логин (QR висит). Альтернатива: lazy-провижн при первом запросе
+  `/twa-session` с возможностью retry. Сделать `iframe_session` nullable +
+  отдельный POST `/accounts/{id}/refresh-iframe-session` для retry.
+- **`reviveDeadListeners` каждые 10 сек** — N RPC на N аккаунтов. На 100+
+  outreach-аккаунтов это 10 RPC/сек впустую. Перейти на event-driven: ловить
+  `disconnect`-event клиента gramjs и сразу пересоздавать, без polling.
+- **TDLib вместо gramjs (long-term).** Текущий gramjs-стек принят как
+  pre-MVP. Триггеры для миграции: рост числа аккаунтов, появление CRM-side
+  чата (без iframe), очередной незакрываемый bug в gramjs. Конкретно по
+  серии `feat(unread)` нашими руками собраны workaround'ы для quirks gramjs
+  (handler-leak при reconnect, плоский ImportAuthorization без InitConnection,
+  пустой `catchUp()`, ручной DC migration). Половина-треть боли уйдёт на
+  TDLib (`tdl` / `prebuilt-tdlib`). Цена — ~15-20 часов миграции и мост
+  TDLib↔gramjs для передачи auth_key в TWA-iframe.

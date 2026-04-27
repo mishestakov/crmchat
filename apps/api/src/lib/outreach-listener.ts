@@ -13,6 +13,7 @@ import { validateContactProperties } from "./contact-properties";
 import { emitContactChanged } from "./contact-events";
 import { errMsg } from "./errors";
 import { emitSequenceChanged } from "./outreach-events";
+import { pickActiveUsername } from "./tg-auth";
 
 // Из всех типов property только эти безопасно копируются «как есть» из
 // raw CSV-string без рисков для validateContactProperties:
@@ -141,12 +142,7 @@ export function attachListener(
       if (touched.length === 0) {
         const sender = await event.message.getSender().catch(() => null);
         const username =
-          sender && "username" in sender
-            ? sender.username ||
-              (sender as { usernames?: { active?: boolean; username: string }[] })
-                .usernames?.find((u) => u.active)?.username ||
-              null
-            : null;
+          sender instanceof Api.User ? pickActiveUsername(sender) : null;
         if (username) {
           touched = await db
             .update(contacts)
