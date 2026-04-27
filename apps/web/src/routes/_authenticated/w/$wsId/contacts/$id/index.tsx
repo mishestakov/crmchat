@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bell,
   ChevronDown,
@@ -11,6 +11,7 @@ import {
   Phone,
   Send,
   StickyNote,
+  X,
 } from "lucide-react";
 import type { Contact, Property } from "@repo/core";
 import { api } from "../../../../../../lib/api";
@@ -22,8 +23,15 @@ import {
   ReminderModal,
 } from "../-activities-section";
 import { useOpenChat } from "../../../../../../components/tg-chat-host";
+import { TgChatIframe } from "../../../../../../components/tg-chat-iframe";
+import type { ChatPeer } from "../../../../../../lib/chat-store";
+
+type Search = { chat?: boolean };
 
 export const Route = createFileRoute("/_authenticated/w/$wsId/contacts/$id/")({
+  validateSearch: (s: Record<string, unknown>): Search => ({
+    chat: s.chat === true || s.chat === "true" ? true : undefined,
+  }),
   component: ContactDetail,
 });
 
@@ -42,6 +50,16 @@ const IDENTITY_KEYS = new Set([
 function ContactDetail() {
   const { wsId, id } = Route.useParams();
   const navigate = useNavigate();
+  const search = Route.useSearch();
+  const isChatOpen = search.chat ?? false;
+  const setChatOpen = (next: boolean) => {
+    void navigate({
+      to: "/w/$wsId/contacts/$id",
+      params: { wsId, id },
+      search: { chat: next ? true : undefined },
+      replace: true,
+    });
+  };
   const qc = useQueryClient();
 
   const properties = useQuery({
@@ -84,6 +102,26 @@ function ContactDetail() {
 
   const [adding, setAdding] = useState<"note" | "reminder" | null>(null);
   const chat = useOpenChat(wsId);
+
+  const peer = useMemo<ChatPeer | null>(() => {
+    const v = (contact.data?.properties ?? {}) as Record<string, unknown>;
+    const username = stringValue(v.telegram_username);
+    if (username) {
+      return { type: "username", value: username.replace(/^@/, "") };
+    }
+    const tgUserId = stringValue(v.tg_user_id);
+    if (tgUserId) return { type: "id", value: tgUserId };
+    return null;
+  }, [contact.data]);
+
+  const canOpenChat = !!chat.activeAccount && !!peer;
+
+  // Если чат открыт по URL, но нет аккаунта/peer — авто-снимаем флаг, чтобы
+  // не висеть в split-режиме без iframe'а (например, удалили username у контакта).
+  useEffect(() => {
+    if (isChatOpen && !canOpenChat) setChatOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isChatOpen, canOpenChat]);
 
   // Inline-сохранение одного property из view (Сумма / Стадия / custom). PATCH с
   // { properties: { key: value } } → бэк merge'ит поверх существующего. Пустое
@@ -131,33 +169,65 @@ function ContactDetail() {
   return (
     <div className="space-y-3 p-6">
       <BackButton />
-      <div className="mx-auto max-w-xl space-y-3">
-        <ContactView
-          contact={contact.data}
-          properties={props_}
-          onEdit={() =>
-            navigate({
-              to: "/w/$wsId/contacts/$id/edit",
-              params: { wsId, id },
-            })
+      <div
+        className={
+          isChatOpen
+            ? "mx-auto flex max-w-6xl flex-col gap-4 md:flex-row md:items-start"
+            : "mx-auto max-w-xl space-y-3"
+        }
+      >
+        <div
+          className={
+            isChatOpen
+              ? "hidden w-full shrink-0 space-y-3 md:block md:max-w-md"
+              : "space-y-3"
           }
-          onDelete={() => {
-            if (confirm("Удалить контакт?")) remove.mutate();
-          }}
-          onPatch={(key, value) => patchProperty.mutate({ key, value })}
-          onAddNote={() => setAdding("note")}
-          onAddReminder={() => setAdding("reminder")}
-          onOpenChat={() => {
-            const values = (contact.data!.properties as Record<string, unknown>);
-            chat.openChat({
-              username: stringValue(values.telegram_username) ?? null,
-              tgUserId: stringValue(values.tg_user_id) ?? null,
-            });
-          }}
-          canOpenChat={!!chat.activeAccount}
-        />
+        >
+          <ContactView
+            contact={contact.data}
+            properties={props_}
+            isChatOpen={isChatOpen}
+            onEdit={() =>
+              navigate({
+                to: "/w/$wsId/contacts/$id/edit",
+                params: { wsId, id },
+              })
+            }
+            onDelete={() => {
+              if (confirm("Удалить контакт?")) remove.mutate();
+            }}
+            onPatch={(key, value) => patchProperty.mutate({ key, value })}
+            onAddNote={() => setAdding("note")}
+            onAddReminder={() => setAdding("reminder")}
+            onToggleChat={() => setChatOpen(!isChatOpen)}
+            canOpenChat={canOpenChat}
+          />
 
-        <ActivitiesList wsId={wsId} contactId={id} />
+          <ActivitiesList wsId={wsId} contactId={id} />
+        </div>
+
+        {isChatOpen && chat.activeAccount && peer && (
+          <div className="sticky top-3 flex h-[calc(100vh-7rem)] w-full flex-col md:flex-1">
+            <div className="mb-2 flex items-center justify-between md:hidden">
+              <span className="text-sm font-medium">Telegram-чат</span>
+              <button
+                type="button"
+                onClick={() => setChatOpen(false)}
+                className="text-zinc-400 hover:text-zinc-700"
+                aria-label="Закрыть чат"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-hidden rounded-2xl bg-white shadow-sm">
+              <TgChatIframe
+                wsId={wsId}
+                accountId={chat.activeAccount.id}
+                peer={peer}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {adding === "note" && (
@@ -181,15 +251,16 @@ function ContactDetail() {
 function ContactView(props: {
   contact: Contact;
   properties: Property[];
+  isChatOpen: boolean;
   onEdit: () => void;
   onDelete: () => void;
   onPatch: (key: string, value: unknown) => void;
   onAddNote: () => void;
   onAddReminder: () => void;
-  onOpenChat: () => void;
+  onToggleChat: () => void;
   canOpenChat: boolean;
 }) {
-  const { contact, properties } = props;
+  const { contact, properties, isChatOpen } = props;
   const values = contact.properties as Record<string, unknown>;
   const fullName = stringValue(values.full_name);
   const description = stringValue(values.description);
@@ -250,12 +321,12 @@ function ContactView(props: {
         />
         <ActionButton
           icon={<MessageCircle size={20} />}
-          label="Открыть чат"
+          label={isChatOpen ? "Закрыть чат" : "Открыть чат"}
           disabled={
             !props.canOpenChat
             || (!values.telegram_username && !values.tg_user_id)
           }
-          onClick={props.onOpenChat}
+          onClick={props.onToggleChat}
         />
       </div>
     </>

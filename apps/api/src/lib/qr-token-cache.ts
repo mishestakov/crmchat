@@ -19,6 +19,31 @@ const cache = new Map<string, Cached>();
 const bus = new EventEmitter();
 bus.setMaxListeners(0);
 
+// Per-key timer для проактивной ротации QR-токена. TG не пушит UpdateLoginToken
+// на expiry (только на scan), поэтому без таймера фронт держит протухший QR
+// пока юзер ничего не сделает. Таймер дропает кэш ~за секунду до expires →
+// SSE-стрим вытащит свежий токен.
+const refreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function clearRefresh(cacheKey: QrCacheKey): void {
+  const t = refreshTimers.get(cacheKey);
+  if (t) {
+    clearTimeout(t);
+    refreshTimers.delete(cacheKey);
+  }
+}
+
+function scheduleRefresh(cacheKey: QrCacheKey, expiresUnix: number): void {
+  clearRefresh(cacheKey);
+  const ms = Math.max(1000, expiresUnix * 1000 - Date.now() - 1000);
+  const t = setTimeout(() => {
+    refreshTimers.delete(cacheKey);
+    dropQrTokenCache(cacheKey);
+  }, ms);
+  t.unref?.();
+  refreshTimers.set(cacheKey, t);
+}
+
 // Фабрика cache-key'ев. Раньше callsite'ы писали `outreach:${wsId}` руками —
 // опечатка в одном из четырёх мест → invalidation молча не доходит.
 export const qrKey = {
@@ -54,11 +79,15 @@ export async function exportLoginTokenCached(
   if (result instanceof Api.auth.LoginToken || result instanceof Api.auth.LoginTokenSuccess) {
     cache.set(cacheKey, { result, fetchedAt: Date.now() });
   }
+  if (result instanceof Api.auth.LoginToken) {
+    scheduleRefresh(cacheKey, Number(result.expires));
+  }
 
   return result;
 }
 
 export function dropQrTokenCache(cacheKey: QrCacheKey): void {
+  clearRefresh(cacheKey);
   cache.delete(cacheKey);
   bus.emit(channel(cacheKey));
 }
@@ -76,6 +105,12 @@ export function streamQrState<S>(
   c: Context,
   cacheKey: QrCacheKey,
   readState: () => Promise<S>,
+  // Terminal-state predicate: после доставки такого state отключаем дальнейшие
+  // sends. Иначе password_needed (TG бросает SESSION_PASSWORD_NEEDED) или
+  // success могут залупить bus → send → readState → дроп кэша → bus → ...
+  // Pending-клиент нужен ровно один раз для checkPassword/afterAuth — нельзя
+  // его забивать ExportLoginToken'ом параллельно.
+  isTerminal?: (state: S) => boolean,
 ): Response {
   return streamSSE(c, async (stream) => {
     let closed = false;
@@ -102,6 +137,9 @@ export function streamQrState<S>(
           if (payload === lastSent) return;
           lastSent = payload;
           await stream.writeSSE({ event: "state", data: payload });
+          if (isTerminal?.(state)) {
+            closed = true;
+          }
         } catch (e) {
           if (closed) return;
           await stream
@@ -129,12 +167,22 @@ export function streamQrState<S>(
 
     await send();
 
-    // Heartbeat против idle-timeout прокси. stream.sleep — голый setTimeout,
-    // не реагирует на abort → race с promise-of-abort, иначе request висит до
-    // 25с после disconnect, держа listener bus и pending TimerHandle.
+    // Heartbeat против idle-timeout прокси.
+    //   1. abortP создаётся ОДИН раз вне цикла. Раньше каждый цикл делал
+    //      `new Promise(r => stream.onAbort(r))` → onAbort пушит в массив
+    //      subscribers без pop'а на resolve, и за час stream'а копились
+    //      десятки никогда-не-вызываемых listeners.
+    //   2. stream.sleep — голый setTimeout без cancellation. Заворачиваем
+    //      в cancellableSleep → на abort/close дёргаем clearTimeout, иначе
+    //      «зомби-таймер» дотикивает до конца 25с и держит event-loop.
     const abortP = new Promise<void>((resolve) => stream.onAbort(resolve));
     while (!stream.aborted && !closed) {
-      await Promise.race([stream.sleep(25_000), abortP]);
+      const sleep = cancellableSleep(25_000);
+      try {
+        await Promise.race([sleep.promise, abortP]);
+      } finally {
+        sleep.cancel();
+      }
       if (stream.aborted || closed) break;
       try {
         await stream.writeSSE({ event: "ping", data: "" });
@@ -143,4 +191,23 @@ export function streamQrState<S>(
       }
     }
   });
+}
+
+function cancellableSleep(ms: number): { promise: Promise<void>; cancel: () => void } {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const promise = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      timer = null;
+      resolve();
+    }, ms);
+  });
+  return {
+    promise,
+    cancel: () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    },
+  };
 }
