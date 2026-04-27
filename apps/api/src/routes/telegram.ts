@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { Api } from "telegram";
+import { Api, type TelegramClient } from "telegram";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import {
@@ -19,8 +19,11 @@ import {
   getOrCreatePendingClient,
   getUserClient,
   persistSession,
+  tgApiHash as apiHash,
+  tgApiId as apiId,
 } from "../lib/telegram-client";
 import {
+  pickActiveUsername,
   type TgPendingHelpers,
   tgReadQrState,
   tgSendCode,
@@ -31,9 +34,6 @@ import type { SessionVars } from "../middleware/require-session";
 
 // User-scoped TG-аккаунт (один на user) — для импорта папок-чатов в контакты.
 // Auth-флоу делит реализацию с outreach-account auth через lib/tg-auth.
-
-const apiId = Number(process.env.TELEGRAM_API_ID ?? 0);
-const apiHash = process.env.TELEGRAM_API_HASH ?? "";
 
 const helpers = (userId: string): TgPendingHelpers => ({
   getPending: () => getOrCreatePendingClient(userId),
@@ -262,19 +262,11 @@ app.openapi(
 // чистим pending. Игнорируем gramjs Authorization-объект и просто дёргаем getMe —
 // результат стабильно типизирован, в отличие от пересекающихся namespace-ов
 // Api.Authorization vs Api.auth.Authorization (TS сводит к never).
-async function afterSuccessfulAuth(
-  userId: string,
-  client: import("telegram").TelegramClient,
-) {
+async function afterSuccessfulAuth(userId: string, client: TelegramClient) {
   const user = (await client.getMe()) as Api.User;
-  // legacy `username` пустует у юзеров с новым multi-username — fallback на active.
-  const tgUsername =
-    user.username ||
-    user.usernames?.find((u) => u.active)?.username ||
-    null;
   await persistSession(userId, client, {
     tgUserId: String(user.id),
-    tgUsername,
+    tgUsername: pickActiveUsername(user),
     phoneNumber: user.phone ?? null,
     firstName: user.firstName ?? null,
   });
@@ -618,13 +610,7 @@ async function runSync(userId: string, folderId: number, workspaceId: string) {
   const toInsert = candidates
     .filter((u) => !existingSet.has(String(u.id)))
     .map((entity) => {
-      // У TG двойная модель username: legacy `username` (string) + новый
-      // `usernames[]` (с флагами active/editable). У юзеров с новым multi-username
-      // legacy поле бывает пустым → берём active из массива как fallback.
-      const username =
-        entity.username ||
-        entity.usernames?.find((u) => u.active)?.username ||
-        null;
+      const username = pickActiveUsername(entity);
       const fullName =
         [entity.firstName, entity.lastName].filter(Boolean).join(" ").trim() ||
         username ||

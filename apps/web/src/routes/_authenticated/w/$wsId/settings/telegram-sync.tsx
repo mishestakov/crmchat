@@ -1,11 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { RefreshCw, ShieldCheck, Send } from "lucide-react";
+import { RefreshCw, ShieldCheck } from "lucide-react";
 import { api } from "../../../../../lib/api";
 import { errorMessage } from "../../../../../lib/errors";
 import {
+  Card,
   TelegramAuthFlow,
+  TelegramLogo,
   type TgAuthApi,
 } from "../../../../../components/telegram-auth-flow";
 
@@ -476,27 +478,6 @@ function formatTimeAgo(iso: string): string {
   if (hr < 24) return `${hr} ч назад`;
   const d = Math.floor(hr / 24);
   return `${d} дн назад`;
-}
-
-function Card(props: { children: React.ReactNode }) {
-  return (
-    <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
-      {props.children}
-    </div>
-  );
-}
-
-function TelegramLogo({ size = 48 }: { size?: number }) {
-  // Простой круглый логотип Telegram через lucide Send + sky-фон. Не настоящий
-  // лого, но узнаваемо. В будущем можно заменить на SVG-asset.
-  return (
-    <div
-      className="flex items-center justify-center rounded-full bg-sky-500 text-white"
-      style={{ width: size, height: size }}
-    >
-      <Send size={size * 0.5} className="ml-1" />
-    </div>
-  );
 }
 
 function CenteredLoading() {

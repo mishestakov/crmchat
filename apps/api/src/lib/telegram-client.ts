@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/client";
 import { telegramAccounts } from "../db/schema";
 import { encrypt, tryDecrypt } from "./crypto";
-import { dropQrTokenCache, qrKey } from "./qr-token-cache";
+import { dropQrTokenCache, qrKey, type QrCacheKey } from "./qr-token-cache";
 import { silentLogger } from "./silent-logger";
 
 // Один TelegramClient на user — gramjs клиент thread-unsafe для одной session,
@@ -16,55 +16,128 @@ import { silentLogger } from "./silent-logger";
 // свой кэш, sticky-routing по user_id или внешний lock. Сейчас single-instance dev.
 const clients = new Map<string, TelegramClient>();
 
-// Отдельный кэш для pending-auth клиентов: юзер ещё не аутентифицирован в TG, но
-// уже есть наша сессия (userId). Между HTTP-запросами sendCode → signIn клиент
-// должен жить — он держит MTProto-state (phoneCodeHash проверяется на сервере TG
-// относительно той же session). После успеха перетекает в `clients` через
-// persistSession; при ошибках/sign-out — clearPending.
+// Pending-auth кэш: между HTTP-запросами sendCode → signIn клиент должен жить
+// — он держит MTProto-state (phoneCodeHash сервер TG проверяет относительно
+// той же session). После успеха перетекает в `clients`/`workerClients` через
+// persistSession/persistOutreachAccount; при ошибках/sign-out — clear().
+//
+// Inflight-промис мемоизируем отдельно, иначе два конкурентных getOrCreate
+// (двойной клик «получить QR» / двойной poll) оба создают TelegramClient,
+// оба addEventHandler, второй set перетирает первого → первый утекает с
+// активным сокетом и слушателем UpdateLoginToken на чужой workspace.
+//
+// TTL: если auth начали и не закончили (юзер закрыл вкладку), без таймера
+// сокет + слушатель висят до перезапуска процесса. 5 минут — потолок жизни
+// pendingClient'а с момента последнего обращения.
 type PendingEntry = {
   client: TelegramClient;
   qrHandler: (update: Api.TypeUpdate) => void;
   qrEvent: Raw;
+  cacheKey: string;
 };
-const pendingClients = new Map<string, PendingEntry>();
+const PENDING_TTL_MS = 5 * 60_000;
 
-export async function getOrCreatePendingClient(
-  userId: string,
-): Promise<TelegramClient> {
-  // Не лезем в .connected — getter возвращает undefined для свежего клиента,
-  // и мы бы пересоздавали его на каждый poll → новая session → QR из poll N
-  // невидим для poll N+1.
-  const existing = pendingClients.get(userId);
-  if (existing) return existing.client;
-  const client = newAnonymousClient();
-  await client.connect();
-  const qrEvent = new Raw({ types: [Api.UpdateLoginToken] });
-  const qrHandler = (update: Api.TypeUpdate) => {
-    if (update instanceof Api.UpdateLoginToken) {
-      dropQrTokenCache(qrKey.telegram(userId));
+export type PendingClientStore = {
+  getOrCreate: () => Promise<TelegramClient>;
+  clear: () => Promise<void>;
+};
+
+// shouldDisconnect — для outreach: если клиент уже промоутили в workerClients,
+// disconnect ломает inbound-listener. Возвращаем false → закрываем сокет.
+export function createPendingClientStore(opts: {
+  cacheKey: string;
+  shouldDisconnect?: (client: TelegramClient) => boolean;
+}): PendingClientStore {
+  let entry: PendingEntry | null = null;
+  let inflight: Promise<TelegramClient> | null = null;
+  let ttlTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function resetTtl(): void {
+    if (ttlTimer) clearTimeout(ttlTimer);
+    const t = setTimeout(() => {
+      void clear();
+    }, PENDING_TTL_MS);
+    t.unref?.();
+    ttlTimer = t;
+  }
+
+  async function getOrCreate(): Promise<TelegramClient> {
+    if (entry) {
+      resetTtl();
+      return entry.client;
     }
-  };
-  client.addEventHandler(qrHandler, qrEvent);
-  pendingClients.set(userId, { client, qrHandler, qrEvent });
-  return client;
-}
-
-export async function clearPendingClient(userId: string): Promise<void> {
-  dropQrTokenCache(qrKey.telegram(userId));
-  const entry = pendingClients.get(userId);
-  if (entry) {
-    entry.client.removeEventHandler(entry.qrHandler, entry.qrEvent);
+    if (inflight) return inflight;
+    inflight = (async () => {
+      const client = newAnonymousClient();
+      await client.connect();
+      const qrEvent = new Raw({ types: [Api.UpdateLoginToken] });
+      const qrHandler = (update: Api.TypeUpdate) => {
+        if (update instanceof Api.UpdateLoginToken) {
+          dropQrTokenCache(opts.cacheKey as QrCacheKey);
+        }
+      };
+      client.addEventHandler(qrHandler, qrEvent);
+      entry = { client, qrHandler, qrEvent, cacheKey: opts.cacheKey };
+      resetTtl();
+      return client;
+    })();
     try {
-      await entry.client.disconnect();
+      return await inflight;
+    } finally {
+      inflight = null;
+    }
+  }
+
+  async function clear(): Promise<void> {
+    if (ttlTimer) {
+      clearTimeout(ttlTimer);
+      ttlTimer = null;
+    }
+    dropQrTokenCache(opts.cacheKey as QrCacheKey);
+    const e = entry;
+    if (!e) return;
+    entry = null;
+    e.client.removeEventHandler(e.qrHandler, e.qrEvent);
+    if (opts.shouldDisconnect && !opts.shouldDisconnect(e.client)) return;
+    try {
+      await e.client.disconnect();
     } catch {
       // ignore
     }
-    pendingClients.delete(userId);
   }
+
+  return { getOrCreate, clear };
 }
 
-const apiId = Number(process.env.TELEGRAM_API_ID ?? 0);
-const apiHash = process.env.TELEGRAM_API_HASH ?? "";
+// Per-userId хранилище pending-store'ов. Один user → один pending-флоу.
+const userPendingStores = new Map<string, PendingClientStore>();
+
+function pendingStoreFor(userId: string): PendingClientStore {
+  let s = userPendingStores.get(userId);
+  if (!s) {
+    s = createPendingClientStore({ cacheKey: qrKey.telegram(userId) });
+    userPendingStores.set(userId, s);
+  }
+  return s;
+}
+
+export function getOrCreatePendingClient(
+  userId: string,
+): Promise<TelegramClient> {
+  return pendingStoreFor(userId).getOrCreate();
+}
+
+export async function clearPendingClient(userId: string): Promise<void> {
+  await pendingStoreFor(userId).clear();
+}
+
+// Единственное место, где читаем TG-creds из env. Все остальные модули
+// импортируют tgApiId/tgApiHash отсюда, чтобы предупреждение про unset env
+// срабатывало один раз и не было четырёх параллельных copy-paste.
+export const tgApiId = Number(process.env.TELEGRAM_API_ID ?? 0);
+export const tgApiHash = process.env.TELEGRAM_API_HASH ?? "";
+const apiId = tgApiId;
+const apiHash = tgApiHash;
 
 if (!apiId || !apiHash) {
   console.warn(

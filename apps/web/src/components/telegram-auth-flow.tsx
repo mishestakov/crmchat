@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Send } from "lucide-react";
 import { errorMessage } from "../lib/errors";
 
@@ -108,9 +108,14 @@ function ScanQrStep(props: {
     };
   }, [props.api.qrStreamUrl]);
 
+  // onComplete не мемоизирован у вызывающих, deps ловят его ссылку при каждом
+  // ререндере родителя. Без guard'а success-state мог бы тригернуть onComplete
+  // повторно, если родитель ререндерится между success-доставкой и unmount'ом.
+  const completedRef = useRef(false);
   const { onComplete, setState } = props;
   useEffect(() => {
-    if (qrState?.status === "success") {
+    if (qrState?.status === "success" && !completedRef.current) {
+      completedRef.current = true;
       onComplete({ accountId: qrState.accountId });
     }
     if (qrState?.status === "password_needed") {
@@ -371,7 +376,9 @@ function PasswordStep(props: {
   );
 }
 
-function Card(props: { children: React.ReactNode }) {
+// Re-export'им Card/TelegramLogo для других мест auth-флоу (settings/telegram-sync
+// тоже их использует — это третий повтор по правилу CLAUDE.md, выносим).
+export function Card(props: { children: React.ReactNode }) {
   return (
     <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
       {props.children}
@@ -379,7 +386,7 @@ function Card(props: { children: React.ReactNode }) {
   );
 }
 
-function TelegramLogo({ size = 48 }: { size?: number }) {
+export function TelegramLogo({ size = 48 }: { size?: number }) {
   return (
     <div
       className="flex items-center justify-center rounded-full bg-sky-500 text-white"

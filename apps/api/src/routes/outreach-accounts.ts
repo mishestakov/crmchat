@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { Api } from "telegram";
+import { Api, type TelegramClient } from "telegram";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db/client";
 import { outreachAccounts } from "../db/schema";
@@ -12,7 +12,9 @@ import {
   persistOutreachAccount,
 } from "../lib/outreach-account-client";
 import { qrKey, streamQrState } from "../lib/qr-token-cache";
+import { tgApiHash as apiHash, tgApiId as apiId } from "../lib/telegram-client";
 import {
+  pickActiveUsername,
   type TgPendingHelpers,
   tgReadQrState,
   tgSendCode,
@@ -26,9 +28,6 @@ import type { WorkspaceVars } from "../middleware/assert-member";
 // workspace). Auth-флоу делит реализацию с user-scoped /v1/telegram/* через
 // lib/tg-auth; разница только в pending-кэше (per workspace) и postauth-логике
 // (persistOutreachAccount возвращает accountId, плюс держит worker+iframe).
-
-const apiId = Number(process.env.TELEGRAM_API_ID ?? 0);
-const apiHash = process.env.TELEGRAM_API_HASH ?? "";
 
 const helpers = (wsId: string): TgPendingHelpers => ({
   getPending: () => getOrCreatePendingOutreachClient(wsId),
@@ -419,16 +418,12 @@ app.openapi(
 async function afterAuth(
   workspaceId: string,
   userId: string,
-  client: import("telegram").TelegramClient,
+  client: TelegramClient,
 ): Promise<{ id: string }> {
   const user = (await client.getMe()) as Api.User;
-  const tgUsername =
-    user.username ||
-    user.usernames?.find((u) => u.active)?.username ||
-    null;
   const acc = await persistOutreachAccount(workspaceId, userId, client, {
     tgUserId: String(user.id),
-    tgUsername,
+    tgUsername: pickActiveUsername(user),
     phoneNumber: user.phone ?? null,
     firstName: user.firstName ?? null,
     hasPremium: !!user.premium,

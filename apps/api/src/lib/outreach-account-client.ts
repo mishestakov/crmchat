@@ -1,17 +1,19 @@
-import { Api, TelegramClient } from "telegram";
-import { Raw } from "telegram/events";
+import { TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db/client";
 import { outreachAccounts } from "../db/schema";
 import { encrypt, tryDecrypt } from "./crypto";
 import { attachListener, detachListener } from "./outreach-listener";
-import { dropQrTokenCache, qrKey } from "./qr-token-cache";
+import { qrKey } from "./qr-token-cache";
 import { silentLogger } from "./silent-logger";
-import { logoutTgSession, newAnonymousClient } from "./telegram-client";
-
-const apiId = Number(process.env.TELEGRAM_API_ID ?? 0);
-const apiHash = process.env.TELEGRAM_API_HASH ?? "";
+import {
+  createPendingClientStore,
+  logoutTgSession,
+  type PendingClientStore,
+  tgApiHash as apiHash,
+  tgApiId as apiId,
+} from "./telegram-client";
 
 // Кэш authorized-клиентов для worker'а: один long-lived TelegramClient на
 // outreach-аккаунт. Клиент держит MTProto-state (peer cache, last-seen-updates)
@@ -19,56 +21,37 @@ const apiHash = process.env.TELEGRAM_API_HASH ?? "";
 //   - lazy: создаётся при первом отправлении из этого аккаунта
 //   - eviction: вызывает worker когда поймал AUTH_KEY_UNREGISTERED / banned
 const workerClients = new Map<string, TelegramClient>();
+// Set, чтобы pending-store O(1) проверил, не промоутили ли клиента в worker
+// (раньше делали O(n) [...workerClients.values()].includes(client)).
+const promotedClients = new Set<TelegramClient>();
 
-// Pending-clients per workspace: только ОДИН auth-флоу за раз внутри workspace.
-// Если юзер начнёт второй до окончания первого — старый сбрасываем (новый
-// sendCode/getQrState создаст fresh client). Multi-instance prod: см. TODO про
-// sticky-routing в telegram-client.ts.
-type PendingEntry = {
-  client: TelegramClient;
-  qrHandler: (update: Api.TypeUpdate) => void;
-  qrEvent: Raw;
-};
-const pending = new Map<string, PendingEntry>();
+const pendingStores = new Map<string, PendingClientStore>();
 
-export async function getOrCreatePendingOutreachClient(
+function pendingStoreFor(workspaceId: string): PendingClientStore {
+  let s = pendingStores.get(workspaceId);
+  if (!s) {
+    s = createPendingClientStore({
+      cacheKey: qrKey.outreach(workspaceId),
+      // Если клиент уже промоутили в workerClients — НЕ отключаем: он держит
+      // inbound NewMessage-listener для воркера. Возвращаем false →
+      // pending-store снимает qrHandler, но disconnect не зовёт.
+      shouldDisconnect: (client) => !promotedClients.has(client),
+    });
+    pendingStores.set(workspaceId, s);
+  }
+  return s;
+}
+
+export function getOrCreatePendingOutreachClient(
   workspaceId: string,
 ): Promise<TelegramClient> {
-  const existing = pending.get(workspaceId);
-  if (existing) return existing.client;
-  const client = newAnonymousClient();
-  await client.connect();
-  const qrEvent = new Raw({ types: [Api.UpdateLoginToken] });
-  const qrHandler = (update: Api.TypeUpdate) => {
-    if (update instanceof Api.UpdateLoginToken) {
-      dropQrTokenCache(qrKey.outreach(workspaceId));
-    }
-  };
-  client.addEventHandler(qrHandler, qrEvent);
-  pending.set(workspaceId, { client, qrHandler, qrEvent });
-  return client;
+  return pendingStoreFor(workspaceId).getOrCreate();
 }
 
 export async function clearPendingOutreachClient(
   workspaceId: string,
 ): Promise<void> {
-  const entry = pending.get(workspaceId);
-  if (!entry) return;
-  pending.delete(workspaceId);
-  dropQrTokenCache(qrKey.outreach(workspaceId));
-  // QR-handler привязан к pending-flow и больше не нужен (cache-key всё равно
-  // сейчас инвалидируется этим вызовом). Снимаем независимо от того, ушёл
-  // клиент в worker или умирает.
-  entry.client.removeEventHandler(entry.qrHandler, entry.qrEvent);
-  // Если этого же клиента уже промоутили в workerClients — НЕ отключаем:
-  // он держит inbound NewMessage-listener для воркера.
-  const promoted = [...workerClients.values()].includes(entry.client);
-  if (promoted) return;
-  try {
-    await entry.client.disconnect();
-  } catch {
-    // ignore
-  }
+  await pendingStoreFor(workspaceId).clear();
 }
 
 export async function persistOutreachAccount(
@@ -122,6 +105,7 @@ export async function persistOutreachAccount(
   // Иначе listener подключится только при первой исходящей — лид может
   // ответить раньше и мы потеряем event.
   workerClients.set(row!.id, client);
+  promotedClients.add(client);
   attachListener(row!.id, workspaceId, client);
   return row!;
 }
@@ -185,6 +169,7 @@ export async function getOutreachWorkerClient(account: {
   );
   await client.connect();
   workerClients.set(account.id, client);
+  promotedClients.add(client);
   attachListener(account.id, account.workspaceId, client);
   return client;
 }
@@ -193,6 +178,7 @@ export async function evictWorkerClient(accountId: string): Promise<void> {
   const client = workerClients.get(accountId);
   if (!client) return;
   workerClients.delete(accountId);
+  promotedClients.delete(client);
   detachListener(accountId, client);
   try {
     await client.disconnect();
