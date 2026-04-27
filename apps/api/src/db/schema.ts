@@ -278,10 +278,11 @@ export const outreachAccounts = pgTable(
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
     status: outreachAccountStatus("status").notNull().default("active"),
+    // Один authKey на аккаунт: worker (gramjs в Node) и iframe (TWA в браузере)
+    // делят его как несколько вкладок web.telegram.org. Раньше держали отдельный
+    // iframe_session — генерили через auth.ExportAuthorization, что валило 2FA
+    // (DC_ID_INVALID на same-DC) и стоило +3-5с handshake'а.
     session: text("session").notNull(),
-    // Отдельный auth_key для iframe-чата. Шаринг с worker'ской session
-    // триггерит TG force-logout (один auth_key = один consumer).
-    iframeSession: text("iframe_session").notNull(),
     tgUserId: text("tg_user_id").notNull(),
     tgUsername: text("tg_username"),
     phoneNumber: text("phone_number"),

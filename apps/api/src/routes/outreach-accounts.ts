@@ -217,7 +217,7 @@ app.openapi(
     const wsId = c.get("workspaceId");
     const { accountId } = c.req.valid("param");
     const [row] = await db
-      .select({ iframeSession: outreachAccounts.iframeSession })
+      .select({ session: outreachAccounts.session })
       .from(outreachAccounts)
       .where(
         and(
@@ -228,10 +228,10 @@ app.openapi(
       .limit(1);
     if (!row) throw new HTTPException(404, { message: "account not found" });
 
-    const session = await toTwaSession(row.iframeSession);
+    const session = await toTwaSession(row.session);
     if (!session) {
       throw new HTTPException(409, {
-        message: "iframe session corrupted, re-auth required",
+        message: "session corrupted, re-auth required",
       });
     }
 

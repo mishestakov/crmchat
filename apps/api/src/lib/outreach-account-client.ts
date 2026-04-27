@@ -66,12 +66,6 @@ export async function persistOutreachAccount(
     hasPremium: boolean;
   },
 ): Promise<{ id: string }> {
-  // Worker (gramjs в Node) и iframe (TWA в браузере) делят один authKey: TG
-  // спокойно держит несколько одновременных connection'ов с одной session
-  // (типичный кейс — несколько вкладок web.telegram.org). Раньше отдельный
-  // iframe-session генерили через auth.ExportAuthorization → ImportAuthorization,
-  // но это (а) лишний handshake +3-5с после auth, (б) ExportAuthorization
-  // отказывается работать на тот же DC (DC_ID_INVALID) и валило 2FA-флоу.
   const sessionEnc = encrypt((client.session as StringSession).save() ?? "");
 
   const [row] = await db
@@ -79,7 +73,6 @@ export async function persistOutreachAccount(
     .values({
       workspaceId,
       session: sessionEnc,
-      iframeSession: sessionEnc,
       tgUserId: profile.tgUserId,
       tgUsername: profile.tgUsername ?? null,
       phoneNumber: profile.phoneNumber ?? null,
@@ -91,7 +84,6 @@ export async function persistOutreachAccount(
       target: [outreachAccounts.workspaceId, outreachAccounts.tgUserId],
       set: {
         session: sessionEnc,
-        iframeSession: sessionEnc,
         tgUsername: profile.tgUsername ?? null,
         phoneNumber: profile.phoneNumber ?? null,
         firstName: profile.firstName ?? null,
