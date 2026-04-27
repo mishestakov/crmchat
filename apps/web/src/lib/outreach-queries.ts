@@ -15,3 +15,18 @@ export function useOutreachAccounts(wsId: string) {
     },
   });
 }
+
+// Sequence detail — переиспользуется на index/accounts/leads/contact-settings.
+export function useSequence(wsId: string, seqId: string) {
+  return useQuery({
+    queryKey: OUTREACH_QK.sequence(wsId, seqId),
+    queryFn: async () => {
+      const { data, error } = await api.GET(
+        "/v1/workspaces/{wsId}/outreach/sequences/{seqId}",
+        { params: { path: { wsId, seqId } } },
+      );
+      if (error) throw error;
+      return data;
+    },
+  });
+}

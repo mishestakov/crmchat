@@ -1,6 +1,5 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { Api, type TelegramClient } from "telegram";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import {
@@ -10,36 +9,29 @@ import {
   telegramSyncConfigs,
   workspaces,
 } from "../db/schema";
-import { tryDecrypt } from "../lib/crypto";
 import { errMsg } from "../lib/errors";
-import { qrKey, streamQrState } from "../lib/qr-token-cache";
 import {
-  clearPendingClient,
-  dropUserClient,
-  getOrCreatePendingClient,
-  getUserClient,
-  persistSession,
-  tgApiHash as apiHash,
-  tgApiId as apiId,
-} from "../lib/telegram-client";
+  clearPendingPersonalClient,
+  dropPersonalClient,
+  getOrCreatePendingPersonalClient,
+  getPersonalClient,
+  persistPersonalAccount,
+} from "../lib/personal-account-client";
 import {
-  pickActiveUsername,
-  type TgPendingHelpers,
-  tgReadQrState,
-  tgSendCode,
-  tgSignIn,
-  tgSignInPassword,
-} from "../lib/tg-auth";
+  extractActiveUsername,
+  streamAuthState,
+  tdRequestQr,
+  tdSendCode,
+  tdSignInCode,
+  tdSignInPassword,
+  type AuthState,
+  type TdUser,
+} from "../lib/tdlib";
 import type { SessionVars } from "../middleware/require-session";
 
 // User-scoped TG-аккаунт (один на user) — для импорта папок-чатов в контакты.
-// Auth-флоу делит реализацию с outreach-account auth через lib/tg-auth.
-
-const helpers = (userId: string): TgPendingHelpers => ({
-  getPending: () => getOrCreatePendingClient(userId),
-  clearPending: () => clearPendingClient(userId),
-  cacheKey: qrKey.telegram(userId),
-});
+// Auth-флоу делит реализацию с outreach-account через TDLib pending-store
+// (отдельно per userId).
 
 const TgUserSchema = z.object({
   tgUserId: z.string(),
@@ -54,7 +46,6 @@ const StatusSchema = z.discriminatedUnion("status", [
 ]);
 
 const SendCodeRespSchema = z.object({
-  phoneCodeHash: z.string(),
   isCodeViaApp: z.boolean(),
 });
 
@@ -92,11 +83,6 @@ app.openapi(
       .where(eq(telegramAccounts.userId, userId))
       .limit(1);
     if (!acc) return c.json({ status: "unauthorized" as const });
-    // Legacy plain или corrupted row → дропаем, юзер пере-залогинится.
-    if (tryDecrypt(acc.session) === null) {
-      await db.delete(telegramAccounts).where(eq(telegramAccounts.userId, userId));
-      return c.json({ status: "unauthorized" as const });
-    }
     return c.json({
       status: "authorized" as const,
       user: {
@@ -135,9 +121,9 @@ app.openapi(
     const userId = c.get("userId");
     const { phoneNumber } = c.req.valid("json");
     try {
-      return c.json(
-        await tgSendCode(helpers(userId), apiId, apiHash, phoneNumber),
-      );
+      await clearPendingPersonalClient(userId);
+      const pending = await getOrCreatePendingPersonalClient(userId);
+      return c.json(await tdSendCode(pending, phoneNumber));
     } catch (e) {
       throw new HTTPException(400, { message: errMsg(e) });
     }
@@ -154,9 +140,7 @@ app.openapi(
         content: {
           "application/json": {
             schema: z.object({
-              phoneNumber: z.string().min(5).max(32),
               phoneCode: z.string().min(1).max(16),
-              phoneCodeHash: z.string().min(1),
             }),
           },
         },
@@ -172,16 +156,17 @@ app.openapi(
   }),
   async (c) => {
     const userId = c.get("userId");
-    const args = c.req.valid("json");
+    const { phoneCode } = c.req.valid("json");
     try {
-      const r = await tgSignIn(helpers(userId), args);
+      const pending = await getOrCreatePendingPersonalClient(userId);
+      const r = await tdSignInCode(pending, phoneCode);
       if (r.kind === "user_not_found")
         return c.json({ status: "user_not_found" as const });
       if (r.kind === "password_needed")
         return c.json({ status: "password_needed" as const });
       if (r.kind === "phone_code_invalid")
         return c.json({ status: "phone_code_invalid" as const });
-      await afterSuccessfulAuth(userId, r.client);
+      await persistPersonalAccount(userId, pending);
       return c.json({ status: "sign_in_complete" as const });
     } catch (e) {
       throw new HTTPException(400, { message: errMsg(e) });
@@ -215,10 +200,11 @@ app.openapi(
     const userId = c.get("userId");
     const { password } = c.req.valid("json");
     try {
-      const r = await tgSignInPassword(helpers(userId), password);
+      const pending = await getOrCreatePendingPersonalClient(userId);
+      const r = await tdSignInPassword(pending, password);
       if (r.kind === "password_invalid")
         return c.json({ status: "password_invalid" as const });
-      await afterSuccessfulAuth(userId, r.client);
+      await persistPersonalAccount(userId, pending);
       return c.json({ status: "sign_in_complete" as const });
     } catch (e) {
       throw new HTTPException(400, { message: errMsg(e) });
@@ -226,21 +212,43 @@ app.openapi(
   },
 );
 
-app.get("/v1/telegram/qr/stream", (c) => {
+app.get("/v1/telegram/qr/stream", async (c) => {
   const userId = c.get("userId");
-  return streamQrState(
-    c,
-    qrKey.telegram(userId),
-    async () => {
-      const r = await tgReadQrState(helpers(userId), apiId, apiHash, async (client) => {
-        await afterSuccessfulAuth(userId, client);
-      });
-      // Нормализуем к фронтовому shape: success без data.
-      if (r.status === "success") return { status: "success" as const };
-      return r;
-    },
-    (s) => s.status !== "scan-qr-code",
-  );
+  await clearPendingPersonalClient(userId);
+  const pending = await getOrCreatePendingPersonalClient(userId);
+  await tdRequestQr(pending);
+
+  type QrState =
+    | { status: "scan-qr-code"; token: string }
+    | { status: "password_needed" }
+    | { status: "success" }
+    | { status: "error"; message: string };
+
+  let persisted = false;
+  let errored: string | null = null;
+
+  const read = async (): Promise<QrState> => {
+    if (persisted) return { status: "success" };
+    if (errored) return { status: "error", message: errored };
+    const s: AuthState = pending.authBus.current();
+    if (s.kind === "wait_qr") return { status: "scan-qr-code", token: s.link };
+    if (s.kind === "wait_password") return { status: "password_needed" };
+    if (s.kind === "ready") {
+      try {
+        await persistPersonalAccount(userId, pending);
+        persisted = true;
+        return { status: "success" };
+      } catch (e) {
+        errored = errMsg(e);
+        return { status: "error", message: errored };
+      }
+    }
+    return { status: "scan-qr-code", token: "" };
+  };
+
+  return streamAuthState(c, pending.authBus, read, (s) => {
+    return s.status === "success" || s.status === "password_needed" || s.status === "error";
+  });
 });
 
 app.openapi(
@@ -252,26 +260,11 @@ app.openapi(
   }),
   async (c) => {
     const userId = c.get("userId");
-    await clearPendingClient(userId);
-    await dropUserClient(userId);
+    await clearPendingPersonalClient(userId);
+    await dropPersonalClient(userId);
     return c.body(null, 204);
   },
 );
-
-// Общая обработка успешной аутентификации: достаём профиль, сохраняем session,
-// чистим pending. Игнорируем gramjs Authorization-объект и просто дёргаем getMe —
-// результат стабильно типизирован, в отличие от пересекающихся namespace-ов
-// Api.Authorization vs Api.auth.Authorization (TS сводит к never).
-async function afterSuccessfulAuth(userId: string, client: TelegramClient) {
-  const user = (await client.getMe()) as Api.User;
-  await persistSession(userId, client, {
-    tgUserId: String(user.id),
-    tgUsername: pickActiveUsername(user),
-    phoneNumber: user.phone ?? null,
-    firstName: user.firstName ?? null,
-  });
-  await clearPendingClient(userId);
-}
 
 // ─────────────────────── folders + sync ───────────────────────
 
@@ -290,6 +283,32 @@ const SyncConfigSchema = z.object({
   lastSyncImported: z.number().int().nullable(),
 });
 
+type TdChatFolderInfo = {
+  id: number;
+  title: { text?: string } | string;
+  is_shareable?: boolean;
+  has_my_invite_links?: boolean;
+};
+
+type TdChatFolder = {
+  title: { text?: string } | string;
+  included_chat_ids: number[];
+  excluded_chat_ids: number[];
+  pinned_chat_ids: number[];
+  include_contacts: boolean;
+  include_non_contacts: boolean;
+  include_groups: boolean;
+  include_channels: boolean;
+  include_bots: boolean;
+};
+
+type TdChat = {
+  id: number;
+  type:
+    | { _: "chatTypePrivate"; user_id: number }
+    | { _: "chatTypeBasicGroup" | "chatTypeSupergroup" | "chatTypeSecret"; [k: string]: unknown };
+};
+
 app.openapi(
   createRoute({
     method: "get",
@@ -304,45 +323,42 @@ app.openapi(
   }),
   async (c) => {
     const userId = c.get("userId");
-    const client = await getUserClient(userId);
+    const client = await getPersonalClient(userId);
     if (!client) {
       throw new HTTPException(400, { message: "telegram not connected" });
     }
-    const result = await client.invoke(new Api.messages.GetDialogFilters());
-    // Возможные элементы filters:
-    //  - DialogFilter — обычная пользовательская папка
-    //  - DialogFilterChatlist — расшаренная папка (другой access-model, не поддерживаем)
-    //  - DialogFilterDefault — псевдо «Все чаты», не папка → скип
-    //
-    // «Динамические» папки (с wildcard-флагами contacts/nonContacts/groups/...)
-    // помечаем supported=false и в UI они grayed-out. Иначе sync втянет всех
-    // кому юзер когда-либо писал — сотни рандомов, спам, ботов поддержки.
-    // Только static папки (только explicit includePeers) импортим — это
-    // осознанный набор контактов.
-    const folders: { id: number; title: string; supported: boolean }[] = [];
-    for (const f of result.filters) {
-      if (f instanceof Api.DialogFilter) {
-        const hasWildcards = !!(
-          f.contacts ||
-          f.nonContacts ||
-          f.groups ||
-          f.broadcasts ||
-          f.bots
-        );
-        folders.push({
-          id: f.id,
-          title: extractFilterTitle(f.title),
-          supported: !hasWildcards,
-        });
-      } else if (f instanceof Api.DialogFilterChatlist) {
-        folders.push({
-          id: f.id,
-          title: extractFilterTitle(f.title),
-          supported: false,
-        });
+    const result = (await client.invoke({ _: "getChatFolders" } as never)) as {
+      chat_folders: TdChatFolderInfo[];
+    };
+
+    // Каждая folder через getChatFolder — full фильтр-объект с wildcard-флагами.
+    // «Динамические» папки (любой include_* wildcard) помечаем supported=false:
+    // sync втянул бы всех, кому юзер когда-либо писал, плюс ботов. Только static
+    // папки (только explicit included_chat_ids) импортим.
+    const out: { id: number; title: string; supported: boolean }[] = [];
+    for (const f of result.chat_folders ?? []) {
+      const full = (await client
+        .invoke({ _: "getChatFolder", chat_folder_id: f.id } as never)
+        .catch(() => null)) as TdChatFolder | null;
+      const title = extractFolderTitle(f.title);
+      if (!full) {
+        out.push({ id: f.id, title, supported: false });
+        continue;
       }
+      const hasWildcards =
+        full.include_contacts ||
+        full.include_non_contacts ||
+        full.include_groups ||
+        full.include_channels ||
+        full.include_bots;
+      const isShareable = !!f.is_shareable || !!f.has_my_invite_links;
+      out.push({
+        id: f.id,
+        title,
+        supported: !hasWildcards && !isShareable,
+      });
     }
-    return c.json(folders);
+    return c.json(out);
   },
 );
 
@@ -406,8 +422,6 @@ app.openapi(
   async (c) => {
     const userId = c.get("userId");
     const body = c.req.valid("json");
-    // Workspace должна принадлежать юзеру — переиспользуем правило `createdBy`,
-    // как в assertMember (сейчас единственная авторизация workspace'ов).
     const [ws] = await db
       .select({ id: workspaces.id })
       .from(workspaces)
@@ -437,8 +451,6 @@ app.openapi(
       })
       .returning();
 
-    // Fire-and-forget — sync уйдёт в фон, ответ возвращаем сразу. Юзер увидит
-    // toast «синхронизация началась» и через ~неск.секунд lastSyncAt обновится.
     void runSync(userId, body.folderId, body.workspaceId).catch((e) => {
       console.error("[telegram/sync] background failed:", e);
     });
@@ -457,8 +469,6 @@ app.openapi(
   },
 );
 
-// Manual re-sync уже-настроенной папки. Юзер хочет «обновить, вдруг там есть
-// новые чаты». Авто-cron — отдельный шаг (background scheduler).
 app.openapi(
   createRoute({
     method: "post",
@@ -482,7 +492,6 @@ app.openapi(
       .limit(1);
     if (!config) throw new HTTPException(404, { message: "config not found" });
 
-    // Сбрасываем lastSyncAt → UI поймёт что идёт sync (показывает spinner).
     await db
       .update(telegramSyncConfigs)
       .set({ lastSyncAt: null, lastSyncImported: null })
@@ -518,40 +527,58 @@ app.openapi(
   },
 );
 
-// Background sync: тянет все диалоги юзера, отфильтровывает соответствующие
-// заданному folder (по правилам gramjs DialogFilter: includePeers/pinnedPeers
-// + wildcard-флаги contacts/nonContacts/bots; minus excludePeers), upsert'ит
-// User-контакты в workspace. Group/Channel диалоги игнорируем — мы импортим
-// людей, а не чаты.
-async function runSync(userId: string, folderId: number, workspaceId: string) {
-  const client = await getUserClient(userId);
+// Background sync: тащим chat_id'ы из конкретной папки через TDLib, фильтруем
+// до приватных DM с user'ами (не группы/каналы/боты), upsert'им в contacts.
+async function runSync(
+  userId: string,
+  folderId: number,
+  workspaceId: string,
+): Promise<void> {
+  const client = await getPersonalClient(userId);
   if (!client) return;
 
-  const result = await client.invoke(new Api.messages.GetDialogFilters());
-  const filter = result.filters.find(
-    (f): f is Api.DialogFilter =>
-      f instanceof Api.DialogFilter && f.id === folderId,
-  );
-  if (!filter) {
+  const folder = (await client
+    .invoke({ _: "getChatFolder", chat_folder_id: folderId } as never)
+    .catch(() => null)) as TdChatFolder | null;
+  if (!folder) {
     await markSynced(userId, folderId, 0);
     return;
   }
 
-  // Set ключей user-id для O(1) лукапа — peers могут быть InputPeerUser /
-  // InputPeerChat / InputPeerChannel; нас интересуют только User.
-  const userIdsFrom = (peers: readonly Api.TypeInputPeer[]): Set<string> => {
-    const out = new Set<string>();
-    for (const p of peers) {
-      if (p instanceof Api.InputPeerUser) out.add(String(p.userId));
-    }
-    return out;
-  };
-  const includeUsers = userIdsFrom(filter.includePeers);
-  const pinnedUsers = userIdsFrom(filter.pinnedPeers);
-  const excludeUsers = userIdsFrom(filter.excludePeers);
+  const includeIds = new Set<number>([
+    ...folder.included_chat_ids,
+    ...folder.pinned_chat_ids,
+  ]);
+  const excludeIds = new Set<number>(folder.excluded_chat_ids);
 
-  // limit=500 — для большинства юзеров достаточно, дальше пагинация TODO.
-  const dialogs = await client.getDialogs({ limit: 500 });
+  // Фильтруем до private DM — для каждой включённой chat_id getChat и проверяем
+  // type. Параллелим фиксированными чанками: на 100+ чатах вереница getChat
+  // занимает секунды; concurrency=10 даёт компромисс между скоростью и
+  // FloodWait-риском.
+  const chatIds = [...includeIds].filter((id) => !excludeIds.has(id));
+  const userIds: number[] = [];
+  const CONCURRENCY = 10;
+  for (let i = 0; i < chatIds.length; i += CONCURRENCY) {
+    const batch = chatIds.slice(i, i + CONCURRENCY);
+    const chats = await Promise.all(
+      batch.map((id) =>
+        (client.invoke({ _: "getChat", chat_id: id } as never) as Promise<TdChat>).catch(
+          () => null,
+        ),
+      ),
+    );
+    for (const chat of chats) {
+      if (!chat) continue;
+      if (chat.type._ === "chatTypePrivate") {
+        userIds.push(chat.type.user_id);
+      }
+    }
+  }
+
+  if (userIds.length === 0) {
+    await markSynced(userId, folderId, 0);
+    return;
+  }
 
   // Дефолтный stage для нового контакта — first option preset-property `stage`.
   const [stageProp] = await db
@@ -566,35 +593,8 @@ async function runSync(userId: string, folderId: number, workspaceId: string) {
     .limit(1);
   const defaultStageId = stageProp?.values?.[0]?.id;
 
-  // Pass 1: фильтруем диалоги по правилам без обращения к БД.
-  const candidates: Api.User[] = [];
-  for (const d of dialogs) {
-    const entity = d.entity;
-    if (!(entity instanceof Api.User)) continue;
-    if (entity.deleted || entity.bot) continue;
-
-    const tgUserId = String(entity.id);
-    if (excludeUsers.has(tgUserId)) continue;
-
-    // Подходит ли диалог под фильтр: явное включение || pinned || wildcard по типу.
-    // Боты уже отсечены выше — даже если папка включает botс, мы их не импортим.
-    let matches = includeUsers.has(tgUserId) || pinnedUsers.has(tgUserId);
-    if (!matches) {
-      if (entity.contact) matches = !!filter.contacts;
-      else matches = !!filter.nonContacts;
-    }
-    if (matches) candidates.push(entity);
-  }
-
-  if (candidates.length === 0) {
-    await markSynced(userId, folderId, 0);
-    return;
-  }
-
-  // Pass 2: один батч-SELECT для дедупа (вместо N+1). Раньше было ANY(::text[])
-  // через ручной sql-template — postgres-js биндил массив как `record` и падало
-  // на cast'е. inArray от drizzle сам сериализует параметризованный список.
-  const candidateIds = candidates.map((u) => String(u.id));
+  // Дедуп по существующим contact'ам — один пакетный SELECT.
+  const candidateIds = userIds.map(String);
   const tgUserIdExpr = sql<string>`${contacts.properties}->>'tg_user_id'`;
   const existingRows = await db
     .select({ tgUserId: tgUserIdExpr })
@@ -607,24 +607,44 @@ async function runSync(userId: string, folderId: number, workspaceId: string) {
     );
   const existingSet = new Set(existingRows.map((r) => r.tgUserId));
 
-  // Pass 3: батч-INSERT новых.
-  const toInsert = candidates
-    .filter((u) => !existingSet.has(String(u.id)))
-    .map((entity) => {
-      const username = pickActiveUsername(entity);
+  // getUser per новый id — получаем имя/username/phone. Боты и удалённые —
+  // отсеиваем.
+  const newUserIds = userIds.filter((id) => !existingSet.has(String(id)));
+  const toInsert: Array<{
+    workspaceId: string;
+    properties: Record<string, unknown>;
+    createdBy: string;
+  }> = [];
+  for (let i = 0; i < newUserIds.length; i += CONCURRENCY) {
+    const batch = newUserIds.slice(i, i + CONCURRENCY);
+    const users = await Promise.all(
+      batch.map((uid) =>
+        (
+          client.invoke({ _: "getUser", user_id: uid } as never) as Promise<TdUser>
+        ).catch(() => null),
+      ),
+    );
+    for (let j = 0; j < users.length; j++) {
+      const user = users[j];
+      if (!user) continue;
+      if (user.type?._ === "userTypeBot" || user.type?._ === "userTypeDeleted") {
+        continue;
+      }
+      const username = extractActiveUsername(user);
       const fullName =
-        [entity.firstName, entity.lastName].filter(Boolean).join(" ").trim() ||
+        [user.first_name, user.last_name].filter(Boolean).join(" ").trim() ||
         username ||
         "Без имени";
       const properties: Record<string, unknown> = {
-        tg_user_id: String(entity.id),
+        tg_user_id: String(batch[j]),
         full_name: fullName,
       };
       if (username) properties.telegram_username = username;
-      if (entity.phone) properties.phone = `+${entity.phone}`;
+      if (user.phone_number) properties.phone = `+${user.phone_number}`;
       if (defaultStageId) properties.stage = defaultStageId;
-      return { workspaceId, properties, createdBy: userId };
-    });
+      toInsert.push({ workspaceId, properties, createdBy: userId });
+    }
+  }
 
   if (toInsert.length > 0) {
     await db.insert(contacts).values(toInsert);
@@ -649,12 +669,10 @@ async function markSynced(
     );
 }
 
-// gramjs возвращает title как `TextWithEntities { text, entities }` для DialogFilter.title
-// (раньше был просто string). Приводим к строке.
-function extractFilterTitle(title: unknown): string {
+function extractFolderTitle(title: TdChatFolder["title"]): string {
   if (typeof title === "string") return title;
   if (title && typeof title === "object" && "text" in title) {
-    return String((title as { text: string }).text);
+    return String(title.text ?? "Без названия");
   }
   return "Без названия";
 }

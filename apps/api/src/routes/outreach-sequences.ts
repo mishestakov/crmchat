@@ -1,7 +1,7 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { streamSSE } from "hono/streaming";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import {
   outreachAccounts,
@@ -44,6 +44,10 @@ const SequenceStatusSchema = z.enum([
   "completed",
 ]);
 const AccountsModeSchema = z.enum(["all", "selected"]);
+const ContactCreationTriggerSchema = z.enum([
+  "on-reply",
+  "on-first-message-sent",
+]);
 
 const SequenceSchema = z.object({
   id: z.string(),
@@ -53,6 +57,9 @@ const SequenceSchema = z.object({
   accountsMode: AccountsModeSchema,
   accountsSelected: z.array(z.string()),
   messages: z.array(MessageSchema),
+  contactCreationTrigger: ContactCreationTriggerSchema,
+  contactDefaultOwnerIds: z.array(z.string()),
+  contactDefaults: z.record(z.string(), z.unknown()),
   activatedAt: z.string().datetime().nullable(),
   completedAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
@@ -68,16 +75,44 @@ const UpdateSequenceBody = z.object({
   accountsMode: AccountsModeSchema.optional(),
   accountsSelected: z.array(z.string()).optional(),
   messages: z.array(MessageSchema).optional(),
+  contactCreationTrigger: ContactCreationTriggerSchema.optional(),
+  contactDefaultOwnerIds: z.array(z.string()).optional(),
+  contactDefaults: z.record(z.string(), z.unknown()).optional(),
+});
+
+// Расширенный progress: на каждое сообщение sequence у лида либо одно
+// scheduled_messages-row (одна попытка), либо ничего (msg ещё не запланирован).
+// status: pending → sent → (read), либо failed/cancelled.
+const LeadMessageProgressSchema = z.object({
+  messageIdx: z.number().int(),
+  status: z.enum(["pending", "sent", "failed", "cancelled"]),
+  sentAt: z.string().datetime().nullable(),
+  readAt: z.string().datetime().nullable(),
+  scheduledAt: z.string().datetime().nullable(),
+  error: z.string().nullable(),
+});
+
+const LeadAccountSchema = z.object({
+  id: z.string(),
+  firstName: z.string().nullable(),
+  tgUsername: z.string().nullable(),
+  phoneNumber: z.string().nullable(),
+  hasPremium: z.boolean(),
 });
 
 const LeadProgressSchema = z.object({
   id: z.string(),
   username: z.string().nullable(),
   phone: z.string().nullable(),
-  sentCount: z.number().int(),
-  totalCount: z.number().int(),
-  nextSendAt: z.string().datetime().nullable(),
-  hasFailed: z.boolean(),
+  // CSV-properties (для toggle «Показать CSV-данные» в leads-таблице).
+  // Сюда уезжают и raw CSV-headers, и mapped-keys.
+  properties: z.record(z.string(), z.string()),
+  // Аккаунт, через который отправляются сообщения этому лиду. Может быть
+  // разным для разных лидов (round-robin distribution при активации).
+  // null если ещё не запланировано (sequence в draft).
+  account: LeadAccountSchema.nullable(),
+  // Прогресс по каждому сообщению sequence. Длина массива = seq.messages.length.
+  messages: z.array(LeadMessageProgressSchema),
   repliedAt: z.string().datetime().nullable(),
   contactId: z.string().nullable(),
 });
@@ -200,15 +235,22 @@ app.openapi(
     const { seqId } = c.req.valid("param");
     const body = c.req.valid("json");
     const existing = await loadSequence(wsId, seqId);
-    // Edit разрешён только когда sequence ещё не запущена. После activate
-    // тексты уже зашиты в scheduled_messages snapshot — менять формулировку
-    // через editor было бы вводящим в заблуждение (часть лидов уже получит
-    // старую версию).
-    if (existing.status !== "draft") {
+
+    // Snapshot-fields (зашиваются в scheduled_messages при activate) можно
+    // менять только в draft. Contact-settings влияют на ещё-не-созданные
+    // контакты, их можно менять в любой момент.
+    const touchedSnapshot =
+      body.name !== undefined ||
+      body.accountsMode !== undefined ||
+      body.accountsSelected !== undefined ||
+      body.messages !== undefined;
+    if (touchedSnapshot && existing.status !== "draft") {
       throw new HTTPException(400, {
-        message: "Only draft sequences can be edited",
+        message:
+          "Name/accounts/messages can be edited only in draft. Use contact-settings fields anytime.",
       });
     }
+
     const [row] = await db
       .update(outreachSequences)
       .set({
@@ -220,6 +262,15 @@ app.openapi(
           accountsSelected: body.accountsSelected,
         }),
         ...(body.messages !== undefined && { messages: body.messages }),
+        ...(body.contactCreationTrigger !== undefined && {
+          contactCreationTrigger: body.contactCreationTrigger,
+        }),
+        ...(body.contactDefaultOwnerIds !== undefined && {
+          contactDefaultOwnerIds: body.contactDefaultOwnerIds,
+        }),
+        ...(body.contactDefaults !== undefined && {
+          contactDefaults: body.contactDefaults,
+        }),
         updatedAt: new Date(),
       })
       .where(eq(outreachSequences.id, seqId))
@@ -305,13 +356,26 @@ app.openapi(
       });
     }
 
-    const leads = await db
+    const allLeads = await db
       .select()
       .from(outreachLeads)
       .where(eq(outreachLeads.listId, seq.listId))
       .orderBy(asc(outreachLeads.createdAt));
-    if (leads.length === 0) {
+    if (allLeads.length === 0) {
       throw new HTTPException(400, { message: "List has no leads" });
+    }
+    // Defense-in-depth: identity-приоритет username > phone. Один и тот же
+    // TG-юзер не должен получить N сообщений из-за того, что в CSV у него
+    // были разные форматы phone-колонки.
+    const seen = new Set<string>();
+    const leads: typeof allLeads = [];
+    for (const l of allLeads) {
+      const key = l.username
+        ? `u:${l.username.toLowerCase()}`
+        : `p:${l.phone ?? ""}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      leads.push(l);
     }
 
     const activatedAt = new Date();
@@ -457,46 +521,54 @@ app.openapi(
     const seq = await loadSequence(wsId, seqId);
     const totalCount = seq.messages.length;
 
-    // repliedCount считаем по всему списку лидов (не по пагинации) — нужен в
-    // шапке sequence чтобы видеть «N ответили из M», а не «N из 100 на этой странице».
-    const [repliedAgg] = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(outreachLeads)
-      .where(
-        and(
-          eq(outreachLeads.listId, seq.listId),
-          sql`${outreachLeads.repliedAt} IS NOT NULL`,
+    // repliedAgg + leadRows независимы — параллелим. repliedCount по всему
+    // списку (не пагинированному) для шапки «N ответили из M».
+    const [repliedAggRows, leadRows] = await Promise.all([
+      db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(outreachLeads)
+        .where(
+          and(
+            eq(outreachLeads.listId, seq.listId),
+            sql`${outreachLeads.repliedAt} IS NOT NULL`,
+          ),
         ),
-      );
-    const repliedCount = repliedAgg?.count ?? 0;
-
-    const leadRows = await db
-      .select({
-        id: outreachLeads.id,
-        username: outreachLeads.username,
-        phone: outreachLeads.phone,
-        repliedAt: outreachLeads.repliedAt,
-        contactId: outreachLeads.contactId,
-        total: sql<number>`count(*) OVER ()::int`,
-      })
-      .from(outreachLeads)
-      .where(eq(outreachLeads.listId, seq.listId))
-      .orderBy(asc(outreachLeads.createdAt))
-      .limit(limit)
-      .offset(offset);
+      db
+        .select({
+          id: outreachLeads.id,
+          username: outreachLeads.username,
+          phone: outreachLeads.phone,
+          properties: outreachLeads.properties,
+          repliedAt: outreachLeads.repliedAt,
+          contactId: outreachLeads.contactId,
+          total: sql<number>`count(*) OVER ()::int`,
+        })
+        .from(outreachLeads)
+        .where(eq(outreachLeads.listId, seq.listId))
+        .orderBy(asc(outreachLeads.createdAt))
+        .limit(limit)
+        .offset(offset),
+    ]);
+    const repliedCount = repliedAggRows[0]?.count ?? 0;
 
     if (leadRows.length === 0) {
       return c.json({ total: 0, totalCount, repliedCount, leads: [] });
     }
 
     // Все scheduled_messages для этих лидов одним запросом, агрегируем в JS.
-    // Альтернатива — group by в SQL, но JS-агрегация на 100 лидах × N msgs
-    // это сотни строк, не повод усложнять.
+    // Колонки sentAt/readAt/error per scheduled_message нужны для UI-таблицы
+    // лидов (донор-style), accountId — чтобы показать через какой аккаунт
+    // рассылается этому лиду.
     const sched = await db
       .select({
         leadId: scheduledMessages.leadId,
+        accountId: scheduledMessages.accountId,
+        messageIdx: scheduledMessages.messageIdx,
         status: scheduledMessages.status,
         sendAt: scheduledMessages.sendAt,
+        sentAt: scheduledMessages.sentAt,
+        readAt: scheduledMessages.readAt,
+        error: scheduledMessages.error,
       })
       .from(scheduledMessages)
       .where(
@@ -509,23 +581,28 @@ app.openapi(
         ),
       );
 
-    const byLead = new Map<
-      string,
-      { sent: number; failed: number; nextPendingAt: Date | null }
-    >();
+    // Account info — один SELECT по distinct accountIds.
+    const accountIds = [...new Set(sched.map((s) => s.accountId))];
+    const accountRows = accountIds.length
+      ? await db
+          .select({
+            id: outreachAccounts.id,
+            firstName: outreachAccounts.firstName,
+            tgUsername: outreachAccounts.tgUsername,
+            phoneNumber: outreachAccounts.phoneNumber,
+            hasPremium: outreachAccounts.hasPremium,
+          })
+          .from(outreachAccounts)
+          .where(inArray(outreachAccounts.id, accountIds))
+      : [];
+    const accountById = new Map(accountRows.map((a) => [a.id, a]));
+
+    type SchedRow = typeof sched[number];
+    const byLead = new Map<string, SchedRow[]>();
     for (const s of sched) {
-      let agg = byLead.get(s.leadId);
-      if (!agg) {
-        agg = { sent: 0, failed: 0, nextPendingAt: null };
-        byLead.set(s.leadId, agg);
-      }
-      if (s.status === "sent") agg.sent++;
-      else if (s.status === "failed") agg.failed++;
-      else if (s.status === "pending") {
-        if (!agg.nextPendingAt || s.sendAt < agg.nextPendingAt) {
-          agg.nextPendingAt = s.sendAt;
-        }
-      }
+      const arr = byLead.get(s.leadId);
+      if (arr) arr.push(s);
+      else byLead.set(s.leadId, [s]);
     }
 
     return c.json({
@@ -533,19 +610,375 @@ app.openapi(
       totalCount,
       repliedCount,
       leads: leadRows.map((l) => {
-        const agg = byLead.get(l.id);
+        const items = byLead.get(l.id) ?? [];
+        // Аккаунт берём из первого scheduled_message — все сообщения этого
+        // лида ходят через один аккаунт (см. activate logic).
+        const accountId = items[0]?.accountId ?? null;
+        const account = accountId ? accountById.get(accountId) ?? null : null;
+        const messages = items
+          .slice()
+          .sort((a, b) => a.messageIdx - b.messageIdx)
+          .map((s) => ({
+            messageIdx: s.messageIdx,
+            status: s.status,
+            sentAt: s.sentAt?.toISOString() ?? null,
+            readAt: s.readAt?.toISOString() ?? null,
+            scheduledAt: s.sendAt?.toISOString() ?? null,
+            error: s.error,
+          }));
         return {
           id: l.id,
           username: l.username,
           phone: l.phone,
-          sentCount: agg?.sent ?? 0,
-          totalCount,
-          nextSendAt: agg?.nextPendingAt?.toISOString() ?? null,
-          hasFailed: (agg?.failed ?? 0) > 0,
+          properties: l.properties,
+          account,
+          messages,
           repliedAt: l.repliedAt?.toISOString() ?? null,
           contactId: l.contactId,
         };
       }),
+    });
+  },
+);
+
+// Sequence analytics: агрегаты sent/read/replied + timeseries.
+//
+// `period`: окно (дни). Влияет только на timeseries; total-метрики — за всё время.
+// `grouping`: `day` / `week` / `month` — bucket для timeseries (date_trunc).
+// `viewMode`:
+//   - "eventDate" (по дате события): sent в день когда отправили, read когда
+//     лид прочитал, replied когда лид ответил. Удобно для «когда у нас
+//     активность вообще».
+//   - "sendDate" (по дате отправки): read и replied отнесены к дню sentAt
+//     самого исходящего, к которому относится событие. Удобно для cohort-
+//     анализа «насколько эффективна была отправка такого-то дня».
+const AnalyticsPointSchema = z.object({
+  date: z.string(),
+  sent: z.number().int(),
+  read: z.number().int(),
+  replied: z.number().int(),
+});
+
+const GroupingSchema = z.enum(["day", "week", "month"]);
+const ViewModeSchema = z.enum(["eventDate", "sendDate"]);
+
+app.openapi(
+  createRoute({
+    method: "get",
+    path: "/v1/workspaces/{wsId}/outreach/sequences/{seqId}/analytics",
+    tags: ["outreach"],
+    request: {
+      params: WsSeqParam,
+      query: z.object({
+        period: z.coerce.number().int().min(1).max(365).default(30),
+        grouping: GroupingSchema.default("day"),
+        viewMode: ViewModeSchema.default("eventDate"),
+      }),
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({
+              totalSent: z.number().int(),
+              totalRead: z.number().int(),
+              totalReplied: z.number().int(),
+              totalLeads: z.number().int(),
+              grouping: GroupingSchema,
+              viewMode: ViewModeSchema,
+              series: z.array(AnalyticsPointSchema),
+            }),
+          },
+        },
+        description: "Sequence analytics aggregates + timeseries",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const { seqId } = c.req.valid("param");
+    const { period, grouping, viewMode } = c.req.valid("query");
+
+    // grouping валидирован zod'ом до 'day'/'week'/'month' — кладём inline,
+    // чтобы date_trunc-выражение в SELECT и GROUP BY были БУКВАЛЬНО одинаковые.
+    // Через параметр postgres-js биндит как $1, и Postgres считает date_trunc($1)
+    // и date_trunc($2) разными expression'ами → 42803.
+    const gKw = sql.raw(`'${grouping}'`);
+
+    // Параллельно: short loadSequence (нужен только listId) + total-агрегаты.
+    const [seqRows, aggRows] = await Promise.all([
+      db
+        .select({ listId: outreachSequences.listId })
+        .from(outreachSequences)
+        .where(
+          and(
+            eq(outreachSequences.id, seqId),
+            eq(outreachSequences.workspaceId, wsId),
+          ),
+        )
+        .limit(1),
+      db
+        .select({
+          sent: sql<number>`count(*) FILTER (WHERE ${scheduledMessages.status} = 'sent')::int`,
+          read: sql<number>`count(*) FILTER (WHERE ${scheduledMessages.readAt} IS NOT NULL)::int`,
+        })
+        .from(scheduledMessages)
+        .where(eq(scheduledMessages.sequenceId, seqId)),
+    ]);
+    const seq = seqRows[0];
+    if (!seq) throw new HTTPException(404, { message: "sequence not found" });
+    const agg = aggRows[0];
+
+    const [leadsAgg] = await db
+      .select({
+        total: sql<number>`count(*)::int`,
+        replied: sql<number>`count(*) FILTER (WHERE ${outreachLeads.repliedAt} IS NOT NULL)::int`,
+      })
+      .from(outreachLeads)
+      .where(eq(outreachLeads.listId, seq.listId));
+
+    const since = new Date(Date.now() - period * 86_400_000);
+
+    // sent buckets — всегда по sentAt.
+    const sentTrunc = sql`date_trunc(${gKw}, ${scheduledMessages.sentAt})`;
+    const sentRows = await db
+      .select({
+        bucket: sql<Date>`${sentTrunc}`,
+        sent: sql<number>`count(*)::int`,
+      })
+      .from(scheduledMessages)
+      .where(
+        and(
+          eq(scheduledMessages.sequenceId, seqId),
+          eq(scheduledMessages.status, "sent"),
+          gte(scheduledMessages.sentAt, since),
+        ),
+      )
+      .groupBy(sentTrunc);
+
+    // read/replied buckets — выбор по viewMode:
+    //   eventDate → группируем по readAt / repliedAt
+    //   sendDate  → группируем по sentAt самого исходящего
+    const readTrunc =
+      viewMode === "sendDate"
+        ? sql`date_trunc(${gKw}, ${scheduledMessages.sentAt})`
+        : sql`date_trunc(${gKw}, ${scheduledMessages.readAt})`;
+    const readRows = await db
+      .select({
+        bucket: sql<Date>`${readTrunc}`,
+        read: sql<number>`count(*)::int`,
+      })
+      .from(scheduledMessages)
+      .where(
+        and(
+          eq(scheduledMessages.sequenceId, seqId),
+          isNotNull(scheduledMessages.readAt),
+          gte(
+            viewMode === "sendDate"
+              ? scheduledMessages.sentAt
+              : scheduledMessages.readAt,
+            since,
+          ),
+        ),
+      )
+      .groupBy(readTrunc);
+
+    // replied: на стороне leads.repliedAt. В sendDate-режиме отнесём к дню
+    // первого sentAt лида (упрощение MVP — точнее было бы "последний sentAt
+    // до repliedAt").
+    let repliedRows: { bucket: Date; replied: number }[];
+    if (viewMode === "sendDate") {
+      const sub = db
+        .select({
+          leadId: scheduledMessages.leadId,
+          firstSentAt: sql<Date>`min(${scheduledMessages.sentAt})`.as(
+            "first_sent_at",
+          ),
+        })
+        .from(scheduledMessages)
+        .innerJoin(
+          outreachLeads,
+          eq(outreachLeads.id, scheduledMessages.leadId),
+        )
+        .where(
+          and(
+            eq(scheduledMessages.sequenceId, seqId),
+            isNotNull(scheduledMessages.sentAt),
+            isNotNull(outreachLeads.repliedAt),
+            gte(scheduledMessages.sentAt, since),
+          ),
+        )
+        .groupBy(scheduledMessages.leadId)
+        .as("sub");
+      const subTrunc = sql`date_trunc(${gKw}, sub.first_sent_at)`;
+      repliedRows = await db
+        .select({
+          bucket: sql<Date>`${subTrunc}`,
+          replied: sql<number>`count(*)::int`,
+        })
+        .from(sub)
+        .groupBy(subTrunc);
+    } else {
+      const repTrunc = sql`date_trunc(${gKw}, ${outreachLeads.repliedAt})`;
+      repliedRows = await db
+        .select({
+          bucket: sql<Date>`${repTrunc}`,
+          replied: sql<number>`count(*)::int`,
+        })
+        .from(outreachLeads)
+        .where(
+          and(
+            eq(outreachLeads.listId, seq.listId),
+            isNotNull(outreachLeads.repliedAt),
+            gte(outreachLeads.repliedAt, since),
+          ),
+        )
+        .groupBy(repTrunc);
+    }
+
+    // Bucket-ключ — UTC ISO-date "YYYY-MM-DD" (date_trunc возвращает Date в UTC).
+    const bucketKey = (d: Date | string): string => {
+      const dt = typeof d === "string" ? new Date(d) : d;
+      return dt.toISOString().slice(0, 10);
+    };
+    const byBucket = new Map<
+      string,
+      { sent: number; read: number; replied: number }
+    >();
+    for (const r of sentRows) {
+      const k = bucketKey(r.bucket);
+      const e = byBucket.get(k) ?? { sent: 0, read: 0, replied: 0 };
+      e.sent = r.sent;
+      byBucket.set(k, e);
+    }
+    for (const r of readRows) {
+      const k = bucketKey(r.bucket);
+      const e = byBucket.get(k) ?? { sent: 0, read: 0, replied: 0 };
+      e.read = r.read;
+      byBucket.set(k, e);
+    }
+    for (const r of repliedRows) {
+      const k = bucketKey(r.bucket);
+      const e = byBucket.get(k) ?? { sent: 0, read: 0, replied: 0 };
+      e.replied = r.replied;
+      byBucket.set(k, e);
+    }
+
+    // Dense series — последовательно перечисляем bucket'ы в окне period.
+    // Для day — ровно period шагов; для week/month — округляем границы.
+    const series = densifySeries(period, grouping, byBucket);
+
+    return c.json({
+      totalSent: agg?.sent ?? 0,
+      totalRead: agg?.read ?? 0,
+      totalReplied: leadsAgg?.replied ?? 0,
+      totalLeads: leadsAgg?.total ?? 0,
+      grouping,
+      viewMode,
+      series,
+    });
+  },
+);
+
+function densifySeries(
+  period: number,
+  grouping: "day" | "week" | "month",
+  byBucket: Map<string, { sent: number; read: number; replied: number }>,
+): { date: string; sent: number; read: number; replied: number }[] {
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const out: ReturnType<typeof densifySeries> = [];
+  if (grouping === "day") {
+    for (let i = period - 1; i >= 0; i--) {
+      const d = new Date(today.getTime() - i * 86_400_000);
+      const key = d.toISOString().slice(0, 10);
+      const e = byBucket.get(key) ?? { sent: 0, read: 0, replied: 0 };
+      out.push({ date: key, ...e });
+    }
+  } else if (grouping === "week") {
+    // ISO-week start: Monday. Postgres date_trunc('week') тоже даёт Monday.
+    const startOfWeek = (d: Date): Date => {
+      const dow = d.getUTCDay() || 7; // Sun=7
+      const r = new Date(d);
+      r.setUTCDate(d.getUTCDate() - (dow - 1));
+      r.setUTCHours(0, 0, 0, 0);
+      return r;
+    };
+    const weeksBack = Math.ceil(period / 7);
+    const lastMonday = startOfWeek(today);
+    for (let i = weeksBack - 1; i >= 0; i--) {
+      const d = new Date(lastMonday.getTime() - i * 7 * 86_400_000);
+      const key = d.toISOString().slice(0, 10);
+      const e = byBucket.get(key) ?? { sent: 0, read: 0, replied: 0 };
+      out.push({ date: key, ...e });
+    }
+  } else {
+    // month
+    const monthsBack = Math.ceil(period / 30);
+    const startOfMonth = (y: number, m: number): Date => {
+      const d = new Date(Date.UTC(y, m, 1));
+      d.setUTCHours(0, 0, 0, 0);
+      return d;
+    };
+    const cur = startOfMonth(today.getUTCFullYear(), today.getUTCMonth());
+    for (let i = monthsBack - 1; i >= 0; i--) {
+      const d = new Date(cur);
+      d.setUTCMonth(cur.getUTCMonth() - i);
+      const key = d.toISOString().slice(0, 10);
+      const e = byBucket.get(key) ?? { sent: 0, read: 0, replied: 0 };
+      out.push({ date: key, ...e });
+    }
+  }
+  return out;
+}
+
+// Preview-helper: один случайный лид из листа sequence для предпросмотра
+// {{}}-подстановок в редакторе сообщения. Возвращает minimal payload —
+// идентификатор + properties; sequence detail-page использует его в
+// `substituteVariables` чтобы показать «как будет выглядеть текст для лида».
+const SampleLeadSchema = z.object({
+  id: z.string(),
+  username: z.string().nullable(),
+  phone: z.string().nullable(),
+  properties: z.record(z.string(), z.string()),
+});
+
+app.openapi(
+  createRoute({
+    method: "get",
+    path: "/v1/workspaces/{wsId}/outreach/sequences/{seqId}/sample-lead",
+    tags: ["outreach"],
+    request: { params: WsSeqParam },
+    responses: {
+      200: {
+        content: {
+          "application/json": { schema: SampleLeadSchema.nullable() },
+        },
+        description: "Random lead from sequence list (or null if empty)",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const { seqId } = c.req.valid("param");
+    const seq = await loadSequence(wsId, seqId);
+    const [row] = await db
+      .select({
+        id: outreachLeads.id,
+        username: outreachLeads.username,
+        phone: outreachLeads.phone,
+        properties: outreachLeads.properties,
+      })
+      .from(outreachLeads)
+      .where(eq(outreachLeads.listId, seq.listId))
+      .orderBy(sql`random()`)
+      .limit(1);
+    if (!row) return c.json(null);
+    return c.json({
+      id: row.id,
+      username: row.username,
+      phone: row.phone,
+      properties: row.properties,
     });
   },
 );
@@ -574,6 +1007,9 @@ function serializeSequence(row: typeof outreachSequences.$inferSelect) {
     accountsMode: row.accountsMode,
     accountsSelected: row.accountsSelected,
     messages: row.messages,
+    contactCreationTrigger: row.contactCreationTrigger,
+    contactDefaultOwnerIds: row.contactDefaultOwnerIds,
+    contactDefaults: row.contactDefaults,
     activatedAt: row.activatedAt?.toISOString() ?? null,
     completedAt: row.completedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),

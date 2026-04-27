@@ -141,9 +141,12 @@ app.openapi(
     }[] = [];
 
     for (const row of body.rows) {
+      // TG username case-insensitive — нормализуем к lowercase, иначе CSV с
+      // вариантами "Mike1936" / "mike1936" / "@Mike1936" даст три разных
+      // dedup-key и три записи на одного и того же юзера.
       const usernameRaw =
         usernameColumn && row[usernameColumn]
-          ? row[usernameColumn]!.trim().replace(/^@/, "")
+          ? row[usernameColumn]!.trim().replace(/^@/, "").toLowerCase()
           : "";
       const phoneRaw =
         phoneColumn && row[phoneColumn] ? row[phoneColumn]!.trim() : "";
@@ -170,7 +173,13 @@ app.openapi(
         continue;
       }
 
-      const dedupKey = `u:${username ?? ""}|p:${phone ?? ""}`;
+      // Identity-приоритет: если есть username (TG-уникальный идентификатор) —
+      // дедупим ТОЛЬКО по нему, игнорируя phone. Иначе у одного и того же
+      // блогера с username "@vasya" но разными "phone"-колонками в CSV
+      // (формат-варианты, опечатки, null) будут разные dedup-ключи и в БД
+      // насыпется по N строк → worker отправит N сообщений одному человеку.
+      // Без username — fallback на phone (он сам по себе уникальный TG-юзер).
+      const dedupKey = username ? `u:${username}` : `p:${phone}`;
       if (seen.has(dedupKey)) {
         stats.skippedDuplicate++;
         continue;

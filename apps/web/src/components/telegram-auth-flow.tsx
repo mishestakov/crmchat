@@ -1,6 +1,7 @@
 import { useMutation } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Send } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import { errorMessage } from "../lib/errors";
 
 // Унифицированный auth-флоу TG-аккаунта. Используется и для user-scoped TG-sync
@@ -22,14 +23,9 @@ export type TgAuthSignInPasswordResult =
 export type TgAuthApi = {
   qrStreamUrl: string;
   sendCode: (phoneNumber: string) => Promise<{
-    phoneCodeHash: string;
     isCodeViaApp: boolean;
   }>;
-  signIn: (args: {
-    phoneNumber: string;
-    phoneCode: string;
-    phoneCodeHash: string;
-  }) => Promise<TgAuthSignInResult>;
+  signIn: (args: { phoneCode: string }) => Promise<TgAuthSignInResult>;
   signInPassword: (password: string) => Promise<TgAuthSignInPasswordResult>;
 };
 
@@ -44,7 +40,6 @@ type AuthState =
   | {
       step: "enter-code";
       phoneNumber: string;
-      phoneCodeHash: string;
       isCodeViaApp: boolean;
       phoneCode: string;
     }
@@ -163,14 +158,19 @@ function ScanQrStep(props: {
   );
 }
 
-// Telegram-deep-link для QR: tg://login?token={base64url(token)}.
-// QR-генератор без либы — внешний сервис api.qrserver.com (для MVP норм).
+// `token` — готовый tg://login?token=... link из TDLib
+// (authorizationStateWaitOtherDeviceConfirmation.link). Рендерим SVG
+// локально через qrcode.react: zero-dep, оффлайн, без внешнего сервиса.
 function QrImage({ token }: { token: string }) {
-  const tgUrl = `tg://login?token=${token}`;
-  const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=4&data=${encodeURIComponent(
-    tgUrl,
-  )}`;
-  return <img src={qrSrc} alt="Telegram QR" className="h-56 w-56" />;
+  return (
+    <QRCodeSVG
+      value={token}
+      size={224}
+      level="M"
+      marginSize={2}
+      className="h-56 w-56"
+    />
+  );
 }
 
 function PhoneStep(props: {
@@ -189,7 +189,6 @@ function PhoneStep(props: {
       props.setState({
         step: "enter-code",
         phoneNumber: d.phoneNumber,
-        phoneCodeHash: d.phoneCodeHash,
         isCodeViaApp: d.isCodeViaApp,
         phoneCode: "",
       }),
@@ -242,11 +241,7 @@ function CodeStep(props: {
 
   const signIn = useMutation({
     mutationFn: async (phoneCode: string) => {
-      return props.api.signIn({
-        phoneNumber: props.state.phoneNumber,
-        phoneCodeHash: props.state.phoneCodeHash,
-        phoneCode,
-      });
+      return props.api.signIn({ phoneCode });
     },
     onSuccess: (d) => {
       if (d.status === "sign_in_complete")

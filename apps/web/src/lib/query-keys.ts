@@ -13,5 +13,22 @@ export const OUTREACH_QK = {
     ["outreach-sequence", wsId, seqId] as const,
   sequenceLeads: (wsId: string, seqId: string) =>
     ["outreach-sequence-leads", wsId, seqId] as const,
+  sequenceAnalytics: (
+    wsId: string,
+    seqId: string,
+    period: number,
+    grouping: string = "day",
+    viewMode: string = "eventDate",
+  ) =>
+    [
+      "outreach-sequence-analytics",
+      wsId,
+      seqId,
+      period,
+      grouping,
+      viewMode,
+    ] as const,
+  sampleLead: (wsId: string, seqId: string, seed: number) =>
+    ["outreach-sample-lead", wsId, seqId, seed] as const,
   schedule: (wsId: string) => ["outreach-schedule", wsId] as const,
 };

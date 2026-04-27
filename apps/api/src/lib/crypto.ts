@@ -5,12 +5,12 @@ import {
   randomBytes,
 } from "node:crypto";
 
-// Симметричное шифрование MTProto session-string'ов и других секретов перед
-// записью в БД. AES-256-GCM = authenticated encryption (отлавливает повреждения /
-// подмену). Ключ выводим из ENCRYPTION_SECRET через SHA-256 — секрет любой длины.
+// Симметричное шифрование iframe_session JSON перед записью в БД.
+// AES-256-GCM = authenticated encryption (отлавливает повреждения / подмену).
+// Ключ выводим из ENCRYPTION_SECRET через SHA-256 — секрет любой длины.
 //
-// Format ciphertext: `iv.tag.payload` все base64url. Per-row IV (12 байт) делает
-// одинаковые plaintext'ы шифрованными по-разному.
+// Format ciphertext: `iv.tag.payload` все base64url. Per-row IV (12 байт)
+// делает одинаковые plaintext'ы шифрованными по-разному.
 //
 // ВНИМАНИЕ: потеря ENCRYPTION_SECRET = unrecoverable. В prod — secrets manager.
 
@@ -57,9 +57,6 @@ export function decrypt(s: string): string {
   return dec.toString("utf8");
 }
 
-// Удобно для миграции legacy plaintext → encrypted (или для случаев когда
-// row может быть из старой версии без encryption). Возвращает null при любой
-// ошибке: missing secret, неверный формат, MAC fail, etc.
 export function tryDecrypt(s: string): string | null {
   try {
     return decrypt(s);

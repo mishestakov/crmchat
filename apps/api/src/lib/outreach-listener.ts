@@ -1,11 +1,10 @@
-import { Api, type TelegramClient } from "telegram";
-import { NewMessage, type NewMessageEvent, Raw } from "telegram/events";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import {
   contacts,
   outreachLeads,
   outreachLists,
+  outreachSequences,
   properties as propsTable,
   scheduledMessages,
 } from "../db/schema";
@@ -13,14 +12,18 @@ import { validateContactProperties } from "./contact-properties";
 import { emitContactChanged } from "./contact-events";
 import { errMsg } from "./errors";
 import { emitSequenceChanged } from "./outreach-events";
-import { pickActiveUsername } from "./tg-auth";
+import { extractActiveUsername, type TdClient, type TdUser } from "./tdlib";
 
-// Из всех типов property только эти безопасно копируются «как есть» из
-// raw CSV-string без рисков для validateContactProperties:
-//   - text/textarea/tel/url/user_select — string без формата
-// number/email требуют конкретный формат (CSV даёт string),
-// single_select/multi_select требуют валидный option.id — CSV даёт человеческий
-// текст. Их пропускаем; юзер дозаполнит вручную из UI карточки контакта.
+// Inbound listener: подписываем глобальный update-handler за каждый authorized
+// outreach-account TDLib-инстанс. На каждое incoming DM от человека, который у
+// нас в outreach_leads (по tg_user_id + workspace_id), помечаем `replied_at` и
+// отменяем все его pending scheduled_messages во всех его sequences. Параллельно
+// зеркалим unread у contacts.
+//
+// tg_user_id у лида заполняется воркером после первой успешной отправки. Если
+// лид нам ещё не написан — нет tgUserId — нет матча. «остановить sequence на
+// ответ» имеет смысл только когда мы УЖЕ что-то послали.
+
 const COPY_SAFE_PROPERTY_TYPES = new Set([
   "text",
   "textarea",
@@ -29,214 +32,286 @@ const COPY_SAFE_PROPERTY_TYPES = new Set([
   "user_select",
 ]);
 
-// postgres SQLSTATE 23505 = unique_violation. postgres-js кладёт код в .code.
 function isUniqueViolation(e: unknown): boolean {
   return (e as { code?: string } | null)?.code === "23505";
 }
 
-// Inbound listener: подписка на NewMessage за каждый authorized outreach-account.
-// При входящем DM от человека, который у нас в outreach_leads (по tg_user_id +
-// workspace_id), помечаем `replied_at = now()` и отменяем все его pending
-// scheduled_messages во всех его sequences.
-//
-// tg_user_id у лида заполняется воркером после первой успешной отправки (через
-// getEntity). Если лид нам ещё не написан — нет tgUserId — нет матча. Это норм:
-// «остановить sequence на ответ» имеет смысл только когда мы УЖЕ что-то послали.
-
+// Минимальные локальные типы для updates, которые мы реально используем.
+// Полная схема — в `tdlib-types`, но цеплять её здесь не обязательно.
+type TdMessageSender =
+  | { _: "messageSenderUser"; user_id: number }
+  | { _: "messageSenderChat"; chat_id: number };
+type TdMessage = {
+  _: "message";
+  id: number;
+  chat_id: number;
+  sender_id: TdMessageSender;
+  is_outgoing: boolean;
+};
 type HandlerEntry = {
-  newMessage: (event: NewMessageEvent) => unknown;
-  newMessageEvent: NewMessage;
-  readInbox: (update: Api.TypeUpdate) => unknown;
-  readInboxEvent: Raw;
+  handler: (update: unknown) => void;
 };
 const handlers = new Map<string, HandlerEntry>();
 
 export function attachListener(
   accountId: string,
   workspaceId: string,
-  client: TelegramClient,
-) {
+  client: TdClient,
+): void {
   if (handlers.has(accountId)) return;
 
-  const newMessage = async (event: NewMessageEvent) => {
+  const handler = (update: unknown) => {
     try {
-      // Только private DM, не группы/каналы — иначе на любое сообщение в любом
-      // чате будем дёргать БД. Самая горячая ручка системы под listener'ом.
-      if (!event.isPrivate) return;
-      const senderId = event.message.senderId;
-      if (!senderId) return;
-      const senderIdStr = String(senderId);
-
-      // ── Outreach-лид → отметка repliedAt + отмена pending sequence-сообщений.
-      // Атомарно: пометить только если ещё не помечен (не перезатираем первый
-      // момент ответа), вернуть строки для последующей конвертации.
-      const updated = await db
-        .update(outreachLeads)
-        .set({ repliedAt: new Date() })
-        .where(
-          and(
-            eq(outreachLeads.workspaceId, workspaceId),
-            eq(outreachLeads.tgUserId, senderIdStr),
-            isNull(outreachLeads.repliedAt),
-          ),
-        )
-        .returning();
-
-      if (updated.length > 0) {
-        const leadIds = updated.map((u) => u.id);
-        const cancelled = await db
-          .update(scheduledMessages)
-          .set({ status: "cancelled", error: "lead replied" })
-          .where(
-            and(
-              eq(scheduledMessages.status, "pending"),
-              inArray(scheduledMessages.leadId, leadIds),
-            ),
-          )
-          .returning({ sequenceId: scheduledMessages.sequenceId });
-        for (const seqId of new Set(cancelled.map((r) => r.sequenceId))) {
-          emitSequenceChanged(seqId);
+      const u = update as { _?: string };
+      switch (u._) {
+        case "updateNewMessage": {
+          const msg = (update as { message: TdMessage }).message;
+          void onNewMessage(accountId, workspaceId, client, msg);
+          return;
         }
-
-        // Конвертим в контакт ДО bump unread, чтобы новый контакт подхватил +1
-        // на этом же входящем (а не следующем).
-        for (const lead of updated) {
-          try {
-            await convertLeadToContact(lead);
-          } catch (e) {
-            console.error(
-              `[outreach-listener] convert lead ${lead.id}:`,
-              errMsg(e),
-            );
-          }
+        case "updateChatReadInbox": {
+          const x = update as { chat_id: number; unread_count: number };
+          void onReadInbox(workspaceId, x.chat_id, x.unread_count);
+          return;
         }
-      }
-
-      // ── Bump unread у contact'а. Это локальный «оптимистичный» инкремент:
-      // TG не шлёт UpdateReadHistoryInbox на incoming, только на read action.
-      // Если юзер прочитает чат на телефоне — TG разошлёт UpdateReadHistoryInbox
-      // со stillUnreadCount=N, и наш readInbox-handler ниже синхронизирует БД
-      // с правдой TG. То есть наш +1 — temporary, до первого read-event'а.
-      const now = new Date();
-      let touched = await db
-        .update(contacts)
-        .set({
-          unreadCount: sql`${contacts.unreadCount} + 1`,
-          lastMessageAt: now,
-        })
-        .where(
-          and(
-            eq(contacts.workspaceId, workspaceId),
-            sql`${contacts.properties}->>'tg_user_id' = ${senderIdStr}`,
-          ),
-        )
-        .returning({
-          id: contacts.id,
-          unreadCount: contacts.unreadCount,
-        });
-
-      // Fallback: контакт может быть создан вручную с одним telegram_username,
-      // без tg_user_id. Резолвим sender'а, ищем по username, и заодно инжектим
-      // tg_user_id в properties — при следующем входящем сразу попадём в
-      // быстрый путь по tg_user_id.
-      if (touched.length === 0) {
-        const sender = await event.message.getSender().catch(() => null);
-        const username =
-          sender instanceof Api.User ? pickActiveUsername(sender) : null;
-        if (username) {
-          touched = await db
-            .update(contacts)
-            .set({
-              unreadCount: sql`${contacts.unreadCount} + 1`,
-              lastMessageAt: now,
-              properties: sql`${contacts.properties} || jsonb_build_object('tg_user_id', ${senderIdStr}::text)`,
-            })
-            .where(
-              and(
-                eq(contacts.workspaceId, workspaceId),
-                sql`${contacts.properties}->>'telegram_username' = ${username}`,
-                sql`${contacts.properties}->>'tg_user_id' IS NULL`,
-              ),
-            )
-            .returning({
-              id: contacts.id,
-              unreadCount: contacts.unreadCount,
-            });
+        case "updateChatReadOutbox": {
+          const x = update as { chat_id: number };
+          void onReadOutbox(workspaceId, x.chat_id);
+          return;
         }
-      }
-
-      for (const t of touched) {
-        emitContactChanged(workspaceId, {
-          contactId: t.id,
-          unreadCount: t.unreadCount,
-          lastMessageAt: now.toISOString(),
-        });
       }
     } catch (e) {
       console.error(
-        `[outreach-listener] account ${accountId}:`,
+        `[outreach-listener] dispatch ${accountId}:`,
         errMsg(e),
       );
     }
   };
-
-  // ── Зеркало TG: UpdateReadHistoryInbox прилетает когда юзер прочитал чат
-  // на ЛЮБОМ устройстве (мобила, web.telegram.org, наш mark-read через
-  // messages.ReadHistory). stillUnreadCount = реальное число непрочитанных
-  // в чате после действия. Перезаписываем БД этим значением — это и есть
-  // "правда". На свежий incoming TG этот update НЕ шлёт (для incoming у нас
-  // newMessage-handler выше с +1).
-  const readInbox = async (update: Api.TypeUpdate) => {
-    try {
-      if (!(update instanceof Api.UpdateReadHistoryInbox)) return;
-      const peer = update.peer;
-      if (!(peer instanceof Api.PeerUser)) return; // только private DM
-      const tgUserIdStr = String(peer.userId);
-      const stillUnread = update.stillUnreadCount;
-
-      const touched = await db
-        .update(contacts)
-        .set({ unreadCount: stillUnread })
-        .where(
-          and(
-            eq(contacts.workspaceId, workspaceId),
-            sql`${contacts.properties}->>'tg_user_id' = ${tgUserIdStr}`,
-            sql`${contacts.unreadCount} <> ${stillUnread}`,
-          ),
-        )
-        .returning({
-          id: contacts.id,
-          unreadCount: contacts.unreadCount,
-          lastMessageAt: contacts.lastMessageAt,
-        });
-      for (const t of touched) {
-        emitContactChanged(workspaceId, {
-          contactId: t.id,
-          unreadCount: t.unreadCount,
-          lastMessageAt: t.lastMessageAt?.toISOString() ?? null,
-        });
-      }
-    } catch (e) {
-      console.error(
-        `[outreach-listener] readInbox account ${accountId}:`,
-        errMsg(e),
-      );
-    }
-  };
-
-  const newMessageEvent = new NewMessage({ incoming: true });
-  const readInboxEvent = new Raw({ types: [Api.UpdateReadHistoryInbox] });
-  client.addEventHandler(newMessage, newMessageEvent);
-  client.addEventHandler(readInbox, readInboxEvent);
-  handlers.set(accountId, {
-    newMessage,
-    newMessageEvent,
-    readInbox,
-    readInboxEvent,
-  });
+  client.on("update", handler);
+  handlers.set(accountId, { handler });
 }
 
-async function convertLeadToContact(lead: typeof outreachLeads.$inferSelect) {
+export function detachListener(accountId: string, client: TdClient): void {
+  const entry = handlers.get(accountId);
+  if (!entry) return;
+  try {
+    client.off("update", entry.handler);
+  } catch {
+    // client may be already closed
+  }
+  handlers.delete(accountId);
+}
+
+async function onNewMessage(
+  accountId: string,
+  workspaceId: string,
+  client: TdClient,
+  msg: TdMessage,
+): Promise<void> {
+  if (msg.is_outgoing) return;
+  // Только private DM от user'а — sender = messageSenderUser, и в TDLib
+  // private chat_id == user_id. Боты технически тоже user'ы, но бот не
+  // пишет нам сам, если мы не подписались.
+  if (msg.sender_id._ !== "messageSenderUser") return;
+  const senderUserId = msg.sender_id.user_id;
+  if (msg.chat_id !== senderUserId) return;
+  const senderIdStr = String(senderUserId);
+
+  try {
+    // Outreach-лид → отметка repliedAt + отмена pending sequence-сообщений.
+    const updated = await db
+      .update(outreachLeads)
+      .set({ repliedAt: new Date() })
+      .where(
+        and(
+          eq(outreachLeads.workspaceId, workspaceId),
+          eq(outreachLeads.tgUserId, senderIdStr),
+          isNull(outreachLeads.repliedAt),
+        ),
+      )
+      .returning();
+
+    if (updated.length > 0) {
+      const leadIds = updated.map((u) => u.id);
+      const cancelled = await db
+        .update(scheduledMessages)
+        .set({ status: "cancelled", error: "lead replied" })
+        .where(
+          and(
+            eq(scheduledMessages.status, "pending"),
+            inArray(scheduledMessages.leadId, leadIds),
+          ),
+        )
+        .returning({ sequenceId: scheduledMessages.sequenceId });
+      for (const seqId of new Set(cancelled.map((r) => r.sequenceId))) {
+        emitSequenceChanged(seqId);
+      }
+      for (const lead of updated) {
+        try {
+          await convertLeadToContact(lead);
+        } catch (e) {
+          console.error(
+            `[outreach-listener] convert lead ${lead.id}:`,
+            errMsg(e),
+          );
+        }
+      }
+    }
+
+    // Bump unread у contact'а. Локальный «оптимистичный» инкремент: на свежий
+    // incoming TG не шлёт UpdateChatReadInbox, только на read action. Когда
+    // юзер прочитает чат на телефоне — TG разошлёт update со stillUnreadCount,
+    // и onReadInbox синхронизирует БД с правдой TG.
+    const now = new Date();
+    let touched = await db
+      .update(contacts)
+      .set({
+        unreadCount: sql`${contacts.unreadCount} + 1`,
+        lastMessageAt: now,
+      })
+      .where(
+        and(
+          eq(contacts.workspaceId, workspaceId),
+          sql`${contacts.properties}->>'tg_user_id' = ${senderIdStr}`,
+        ),
+      )
+      .returning({
+        id: contacts.id,
+        unreadCount: contacts.unreadCount,
+      });
+
+    // Fallback: контакт может быть создан вручную с одним telegram_username,
+    // без tg_user_id. Резолвим sender'а через getUser, ищем по username, и
+    // заодно инжектим tg_user_id в properties — следующий incoming сразу
+    // попадёт в быстрый путь по tg_user_id.
+    if (touched.length === 0) {
+      const user = await client
+        .invoke({ _: "getUser", user_id: senderUserId } as never)
+        .catch(() => null);
+      const username =
+        user && typeof user === "object"
+          ? extractActiveUsername(user as TdUser)
+          : null;
+      if (username) {
+        touched = await db
+          .update(contacts)
+          .set({
+            unreadCount: sql`${contacts.unreadCount} + 1`,
+            lastMessageAt: now,
+            properties: sql`${contacts.properties} || jsonb_build_object('tg_user_id', ${senderIdStr}::text)`,
+          })
+          .where(
+            and(
+              eq(contacts.workspaceId, workspaceId),
+              sql`${contacts.properties}->>'telegram_username' = ${username}`,
+              sql`${contacts.properties}->>'tg_user_id' IS NULL`,
+            ),
+          )
+          .returning({
+            id: contacts.id,
+            unreadCount: contacts.unreadCount,
+          });
+      }
+    }
+
+    for (const t of touched) {
+      emitContactChanged(workspaceId, {
+        contactId: t.id,
+        unreadCount: t.unreadCount,
+        lastMessageAt: now.toISOString(),
+      });
+    }
+  } catch (e) {
+    console.error(
+      `[outreach-listener] onNewMessage ${accountId}:`,
+      errMsg(e),
+    );
+  }
+}
+
+async function onReadInbox(
+  workspaceId: string,
+  chatId: number,
+  unreadCount: number,
+): Promise<void> {
+  if (chatId <= 0) return; // только private DM
+  const tgUserIdStr = String(chatId);
+  try {
+    const touched = await db
+      .update(contacts)
+      .set({ unreadCount })
+      .where(
+        and(
+          eq(contacts.workspaceId, workspaceId),
+          sql`${contacts.properties}->>'tg_user_id' = ${tgUserIdStr}`,
+          sql`${contacts.unreadCount} <> ${unreadCount}`,
+        ),
+      )
+      .returning({
+        id: contacts.id,
+        unreadCount: contacts.unreadCount,
+        lastMessageAt: contacts.lastMessageAt,
+      });
+    for (const t of touched) {
+      emitContactChanged(workspaceId, {
+        contactId: t.id,
+        unreadCount: t.unreadCount,
+        lastMessageAt: t.lastMessageAt?.toISOString() ?? null,
+      });
+    }
+  } catch (e) {
+    console.error("[outreach-listener] onReadInbox:", errMsg(e));
+  }
+}
+
+async function onReadOutbox(workspaceId: string, chatId: number): Promise<void> {
+  if (chatId <= 0) return;
+  const tgUserIdStr = String(chatId);
+  const now = new Date();
+  try {
+    const updated = await db
+      .update(scheduledMessages)
+      .set({ readAt: now })
+      .where(
+        and(
+          eq(scheduledMessages.workspaceId, workspaceId),
+          eq(scheduledMessages.status, "sent"),
+          isNull(scheduledMessages.readAt),
+          inArray(
+            scheduledMessages.leadId,
+            db
+              .select({ id: outreachLeads.id })
+              .from(outreachLeads)
+              .where(
+                and(
+                  eq(outreachLeads.workspaceId, workspaceId),
+                  eq(outreachLeads.tgUserId, tgUserIdStr),
+                ),
+              ),
+          ),
+        ),
+      )
+      .returning({ sequenceId: scheduledMessages.sequenceId });
+    for (const seqId of new Set(updated.map((r) => r.sequenceId))) {
+      emitSequenceChanged(seqId);
+    }
+  } catch (e) {
+    console.error("[outreach-listener] onReadOutbox:", errMsg(e));
+  }
+}
+
+// convertLeadToContact:
+//   - находит contact по tg_user_id (если уже есть — переиспользует);
+//   - применяет CRM-автоматизации sequence: contactDefaults +
+//     contactDefaultOwnerIds (round-robin);
+//   - upsert'ит contactId в outreach_leads.
+//
+// sequenceId опциональный — для legacy-вызовов из NewMessage без контекста
+// конкретной sequence (эта ветка просто работает по дефолтным правилам).
+export async function convertLeadToContact(
+  lead: typeof outreachLeads.$inferSelect,
+  sequenceId?: string,
+) {
   if (!lead.tgUserId) return;
 
   let contactId = await findContactByTgUserId(
@@ -245,22 +320,37 @@ async function convertLeadToContact(lead: typeof outreachLeads.$inferSelect) {
   );
 
   if (!contactId) {
-    // createdBy для нового контакта — берём от того, кто загружал список
-    // (это владелец данных). В single-user MVP всё равно один человек.
-    const [list] = await db
-      .select({ createdBy: outreachLists.createdBy })
-      .from(outreachLists)
-      .where(eq(outreachLists.id, lead.listId))
-      .limit(1);
-    if (!list) return; // лист удалён, не за что зацепить createdBy
-
-    // Тянем все property defs workspace одним запросом — используем для:
-    //   1) фильтра lead.properties (raw CSV-keys и unsafe-типы пропускаем)
-    //   2) дефолтного stage = первая опция preset-property `stage`
-    const defs = await db
-      .select()
-      .from(propsTable)
-      .where(eq(propsTable.workspaceId, lead.workspaceId));
+    const [listRows, seqRows, defs] = await Promise.all([
+      db
+        .select({ createdBy: outreachLists.createdBy })
+        .from(outreachLists)
+        .where(eq(outreachLists.id, lead.listId))
+        .limit(1),
+      sequenceId
+        ? db
+            .select({
+              id: outreachSequences.id,
+              contactDefaults: outreachSequences.contactDefaults,
+              contactDefaultOwnerIds: outreachSequences.contactDefaultOwnerIds,
+              contactOwnerRoundRobin: outreachSequences.contactOwnerRoundRobin,
+            })
+            .from(outreachSequences)
+            .where(eq(outreachSequences.id, sequenceId))
+            .limit(1)
+        : Promise.resolve([] as {
+            id: string;
+            contactDefaults: Record<string, unknown>;
+            contactDefaultOwnerIds: string[];
+            contactOwnerRoundRobin: number;
+          }[]),
+      db
+        .select()
+        .from(propsTable)
+        .where(eq(propsTable.workspaceId, lead.workspaceId)),
+    ]);
+    const list = listRows[0];
+    if (!list) return;
+    const seqRow = seqRows[0] ?? null;
     const safeKeys = new Set(
       defs
         .filter((d) => COPY_SAFE_PROPERTY_TYPES.has(d.type))
@@ -279,8 +369,6 @@ async function convertLeadToContact(lead: typeof outreachLeads.$inferSelect) {
     if (safeKeys.has("phone") && lead.phone) {
       props.phone = lead.phone;
     }
-    // Имя: full_name из CSV если был; иначе username/phone как fallback
-    // (контакт без имени в UI выглядит как «Без имени»).
     const fullName =
       (typeof lead.properties.full_name === "string"
         ? lead.properties.full_name
@@ -289,9 +377,6 @@ async function convertLeadToContact(lead: typeof outreachLeads.$inferSelect) {
       lead.phone ||
       "Без имени";
     if (safeKeys.has("full_name")) props.full_name = fullName;
-    // Остальные CSV-колонки → пропускаем через safeKeys-фильтр (исключает
-    // single_select/multi_select/number/email где сырое CSV-string не пройдёт
-    // валидацию). Юзер дозаполнит эти поля руками из карточки контакта.
     for (const [k, v] of Object.entries(lead.properties)) {
       if (k === "full_name") continue;
       if (k === "telegram_username" || k === "phone" || k === "tg_user_id") {
@@ -302,9 +387,26 @@ async function convertLeadToContact(lead: typeof outreachLeads.$inferSelect) {
     }
     if (allKeys.has("stage") && defaultStageId) props.stage = defaultStageId;
 
-    // validateContactProperties отвергает unknown keys / неверные значения.
-    // Мы уже фильтровали по safeKeys, но валидация ловит крайние случаи
-    // (например битый CSV дал не-string значение для text-property).
+    if (seqRow) {
+      for (const [k, v] of Object.entries(seqRow.contactDefaults)) {
+        if (props[k] === undefined && allKeys.has(k)) {
+          props[k] = v;
+        }
+      }
+      if (seqRow.contactDefaultOwnerIds.length > 0 && allKeys.has("owner_id")) {
+        const idx =
+          seqRow.contactOwnerRoundRobin %
+          seqRow.contactDefaultOwnerIds.length;
+        props.owner_id = seqRow.contactDefaultOwnerIds[idx];
+        await db
+          .update(outreachSequences)
+          .set({
+            contactOwnerRoundRobin: sql`${outreachSequences.contactOwnerRoundRobin} + 1`,
+          })
+          .where(eq(outreachSequences.id, seqRow.id));
+      }
+    }
+
     const validated = validateContactProperties(defs, props);
 
     try {
@@ -317,11 +419,12 @@ async function convertLeadToContact(lead: typeof outreachLeads.$inferSelect) {
         })
         .returning({ id: contacts.id });
       contactId = created!.id;
+      emitContactChanged(lead.workspaceId, {
+        contactId,
+        unreadCount: 0,
+        lastMessageAt: null,
+      });
     } catch (e) {
-      // Race: параллельный listener-event для того же лида (или другого
-      // лида с тем же tg_user_id в этом же workspace) уже вставил контакта.
-      // Unique partial index `contacts_workspace_tg_user_id_unique` стрельнул
-      // 23505. Перечитываем — теперь existing найдётся.
       if (!isUniqueViolation(e)) throw e;
       contactId = await findContactByTgUserId(
         lead.workspaceId,
@@ -352,17 +455,4 @@ async function findContactByTgUserId(
     )
     .limit(1);
   return row?.id ?? null;
-}
-
-export function detachListener(accountId: string, client: TelegramClient) {
-  const entry = handlers.get(accountId);
-  if (!entry) return;
-  try {
-    client.removeEventHandler(entry.newMessage, entry.newMessageEvent);
-    client.removeEventHandler(entry.readInbox, entry.readInboxEvent);
-  } catch {
-    // gramjs может не уметь снять handler если internal-state уже сбит при
-    // disconnect — не критично, всё равно сейчас уничтожаем клиента.
-  }
-  handlers.delete(accountId);
 }

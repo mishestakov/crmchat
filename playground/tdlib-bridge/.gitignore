@@ -1,0 +1,5 @@
+node_modules/
+td-database/
+td-database-*/
+*.log
+.env

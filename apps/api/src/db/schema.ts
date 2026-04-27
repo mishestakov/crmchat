@@ -242,13 +242,13 @@ export const contacts = pgTable(
 
 // Личный CRM-аккаунт юзера: один на user (unique constraint), используется для
 // импорта существующих чатов из TG-папок в CRM (см. /settings/telegram-sync).
-// Outreach-аккаунты (для холодных рассылок) — это ОТДЕЛЬНАЯ сущность, придёт
-// в своей таблице (`outreach_accounts` или подобное): multi per workspace, со
-// своим proxy, warmup-pipeline, encrypted secrets, daily rate-limit. Не путать.
+// Outreach-аккаунты (для холодных рассылок) — отдельная сущность в
+// `outreach_accounts`: multi per workspace, со своим proxy, warmup-pipeline,
+// daily rate-limit. Не путать.
 //
-// session — long-lived MTProto session-string от gramjs (StringSession.save()),
-// достаточно чтобы восстановить клиента без повторной аутентификации. Хранится
-// plain в dev; в prod-сборке нужно зашифровать (TODO).
+// MTProto-state живёт в `td-database/personal/<userId>/` (TDLib binlog +
+// per-account peer cache). Эта таблица — справочник «у юзера подключен
+// TG-аккаунт + базовый профиль для UI». Удаление row = drop personal client.
 export const telegramAccounts = pgTable("telegram_accounts", {
   id: text("id").primaryKey().$defaultFn(shortId),
   userId: text("user_id")
@@ -259,7 +259,6 @@ export const telegramAccounts = pgTable("telegram_accounts", {
   tgUsername: text("tg_username"),
   phoneNumber: text("phone_number"),
   firstName: text("first_name"),
-  session: text("session").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -268,8 +267,16 @@ export const telegramAccounts = pgTable("telegram_accounts", {
 // с `telegram_accounts` (личный CRM-аккаунт юзера, импорт чатов).
 //   - Multi per workspace (не unique по чему-либо identifying).
 //   - Жизненный цикл: расходник; при бане — заводят новый.
-//   - session AES-256-GCM шифруется (см. lib/crypto.ts).
-//   - TODO фаза 4: proxy_id, warmup_*, bucket, transport, daily_limit, encrypted server/web sessions.
+//   - Worker MTProto-state (TDLib binlog) живёт per-account в
+//     `td-database/outreach/<accountId>/`.
+//   - iframe_session — ВТОРОЙ независимый MTProto auth_key для TWA-iframe:
+//     зашифрованный JSON `{ mainDcId, keys: { [dcId]: hex } }`. Создаётся
+//     при persist'e через временный TDLib инстанс +
+//     confirmQrCodeAuthentication (см. lib/tdlib/provision-iframe-session.ts).
+//     Один auth_key для worker и iframe не подходит: TG распределяет updates
+//     на активную сессию, и при открытом iframe worker молчит — теряем
+//     incoming/read events.
+//   - TODO фаза 4: proxy_id, warmup_*, bucket, transport, daily_limit.
 export const outreachAccountStatus = pgEnum("outreach_account_status", [
   "active",
   "banned",
@@ -286,17 +293,12 @@ export const outreachAccounts = pgTable(
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
     status: outreachAccountStatus("status").notNull().default("active"),
-    // ДВА разных auth_key на один TG-аккаунт:
-    //   session       — worker'ный (gramjs в Node, отправка + listener updates)
-    //   iframeSession — для TWA-iframe в браузере (postMessage authKey)
-    // Один auth_key для обоих не работает: gramjs и TWA — независимые
-    // MTProto-клиенты без shared update-state. TG распределяет updates на
-    // активную сессию (TWA в открытой вкладке), а worker молчит и теряет
-    // NewMessage / UpdateReadHistoryInbox. iframeSession генерится через
-    // canonical multi-device flow (auth.ExportLoginToken на iframe-клиенте +
-    // auth.AcceptLoginToken через worker — см. provisionIframeSession).
-    session: text("session").notNull(),
-    iframeSession: text("iframe_session").notNull(),
+    // Зашифрованный JSON `{ mainDcId, keys: { [dcId]: hex } }`. NULL'ом сидит
+    // только короткий момент между INSERT row и success'ным
+    // provisionIframeSession; после провижна — заполнен. Если так и остался
+    // NULL (provision упал) — UI зовёт /twa-session, ловит 409 и просит
+    // re-auth.
+    iframeSession: text("iframe_session"),
     tgUserId: text("tg_user_id").notNull(),
     tgUsername: text("tg_username"),
     phoneNumber: text("phone_number"),
@@ -425,6 +427,16 @@ export const outreachLeads = pgTable(
       t.workspaceId,
       t.tgUserId,
     ),
+    // Identity-уникальность лидов в одном листе: username (если есть) ИЛИ
+    // phone — каждый сам по себе уникальный TG-идентификатор. Делаем ДВА
+    // partial unique indexes, потому что один и тот же лид не должен иметь
+    // ни двух записей по username, ни двух по phone.
+    listUsernameUnique: uniqueIndex("outreach_leads_list_username_unique")
+      .on(t.listId, sql`lower(${t.username})`)
+      .where(sql`${t.username} IS NOT NULL`),
+    listPhoneUnique: uniqueIndex("outreach_leads_list_phone_unique")
+      .on(t.listId, t.phone)
+      .where(sql`${t.phone} IS NOT NULL AND ${t.username} IS NULL`),
   }),
 );
 
@@ -446,6 +458,10 @@ export const outreachSequenceStatus = pgEnum("outreach_sequence_status", [
 export const outreachAccountsMode = pgEnum("outreach_accounts_mode", [
   "all",
   "selected",
+]);
+export const contactCreationTrigger = pgEnum("contact_creation_trigger", [
+  "on-reply",
+  "on-first-message-sent",
 ]);
 
 export type OutreachSequenceMessageDelay = {
@@ -482,6 +498,28 @@ export const outreachSequences = pgTable(
       .$type<OutreachSequenceMessage[]>()
       .notNull()
       .default([]),
+    // CRM-автоматизация: когда из лида создавать контакт + кому назначать
+    // (round-robin по списку, пусто = createdBy sequence) + какие свойства
+    // предзаполнить. Применяется в outreach-listener convertLeadToContact и
+    // в worker'е (если trigger = on-first-message-sent — вызывается из
+    // sendOne success-ветки, не дожидаясь ответа лида).
+    contactCreationTrigger: contactCreationTrigger("contact_creation_trigger")
+      .notNull()
+      .default("on-reply"),
+    contactDefaultOwnerIds: jsonb("contact_default_owner_ids")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    contactDefaults: jsonb("contact_defaults")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    // Round-robin counter для contact_default_owner_ids — увеличиваем при
+    // каждом успешном create-contact из этой sequence. Хранится в БД, чтобы
+    // не сбрасываться на рестартах api.
+    contactOwnerRoundRobin: integer("contact_owner_round_robin")
+      .notNull()
+      .default(0),
     activatedAt: timestamp("activated_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     createdBy: text("created_by")
@@ -524,12 +562,17 @@ export const scheduledMessages = pgTable(
       .references(() => outreachLeads.id, { onDelete: "cascade" }),
     accountId: text("account_id")
       .notNull()
-      .references(() => outreachAccounts.id, { onDelete: "restrict" }),
+      .references(() => outreachAccounts.id, { onDelete: "cascade" }),
     messageIdx: integer("message_idx").notNull(),
     text: text("text").notNull(),
     sendAt: timestamp("send_at", { withTimezone: true }).notNull(),
     status: scheduledMessageStatus("status").notNull().default("pending"),
     sentAt: timestamp("sent_at", { withTimezone: true }),
+    // Когда лид прочитал наше сообщение (TG прислал UpdateReadHistoryOutbox).
+    // NULL пока не прочитано. Гранулярность — message-уровень не строгая: TG
+    // даёт max_id, мы помечаем все исходящие в этом диалоге как прочитанные
+    // (для агрегата read-rate этого достаточно).
+    readAt: timestamp("read_at", { withTimezone: true }),
     error: text("error"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

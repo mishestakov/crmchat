@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Loader2 } from "lucide-react";
 import { api } from "../lib/api";
 import { errorMessage } from "../lib/errors";
 import type { ChatPeer } from "../lib/chat-store";
@@ -117,17 +118,40 @@ export function TgChatIframe({ wsId, accountId, peer }: Props) {
     );
   }
 
+  // Готов = auth прошёл + соединение TG установлено + chat list синкнулся.
+  // Только тогда показываем iframe — иначе TWA в процессе init'а перерисовывает
+  // layout (sign-in screen → connecting → chats → chat) и юзер видит мигание.
+  // Iframe всё равно рендерим под overlay'ем, чтобы он успел инициализироваться.
+  const isReady =
+    authState === "authorizationStateReady" &&
+    connectionState === "connectionStateReady" &&
+    isSynced;
+
   return (
     <div className="relative h-full w-full">
       <iframe
         ref={iframeRef}
         src={iframeUrl}
-        className="h-full w-full border-0"
+        className={
+          "h-full w-full border-0 transition-opacity " +
+          (isReady ? "opacity-100" : "opacity-0")
+        }
         title="Telegram chat"
       />
-      {connectionState === "connectionStateBroken" && (
-        <div className="absolute right-2 bottom-2 rounded-md bg-red-100 px-2 py-1 text-xs text-red-700 shadow">
-          Нет коннекта к Telegram
+      {!isReady && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-white">
+          <Loader2 size={28} className="animate-spin text-emerald-500" />
+          <div className="text-sm text-zinc-500">
+            {connectionState === "connectionStateBroken"
+              ? "Нет коннекта к Telegram"
+              : connectionState === "connectionStateConnecting"
+              ? "Подключаемся к Telegram…"
+              : !authState || authState === "authorizationStateWaitTdlibParameters"
+              ? "Загружаем сессию…"
+              : !isSynced
+              ? "Синхронизируем чаты…"
+              : "Загрузка чата…"}
+          </div>
         </div>
       )}
     </div>

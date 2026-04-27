@@ -189,14 +189,25 @@ function SchedulePage() {
           <p className="text-sm text-red-600">{errorMessage(save.error)}</p>
         )}
 
-        <button
-          type="button"
-          onClick={() => save.mutate()}
-          disabled={save.isPending}
-          className="w-full rounded-xl bg-emerald-600 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-        >
-          {save.isPending ? "Сохраняем…" : "Сохранить"}
-        </button>
+        {(() => {
+          // Сравнение draft vs server: глубокое JSON-equal по полному shape.
+          // Кнопка показывается ТОЛЬКО когда есть unsaved changes — иначе
+          // юзер видит «нечего сохранять» вместо мигающей зелёной полоски.
+          const dirty =
+            schedule.data &&
+            JSON.stringify(schedule.data) !== JSON.stringify(draft);
+          if (!dirty) return null;
+          return (
+            <button
+              type="button"
+              onClick={() => save.mutate()}
+              disabled={save.isPending}
+              className="w-full rounded-xl bg-emerald-600 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
+              {save.isPending ? "Сохраняем…" : "Сохранить"}
+            </button>
+          );
+        })()}
       </div>
     </div>
   );

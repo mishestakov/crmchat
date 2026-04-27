@@ -1,7 +1,6 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { streamSSE } from "hono/streaming";
-import { Api } from "telegram";
 import { and, eq, getTableColumns, ilike, or, sql, type SQL } from "drizzle-orm";
 import {
   ContactSchema as BaseContactSchema,
@@ -455,7 +454,7 @@ async function readOnTelegram(
   tgUserId: string,
 ): Promise<void> {
   const [acc] = await db
-    .select({ id: outreachAccounts.id, session: outreachAccounts.session })
+    .select({ id: outreachAccounts.id })
     .from(outreachAccounts)
     .where(
       and(
@@ -469,14 +468,26 @@ async function readOnTelegram(
   const client = await getOutreachWorkerClient({
     id: acc.id,
     workspaceId: wsId,
-    session: acc.session,
   });
   if (!client) return;
 
-  // getInputEntity резолвит peer (берёт accessHash из gramjs session-cache,
-  // или dotchает getEntity если нужно). messages.ReadHistory maxId=0 = «всё».
-  const peer = await client.getInputEntity(tgUserId);
-  await client.invoke(new Api.messages.ReadHistory({ peer, maxId: 0 }));
+  // В TDLib для приватных DM chat_id == user_id. Берём last_message из getChat
+  // и зовём viewMessages с force_read — это то, что делает Telegram-клиент
+  // когда юзер открывает чат и видит сообщения.
+  const chatId = Number(tgUserId);
+  const chat = (await client.invoke({
+    _: "getChat",
+    chat_id: chatId,
+  } as never)) as { last_message?: { id: number } };
+  const lastId = chat.last_message?.id;
+  if (!lastId) return;
+  await client.invoke({
+    _: "viewMessages",
+    chat_id: chatId,
+    message_ids: [lastId],
+    source: { _: "messageSourceChatHistory" },
+    force_read: true,
+  } as never);
 }
 
 // SSE-стрим контактных апдейтов. Фронт открывает один EventSource на канбан,

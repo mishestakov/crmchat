@@ -1,6 +1,5 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { Api, type TelegramClient } from "telegram";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db/client";
 import { outreachAccounts } from "../db/schema";
@@ -11,29 +10,22 @@ import {
   getOrCreatePendingOutreachClient,
   persistOutreachAccount,
 } from "../lib/outreach-account-client";
-import { qrKey, streamQrState } from "../lib/qr-token-cache";
-import { tgApiHash as apiHash, tgApiId as apiId } from "../lib/telegram-client";
+import { tryDecrypt } from "../lib/crypto";
 import {
-  pickActiveUsername,
-  type TgPendingHelpers,
-  tgReadQrState,
-  tgSendCode,
-  tgSignIn,
-  tgSignInPassword,
-} from "../lib/tg-auth";
-import { toTwaSession } from "../lib/twa-session";
+  streamAuthState,
+  tdRequestQr,
+  tdSendCode,
+  tdSignInCode,
+  tdSignInPassword,
+  type AuthState,
+} from "../lib/tdlib";
 import type { WorkspaceVars } from "../middleware/assert-member";
 
 // Outreach-аккаунты: ОТПРАВЛЯЮЩИЕ TG-аккаунты для холодных рассылок (multi per
-// workspace). Auth-флоу делит реализацию с user-scoped /v1/telegram/* через
-// lib/tg-auth; разница только в pending-кэше (per workspace) и postauth-логике
-// (persistOutreachAccount возвращает accountId, плюс держит worker+iframe).
-
-const helpers = (wsId: string): TgPendingHelpers => ({
-  getPending: () => getOrCreatePendingOutreachClient(wsId),
-  clearPending: () => clearPendingOutreachClient(wsId),
-  cacheKey: qrKey.outreach(wsId),
-});
+// workspace). Auth-флоу через TDLib state-machine: HTTP-ручки вызывают
+// нужные методы (sendCode/signIn/signInPassword/qr), а UI следит за прогрессом
+// через SSE qr-stream, который мапит updateAuthorizationState в дискретные
+// state'ы.
 
 const WsParam = z.object({ wsId: z.string().min(1).max(64) });
 const WsAccountParam = z.object({
@@ -57,9 +49,8 @@ const PatchAccountBody = z.object({
   newLeadsDailyLimit: z.number().int().min(0).max(1000).optional(),
 });
 
-// Session в формате который ждёт TG-клиент (apps/tg-client). Это фактически
-// authKey + dcId из gramjs StringSession в hex-формате. Передаётся фронту →
-// фронт через postMessage инжектит в iframe.
+// TWA session: { mainDcId, keys: { [dcId]: hexAuthKey } } — формат, который
+// принимает apps/tg-client. Получается через TDLib getRawAuthKey patch.
 const TwaSessionResponseSchema = z.object({
   session: z.object({
     mainDcId: z.number().int(),
@@ -83,7 +74,6 @@ function serializeAccount(r: typeof outreachAccounts.$inferSelect) {
 }
 
 const SendCodeRespSchema = z.object({
-  phoneCodeHash: z.string(),
   isCodeViaApp: z.boolean(),
 });
 
@@ -98,7 +88,6 @@ const SignInPasswordRespSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("sign_in_complete"), accountId: z.string() }),
   z.object({ status: z.literal("password_invalid") }),
 ]);
-
 
 const app = new OpenAPIHono<{ Variables: WorkspaceVars }>();
 
@@ -183,8 +172,6 @@ app.openapi(
     const [row] = await db
       .update(outreachAccounts)
       .set({
-        // Drizzle игнорит undefined-поля, не пишет их в SET. Если body пустой —
-        // фактически апдейтится только updatedAt (idempotent ping).
         newLeadsDailyLimit: body.newLeadsDailyLimit,
         updatedAt: new Date(),
       })
@@ -227,13 +214,25 @@ app.openapi(
       )
       .limit(1);
     if (!row) throw new HTTPException(404, { message: "account not found" });
+    if (!row.iframeSession) {
+      throw new HTTPException(409, {
+        message: "iframe session unavailable, re-auth required",
+      });
+    }
 
-    // iframeSession — отдельный auth_key, изолированный от worker'ной session
-    // (см. provisionIframeSession в outreach-account-client.ts).
-    const session = await toTwaSession(row.iframeSession);
-    if (!session) {
+    const decoded = tryDecrypt(row.iframeSession);
+    if (!decoded) {
       throw new HTTPException(409, {
         message: "iframe session corrupted, re-auth required",
+      });
+    }
+    let session: { mainDcId: number; keys: Record<number, string> };
+    try {
+      session = JSON.parse(decoded);
+    } catch (e) {
+      console.error(`[twa-session] parse failed for ${accountId}:`, errMsg(e));
+      throw new HTTPException(409, {
+        message: "iframe session malformed, re-auth required",
       });
     }
 
@@ -271,9 +270,11 @@ app.openapi(
     const wsId = c.get("workspaceId");
     const { phoneNumber } = c.req.valid("json");
     try {
-      return c.json(
-        await tgSendCode(helpers(wsId), apiId, apiHash, phoneNumber),
-      );
+      // Свежий клиент: предыдущая попытка могла оставить устаревший phone-state.
+      await clearPendingOutreachClient(wsId);
+      const pending = await getOrCreatePendingOutreachClient(wsId);
+      const r = await tdSendCode(pending, phoneNumber);
+      return c.json(r);
     } catch (e) {
       throw new HTTPException(400, { message: errMsg(e) });
     }
@@ -291,9 +292,7 @@ app.openapi(
         content: {
           "application/json": {
             schema: z.object({
-              phoneNumber: z.string().min(5).max(32),
               phoneCode: z.string().min(1).max(16),
-              phoneCodeHash: z.string().min(1),
             }),
           },
         },
@@ -310,16 +309,17 @@ app.openapi(
   async (c) => {
     const wsId = c.get("workspaceId");
     const userId = c.get("userId");
-    const args = c.req.valid("json");
+    const { phoneCode } = c.req.valid("json");
     try {
-      const r = await tgSignIn(helpers(wsId), args);
+      const pending = await getOrCreatePendingOutreachClient(wsId);
+      const r = await tdSignInCode(pending, phoneCode);
       if (r.kind === "user_not_found")
         return c.json({ status: "user_not_found" as const });
       if (r.kind === "password_needed")
         return c.json({ status: "password_needed" as const });
       if (r.kind === "phone_code_invalid")
         return c.json({ status: "phone_code_invalid" as const });
-      const acc = await afterAuth(wsId, userId, r.client);
+      const acc = await persistOutreachAccount(wsId, userId, pending);
       return c.json({
         status: "sign_in_complete" as const,
         accountId: acc.id,
@@ -360,10 +360,11 @@ app.openapi(
     const userId = c.get("userId");
     const { password } = c.req.valid("json");
     try {
-      const r = await tgSignInPassword(helpers(wsId), password);
+      const pending = await getOrCreatePendingOutreachClient(wsId);
+      const r = await tdSignInPassword(pending, password);
       if (r.kind === "password_invalid")
         return c.json({ status: "password_invalid" as const });
-      const acc = await afterAuth(wsId, userId, r.client);
+      const acc = await persistOutreachAccount(wsId, userId, pending);
       return c.json({
         status: "sign_in_complete" as const,
         accountId: acc.id,
@@ -374,30 +375,50 @@ app.openapi(
   },
 );
 
-app.get(
-  "/v1/workspaces/:wsId/outreach/accounts/auth/qr-stream",
-  (c) => {
-    const wsId = c.get("workspaceId");
-    const userId = c.get("userId");
-    return streamQrState(
-      c,
-      qrKey.outreach(wsId),
-      async () => {
-        const r = await tgReadQrState(
-          helpers(wsId),
-          apiId,
-          apiHash,
-          (client) => afterAuth(wsId, userId, client),
-        );
-        if (r.status === "success") {
-          return { status: "success" as const, accountId: r.data.id };
-        }
-        return r;
-      },
-      (s) => s.status !== "scan-qr-code",
-    );
-  },
-);
+app.get("/v1/workspaces/:wsId/outreach/accounts/auth/qr-stream", async (c) => {
+  const wsId = c.get("workspaceId");
+  const userId = c.get("userId");
+  // Свежий pending-клиент для QR-флоу, и сразу invoke requestQrCodeAuthentication
+  // — TDLib ответит updateAuthorizationStateWaitOtherDeviceConfirmation с link'ом,
+  // который streamAuthState прочитает из current().
+  await clearPendingOutreachClient(wsId);
+  const pending = await getOrCreatePendingOutreachClient(wsId);
+  await tdRequestQr(pending);
+
+  type QrState =
+    | { status: "scan-qr-code"; token: string }
+    | { status: "password_needed" }
+    | { status: "success"; accountId: string }
+    | { status: "error"; message: string };
+
+  // success-ветку обрабатываем ровно один раз (persist + clear pending).
+  let persisted: { id: string } | null = null;
+  let errored: string | null = null;
+
+  const read = async (): Promise<QrState> => {
+    if (persisted) return { status: "success", accountId: persisted.id };
+    if (errored) return { status: "error", message: errored };
+    const s: AuthState = pending.authBus.current();
+    if (s.kind === "wait_qr") return { status: "scan-qr-code", token: s.link };
+    if (s.kind === "wait_password") return { status: "password_needed" };
+    if (s.kind === "ready") {
+      try {
+        persisted = await persistOutreachAccount(wsId, userId, pending);
+        return { status: "success", accountId: persisted.id };
+      } catch (e) {
+        errored = errMsg(e);
+        return { status: "error", message: errored };
+      }
+    }
+    // wait_phone_or_qr / wait_tdlib_parameters — скрываем за scan-qr-code,
+    // фронт ждёт нашего link'а и не паникует.
+    return { status: "scan-qr-code", token: "" };
+  };
+
+  return streamAuthState(c, pending.authBus, read, (s) => {
+    return s.status === "success" || s.status === "password_needed" || s.status === "error";
+  });
+});
 
 app.openapi(
   createRoute({
@@ -415,23 +436,5 @@ app.openapi(
     return c.body(null, 204);
   },
 );
-
-// Финал auth: getMe → persist (dedup по uniq workspace+tg_user_id), чистим pending.
-async function afterAuth(
-  workspaceId: string,
-  userId: string,
-  client: TelegramClient,
-): Promise<{ id: string }> {
-  const user = (await client.getMe()) as Api.User;
-  const acc = await persistOutreachAccount(workspaceId, userId, client, {
-    tgUserId: String(user.id),
-    tgUsername: pickActiveUsername(user),
-    phoneNumber: user.phone ?? null,
-    firstName: user.firstName ?? null,
-    hasPremium: !!user.premium,
-  });
-  await clearPendingOutreachClient(workspaceId);
-  return acc;
-}
 
 export default app;

@@ -1,0 +1,69 @@
+diff --git a/td/generate/scheme/td_api.tl b/td/generate/scheme/td_api.tl
+index 836ca4b8a..6bd2bc341 100644
+--- a/td/generate/scheme/td_api.tl
++++ b/td/generate/scheme/td_api.tl
+@@ -8526,6 +8526,9 @@ session id:int64 is_current:Bool is_password_pending:Bool is_unconfirmed:Bool ca
+ //@description Contains a list of sessions @sessions List of sessions @inactive_session_ttl_days Number of days of inactivity before sessions will automatically be terminated; 1-366 days
+ sessions sessions:vector<session> inactive_session_ttl_days:int32 = Sessions;
+ 
++//@description Raw MTProto auth_key material for a single data center. crmchat extension. @dc_id Telegram DC id, 1..5 @auth_key Raw 256-byte MTProto auth_key
++authKeyData dc_id:int32 auth_key:bytes = AuthKeyData;
++
+ //@description Contains information about an unconfirmed session
+ //@id Session identifier
+ //@log_in_date Point in time (Unix timestamp) when the user has logged in
+@@ -14146,6 +14149,9 @@ removeMessageSenderBotVerification bot_user_id:int53 verified_id:MessageSender =
+ //@description Returns all active sessions of the current user
+ getActiveSessions = Sessions;
+ 
++//@description Returns raw MTProto auth_key material for the requested data center. crmchat extension. Returns 404 if the auth_key for the DC has not been negotiated yet @dc_id Target Telegram DC id (1..5)
++getRawAuthKey dc_id:int32 = AuthKeyData;
++
+ //@description Terminates a session of the current user @session_id Session identifier
+ terminateSession session_id:int64 = Ok;
+ 
+diff --git a/td/telegram/Requests.cpp b/td/telegram/Requests.cpp
+index 097e79518..11f5ccbd2 100644
+--- a/td/telegram/Requests.cpp
++++ b/td/telegram/Requests.cpp
+@@ -104,6 +104,7 @@
+ #include "td/telegram/MessageTopic.h"
+ #include "td/telegram/MessageTtl.h"
+ #include "td/telegram/misc.h"
++#include "td/telegram/net/AuthDataShared.h"
+ #include "td/telegram/net/ConnectionCreator.h"
+ #include "td/telegram/net/NetQueryDispatcher.h"
+ #include "td/telegram/net/NetStatsManager.h"
+@@ -2536,6 +2537,19 @@ void Requests::on_request(uint64 id, const td_api::getActiveSessions &request) {
+   td_->account_manager_->get_active_sessions(std::move(promise));
+ }
+ 
++void Requests::on_request(uint64 id, const td_api::getRawAuthKey &request) {
++  CHECK_IS_USER();
++  if (!DcId::is_valid(request.dc_id_)) {
++    return send_error_raw(id, 400, "Invalid DC id");
++  }
++  auto auth_key = AuthDataShared::get_auth_key_for_dc(DcId::internal(request.dc_id_));
++  if (auth_key.empty()) {
++    return send_error_raw(id, 404, "No auth_key for the requested DC");
++  }
++  send_closure(td_actor_, &Td::send_result, id,
++               td_api::make_object<td_api::authKeyData>(request.dc_id_, auth_key.key()));
++}
++
+ void Requests::on_request(uint64 id, const td_api::terminateSession &request) {
+   CHECK_IS_USER();
+   CREATE_OK_REQUEST_PROMISE();
+diff --git a/td/telegram/Requests.h b/td/telegram/Requests.h
+index 7aec153a5..a9c077bb8 100644
+--- a/td/telegram/Requests.h
++++ b/td/telegram/Requests.h
+@@ -230,6 +230,8 @@ class Requests {
+ 
+   void on_request(uint64 id, const td_api::getActiveSessions &request);
+ 
++  void on_request(uint64 id, const td_api::getRawAuthKey &request);
++
+   void on_request(uint64 id, const td_api::terminateSession &request);
+ 
+   void on_request(uint64 id, const td_api::terminateAllOtherSessions &request);

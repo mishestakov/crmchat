@@ -1,6 +1,3 @@
-import { Api } from "telegram";
-import type { TelegramClient } from "telegram";
-import { FloodWaitError, SlowModeWaitError } from "telegram/errors";
 import { and, asc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import {
@@ -12,42 +9,34 @@ import {
 } from "../db/schema";
 import { errMsg } from "./errors";
 import {
+  accountCooldownUntil,
   evictWorkerClient,
   getOutreachWorkerClient,
 } from "./outreach-account-client";
 import { emitSequenceChanged } from "./outreach-events";
+import { convertLeadToContact } from "./outreach-listener";
 import { isNowInWindow, startOfDayInTz } from "./outreach-schedule";
+import type { TdClient } from "./tdlib";
 
 // Outbound worker для холодных рассылок. Каждый tick:
 //   1) забирает pending scheduled_messages где send_at<=now AND sequence.status=active
 //   2) группирует по account, кэпит N штук на account за tick
 //   3) для каждого account: проверяет workspace.outreachSchedule + per-account
-//      daily-limit; шлёт через gramjs с человекоподобной паузой между сообщениями
+//      daily-limit; шлёт через TDLib с человекоподобной паузой между сообщениями
 //   4) автоматически переводит sequence в completed когда нет pending
 //
 // Concurrency: один tick не пересекается с другим (флаг `tickRunning`); внутри
-// tick'а аккаунты обрабатываются параллельно (у каждого свой gramjs-клиент).
+// tick'а аккаунты обрабатываются параллельно (у каждого свой TDLib-клиент).
 
 const TICK_INTERVAL_MS = 10_000;
 const MAX_PER_TICK_GLOBAL = 500;
 const MAX_PER_ACCOUNT_PER_TICK = 5;
-// Рандомизированная пауза между sends внутри одного аккаунта — чтобы выглядело
-// как живой человек, а не bulk-скрипт. Крутить когда поймёт что слишком быстро.
 const MIN_INTER_SEND_PAUSE_MS = 3_000;
 const MAX_INTER_SEND_PAUSE_MS = 8_000;
 
 let timer: ReturnType<typeof setInterval> | null = null;
 let tickRunning = false;
 
-// Per-account cooldown в памяти. Заполняется при ловле FloodWait/SlowMode —
-// account полностью пропускается до этого момента. На рестарт процесса
-// потеряется и при первой попытке заново словим тот же FloodWait, начнём
-// с новым cooldown'ом — не критично, аккаунт сразу же снова уснёт.
-//
-// Можно было бы хранить в DB (outreach_accounts.cooldown_until), но это
-// rate-limit hint от MTProto — он валиден короткое время, и пере-словить
-// тот же error при cold-start не страшнее чем lose pending в.памяти.
-const accountCooldownUntil = new Map<string, number>();
 
 export function startOutreachWorker() {
   if (timer) return;
@@ -55,12 +44,10 @@ export function startOutreachWorker() {
   timer = setInterval(() => {
     void tick();
   }, TICK_INTERVAL_MS);
-  // Eagerly поднимаем все active outreach-аккаунты на старте процесса.
-  // Это НЕ polling: gramjs держит постоянное MTProto TCP-соединение к
-  // серверам TG, и наш `addEventHandler(NewMessage)` срабатывает push'ом
-  // в момент прихода update'а (миллисекунды). Если не warm'ить — клиент
-  // поднимется только при первой исходящей, до этого ответы лидов будут
-  // молча идти в эфир мимо нас.
+  // Eagerly поднимаем все active outreach-аккаунты на старте процесса. TDLib
+  // сам держит постоянный TCP к серверам TG и вызывает наш update-handler
+  // push'ом. warmup нужен чтобы listener поднялся до первой исходящей —
+  // иначе ответы лидов уйдут мимо нас.
   void warmupListeners();
   void tick();
 }
@@ -71,13 +58,11 @@ async function warmupListeners() {
       .select({
         id: outreachAccounts.id,
         workspaceId: outreachAccounts.workspaceId,
-        session: outreachAccounts.session,
       })
       .from(outreachAccounts)
       .where(eq(outreachAccounts.status, "active"));
-    // Чанки по WARMUP_CONCURRENCY: 50 одновременных MTProto handshake'ов
-    // выглядят для TG как подозрительный bulk и могут получить временный
-    // ban. По 5 — безопасно и достаточно быстро.
+    // Чанки по WARMUP_CONCURRENCY: TDLib инстансы тяжёлые на старте (binlog
+    // load + handshake), толпой стартовать дорого по RAM/CPU.
     const WARMUP_CONCURRENCY = 5;
     for (let i = 0; i < accounts.length; i += WARMUP_CONCURRENCY) {
       const batch = accounts.slice(i, i + WARMUP_CONCURRENCY);
@@ -113,44 +98,12 @@ async function tick() {
   if (tickRunning) return;
   tickRunning = true;
   try {
-    // Сначала восстанавливаем умершие listener-клиенты (TG idle/network drop):
-    // без этого после первого disconnect'а inbound-апдейты молча перестают
-    // приходить, потому что getOutreachWorkerClient вызывается лениво только
-    // на исходящие.
-    await reviveDeadListeners();
     await runTick();
   } catch (e) {
     console.error("[outreach-worker] tick failed:", errMsg(e));
   } finally {
     tickRunning = false;
   }
-}
-
-// Профилактический lazy-revive: если кэшированный client мёртв (TCP drop /
-// idle), `getOutreachWorkerClient` пересоздаст его и повторно подпишет
-// listener. Без этого после disconnect'а inbound-апдейты молча не приходили
-// бы пока кто-то не дёрнет outgoing-операцию.
-async function reviveDeadListeners(): Promise<void> {
-  const accounts = await db
-    .select({
-      id: outreachAccounts.id,
-      workspaceId: outreachAccounts.workspaceId,
-      session: outreachAccounts.session,
-    })
-    .from(outreachAccounts)
-    .where(eq(outreachAccounts.status, "active"));
-  await Promise.all(
-    accounts.map(async (a) => {
-      try {
-        await getOutreachWorkerClient(a);
-      } catch (e) {
-        console.error(
-          `[outreach-worker] revive ${a.id}:`,
-          errMsg(e),
-        );
-      }
-    }),
-  );
 }
 
 async function runTick() {
@@ -161,6 +114,7 @@ async function runTick() {
       sequenceId: scheduledMessages.sequenceId,
       leadId: scheduledMessages.leadId,
       accountId: scheduledMessages.accountId,
+      messageIdx: scheduledMessages.messageIdx,
       text: scheduledMessages.text,
       workspaceId: scheduledMessages.workspaceId,
     })
@@ -181,8 +135,6 @@ async function runTick() {
 
   if (due.length === 0) return;
 
-  // Группируем по account + лимитим. Лиды распределены round-robin при
-  // активации, так что 500 due легко могут разлететься на 5+ аккаунтов.
   const byAccount = new Map<string, typeof due>();
   for (const r of due) {
     let list = byAccount.get(r.accountId);
@@ -198,13 +150,12 @@ async function runTick() {
       processAccount(accountId, items).catch((e) =>
         console.error(
           `[outreach-worker] account ${accountId}:`,
-          errMsg(e),
+          e instanceof Error ? (e.stack ?? e.message) : String(e),
         ),
       ),
     ),
   );
 
-  // После всех отправок — посмотреть какие sequences можно закрыть.
   const sequenceIds = [...new Set(due.map((r) => r.sequenceId))];
   await Promise.all(sequenceIds.map((id) => maybeCompleteSequence(id)));
 }
@@ -214,51 +165,64 @@ type DueItem = {
   sequenceId: string;
   leadId: string;
   accountId: string;
+  messageIdx: number;
   text: string;
   workspaceId: string;
 };
+
+const NEW_LEAD_MIN_INTERVAL_MS = 60_000;
 
 async function processAccount(accountId: string, items: DueItem[]) {
   const cooldown = accountCooldownUntil.get(accountId);
   if (cooldown && cooldown > Date.now()) return;
   if (cooldown && cooldown <= Date.now()) accountCooldownUntil.delete(accountId);
 
-  const [account] = await db
-    .select()
+  // Один JOIN-SELECT вместо двух round-trip'ов: account + outreachSchedule
+  // — обе таблицы маленькие, индексы по PK.
+  const [row] = await db
+    .select({
+      account: outreachAccounts,
+      outreachSchedule: workspaces.outreachSchedule,
+    })
     .from(outreachAccounts)
+    .innerJoin(workspaces, eq(workspaces.id, outreachAccounts.workspaceId))
     .where(eq(outreachAccounts.id, accountId))
     .limit(1);
-  if (!account || account.status !== "active") return;
+  if (!row || row.account.status !== "active") return;
+  const { account, outreachSchedule } = row;
 
-  const [ws] = await db
-    .select({ outreachSchedule: workspaces.outreachSchedule })
-    .from(workspaces)
-    .where(eq(workspaces.id, account.workspaceId))
-    .limit(1);
-  if (!ws) return;
+  if (!isNowInWindow(outreachSchedule, new Date())) return;
 
-  if (!isNowInWindow(ws.outreachSchedule, new Date())) return;
+  // Daily-stats тащим только если в tick'е есть first-message слот (msg_idx=0):
+  // для follow-up only это пустая трата round-trip'а.
+  const hasFirstMessage = items.some((it) => it.messageIdx === 0);
+  let newLeadsRemaining = account.newLeadsDailyLimit;
+  let lastNewLeadInTick = 0;
+  if (hasFirstMessage) {
+    const { newLeadsToday, lastNewLeadAt } = await getNewLeadsStatsToday(
+      accountId,
+      outreachSchedule.timezone,
+    );
+    newLeadsRemaining = account.newLeadsDailyLimit - newLeadsToday;
+    lastNewLeadInTick = lastNewLeadAt?.getTime() ?? 0;
+  }
 
-  const sentToday = await countSentToday(
-    accountId,
-    ws.outreachSchedule.timezone,
-  );
-  let remaining = account.newLeadsDailyLimit - sentToday;
-  if (remaining <= 0) return;
-
-  const client = await getOutreachWorkerClient(account);
+  const client = await getOutreachWorkerClient({
+    id: account.id,
+    workspaceId: account.workspaceId,
+  });
   if (!client) {
-    // Session corrupted (legacy plain или дешифровка не прошла). Mark
-    // unauthorized — UI попросит юзера повторно залогиниться.
-    await db
-      .update(outreachAccounts)
-      .set({ status: "unauthorized", updatedAt: new Date() })
-      .where(eq(outreachAccounts.id, accountId));
+    // Не помечаем unauthorized: spawn мог упасть по временной причине
+    // (TDLIB_LIBDIR не проброшен после HMR, dir заблокирован файлами,
+    // network blip). status переключаем только когда TDLib явно сообщил
+    // logged_out / closed (см. markUnauthorized в outreach-account-client.ts)
+    // или sendOne словил AUTH_KEY-style ошибку (см. ниже).
+    console.warn(
+      `[outreach-worker] worker client unavailable for ${accountId}, retry next tick`,
+    );
     return;
   }
 
-  // Один SELECT для всех лидов tick'а вместо N+1 в цикле. Worker hot path,
-  // экономит N round-trip'ов на каждом аккаунте.
   const leadRows = await db
     .select()
     .from(outreachLeads)
@@ -271,8 +235,10 @@ async function processAccount(accountId: string, items: DueItem[]) {
   const leadById = new Map(leadRows.map((l) => [l.id, l]));
 
   for (let i = 0; i < items.length; i++) {
-    if (remaining <= 0) break;
     const item = items[i]!;
+    if (newLeadsRemaining <= 0 && item.messageIdx === 0) {
+      continue;
+    }
     const lead = leadById.get(item.leadId);
     if (!lead) {
       await db
@@ -283,12 +249,6 @@ async function processAccount(accountId: string, items: DueItem[]) {
       continue;
     }
 
-    // Reply-check: лид ответил → не шлём ничего больше, в любой sequence.
-    // Listener (outreach-listener.ts) при NewMessage event пишет lead.replied_at
-    // и сам отменяет pending. Этот guard НЕ ИЗБЫТОЧНЫЙ — listener-событие
-    // могло прилететь в зазоре между runTick→processAccount→этот цикл, когда
-    // мы уже взяли scheduled_message в работу. Без перепроверки можем послать
-    // лишнее. Не удалять как «дубликат listener'а».
     if (lead.repliedAt) {
       const cancelled = await db
         .update(scheduledMessages)
@@ -306,11 +266,17 @@ async function processAccount(accountId: string, items: DueItem[]) {
       continue;
     }
 
+    if (item.messageIdx === 0) {
+      const elapsed = Date.now() - lastNewLeadInTick;
+      if (elapsed < NEW_LEAD_MIN_INTERVAL_MS) continue;
+    }
+
     try {
       const { tgUserId } = await sendOne(client, lead, item.text);
+      const now = new Date();
       await db
         .update(scheduledMessages)
-        .set({ status: "sent", sentAt: new Date() })
+        .set({ status: "sent", sentAt: now })
         .where(eq(scheduledMessages.id, item.id));
       if (tgUserId && !lead.tgUserId) {
         await db
@@ -319,38 +285,39 @@ async function processAccount(accountId: string, items: DueItem[]) {
           .where(eq(outreachLeads.id, lead.id));
       }
       emitSequenceChanged(item.sequenceId);
-      remaining--;
+      if (item.messageIdx === 0) {
+        newLeadsRemaining--;
+        lastNewLeadInTick = now.getTime();
+
+        void maybeCreateContactOnFirstSent(item.sequenceId, item.leadId).catch(
+          (e) =>
+            console.error(
+              `[outreach-worker] convert lead ${item.leadId} on-first-sent:`,
+              errMsg(e),
+            ),
+        );
+      }
     } catch (e) {
-      if (e instanceof FloodWaitError || e instanceof SlowModeWaitError) {
-        // FloodWait — TG явно сказал сколько ждать. Уважаем секунда-в-секунду
-        // (+ небольшой jitter), иначе аккаунт быстро прогорит. Применяем
-        // ко ВСЕМУ аккаунту, потому что flood-bucket per-account/method.
-        const waitMs = (e.seconds + 5) * 1000;
+      const msg = errMsg(e);
+      const flood = parseFloodWaitSeconds(msg);
+      if (flood !== null) {
+        const waitMs = (flood + 5) * 1000;
         accountCooldownUntil.set(accountId, Date.now() + waitMs);
-        // Сдвинуть send_at этого сообщения чтобы не подбирать его сразу как
-        // только cooldown снимется — иначе на тике после cooldown снова
-        // словим тот же flood за первое же сообщение.
         await db
           .update(scheduledMessages)
           .set({ sendAt: new Date(Date.now() + waitMs) })
           .where(eq(scheduledMessages.id, item.id));
-        // sendAt в UI колонке «Дальше» сдвинулся — push фронту чтобы он
-        // увидел новую дату без ожидания следующего sent/failed.
         emitSequenceChanged(item.sequenceId);
         console.warn(
-          `[outreach-worker] FloodWait on account ${accountId}: ${e.seconds}s`,
+          `[outreach-worker] FloodWait on account ${accountId}: ${flood}s`,
         );
         return;
       }
-      const msg = errMsg(e);
-      if (isAccountKilledError(msg)) {
-        const newStatus: "unauthorized" | "banned" =
-          /AUTH_KEY|SESSION_(REVOKED|EXPIRED)/.test(msg)
-            ? "unauthorized"
-            : "banned";
+      const killed = classifyKilled(msg);
+      if (killed) {
         await db
           .update(outreachAccounts)
-          .set({ status: newStatus, updatedAt: new Date() })
+          .set({ status: killed, updatedAt: new Date() })
           .where(eq(outreachAccounts.id, accountId));
         await evictWorkerClient(accountId);
         return;
@@ -362,10 +329,9 @@ async function processAccount(accountId: string, items: DueItem[]) {
           .where(eq(scheduledMessages.id, item.id));
         emitSequenceChanged(item.sequenceId);
       }
-      // Иначе (SERVER_ERROR, transient network) — оставляем pending.
     }
 
-    if (i < items.length - 1 && remaining > 0) {
+    if (i < items.length - 1) {
       await sleep(
         MIN_INTER_SEND_PAUSE_MS +
           Math.random() * (MAX_INTER_SEND_PAUSE_MS - MIN_INTER_SEND_PAUSE_MS),
@@ -377,92 +343,143 @@ async function processAccount(accountId: string, items: DueItem[]) {
 type LeadRow = typeof outreachLeads.$inferSelect;
 
 async function sendOne(
-  client: TelegramClient,
+  client: TdClient,
   lead: LeadRow,
   text: string,
 ): Promise<{ tgUserId: string | null }> {
-  // TODO phone-only: реализовать через `Api.contacts.ImportContacts` с
-  // `clientId: bigInt(...)`. big-integer установлен как direct dep, но юзер
-  // решил отложить до подтверждения, что фича реально нужна. См. DECISIONS.md
-  // секция «Outreach» → «Phone-only лиды (отложено)».
   if (!lead.username) {
     throw new Error(
       "PHONE_NOT_SUPPORTED — phone-only лиды пока нельзя отправлять, нужен @username",
     );
   }
 
-  const sent = await client.sendMessage(lead.username, { message: text });
+  // searchPublicChat резолвит @username в Chat. Для DM chat.id == user_id
+  // получателя (TDLib convention для chatTypePrivate).
+  const chat = (await client.invoke({
+    _: "searchPublicChat",
+    username: stripAt(lead.username),
+  } as never)) as { id: number | string; type?: { _?: string; user_id?: number } };
 
-  // tgUserId извлекаем из самого Message-результата, БЕЗ дополнительного
-  // getEntity — иначе на каждое первое сообщение лиду уходит лишний
-  // resolveUsername RPC. У DM peerId всегда PeerUser с userId получателя.
+  await client.invoke({
+    _: "sendMessage",
+    chat_id: chat.id,
+    input_message_content: {
+      _: "inputMessageText",
+      text: { _: "formattedText", text, entities: [] },
+      link_preview_options: { _: "linkPreviewOptions", is_disabled: true },
+      clear_draft: false,
+    },
+  } as never);
+
   let tgUserId: string | null = null;
-  if (sent.peerId instanceof Api.PeerUser) {
-    tgUserId = String(sent.peerId.userId);
+  if (chat.type?._ === "chatTypePrivate" && chat.type.user_id != null) {
+    tgUserId = String(chat.type.user_id);
+  } else if (typeof chat.id === "number" && chat.id > 0) {
+    tgUserId = String(chat.id);
   }
   return { tgUserId };
 }
 
-// Permanent failure: gramjs ошибки которые НЕ исчезнут на следующем tick'е.
-// Помечаем scheduled_message=failed чтобы не перевыбирать.
+function stripAt(s: string): string {
+  return s.startsWith("@") ? s.slice(1) : s;
+}
+
+function parseFloodWaitSeconds(msg: string): number | null {
+  // TDLib переписывает MTProto FLOOD_WAIT в "Too Many Requests: retry after N",
+  // но для некоторых методов оставляет MTProto-style текст.
+  const m1 = msg.match(/retry after (\d+)/i);
+  if (m1) return Number(m1[1]);
+  const m2 = msg.match(/FLOOD_WAIT_(\d+)/);
+  if (m2) return Number(m2[1]);
+  const m3 = msg.match(/SLOWMODE_WAIT_(\d+)/);
+  if (m3) return Number(m3[1]);
+  return null;
+}
+
 function isPermanentSendError(msg: string): boolean {
-  return /USERNAME_INVALID|USERNAME_NOT_OCCUPIED|PEER_FLOOD|USER_PRIVACY_RESTRICTED|USER_IS_BLOCKED|USER_DEACTIVATED|YOU_BLOCKED_USER|CHAT_WRITE_FORBIDDEN|INPUT_USER_DEACTIVATED|PHONE_NOT_SUPPORTED|MESSAGE_EMPTY|MESSAGE_TOO_LONG/.test(
+  return /USERNAME_INVALID|USERNAME_NOT_OCCUPIED|PEER_FLOOD|USER_PRIVACY_RESTRICTED|USER_IS_BLOCKED|USER_DEACTIVATED|YOU_BLOCKED_USER|CHAT_WRITE_FORBIDDEN|INPUT_USER_DEACTIVATED|PHONE_NOT_SUPPORTED|MESSAGE_EMPTY|MESSAGE_TOO_LONG|No such public user|Username not occupied|Bot can't initiate conversation/i.test(
     msg,
   );
 }
 
-// Account-killed: gramjs ошибки которые означают «аккаунт больше не пригоден»
-// — не пытаемся слать с него ничего пока юзер не разберётся.
-function isAccountKilledError(msg: string): boolean {
-  return /AUTH_KEY_UNREGISTERED|USER_DEACTIVATED_BAN|SESSION_REVOKED|SESSION_EXPIRED/.test(
-    msg,
-  );
+// Возвращает либо целевой статус ('unauthorized' | 'banned'), либо null если
+// ошибка не «account-killed». unauthorized — auth_key/session протухли (юзер
+// сам разлогинил, или TG отозвал); banned — сам аккаунт прибит.
+function classifyKilled(msg: string): "unauthorized" | "banned" | null {
+  if (/AUTH_KEY_UNREGISTERED|SESSION_(REVOKED|EXPIRED)|^401|Unauthorized/.test(msg)) {
+    return "unauthorized";
+  }
+  if (/USER_DEACTIVATED_BAN/.test(msg)) return "banned";
+  return null;
 }
 
-async function countSentToday(
+async function getNewLeadsStatsToday(
   accountId: string,
   tz: string,
-): Promise<number> {
+): Promise<{ newLeadsToday: number; lastNewLeadAt: Date | null }> {
   const start = startOfDayInTz(new Date(), tz);
+  // postgres-js при биндинге внутри FILTER-клаузы не выводит timestamptz и
+  // фейлится на Date.byteLength. Передаём ISO-строку — Postgres сам кастит
+  // её к timestamptz через >= оператор.
+  const startIso = start.toISOString();
   const [row] = await db
-    .select({ count: sql<number>`count(*)::int` })
+    .select({
+      todayCount: sql<number>`count(*) FILTER (WHERE ${scheduledMessages.sentAt} >= ${startIso}::timestamptz)::int`,
+      // postgres-js за пределами column-mapping не знает тип max(...) и
+      // возвращает строку. Конвертируем сами в Date.
+      lastSentAt: sql<string | null>`max(${scheduledMessages.sentAt})`,
+    })
     .from(scheduledMessages)
     .where(
       and(
         eq(scheduledMessages.accountId, accountId),
         eq(scheduledMessages.status, "sent"),
-        gte(scheduledMessages.sentAt, start),
+        eq(scheduledMessages.messageIdx, 0),
       ),
     );
-  return row?.count ?? 0;
+  return {
+    newLeadsToday: row?.todayCount ?? 0,
+    lastNewLeadAt: row?.lastSentAt ? new Date(row.lastSentAt) : null,
+  };
+}
+
+async function maybeCreateContactOnFirstSent(
+  sequenceId: string,
+  leadId: string,
+): Promise<void> {
+  const [seq] = await db
+    .select({
+      contactCreationTrigger: outreachSequences.contactCreationTrigger,
+    })
+    .from(outreachSequences)
+    .where(eq(outreachSequences.id, sequenceId))
+    .limit(1);
+  if (!seq || seq.contactCreationTrigger !== "on-first-message-sent") return;
+  const [lead] = await db
+    .select()
+    .from(outreachLeads)
+    .where(eq(outreachLeads.id, leadId))
+    .limit(1);
+  if (!lead) return;
+  await convertLeadToContact(lead, sequenceId);
 }
 
 async function maybeCompleteSequence(seqId: string) {
-  // Sequence завершена когда ни одного pending не осталось. Cancelled/failed/sent
-  // — все терминальные, sequence можно закрыть. UPDATE-условие на status='active'
-  // защищает от race: если юзер успел нажать pause, completed не должен
-  // перезаписать paused.
-  const [row] = await db
-    .select({ pending: sql<number>`count(*)::int` })
-    .from(scheduledMessages)
-    .where(
-      and(
-        eq(scheduledMessages.sequenceId, seqId),
-        eq(scheduledMessages.status, "pending"),
-      ),
-    );
-  if ((row?.pending ?? 0) > 0) return;
+  // Один UPDATE с NOT EXISTS вместо SELECT-then-UPDATE — экономит round-trip
+  // и закрывает race с конкурентным INSERT'ом scheduled_messages.
+  const now = new Date();
   await db
     .update(outreachSequences)
-    .set({
-      status: "completed",
-      completedAt: new Date(),
-      updatedAt: new Date(),
-    })
+    .set({ status: "completed", completedAt: now, updatedAt: now })
     .where(
       and(
         eq(outreachSequences.id, seqId),
         eq(outreachSequences.status, "active"),
+        sql`NOT EXISTS (
+          SELECT 1 FROM ${scheduledMessages}
+          WHERE ${scheduledMessages.sequenceId} = ${seqId}
+            AND ${scheduledMessages.status} = 'pending'
+        )`,
       ),
     );
 }

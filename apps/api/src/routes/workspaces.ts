@@ -7,7 +7,7 @@ import {
   UpdateWorkspaceSchema as BaseUpdateWorkspaceSchema,
 } from "@repo/core";
 import { db } from "../db/client";
-import { organizations, workspaces } from "../db/schema";
+import { organizations, users, workspaces } from "../db/schema";
 import { seedDefaultProperties } from "../lib/workspace-presets";
 import type { SessionVars } from "../middleware/require-session";
 
@@ -119,6 +119,47 @@ app.openapi(
       throw new HTTPException(404, { message: "workspace not found" });
     }
     return c.json(serialize(row));
+  },
+);
+
+// Membership-список workspace'а. В MVP-модели владелец = единственный участник
+// (workspace_members таблицы пока нет; см. TODO в /workspaces). Когда появится
+// настоящая team — здесь будет JOIN на workspace_members. Endpoint используется
+// в CRM-автоматизациях sequence как кандидаты в default owners.
+const MemberSchema = z.object({
+  id: z.string(),
+  email: z.string(),
+  name: z.string().nullable(),
+});
+
+app.openapi(
+  createRoute({
+    method: "get",
+    path: "/v1/workspaces/{id}/members",
+    request: { params: IdParam },
+    responses: {
+      200: {
+        content: { "application/json": { schema: z.array(MemberSchema) } },
+        description: "Workspace members",
+      },
+    },
+  }),
+  async (c) => {
+    const userId = c.get("userId");
+    const { id } = c.req.valid("param");
+    const [ws] = await db
+      .select({ createdBy: workspaces.createdBy })
+      .from(workspaces)
+      .where(and(eq(workspaces.id, id), eq(workspaces.createdBy, userId)))
+      .limit(1);
+    if (!ws) {
+      throw new HTTPException(404, { message: "workspace not found" });
+    }
+    const rows = await db
+      .select({ id: users.id, email: users.email, name: users.name })
+      .from(users)
+      .where(eq(users.id, ws.createdBy));
+    return c.json(rows);
   },
 );
 

@@ -30,15 +30,15 @@
 │  └──────────────────────┬───────────────────────────────┘              │
 │                         ▼                                              │
 │  ┌──────────────────────────────────────────────────────┐              │
-│  │ Drizzle ORM · pg-boss (очередь) · gramjs (MTProto)   │              │
+│  │ Drizzle ORM · pg-boss (очередь) · TDLib (MTProto)    │              │
 │  └──────────────────────────────────────────────────────┘              │
 └────────────────┬───────────────────────────┬───────────────────────────┘
                  │                           │
          ┌───────▼────────┐          ┌───────▼────────┐
          │   PostgreSQL    │          │ S3-совместимое │
          │  (домен, сессии,│          │  (CSV, media,  │
-         │   очередь,      │          │   avatars)     │
-         │   MTProto ses.) │          │                │
+         │   очередь)      │          │   avatars)     │
+         │                 │          │                │
          └────────────────┘          └────────────────┘
 ```
 
@@ -133,7 +133,7 @@ Auth — server-side сессия в httpOnly cookie (см. `auth.md`). Клие
 | Real-time источник | Postgres `LISTEN/NOTIFY` → SSE |
 | Очередь фоновых задач | **pg-boss** (поверх того же Postgres) |
 | Файлы | **S3-совместимое**: Yandex Object Storage в проде, **MinIO** локально |
-| MTProto | **gramjs**; сессии хранятся в Postgres `jsonb`-колонке |
+| MTProto | **TDLib** через `tdl` (кастомный билд `libtdjson.so` из `tools/tdlib/`); auth-state и binlog хранятся per-account в `td-database/<accountId>/` (FS-volume в проде). В TWA-iframe (`apps/tg-client`) — gramjs, auth_key в него передаётся через `/twa-session` (под капотом наш патч `getRawAuthKey`). |
 | Auth | Яндекс OAuth2 → server-side session в Postgres |
 | Scheduler | pg-boss schedules (cron-expression внутри очереди) |
 
@@ -222,7 +222,7 @@ docker compose up
 3. **Яндекс OAuth** + session storage в Postgres.
 4. **S3-совместимое хранилище** + signed URL для uploads.
 5. **pg-boss** — фоновые задачи (reschedule sequences, dispatch outreach messages, cleanup expired invites).
-6. **MTProto clients** (gramjs) для outreach и personal sync.
+6. **MTProto clients** (TDLib через `tdl`) для outreach и personal sync.
 7. **SSE** для чата (US-10).
 
 ---

@@ -65,6 +65,25 @@
 
 ---
 
+## TDLib на бэке + gramjs только в TWA-iframe
+
+**Решение.** MTProto на стороне `apps/api` — через TDLib (`tdl` npm-обёртка над кастомно собранным `libtdjson.so` из `tools/tdlib/`). Гramjs остаётся **только** в `apps/tg-client/` (форк Telegram-T, монтируется как iframe в карточке контакта). Iframe получает auth-key через эндпоинт `/twa-session`, который дёргает у TDLib `getRawAuthKey dc_id` (наш патч) и конвертит сырые 256 байт в формат `{ mainDcId, keys: { [dcId]: hex } }`, ожидаемый TWA. Один TG-аккаунт → одна запись в Active Sessions Telegram.
+
+**В прежней версии (до этой миграции).** Бэкенд ходил в TG через gramjs: ручной QR-флоу с `Api.auth.ExportLoginToken` + `LoginTokenMigrateTo` DC migration, ручной SRP в `computeCheck` для 2FA, ручное управление `phoneCodeHash` между HTTP-запросами, отдельный кэш `qr-token-cache` с TTL и SSE-bus. Iframe получал свой auth_key через `auth.AcceptLoginToken` хак (worker accept'ил token второго device server-side), отдельная зашифрованная колонка `outreach_accounts.iframe_session` хранила второй gramjs StringSession. Все workaround'ы (handler-leak при reconnect, плоский ImportAuthorization, пустой `catchUp()`, ручная DC-маршрутизация, периодический `reviveDeadListeners`) — следствия gramjs API.
+
+**Почему отказались.**
+- TDLib инкапсулирует MTProto-state, переподключения, DC-routing, SRP — всю боль gramjs мы у себя руками воспроизводили.
+- `getRawAuthKey` (наш ~21-строчный патч поверх существующего `AuthDataShared::get_auth_key_for_dc`) даёт прямой выход на TWA-iframe без второй авторизации/2FA — auth-key из TDLib-сессии становится auth-key'ем gramjs-iframe.
+- Перестаёт нужно `iframe_session` в БД — генерим on-demand при запросе `/twa-session`.
+- TDLib bin-log сам шифрует чувствительные данные (опция `database_encryption_key`), наша AES-обёртка над gramjs StringSession пропадает.
+- Spike в `playground/tdlib-bridge/` (01–04) подтвердил end-to-end флоу + патч.
+
+**Что осталось.** `apps/tg-client/` (TWA) — gramjs-форк, не трогаем: для встраиваемого web-клиента TDLib-WASM избыточен, и любые наши правки в форке — техдолг под каждую версию upstream.
+
+**Цена.** Кастомный билд `libtdjson.so` (`tools/tdlib/build.sh`, ~5 минут на чистой машине) — деплой требует либо включения сборки в CI/Docker, либо распространения `.so` отдельно. `td-database/<accountId>/` — persistent FS-stete, требует volume в проде.
+
+---
+
 ## Bun + Hono + Drizzle вместо Node + tRPC + Firestore SDK
 
 **Решение.** Runtime — Bun 1.x (нативный TS, быстрый старт, встроенный test-runner). HTTP — Hono + `@hono/zod-openapi` (валидация + OpenAPI одной схемой). Query layer — Drizzle ORM (TS-first, миграции встроены).
@@ -212,11 +231,7 @@
 - **`reviveDeadListeners` каждые 10 сек** — N RPC на N аккаунтов. На 100+
   outreach-аккаунтов это 10 RPC/сек впустую. Перейти на event-driven: ловить
   `disconnect`-event клиента gramjs и сразу пересоздавать, без polling.
-- **TDLib вместо gramjs (long-term).** Текущий gramjs-стек принят как
-  pre-MVP. Триггеры для миграции: рост числа аккаунтов, появление CRM-side
-  чата (без iframe), очередной незакрываемый bug в gramjs. Конкретно по
-  серии `feat(unread)` нашими руками собраны workaround'ы для quirks gramjs
-  (handler-leak при reconnect, плоский ImportAuthorization без InitConnection,
-  пустой `catchUp()`, ручной DC migration). Половина-треть боли уйдёт на
-  TDLib (`tdl` / `prebuilt-tdlib`). Цена — ~15-20 часов миграции и мост
-  TDLib↔gramjs для передачи auth_key в TWA-iframe.
+- ~~**TDLib вместо gramjs (long-term).**~~ Сделано — см. отдельную запись «TDLib на бэке + gramjs только в TWA-iframe» выше. Соответственно закрыты:
+  - **N+1 RPC риск в `outreach-listener.ts` fallback'е** — ушёл вместе с `event.message.getSender()` (TDLib отдаёт sender как ID, имя/username берём из `getUser`/кэша).
+  - **`provisionIframeSession` блокирует auth-флоу** — устранён, `iframe_session` колонки в БД больше нет, `/twa-session` дёргает `getRawAuthKey` лениво.
+  - **`reviveDeadListeners` каждые 10 сек** — устранён, TDLib держит соединение и переподключается сам.

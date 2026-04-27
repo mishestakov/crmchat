@@ -1,0 +1,26 @@
+{
+  "name": "tdlib-bridge-spike",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "01": "tsx 01-tdlib-auth.ts",
+    "02": "tsx 02-binlog-peek.ts",
+    "03": "tsx 03-bridge-gramjs.ts",
+    "04": "tsx 04-getRawAuthKey.ts",
+    "05": "tsx 05-iframe-provision-trace.ts",
+    "06": "tsx 06-iframe-provision-clean.ts"
+  },
+  "dependencies": {
+    "tdl": "^8.0.3",
+    "telegram": "^2.26.22",
+    "input": "^1.0.1",
+    "dotenv": "^16.4.5",
+    "better-sqlite3": "^11.5.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "@types/node": "^22.10.0",
+    "@types/better-sqlite3": "^7.6.11"
+  }
+}

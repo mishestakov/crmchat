@@ -43,6 +43,10 @@ function ContactsList() {
         unreadCount: number;
         lastMessageAt: string | null;
       };
+      // Сначала пытаемся patch'нуть существующую карточку. Если её нет в кэше
+      // (новый контакт от listener'а при ответе лида / при on-first-message-sent
+      // trigger'е) — invalidate, чтобы canban перетянул свежий список.
+      let foundInCache = false;
       qc.setQueriesData<Contact[]>(
         { queryKey: ["contacts", wsId] },
         (prev) => {
@@ -50,10 +54,12 @@ function ContactsList() {
           let changed = false;
           const next = prev.map((c) => {
             if (c.id !== ev.contactId) return c;
+            foundInCache = true;
             if (
               c.unreadCount === ev.unreadCount
               && c.lastMessageAt === ev.lastMessageAt
-            ) return c;
+            )
+              return c;
             changed = true;
             return {
               ...c,
@@ -64,6 +70,9 @@ function ContactsList() {
           return changed ? next : prev;
         },
       );
+      if (!foundInCache) {
+        qc.invalidateQueries({ queryKey: ["contacts", wsId] });
+      }
     };
     es.addEventListener("contact", onContact);
     return () => {
