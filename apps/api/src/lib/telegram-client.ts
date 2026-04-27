@@ -161,9 +161,14 @@ export async function switchDc(
 
 // Создаёт клиента с пустой session — для первичной аутентификации (QR/phone).
 // session-string получим через `client.session.save()` после успешного auth.
-export function newAnonymousClient(): TelegramClient {
+// deviceModel опционально — он попадает в TG как имя «активного устройства»
+// (Settings → Devices). Используем чтобы различать worker и iframe-сессии.
+export function newAnonymousClient(opts?: {
+  deviceModel?: string;
+}): TelegramClient {
   return new TelegramClient(new StringSession(""), apiId, apiHash, {
     connectionRetries: 3,
+    deviceModel: opts?.deviceModel ?? "CRM Worker",
     // Молчаливый logger — gramjs по дефолту шумит INFO в stdout.
     baseLogger: silentLogger(),
   });

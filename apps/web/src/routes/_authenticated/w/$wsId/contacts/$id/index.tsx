@@ -123,6 +123,45 @@ function ContactDetail() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isChatOpen, canOpenChat]);
 
+  // Mark-read: дёргаем messages.ReadHistory через активный outreach-аккаунт.
+  // Бэк не обновляет БД сам — TG сервер разошлёт UpdateReadHistoryInbox на
+  // listener, тот обновит unread_count и эмитит SSE-событие, канбан моментально
+  // гасит badge во всех открытых вкладках. Оптимистично патчим cache, чтобы
+  // не ждать round-trip TG → listener → SSE (~200-500ms).
+  const markRead = useMutation({
+    mutationFn: async (accountId: string) => {
+      const { error } = await api.POST(
+        "/v1/workspaces/{wsId}/contacts/{id}/read",
+        {
+          params: { path: { wsId, id } },
+          body: { accountId },
+        },
+      );
+      if (error) throw error;
+    },
+    onMutate: () => {
+      qc.setQueriesData<Contact[]>(
+        { queryKey: ["contacts", wsId] },
+        (prev) =>
+          prev?.map((c) =>
+            c.id === id && c.unreadCount > 0 ? { ...c, unreadCount: 0 } : c,
+          ),
+      );
+      qc.setQueryData<Contact>(["contact", wsId, id], (prev) =>
+        prev && prev.unreadCount > 0 ? { ...prev, unreadCount: 0 } : prev,
+      );
+    },
+  });
+
+  const unread = contact.data?.unreadCount ?? 0;
+  const activeAccountId = chat.activeAccount?.id;
+  useEffect(() => {
+    if (isChatOpen && unread > 0 && activeAccountId) {
+      markRead.mutate(activeAccountId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isChatOpen, unread, id, activeAccountId]);
+
   // Inline-сохранение одного property из view (Сумма / Стадия / custom). PATCH с
   // { properties: { key: value } } → бэк merge'ит поверх существующего. Пустое
   // значение ("" / null / []) на бэке удаляет ключ — этого мы тут не делаем
@@ -224,6 +263,7 @@ function ContactDetail() {
                 wsId={wsId}
                 accountId={chat.activeAccount.id}
                 peer={peer}
+                onChatRead={() => markRead.mutate(chat.activeAccount!.id)}
               />
             </div>
           </div>

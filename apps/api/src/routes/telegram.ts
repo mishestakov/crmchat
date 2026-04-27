@@ -1,7 +1,7 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { Api, type TelegramClient } from "telegram";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import {
   contacts,
@@ -591,17 +591,18 @@ async function runSync(userId: string, folderId: number, workspaceId: string) {
     return;
   }
 
-  // Pass 2: один батч-SELECT для дедупа (вместо N+1).
+  // Pass 2: один батч-SELECT для дедупа (вместо N+1). Раньше было ANY(::text[])
+  // через ручной sql-template — postgres-js биндил массив как `record` и падало
+  // на cast'е. inArray от drizzle сам сериализует параметризованный список.
   const candidateIds = candidates.map((u) => String(u.id));
+  const tgUserIdExpr = sql<string>`${contacts.properties}->>'tg_user_id'`;
   const existingRows = await db
-    .select({
-      tgUserId: sql<string>`${contacts.properties}->>'tg_user_id'`,
-    })
+    .select({ tgUserId: tgUserIdExpr })
     .from(contacts)
     .where(
       and(
         eq(contacts.workspaceId, workspaceId),
-        sql`${contacts.properties}->>'tg_user_id' = ANY(${candidateIds}::text[])`,
+        inArray(tgUserIdExpr, candidateIds),
       ),
     );
   const existingSet = new Set(existingRows.map((r) => r.tgUserId));

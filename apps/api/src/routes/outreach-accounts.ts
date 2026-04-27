@@ -217,7 +217,7 @@ app.openapi(
     const wsId = c.get("workspaceId");
     const { accountId } = c.req.valid("param");
     const [row] = await db
-      .select({ session: outreachAccounts.session })
+      .select({ iframeSession: outreachAccounts.iframeSession })
       .from(outreachAccounts)
       .where(
         and(
@@ -228,10 +228,12 @@ app.openapi(
       .limit(1);
     if (!row) throw new HTTPException(404, { message: "account not found" });
 
-    const session = await toTwaSession(row.session);
+    // iframeSession — отдельный auth_key, изолированный от worker'ной session
+    // (см. provisionIframeSession в outreach-account-client.ts).
+    const session = await toTwaSession(row.iframeSession);
     if (!session) {
       throw new HTTPException(409, {
-        message: "session corrupted, re-auth required",
+        message: "iframe session corrupted, re-auth required",
       });
     }
 

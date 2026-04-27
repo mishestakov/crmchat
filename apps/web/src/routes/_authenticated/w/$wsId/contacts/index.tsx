@@ -27,6 +27,50 @@ function ContactsList() {
   const { wsId } = Route.useParams();
   const search = Route.useSearch();
   const navigate = useNavigate();
+  const qc = useQueryClient();
+
+  // SSE: bumps contact'у unread/lastMessageAt при входящем DM от него
+  // (см. apps/api/src/lib/contact-events.ts) и сбрасывает при mark-read.
+  // Patch'им cache в-place вместо invalidate — не дёргаем GET всех контактов
+  // на каждый чужой message. Поток событий — `{contactId, unreadCount,
+  // lastMessageAt}`, фильтруем известных нам контактов в кэше.
+  useEffect(() => {
+    const url = `/v1/workspaces/${wsId}/contact-stream`;
+    const es = new EventSource(url, { withCredentials: true });
+    const onContact = (e: MessageEvent) => {
+      const ev = JSON.parse(e.data) as {
+        contactId: string;
+        unreadCount: number;
+        lastMessageAt: string | null;
+      };
+      qc.setQueriesData<Contact[]>(
+        { queryKey: ["contacts", wsId] },
+        (prev) => {
+          if (!prev) return prev;
+          let changed = false;
+          const next = prev.map((c) => {
+            if (c.id !== ev.contactId) return c;
+            if (
+              c.unreadCount === ev.unreadCount
+              && c.lastMessageAt === ev.lastMessageAt
+            ) return c;
+            changed = true;
+            return {
+              ...c,
+              unreadCount: ev.unreadCount,
+              lastMessageAt: ev.lastMessageAt,
+            };
+          });
+          return changed ? next : prev;
+        },
+      );
+    };
+    es.addEventListener("contact", onContact);
+    return () => {
+      es.removeEventListener("contact", onContact);
+      es.close();
+    };
+  }, [wsId, qc]);
 
   const properties = useQuery({
     queryKey: ["properties", wsId],
@@ -297,7 +341,17 @@ function ContactCard(props: {
       onClick={props.onOpen}
       className="cursor-pointer rounded-md border border-zinc-200 bg-white p-2.5 text-sm shadow-sm hover:bg-zinc-50 active:cursor-grabbing"
     >
-      <div className="font-medium">{name ?? "—"}</div>
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1 font-medium">{name ?? "—"}</div>
+        {props.contact.unreadCount > 0 && (
+          <span
+            className="shrink-0 rounded-full bg-emerald-500 px-1.5 text-xs font-semibold leading-5 text-white"
+            title={`${props.contact.unreadCount} непрочитанных`}
+          >
+            {props.contact.unreadCount > 99 ? "99+" : props.contact.unreadCount}
+          </span>
+        )}
+      </div>
       {tg && (
         <div className="mt-0.5 flex items-center gap-1 text-xs text-zinc-500">
           <Send size={11} className="text-sky-500" />@{tg}

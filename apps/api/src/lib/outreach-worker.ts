@@ -113,12 +113,44 @@ async function tick() {
   if (tickRunning) return;
   tickRunning = true;
   try {
+    // Сначала восстанавливаем умершие listener-клиенты (TG idle/network drop):
+    // без этого после первого disconnect'а inbound-апдейты молча перестают
+    // приходить, потому что getOutreachWorkerClient вызывается лениво только
+    // на исходящие.
+    await reviveDeadListeners();
     await runTick();
   } catch (e) {
     console.error("[outreach-worker] tick failed:", errMsg(e));
   } finally {
     tickRunning = false;
   }
+}
+
+// Профилактический lazy-revive: если кэшированный client мёртв (TCP drop /
+// idle), `getOutreachWorkerClient` пересоздаст его и повторно подпишет
+// listener. Без этого после disconnect'а inbound-апдейты молча не приходили
+// бы пока кто-то не дёрнет outgoing-операцию.
+async function reviveDeadListeners(): Promise<void> {
+  const accounts = await db
+    .select({
+      id: outreachAccounts.id,
+      workspaceId: outreachAccounts.workspaceId,
+      session: outreachAccounts.session,
+    })
+    .from(outreachAccounts)
+    .where(eq(outreachAccounts.status, "active"));
+  await Promise.all(
+    accounts.map(async (a) => {
+      try {
+        await getOutreachWorkerClient(a);
+      } catch (e) {
+        console.error(
+          `[outreach-worker] revive ${a.id}:`,
+          errMsg(e),
+        );
+      }
+    }),
+  );
 }
 
 async function runTick() {

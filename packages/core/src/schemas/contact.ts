@@ -17,6 +17,10 @@ export const ContactSchema = z.object({
   workspaceId: z.string().min(1).max(64),
   properties: z.record(z.string(), z.unknown()),
   nextStep: ContactNextStepSchema.nullable(),
+  // Непрочитанные TG-входящие. Канбан рисует badge если > 0, обнуляется
+  // на open-карточки или mark-read postMessage из TWA-iframe.
+  unreadCount: z.number().int().nonnegative(),
+  lastMessageAt: z.string().datetime().nullable(),
   createdBy: z.string().min(1).max(64),
   createdAt: z.string().datetime(),
 });

@@ -1,5 +1,5 @@
-import type { TelegramClient } from "telegram";
-import { NewMessage, type NewMessageEvent } from "telegram/events";
+import { Api, type TelegramClient } from "telegram";
+import { NewMessage, type NewMessageEvent, Raw } from "telegram/events";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import {
@@ -10,6 +10,7 @@ import {
   scheduledMessages,
 } from "../db/schema";
 import { validateContactProperties } from "./contact-properties";
+import { emitContactChanged } from "./contact-events";
 import { errMsg } from "./errors";
 import { emitSequenceChanged } from "./outreach-events";
 
@@ -41,7 +42,13 @@ function isUniqueViolation(e: unknown): boolean {
 // getEntity). Если лид нам ещё не написан — нет tgUserId — нет матча. Это норм:
 // «остановить sequence на ответ» имеет смысл только когда мы УЖЕ что-то послали.
 
-const handlers = new Map<string, (event: NewMessageEvent) => unknown>();
+type HandlerEntry = {
+  newMessage: (event: NewMessageEvent) => unknown;
+  newMessageEvent: NewMessage;
+  readInbox: (update: Api.TypeUpdate) => unknown;
+  readInboxEvent: Raw;
+};
+const handlers = new Map<string, HandlerEntry>();
 
 export function attachListener(
   accountId: string,
@@ -50,7 +57,7 @@ export function attachListener(
 ) {
   if (handlers.has(accountId)) return;
 
-  const handler = async (event: NewMessageEvent) => {
+  const newMessage = async (event: NewMessageEvent) => {
     try {
       // Только private DM, не группы/каналы — иначе на любое сообщение в любом
       // чате будем дёргать БД. Самая горячая ручка системы под listener'ом.
@@ -59,9 +66,9 @@ export function attachListener(
       if (!senderId) return;
       const senderIdStr = String(senderId);
 
-      // Атомарно: пометить лид как ответившего (только если ещё не помечен —
-      // не перезатираем первый момент ответа), вернуть всю строку чтобы дальше
-      // конвертить в контакт без лишнего SELECT'а.
+      // ── Outreach-лид → отметка repliedAt + отмена pending sequence-сообщений.
+      // Атомарно: пометить только если ещё не помечен (не перезатираем первый
+      // момент ответа), вернуть строки для последующей конвертации.
       const updated = await db
         .update(outreachLeads)
         .set({ repliedAt: new Date() })
@@ -74,38 +81,100 @@ export function attachListener(
         )
         .returning();
 
-      if (updated.length === 0) return;
+      if (updated.length > 0) {
+        const leadIds = updated.map((u) => u.id);
+        const cancelled = await db
+          .update(scheduledMessages)
+          .set({ status: "cancelled", error: "lead replied" })
+          .where(
+            and(
+              eq(scheduledMessages.status, "pending"),
+              inArray(scheduledMessages.leadId, leadIds),
+            ),
+          )
+          .returning({ sequenceId: scheduledMessages.sequenceId });
+        for (const seqId of new Set(cancelled.map((r) => r.sequenceId))) {
+          emitSequenceChanged(seqId);
+        }
 
-      const leadIds = updated.map((u) => u.id);
-      const cancelled = await db
-        .update(scheduledMessages)
-        .set({ status: "cancelled", error: "lead replied" })
-        .where(
-          and(
-            eq(scheduledMessages.status, "pending"),
-            inArray(scheduledMessages.leadId, leadIds),
-          ),
-        )
-        .returning({ sequenceId: scheduledMessages.sequenceId });
-      // Push на все sequence detail-страницы которые в этот момент открыты —
-      // чтобы зелёная подсветка появилась мгновенно, а не через 5s polling.
-      for (const seqId of new Set(cancelled.map((r) => r.sequenceId))) {
-        emitSequenceChanged(seqId);
+        // Конвертим в контакт ДО bump unread, чтобы новый контакт подхватил +1
+        // на этом же входящем (а не следующем).
+        for (const lead of updated) {
+          try {
+            await convertLeadToContact(lead);
+          } catch (e) {
+            console.error(
+              `[outreach-listener] convert lead ${lead.id}:`,
+              errMsg(e),
+            );
+          }
+        }
       }
 
-      // Конвертируем каждый только-что-ответивший лид в контакта. Дедуп по
-      // tg_user_id внутри workspace: если контакт уже существует — просто
-      // привязываем contact_id. Полноценный чат внутри CRM не делаем (отдельная
-      // фича донор-стиля); юзер читает текст ответа в TG-клиенте.
-      for (const lead of updated) {
-        try {
-          await convertLeadToContact(lead);
-        } catch (e) {
-          console.error(
-            `[outreach-listener] convert lead ${lead.id}:`,
-            errMsg(e),
-          );
+      // ── Bump unread у contact'а. Это локальный «оптимистичный» инкремент:
+      // TG не шлёт UpdateReadHistoryInbox на incoming, только на read action.
+      // Если юзер прочитает чат на телефоне — TG разошлёт UpdateReadHistoryInbox
+      // со stillUnreadCount=N, и наш readInbox-handler ниже синхронизирует БД
+      // с правдой TG. То есть наш +1 — temporary, до первого read-event'а.
+      const now = new Date();
+      let touched = await db
+        .update(contacts)
+        .set({
+          unreadCount: sql`${contacts.unreadCount} + 1`,
+          lastMessageAt: now,
+        })
+        .where(
+          and(
+            eq(contacts.workspaceId, workspaceId),
+            sql`${contacts.properties}->>'tg_user_id' = ${senderIdStr}`,
+          ),
+        )
+        .returning({
+          id: contacts.id,
+          unreadCount: contacts.unreadCount,
+        });
+
+      // Fallback: контакт может быть создан вручную с одним telegram_username,
+      // без tg_user_id. Резолвим sender'а, ищем по username, и заодно инжектим
+      // tg_user_id в properties — при следующем входящем сразу попадём в
+      // быстрый путь по tg_user_id.
+      if (touched.length === 0) {
+        const sender = await event.message.getSender().catch(() => null);
+        const username =
+          sender && "username" in sender
+            ? sender.username ||
+              (sender as { usernames?: { active?: boolean; username: string }[] })
+                .usernames?.find((u) => u.active)?.username ||
+              null
+            : null;
+        if (username) {
+          touched = await db
+            .update(contacts)
+            .set({
+              unreadCount: sql`${contacts.unreadCount} + 1`,
+              lastMessageAt: now,
+              properties: sql`${contacts.properties} || jsonb_build_object('tg_user_id', ${senderIdStr}::text)`,
+            })
+            .where(
+              and(
+                eq(contacts.workspaceId, workspaceId),
+                sql`${contacts.properties}->>'telegram_username' = ${username}`,
+                sql`${contacts.properties}->>'tg_user_id' IS NULL`,
+              ),
+            )
+            .returning({
+              id: contacts.id,
+              unreadCount: contacts.unreadCount,
+            });
         }
+      }
+
+      for (const t of touched) {
+        emitContactChanged(workspaceId, {
+          contactId: t.id,
+          unreadCount: t.unreadCount,
+          lastMessageAt: now.toISOString(),
+        });
       }
     } catch (e) {
       console.error(
@@ -115,8 +184,60 @@ export function attachListener(
     }
   };
 
-  client.addEventHandler(handler, new NewMessage({ incoming: true }));
-  handlers.set(accountId, handler);
+  // ── Зеркало TG: UpdateReadHistoryInbox прилетает когда юзер прочитал чат
+  // на ЛЮБОМ устройстве (мобила, web.telegram.org, наш mark-read через
+  // messages.ReadHistory). stillUnreadCount = реальное число непрочитанных
+  // в чате после действия. Перезаписываем БД этим значением — это и есть
+  // "правда". На свежий incoming TG этот update НЕ шлёт (для incoming у нас
+  // newMessage-handler выше с +1).
+  const readInbox = async (update: Api.TypeUpdate) => {
+    try {
+      if (!(update instanceof Api.UpdateReadHistoryInbox)) return;
+      const peer = update.peer;
+      if (!(peer instanceof Api.PeerUser)) return; // только private DM
+      const tgUserIdStr = String(peer.userId);
+      const stillUnread = update.stillUnreadCount;
+
+      const touched = await db
+        .update(contacts)
+        .set({ unreadCount: stillUnread })
+        .where(
+          and(
+            eq(contacts.workspaceId, workspaceId),
+            sql`${contacts.properties}->>'tg_user_id' = ${tgUserIdStr}`,
+            sql`${contacts.unreadCount} <> ${stillUnread}`,
+          ),
+        )
+        .returning({
+          id: contacts.id,
+          unreadCount: contacts.unreadCount,
+          lastMessageAt: contacts.lastMessageAt,
+        });
+      for (const t of touched) {
+        emitContactChanged(workspaceId, {
+          contactId: t.id,
+          unreadCount: t.unreadCount,
+          lastMessageAt: t.lastMessageAt?.toISOString() ?? null,
+        });
+      }
+    } catch (e) {
+      console.error(
+        `[outreach-listener] readInbox account ${accountId}:`,
+        errMsg(e),
+      );
+    }
+  };
+
+  const newMessageEvent = new NewMessage({ incoming: true });
+  const readInboxEvent = new Raw({ types: [Api.UpdateReadHistoryInbox] });
+  client.addEventHandler(newMessage, newMessageEvent);
+  client.addEventHandler(readInbox, readInboxEvent);
+  handlers.set(accountId, {
+    newMessage,
+    newMessageEvent,
+    readInbox,
+    readInboxEvent,
+  });
 }
 
 async function convertLeadToContact(lead: typeof outreachLeads.$inferSelect) {
@@ -238,10 +359,11 @@ async function findContactByTgUserId(
 }
 
 export function detachListener(accountId: string, client: TelegramClient) {
-  const handler = handlers.get(accountId);
-  if (!handler) return;
+  const entry = handlers.get(accountId);
+  if (!entry) return;
   try {
-    client.removeEventHandler(handler, new NewMessage({ incoming: true }));
+    client.removeEventHandler(entry.newMessage, entry.newMessageEvent);
+    client.removeEventHandler(entry.readInbox, entry.readInboxEvent);
   } catch {
     // gramjs может не уметь снять handler если internal-state уже сбит при
     // disconnect — не критично, всё равно сейчас уничтожаем клиента.

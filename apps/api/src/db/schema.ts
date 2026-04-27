@@ -209,6 +209,14 @@ export const contacts = pgTable(
       .$type<Record<string, unknown>>()
       .notNull()
       .default({}),
+    // Счётчик непрочитанных сообщений в TG-чате с этим контактом. Инкрементит
+    // outreach-listener (входящее DM от tg_user_id, который у нас в contacts);
+    // обнуляется явным POST /read из фронта (открыли чат / TWA-iframe прислал
+    // chatRead postMessage).
+    unreadCount: integer("unread_count").notNull().default(0),
+    // Время последнего входящего сообщения от контакта — для сортировки кoлонок
+    // канбана «свежий ответ сверху» в будущем + для UI-подсказок «X мин назад».
+    lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
     createdBy: text("created_by")
       .notNull()
       .references(() => users.id),
@@ -278,11 +286,16 @@ export const outreachAccounts = pgTable(
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
     status: outreachAccountStatus("status").notNull().default("active"),
-    // Один authKey на аккаунт: worker (gramjs в Node) и iframe (TWA в браузере)
-    // делят его как несколько вкладок web.telegram.org. Раньше держали отдельный
-    // iframe_session — генерили через auth.ExportAuthorization, что валило 2FA
-    // (DC_ID_INVALID на same-DC) и стоило +3-5с handshake'а.
+    // ДВА разных auth_key на один TG-аккаунт:
+    //   session       — worker'ный (gramjs в Node, отправка + listener updates)
+    //   iframeSession — для TWA-iframe в браузере (postMessage authKey)
+    // Один auth_key для обоих не работает: gramjs и TWA — независимые
+    // MTProto-клиенты без shared update-state. TG распределяет updates на
+    // активную сессию (TWA в открытой вкладке), а worker молчит и теряет
+    // NewMessage / UpdateReadHistoryInbox. iframeSession генерится через
+    // auth.ExportAuthorization на другой DC (см. provisionIframeSession).
     session: text("session").notNull(),
+    iframeSession: text("iframe_session").notNull(),
     tgUserId: text("tg_user_id").notNull(),
     tgUsername: text("tg_username"),
     phoneNumber: text("phone_number"),

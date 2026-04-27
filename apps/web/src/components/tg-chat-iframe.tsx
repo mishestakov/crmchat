@@ -15,9 +15,12 @@ type Props = {
   // Identifier лида в TG. Меняется при переключении контакта без ремонта iframe.
   // null/undefined — iframe запускается без auto-открытия чата (full-page mode).
   peer?: ChatPeer | null;
+  // Дёргается когда TWA-iframe сообщил, что юзер реально прочитал сообщения
+  // в открытом чате (chatRead postMessage). Родитель шлёт mark-read на бэк.
+  onChatRead?: () => void;
 };
 
-export function TgChatIframe({ wsId, accountId, peer }: Props) {
+export function TgChatIframe({ wsId, accountId, peer, onChatRead }: Props) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [authState, setAuthState] = useState<string>();
   const [connectionState, setConnectionState] = useState<string>();
@@ -60,6 +63,10 @@ export function TgChatIframe({ wsId, accountId, peer }: Props) {
   });
 
   // Listener сообщений от iframe. Whitelist origin.
+  // onChatRead держим в ref'е, чтобы не пере-mount'ить listener на каждый
+  // рендер (parent передаёт inline-лямбду).
+  const onChatReadRef = useRef(onChatRead);
+  onChatReadRef.current = onChatRead;
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== TG_CLIENT_ORIGIN) return;
@@ -75,6 +82,8 @@ export function TgChatIframe({ wsId, accountId, peer }: Props) {
         setConnectionState(event.data.state);
       } else if (type === "syncState") {
         setIsSynced(Boolean(event.data.isSynced));
+      } else if (type === "chatRead") {
+        onChatReadRef.current?.();
       }
     };
     window.addEventListener("message", onMessage);

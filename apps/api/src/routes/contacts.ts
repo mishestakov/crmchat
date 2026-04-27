@@ -1,5 +1,7 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
+import { streamSSE } from "hono/streaming";
+import { Api } from "telegram";
 import { and, eq, getTableColumns, ilike, or, sql, type SQL } from "drizzle-orm";
 import {
   ContactSchema as BaseContactSchema,
@@ -7,12 +9,15 @@ import {
   UpdateContactSchema as BaseUpdate,
 } from "@repo/core";
 import { db } from "../db/client";
-import { contacts, properties as propsTable } from "../db/schema";
+import { contacts, outreachAccounts, properties as propsTable } from "../db/schema";
+import { emitContactChanged, subscribeContacts } from "../lib/contact-events";
 import {
   enforceRequiredProperties,
   loadPropertyDefs,
   validateContactProperties,
 } from "../lib/contact-properties";
+import { errMsg } from "../lib/errors";
+import { getOutreachWorkerClient } from "../lib/outreach-account-client";
 import type { WorkspaceVars } from "../middleware/assert-member";
 
 // Subquery: ближайший открытый reminder для контакта. Тащим в каждый GET — чтобы
@@ -245,7 +250,12 @@ app.openapi(
       .where(and(eq(contacts.workspaceId, wsId), or(...conds)))
       .limit(1);
     if (!row) throw new HTTPException(404, { message: "contact not found" });
-    return c.json(serialize({ ...row, nextStep: null }));
+    return c.json(
+      serialize({
+        ...row,
+        nextStep: null,
+      }),
+    );
   },
 );
 
@@ -354,9 +364,162 @@ function serialize(row: ContactRow) {
     workspaceId: row.workspaceId,
     properties: row.properties,
     nextStep: row.nextStep,
+    unreadCount: row.unreadCount,
+    lastMessageAt: row.lastMessageAt ? row.lastMessageAt.toISOString() : null,
     createdBy: row.createdBy,
     createdAt: row.createdAt.toISOString(),
   };
 }
+
+// Mark-read: (а) локально UPDATE unread=0 + emit SSE, (б) синхронизируем с TG
+// через messages.ReadHistory от имени переданного outreach-аккаунта.
+//
+// Локальный UPDATE обязателен: TG НЕ присылает UpdateReadHistoryInbox обратно
+// тому клиенту, который сам инициировал readHistory (только на ОСТАЛЬНЫЕ
+// устройства юзера). То есть наш listener эту операцию не услышит, и без
+// локального UPDATE счётчик в БД останется грязным до следующей синхронизации.
+//
+// Вызов TG — fire-and-forget после ответа (на телефоне в TG чат тоже отметится
+// прочитанным). Если упадёт — счётчик в CRM уже сброшен, на телефоне останется
+// как было. Логируем но не валим запрос.
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/contacts/{id}/read",
+    tags: ["contacts"],
+    request: {
+      params: WsIdParam,
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({
+              accountId: z.string().min(1).max(64),
+            }),
+          },
+        },
+        required: true,
+      },
+    },
+    responses: { 204: { description: "Marked as read" } },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const { id } = c.req.valid("param");
+    const { accountId } = c.req.valid("json");
+
+    // 1) Локальный UPDATE + emit. Главное действие — пользователь увидит сброс
+    //    badge'а немедленно, остальные вкладки канбана через SSE.
+    const result = await db
+      .update(contacts)
+      .set({ unreadCount: 0 })
+      .where(
+        and(
+          eq(contacts.id, id),
+          eq(contacts.workspaceId, wsId),
+          sql`${contacts.unreadCount} > 0`,
+        ),
+      )
+      .returning({
+        id: contacts.id,
+        properties: contacts.properties,
+        lastMessageAt: contacts.lastMessageAt,
+      });
+
+    if (result.length > 0) {
+      const row = result[0]!;
+      emitContactChanged(wsId, {
+        contactId: row.id,
+        unreadCount: 0,
+        lastMessageAt: row.lastMessageAt?.toISOString() ?? null,
+      });
+
+      // 2) Синхронизация с TG — fire-and-forget. Не ждём ответ TG чтобы фронт
+      //    не висел на сетевом round-trip MTProto.
+      const tgUserId = (row.properties as Record<string, unknown>).tg_user_id;
+      if (typeof tgUserId === "string") {
+        void readOnTelegram(wsId, accountId, tgUserId).catch((e) => {
+          console.error(
+            `[contacts/read] TG sync failed (contact=${id}):`,
+            errMsg(e),
+          );
+        });
+      }
+    }
+    return c.body(null, 204);
+  },
+);
+
+async function readOnTelegram(
+  wsId: string,
+  accountId: string,
+  tgUserId: string,
+): Promise<void> {
+  const [acc] = await db
+    .select({ id: outreachAccounts.id, session: outreachAccounts.session })
+    .from(outreachAccounts)
+    .where(
+      and(
+        eq(outreachAccounts.id, accountId),
+        eq(outreachAccounts.workspaceId, wsId),
+      ),
+    )
+    .limit(1);
+  if (!acc) return;
+
+  const client = await getOutreachWorkerClient({
+    id: acc.id,
+    workspaceId: wsId,
+    session: acc.session,
+  });
+  if (!client) return;
+
+  // getInputEntity резолвит peer (берёт accessHash из gramjs session-cache,
+  // или dotchает getEntity если нужно). messages.ReadHistory maxId=0 = «всё».
+  const peer = await client.getInputEntity(tgUserId);
+  await client.invoke(new Api.messages.ReadHistory({ peer, maxId: 0 }));
+}
+
+// SSE-стрим контактных апдейтов. Фронт открывает один EventSource на канбан,
+// на каждый event делает qc.setQueryData патч / invalidate. Не openapi —
+// EventSource не работает с api-client'ом, JSON-shape — `{contactId,
+// unreadCount, lastMessageAt}` (см. lib/contact-events.ts ContactEvent).
+// NB: путь намеренно НЕ внутри /contacts/{id}/* — иначе stream-сегмент
+// конфликтует с `:id` параметром openapi-роута GET /contacts/{id}
+// (Hono матчит первый зарегистрированный, и openapi-роут шире).
+app.get("/v1/workspaces/:wsId/contact-stream", (c) => {
+  const wsId = c.get("workspaceId");
+  return streamSSE(c, async (stream) => {
+    let closed = false;
+    const unsub = subscribeContacts(wsId, (payload) => {
+      if (closed) return;
+      stream
+        .writeSSE({ event: "contact", data: JSON.stringify(payload) })
+        .catch(() => {
+          /* клиент отключился между abort и записью */
+        });
+    });
+    stream.onAbort(() => {
+      closed = true;
+      unsub();
+    });
+
+    // Flush заголовков сразу: до первого write Hono streamSSE буферизирует
+    // response и клиент висит до heartbeat'а 25с. Один пустой comment-frame
+    // ничего не несёт фронту, но открывает канал.
+    await stream.writeSSE({ event: "ready", data: "" });
+
+    // Heartbeat против idle-timeout прокси. Та же схема что в qr-token-cache.ts.
+    const abortP = new Promise<void>((resolve) => stream.onAbort(resolve));
+    while (!stream.aborted && !closed) {
+      await Promise.race([stream.sleep(25_000), abortP]);
+      if (stream.aborted || closed) break;
+      try {
+        await stream.writeSSE({ event: "ping", data: "" });
+      } catch {
+        break;
+      }
+    }
+  });
+});
 
 export default app;

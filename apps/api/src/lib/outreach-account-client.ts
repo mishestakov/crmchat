@@ -1,4 +1,4 @@
-import { TelegramClient } from "telegram";
+import { Api, TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db/client";
@@ -10,7 +10,9 @@ import { silentLogger } from "./silent-logger";
 import {
   createPendingClientStore,
   logoutTgSession,
+  newAnonymousClient,
   type PendingClientStore,
+  switchDc,
   tgApiHash as apiHash,
   tgApiId as apiId,
 } from "./telegram-client";
@@ -67,12 +69,30 @@ export async function persistOutreachAccount(
   },
 ): Promise<{ id: string }> {
   const sessionEnc = encrypt((client.session as StringSession).save() ?? "");
+  // Iframe (TWA) и worker (gramjs) — независимые MTProto-клиенты с разным
+  // update-state. На одном auth_key TG распределяет updates на активную
+  // сессию (TWA в открытой вкладке), worker молчит. Поэтому генерим второй
+  // auth_key через ExportAuthorization. ВАЖНО: делаем это ПЕРЕД insert'ом —
+  // если упадёт, не оставим аккаунт без iframe-сессии (iframeSession NOT NULL
+  // в schema). Лучше юзеру retry чем сломанная запись в БД.
+  let iframeSessionEnc: string;
+  try {
+    const iframeSessionStr = await provisionIframeSession(client);
+    iframeSessionEnc = encrypt(iframeSessionStr);
+  } catch (e) {
+    console.error(
+      "[persistOutreachAccount] provisionIframeSession failed:",
+      e instanceof Error ? e.stack ?? e.message : String(e),
+    );
+    throw e;
+  }
 
   const [row] = await db
     .insert(outreachAccounts)
     .values({
       workspaceId,
       session: sessionEnc,
+      iframeSession: iframeSessionEnc,
       tgUserId: profile.tgUserId,
       tgUsername: profile.tgUsername ?? null,
       phoneNumber: profile.phoneNumber ?? null,
@@ -84,6 +104,7 @@ export async function persistOutreachAccount(
       target: [outreachAccounts.workspaceId, outreachAccounts.tgUserId],
       set: {
         session: sessionEnc,
+        iframeSession: iframeSessionEnc,
         tgUsername: profile.tgUsername ?? null,
         phoneNumber: profile.phoneNumber ?? null,
         firstName: profile.firstName ?? null,
@@ -102,6 +123,81 @@ export async function persistOutreachAccount(
   return row!;
 }
 
+// Создаёт ВТОРОЙ полноценный authorized session для того же TG-юзера через
+// canonical TG multi-device flow (auth.ExportLoginToken + auth.AcceptLoginToken):
+//
+// 1) iframe-клиент (anon) делает ExportLoginToken → получает QR-token (+ возможный
+//    LoginTokenMigrateTo на нужный DC).
+// 2) worker (уже authorized) делает AcceptLoginToken({token}) — это и есть
+//    «accept нового устройства от имени уже-логинного юзера». TG это API
+//    использует для confirmation на физически-отсканенный QR; мы вызываем
+//    его server-side для self-pairing второго device. 2FA не требуется
+//    (уже прошли при первой auth).
+// 3) iframe ещё раз ExportLoginToken — TG возвращает LoginTokenSuccess
+//    (юзер уже attached), iframe-клиент полноценно authorized.
+//
+// Преимущество перед ExportAuthorization: оба клиента делают полный
+// InitConnection с собственным device_model, оба auth_key 100% годны на
+// standalone-подключениях (включая TWA-iframe в браузере).
+async function provisionIframeSession(
+  workerClient: TelegramClient,
+): Promise<string> {
+  const iframeClient = newAnonymousClient({ deviceModel: "CRM iframe" });
+  await iframeClient.connect();
+  try {
+    // Полный цикл «дёргаем ExportLoginToken пока не получим стабильное
+    // состояние» — обрабатываем migrate как до, так и после AcceptLoginToken
+    // (gramjs может сбросить DC между invoke'ами).
+    type StableExport = Api.auth.LoginToken | Api.auth.LoginTokenSuccess;
+    const exportStable = async (): Promise<StableExport> => {
+      let r = (await iframeClient.invoke(
+        new Api.auth.ExportLoginToken({ apiId, apiHash, exceptIds: [] }),
+      )) as
+        | Api.auth.LoginToken
+        | Api.auth.LoginTokenMigrateTo
+        | Api.auth.LoginTokenSuccess;
+      while (r instanceof Api.auth.LoginTokenMigrateTo) {
+        await switchDc(iframeClient, r.dcId);
+        r = (await iframeClient.invoke(
+          new Api.auth.ImportLoginToken({ token: r.token }),
+        )) as
+          | Api.auth.LoginToken
+          | Api.auth.LoginTokenMigrateTo
+          | Api.auth.LoginTokenSuccess;
+      }
+      return r;
+    };
+
+    const first = await exportStable();
+    if (!(first instanceof Api.auth.LoginToken)) {
+      throw new Error(
+        `provisionIframeSession: первый export ожидался LoginToken, got ${first.className}`,
+      );
+    }
+
+    // Worker (уже authorized) accept'ит token — эквивалент «юзер отсканил
+    // QR в Telegram и нажал Confirm». 2FA не требуется, юзер уже её прошёл.
+    await workerClient.invoke(
+      new Api.auth.AcceptLoginToken({ token: first.token }),
+    );
+
+    const final = await exportStable();
+    if (!(final instanceof Api.auth.LoginTokenSuccess)) {
+      throw new Error(
+        `provisionIframeSession: ожидался LoginTokenSuccess, got ${final.className}`,
+      );
+    }
+
+    return (iframeClient.session as StringSession).save() ?? "";
+  } finally {
+    try {
+      await iframeClient.disconnect();
+    } catch {
+      // ignore
+    }
+  }
+}
+
 export async function deleteOutreachAccount(
   workspaceId: string,
   accountId: string,
@@ -118,9 +214,12 @@ export async function deleteOutreachAccount(
     .limit(1);
 
   if (row) {
-    // worker и iframe делят одну session — один logout снимает «активное
-    // устройство» в TG.
-    await logoutTgSession(row.session);
+    // У worker и iframe — РАЗНЫЕ auth_key, оба надо разлогинить, иначе
+    // соответствующее «активное устройство» останется в TG-настройках юзера.
+    await Promise.allSettled([
+      logoutTgSession(row.session),
+      logoutTgSession(row.iframeSession),
+    ]);
   }
 
   await evictWorkerClient(accountId);
@@ -152,6 +251,17 @@ export async function getOutreachWorkerClient(account: {
 
   const session = tryDecrypt(account.session);
   if (!session) return null;
+
+  // Кэшированный клиент мёртв (disconnected). Нужно явно снять старые
+  // handler'ы — иначе attachListener для нового клиента увидит handlers.has
+  // и сделает ранний return, оставив свежий client БЕЗ подписки на updates.
+  // Без этого после первого reconnect'а listener молча перестаёт получать
+  // NewMessage / UpdateReadHistoryInbox до перезапуска api.
+  if (cached) {
+    promotedClients.delete(cached);
+    detachListener(account.id, cached);
+    workerClients.delete(account.id);
+  }
 
   const client = new TelegramClient(
     new StringSession(session),

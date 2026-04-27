@@ -299,7 +299,7 @@ function SyncSettings(props: {
                       </div>
                     )}
                   </div>
-                  {config && !isSyncing && (
+                  {config && (
                     <button
                       type="button"
                       onClick={() =>
@@ -309,10 +309,14 @@ function SyncSettings(props: {
                         })
                       }
                       disabled={triggerSync.isPending}
-                      title="Синхронизировать сейчас"
+                      title={
+                        isSyncing
+                          ? "Запустить заново (если первый прогон упал)"
+                          : "Синхронизировать сейчас"
+                      }
                       className="flex h-8 w-8 items-center justify-center rounded-md text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 disabled:opacity-50"
                     >
-                      <RefreshCw size={14} />
+                      <RefreshCw size={14} className={isSyncing ? "animate-spin" : ""} />
                     </button>
                   )}
                   <Toggle

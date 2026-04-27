@@ -141,6 +141,12 @@ export function streamQrState<S>(
             closed = true;
           }
         } catch (e) {
+          // Логируем ВСЕГДА — иначе провижн iframe-session / persist failures
+          // молча уезжают в SSE error-event, а фронт его игнорит.
+          console.error(
+            `[streamQrState] readState failed for ${cacheKey}:`,
+            e instanceof Error ? e.stack ?? e.message : String(e),
+          );
           if (closed) return;
           await stream
             .writeSSE({
