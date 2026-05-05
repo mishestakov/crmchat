@@ -119,18 +119,18 @@ export function waitForAuthState(
   timeoutMs = 15_000,
 ): Promise<AuthState> {
   if (pred(bus.current())) return Promise.resolve(bus.current());
-  return new Promise<AuthState>((resolve, reject) => {
-    const timer = setTimeout(() => {
+  const { promise, resolve, reject } = Promise.withResolvers<AuthState>();
+  const timer = setTimeout(() => {
+    unsub();
+    reject(new Error("auth-state wait timed out"));
+  }, timeoutMs);
+  timer.unref?.();
+  const unsub = bus.subscribe((s) => {
+    if (pred(s)) {
+      clearTimeout(timer);
       unsub();
-      reject(new Error("auth-state wait timed out"));
-    }, timeoutMs);
-    timer.unref?.();
-    const unsub = bus.subscribe((s) => {
-      if (pred(s)) {
-        clearTimeout(timer);
-        unsub();
-        resolve(s);
-      }
-    });
+      resolve(s);
+    }
   });
+  return promise;
 }

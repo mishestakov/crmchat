@@ -64,14 +64,10 @@ export function streamAuthState<S>(
 
     await send();
 
-    const abortP = new Promise<void>((resolve) => stream.onAbort(resolve));
+    const aborted = Promise.withResolvers<void>();
+    stream.onAbort(aborted.resolve);
     while (!stream.aborted && !closed) {
-      const sleep = cancellableSleep(25_000);
-      try {
-        await Promise.race([sleep.promise, abortP]);
-      } finally {
-        sleep.cancel();
-      }
+      await Promise.race([stream.sleep(25_000), aborted.promise]);
       if (stream.aborted || closed) break;
       try {
         await stream.writeSSE({ event: "ping", data: "" });
@@ -80,26 +76,4 @@ export function streamAuthState<S>(
       }
     }
   });
-}
-
-function cancellableSleep(ms: number): {
-  promise: Promise<void>;
-  cancel: () => void;
-} {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  const promise = new Promise<void>((resolve) => {
-    timer = setTimeout(() => {
-      timer = null;
-      resolve();
-    }, ms);
-  });
-  return {
-    promise,
-    cancel: () => {
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
-    },
-  };
 }

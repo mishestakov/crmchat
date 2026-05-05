@@ -17,8 +17,8 @@ export const ContactViewSchema = z.object({
   mode: ContactViewModeSchema,
   filters: ContactViewFiltersSchema,
   createdBy: z.string().min(1).max(64),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
 });
 export type ContactView = z.infer<typeof ContactViewSchema>;
 

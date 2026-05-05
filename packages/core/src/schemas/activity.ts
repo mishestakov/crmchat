@@ -20,13 +20,13 @@ export const ActivitySchema = z.object({
   contactId: z.string().min(1).max(64),
   type: ActivityTypeSchema,
   text: z.string(),
-  date: z.string().datetime().nullable(),
+  date: z.iso.datetime().nullable(),
   repeat: ActivityRepeatSchema,
   status: ActivityStatusSchema,
-  completedAt: z.string().datetime().nullable(),
+  completedAt: z.iso.datetime().nullable(),
   createdBy: z.string().min(1).max(64),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
 });
 export type Activity = z.infer<typeof ActivitySchema>;
 
@@ -39,7 +39,7 @@ export const CreateActivitySchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("reminder"),
     text: z.string().min(1).max(5000),
-    date: z.string().datetime(),
+    date: z.iso.datetime(),
     repeat: ActivityRepeatSchema.optional(),
   }),
 ]);
@@ -50,7 +50,7 @@ export type CreateActivityInput = z.infer<typeof CreateActivitySchema>;
 export const UpdateActivitySchema = z
   .object({
     text: z.string().min(1).max(5000),
-    date: z.string().datetime().nullable(),
+    date: z.iso.datetime().nullable(),
     repeat: ActivityRepeatSchema,
     status: ActivityStatusSchema,
   })

@@ -520,9 +520,10 @@ app.get("/v1/workspaces/:wsId/contact-stream", (c) => {
     await stream.writeSSE({ event: "ready", data: "" });
 
     // Heartbeat против idle-timeout прокси. Та же схема что в qr-token-cache.ts.
-    const abortP = new Promise<void>((resolve) => stream.onAbort(resolve));
+    const aborted = Promise.withResolvers<void>();
+    stream.onAbort(aborted.resolve);
     while (!stream.aborted && !closed) {
-      await Promise.race([stream.sleep(25_000), abortP]);
+      await Promise.race([stream.sleep(25_000), aborted.promise]);
       if (stream.aborted || closed) break;
       try {
         await stream.writeSSE({ event: "ping", data: "" });

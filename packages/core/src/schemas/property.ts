@@ -57,7 +57,7 @@ export const PropertySchema = z.object({
   showInList: z.boolean(),
   internal: z.boolean(),
   values: z.array(PropertyValueSchema).nullable(),
-  createdAt: z.string().datetime(),
+  createdAt: z.iso.datetime(),
 });
 export type Property = z.infer<typeof PropertySchema>;
 

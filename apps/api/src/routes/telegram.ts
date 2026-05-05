@@ -279,7 +279,7 @@ const SyncConfigSchema = z.object({
   folderId: z.number().int(),
   folderTitle: z.string(),
   workspaceId: z.string(),
-  lastSyncAt: z.string().datetime().nullable(),
+  lastSyncAt: z.iso.datetime().nullable(),
   lastSyncImported: z.number().int().nullable(),
 });
 

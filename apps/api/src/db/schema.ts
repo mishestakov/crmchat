@@ -47,9 +47,7 @@ export const sessions = pgTable(
       .defaultNow(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   },
-  (t) => ({
-    expiresAtIdx: index("sessions_expires_at_idx").on(t.expiresAt),
-  }),
+  (t) => [index("sessions_expires_at_idx").on(t.expiresAt)],
 );
 
 // Расписание окон отправки для outreach-воркера. Хранится на workspace, потому
@@ -101,9 +99,7 @@ export const workspaces = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => ({
-    orgIdx: index("workspaces_organization_id_idx").on(t.organizationId),
-  }),
+  (t) => [index("workspaces_organization_id_idx").on(t.organizationId)],
 );
 
 // Custom-property types. По спеке data-model.md §3 — date добавим когда упрёмся.
@@ -146,13 +142,10 @@ export const properties = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => ({
-    workspaceKeyUnique: unique("properties_workspace_id_key_key").on(
-      t.workspaceId,
-      t.key,
-    ),
-    workspaceIdx: index("properties_workspace_id_idx").on(t.workspaceId),
-  }),
+  (t) => [
+    unique("properties_workspace_id_key_key").on(t.workspaceId, t.key),
+    index("properties_workspace_id_idx").on(t.workspaceId),
+  ],
 );
 
 export const contactViewMode = pgEnum("contact_view_mode", ["list", "kanban"]);
@@ -181,9 +174,7 @@ export const contactViews = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => ({
-    workspaceIdx: index("contact_views_workspace_id_idx").on(t.workspaceId),
-  }),
+  (t) => [index("contact_views_workspace_id_idx").on(t.workspaceId)],
 );
 
 export const activityType = pgEnum("activity_type", ["note", "reminder"]);
@@ -224,21 +215,21 @@ export const contacts = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => ({
-    workspaceIdx: index("contacts_workspace_id_idx").on(t.workspaceId),
+  (t) => [
+    index("contacts_workspace_id_idx").on(t.workspaceId),
     // Functional-индекс под dedup при TG-импорте: lookup
     // `properties->>'tg_user_id'` иначе full scan по всей таблице.
-    tgUserIdIdx: index("contacts_tg_user_id_idx").on(
+    index("contacts_tg_user_id_idx").on(
       sql`(${t.properties} ->> 'tg_user_id')`,
     ),
     // UNIQUE на пару (workspace, tg_user_id) — закрывает race в outreach
     // listener'е: два concurrent NewMessage events могли создать двух контактов
     // для одного TG-юзера (find-or-create в разных запросах). Partial index:
     // контакты без tg_user_id (созданные руками) не попадают под constraint.
-    tgUserIdUnique: uniqueIndex("contacts_workspace_tg_user_id_unique")
+    uniqueIndex("contacts_workspace_tg_user_id_unique")
       .on(t.workspaceId, sql`(${t.properties} ->> 'tg_user_id')`)
       .where(sql`(${t.properties} ->> 'tg_user_id') IS NOT NULL`),
-  }),
+  ],
 );
 
 // Личный CRM-аккаунт юзера: один на user (unique constraint), используется для
@@ -315,14 +306,14 @@ export const outreachAccounts = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => ({
-    workspaceIdx: index("outreach_accounts_workspace_id_idx").on(t.workspaceId),
+  (t) => [
+    index("outreach_accounts_workspace_id_idx").on(t.workspaceId),
     // Один и тот же TG-аккаунт нельзя добавить в один workspace дважды.
-    workspaceTgUnique: unique("outreach_accounts_workspace_tg_unique").on(
+    unique("outreach_accounts_workspace_tg_unique").on(
       t.workspaceId,
       t.tgUserId,
     ),
-  }),
+  ],
 );
 
 // Outreach-список: источник лидов для будущей рассылки. Источники: csv (фаза 2),
@@ -378,9 +369,7 @@ export const outreachLists = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => ({
-    workspaceIdx: index("outreach_lists_workspace_id_idx").on(t.workspaceId),
-  }),
+  (t) => [index("outreach_lists_workspace_id_idx").on(t.workspaceId)],
 );
 
 // Outreach-лид: один peer в листе. tg_user_id заполнится при отправке (Phase 3 —
@@ -418,13 +407,13 @@ export const outreachLeads = pgTable(
       .default({}),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => ({
-    listIdx: index("outreach_leads_list_id_idx").on(t.listId),
-    workspaceIdx: index("outreach_leads_workspace_id_idx").on(t.workspaceId),
+  (t) => [
+    index("outreach_leads_list_id_idx").on(t.listId),
+    index("outreach_leads_workspace_id_idx").on(t.workspaceId),
     // Composite-индекс для inbound-listener: на каждое incoming TG-сообщение
     // делаем lookup `WHERE workspace_id = ? AND tg_user_id = ?`. Без индекса
     // — full scan по всем лидам workspace.
-    workspaceTgUserIdx: index("outreach_leads_workspace_tg_user_id_idx").on(
+    index("outreach_leads_workspace_tg_user_id_idx").on(
       t.workspaceId,
       t.tgUserId,
     ),
@@ -432,13 +421,13 @@ export const outreachLeads = pgTable(
     // phone — каждый сам по себе уникальный TG-идентификатор. Делаем ДВА
     // partial unique indexes, потому что один и тот же лид не должен иметь
     // ни двух записей по username, ни двух по phone.
-    listUsernameUnique: uniqueIndex("outreach_leads_list_username_unique")
+    uniqueIndex("outreach_leads_list_username_unique")
       .on(t.listId, sql`lower(${t.username})`)
       .where(sql`${t.username} IS NOT NULL`),
-    listPhoneUnique: uniqueIndex("outreach_leads_list_phone_unique")
+    uniqueIndex("outreach_leads_list_phone_unique")
       .on(t.listId, t.phone)
       .where(sql`${t.phone} IS NOT NULL AND ${t.username} IS NULL`),
-  }),
+  ],
 );
 
 // Outreach-sequence: рассылка по одному списку лидов с N сообщениями и задержками.
@@ -529,10 +518,10 @@ export const outreachSequences = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => ({
-    workspaceIdx: index("outreach_sequences_workspace_id_idx").on(t.workspaceId),
-    listIdx: index("outreach_sequences_list_id_idx").on(t.listId),
-  }),
+  (t) => [
+    index("outreach_sequences_workspace_id_idx").on(t.workspaceId),
+    index("outreach_sequences_list_id_idx").on(t.listId),
+  ],
 );
 
 // Запланированное сообщение: одна строка = одна предстоящая отправка. Создаётся
@@ -577,15 +566,12 @@ export const scheduledMessages = pgTable(
     error: text("error"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => ({
-    sequenceIdx: index("scheduled_messages_sequence_id_idx").on(t.sequenceId),
-    leadIdx: index("scheduled_messages_lead_id_idx").on(t.leadId),
+  (t) => [
+    index("scheduled_messages_sequence_id_idx").on(t.sequenceId),
+    index("scheduled_messages_lead_id_idx").on(t.leadId),
     // Composite-индекс под главный запрос воркера: pending по sendAt asc.
-    workerPickIdx: index("scheduled_messages_worker_pick_idx").on(
-      t.status,
-      t.sendAt,
-    ),
-  }),
+    index("scheduled_messages_worker_pick_idx").on(t.status, t.sendAt),
+  ],
 );
 
 // Привязка «папка Telegram → workspace для импорта контактов». Один user может
@@ -609,13 +595,10 @@ export const telegramSyncConfigs = pgTable(
     lastSyncImported: integer("last_sync_imported"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => ({
-    userFolderUnique: unique("tg_sync_user_folder_unique").on(
-      t.userId,
-      t.folderId,
-    ),
-    userIdx: index("tg_sync_user_id_idx").on(t.userId),
-  }),
+  (t) => [
+    unique("tg_sync_user_folder_unique").on(t.userId, t.folderId),
+    index("tg_sync_user_id_idx").on(t.userId),
+  ],
 );
 
 export const activities = pgTable(
@@ -641,7 +624,5 @@ export const activities = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => ({
-    contactIdx: index("activities_contact_id_idx").on(t.contactId),
-  }),
+  (t) => [index("activities_contact_id_idx").on(t.contactId)],
 );

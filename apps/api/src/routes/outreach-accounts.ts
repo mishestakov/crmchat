@@ -2,7 +2,7 @@ import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db/client";
-import { outreachAccounts } from "../db/schema";
+import { outreachAccounts, outreachAccountStatus } from "../db/schema";
 import { errMsg } from "../lib/errors";
 import {
   clearPendingOutreachClient,
@@ -35,14 +35,14 @@ const WsAccountParam = z.object({
 
 const AccountSchema = z.object({
   id: z.string(),
-  status: z.enum(["active", "banned", "frozen", "unauthorized", "offline"]),
+  status: z.enum(outreachAccountStatus.enumValues),
   tgUserId: z.string(),
   tgUsername: z.string().nullable(),
   phoneNumber: z.string().nullable(),
   firstName: z.string().nullable(),
   hasPremium: z.boolean(),
   newLeadsDailyLimit: z.number().int(),
-  createdAt: z.string().datetime(),
+  createdAt: z.iso.datetime(),
 });
 
 const PatchAccountBody = z.object({

@@ -3,7 +3,7 @@ import { z } from "zod";
 // Ближайший открытый reminder контакта — рендерится в карточке kanban-а.
 // Бэкенд считает через subquery; null если у контакта нет открытых напоминаний.
 export const ContactNextStepSchema = z.object({
-  date: z.string().datetime(),
+  date: z.iso.datetime(),
   text: z.string(),
   repeat: z.enum(["none", "daily", "weekly", "monthly"]),
 });
@@ -20,9 +20,9 @@ export const ContactSchema = z.object({
   // Непрочитанные TG-входящие. Канбан рисует badge если > 0, обнуляется
   // на open-карточки или mark-read postMessage из TWA-iframe.
   unreadCount: z.number().int().nonnegative(),
-  lastMessageAt: z.string().datetime().nullable(),
+  lastMessageAt: z.iso.datetime().nullable(),
   createdBy: z.string().min(1).max(64),
-  createdAt: z.string().datetime(),
+  createdAt: z.iso.datetime(),
 });
 export type Contact = z.infer<typeof ContactSchema>;
 

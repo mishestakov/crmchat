@@ -4,11 +4,15 @@ import { streamSSE } from "hono/streaming";
 import { and, asc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import {
+  contactCreationTrigger,
   outreachAccounts,
+  outreachAccountsMode,
   outreachLeads,
   outreachLists,
   outreachSequences,
+  outreachSequenceStatus,
   scheduledMessages,
+  scheduledMessageStatus,
   type OutreachSequenceMessage,
 } from "../db/schema";
 import { subscribeSequence } from "../lib/outreach-events";
@@ -37,17 +41,9 @@ const MessageSchema = z.object({
   delay: DelaySchema,
 });
 
-const SequenceStatusSchema = z.enum([
-  "draft",
-  "active",
-  "paused",
-  "completed",
-]);
-const AccountsModeSchema = z.enum(["all", "selected"]);
-const ContactCreationTriggerSchema = z.enum([
-  "on-reply",
-  "on-first-message-sent",
-]);
+const SequenceStatusSchema = z.enum(outreachSequenceStatus.enumValues);
+const AccountsModeSchema = z.enum(outreachAccountsMode.enumValues);
+const ContactCreationTriggerSchema = z.enum(contactCreationTrigger.enumValues);
 
 const SequenceSchema = z.object({
   id: z.string(),
@@ -60,9 +56,9 @@ const SequenceSchema = z.object({
   contactCreationTrigger: ContactCreationTriggerSchema,
   contactDefaultOwnerIds: z.array(z.string()),
   contactDefaults: z.record(z.string(), z.unknown()),
-  activatedAt: z.string().datetime().nullable(),
-  completedAt: z.string().datetime().nullable(),
-  createdAt: z.string().datetime(),
+  activatedAt: z.iso.datetime().nullable(),
+  completedAt: z.iso.datetime().nullable(),
+  createdAt: z.iso.datetime(),
 });
 
 const CreateSequenceBody = z.object({
@@ -85,10 +81,10 @@ const UpdateSequenceBody = z.object({
 // status: pending → sent → (read), либо failed/cancelled.
 const LeadMessageProgressSchema = z.object({
   messageIdx: z.number().int(),
-  status: z.enum(["pending", "sent", "failed", "cancelled"]),
-  sentAt: z.string().datetime().nullable(),
-  readAt: z.string().datetime().nullable(),
-  scheduledAt: z.string().datetime().nullable(),
+  status: z.enum(scheduledMessageStatus.enumValues),
+  sentAt: z.iso.datetime().nullable(),
+  readAt: z.iso.datetime().nullable(),
+  scheduledAt: z.iso.datetime().nullable(),
   error: z.string().nullable(),
 });
 
@@ -113,7 +109,7 @@ const LeadProgressSchema = z.object({
   account: LeadAccountSchema.nullable(),
   // Прогресс по каждому сообщению sequence. Длина массива = seq.messages.length.
   messages: z.array(LeadMessageProgressSchema),
-  repliedAt: z.string().datetime().nullable(),
+  repliedAt: z.iso.datetime().nullable(),
   contactId: z.string().nullable(),
 });
 

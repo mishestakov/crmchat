@@ -1,4 +1,7 @@
-// Общие date/number utility'и. Раньше дублировались в нескольких файлах.
+// Общие date/number utility'и. Опираемся на Intl: локализация + склонения
+// делает рантайм, не мы.
+
+const pluralRules = new Intl.PluralRules("ru");
 
 export function pluralize(
   n: number,
@@ -6,43 +9,47 @@ export function pluralize(
   few: string,
   many: string,
 ): string {
-  const mod10 = n % 10;
-  const mod100 = n % 100;
-  if (mod10 === 1 && mod100 !== 11) return one;
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
-  return many;
+  switch (pluralRules.select(n)) {
+    case "one":
+      return one;
+    case "few":
+      return few;
+    default:
+      return many;
+  }
 }
+
+const dateTimeFormat = new Intl.DateTimeFormat("ru-RU", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
 
 export function formatDateTime(iso: string | Date): string {
   if (!iso) return "";
-  const d = typeof iso === "string" ? new Date(iso) : iso;
-  return d.toLocaleString("ru-RU", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return dateTimeFormat.format(typeof iso === "string" ? new Date(iso) : iso);
 }
 
-// "5 мин назад" / "через 2 ч". opts.future — будущее время.
+const relativeFormat = new Intl.RelativeTimeFormat("ru", { style: "short" });
+
+const RELATIVE_UNITS: { unit: Intl.RelativeTimeFormatUnit; sec: number }[] = [
+  { unit: "day", sec: 86_400 },
+  { unit: "hour", sec: 3_600 },
+  { unit: "minute", sec: 60 },
+  { unit: "second", sec: 1 },
+];
+
 export function formatRelative(
   iso: string,
   opts?: { future?: boolean },
 ): string {
   if (!iso) return "—";
-  const now = Date.now();
-  const t = new Date(iso).getTime();
-  const diffSec = opts?.future
-    ? Math.max(1, Math.floor((t - now) / 1000))
-    : Math.max(1, Math.floor((now - t) / 1000));
-  const suffix = opts?.future ? "" : " назад";
-  const prefix = opts?.future ? "через " : "";
-  if (diffSec < 60) return `${prefix}${diffSec} сек${suffix}`;
-  const min = Math.floor(diffSec / 60);
-  if (min < 60) return `${prefix}${min} мин${suffix}`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${prefix}${hr} ч${suffix}`;
-  const day = Math.floor(hr / 24);
-  return `${prefix}${day} дн${suffix}`;
+  const diffSec = Math.floor((new Date(iso).getTime() - Date.now()) / 1000);
+  const signed = opts?.future ? Math.max(1, diffSec) : Math.min(-1, diffSec);
+  const abs = Math.abs(signed);
+  // abs >= 1 (см. Math.max/min выше) → последний элемент {sec:1} всегда матчит.
+  const { unit, sec } = RELATIVE_UNITS.find((u) => abs >= u.sec)!;
+  return relativeFormat.format(Math.trunc(signed / sec), unit);
 }

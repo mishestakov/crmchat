@@ -2,7 +2,11 @@ import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { and, eq, getTableColumns, sql } from "drizzle-orm";
 import { db } from "../db/client";
-import { outreachLeads, outreachLists } from "../db/schema";
+import {
+  outreachLeads,
+  outreachLists,
+  outreachListStatus,
+} from "../db/schema";
 import type { WorkspaceVars } from "../middleware/assert-member";
 
 // Outreach-листы (CSV-импорт): фронт парсит файл локально, шлёт JSON со
@@ -33,7 +37,7 @@ const ListSchema = z.object({
     phoneColumn: z.string().optional(),
     columns: z.array(z.string()).optional(),
   }),
-  status: z.enum(["pending", "processing", "completed", "failed"]),
+  status: z.enum(outreachListStatus.enumValues),
   totalSize: z.number().int().nullable(),
   importStats: z
     .object({
@@ -43,7 +47,7 @@ const ListSchema = z.object({
       skippedDuplicate: z.number().int(),
     })
     .nullable(),
-  createdAt: z.string().datetime(),
+  createdAt: z.iso.datetime(),
 });
 
 const LeadSchema = z.object({
@@ -52,7 +56,7 @@ const LeadSchema = z.object({
   phone: z.string().nullable(),
   tgUserId: z.string().nullable(),
   properties: z.record(z.string(), z.string()),
-  createdAt: z.string().datetime(),
+  createdAt: z.iso.datetime(),
 });
 
 const CreateListBody = z.object({

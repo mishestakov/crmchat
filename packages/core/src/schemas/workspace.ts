@@ -5,7 +5,7 @@ export const WorkspaceSchema = z.object({
   organizationId: z.string().min(1).max(64),
   name: z.string().min(1).max(120),
   createdBy: z.string().min(1).max(64),
-  createdAt: z.string().datetime(),
+  createdAt: z.iso.datetime(),
 });
 
 export type Workspace = z.infer<typeof WorkspaceSchema>;

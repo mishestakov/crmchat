@@ -17,4 +17,21 @@ export default defineConfig({
       "/openapi.json": "http://localhost:3000",
     },
   },
+  optimizeDeps: {
+    exclude: ["lucide-react"],
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("@tanstack/react-router") || id.includes("@tanstack/react-query")) {
+            return "tanstack";
+          }
+          if (id.includes("/motion/")) {
+            return "motion";
+          }
+        },
+      },
+    },
+  },
 });

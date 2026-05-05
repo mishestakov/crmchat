@@ -1,5 +1,6 @@
 import { HTTPException } from "hono/http-exception";
 import { eq } from "drizzle-orm";
+import { z } from "zod";
 import { db } from "../db/client";
 import { properties as propsTable } from "../db/schema";
 
@@ -58,9 +59,7 @@ function validateValue(def: PropertyDef, raw: unknown): unknown {
 
     case "email": {
       const s = expectString("email string");
-      // Лёгкая проверка — UI ставит type="email" и валидирует браузером;
-      // здесь финальный страховочный rejection уродцев.
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)) {
+      if (!z.email().safeParse(s).success) {
         throw new HTTPException(400, {
           message: `property "${def.key}": invalid email`,
         });
@@ -70,9 +69,7 @@ function validateValue(def: PropertyDef, raw: unknown): unknown {
 
     case "url": {
       const s = expectString("url string");
-      try {
-        new URL(s);
-      } catch {
+      if (!z.url().safeParse(s).success) {
         throw new HTTPException(400, {
           message: `property "${def.key}": invalid url`,
         });

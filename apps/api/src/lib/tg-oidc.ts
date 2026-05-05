@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import { z } from "zod";
 
 const ISSUER = "https://oauth.telegram.org";
 const JWKS = createRemoteJWKSet(new URL(`${ISSUER}/.well-known/jwks.json`));
@@ -31,11 +32,12 @@ export function buildAuthorizationUrl(args: {
   return `${ISSUER}/auth?${params}`;
 }
 
-export type TgIdTokenClaims = {
-  sub: string;
-  name?: string;
-  preferred_username?: string;
-};
+const TgClaimsSchema = z.object({
+  sub: z.string().min(1),
+  name: z.string().optional(),
+  preferred_username: z.string().optional(),
+});
+export type TgIdTokenClaims = z.infer<typeof TgClaimsSchema>;
 
 export async function exchangeCodeForIdToken(args: {
   code: string;
@@ -62,5 +64,5 @@ export async function exchangeCodeForIdToken(args: {
     issuer: ISSUER,
     audience: CLIENT_ID,
   });
-  return payload as unknown as TgIdTokenClaims;
+  return TgClaimsSchema.parse(payload);
 }
