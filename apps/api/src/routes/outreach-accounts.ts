@@ -2,7 +2,11 @@ import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db/client";
-import { outreachAccounts, outreachAccountStatus } from "../db/schema";
+import {
+  outreachAccounts,
+  outreachAccountStatus,
+  workspaceMembers,
+} from "../db/schema";
 import { errMsg } from "../lib/errors";
 import {
   clearPendingOutreachClient,
@@ -10,6 +14,10 @@ import {
   getOrCreatePendingOutreachClient,
   persistOutreachAccount,
 } from "../lib/outreach-account-client";
+import {
+  accountAccessClause,
+  assertAccountAccess,
+} from "../lib/outreach-access";
 import { tryDecrypt } from "../lib/crypto";
 import {
   streamAuthState,
@@ -19,7 +27,7 @@ import {
   tdSignInPassword,
   type AuthState,
 } from "../lib/tdlib";
-import type { WorkspaceVars } from "../middleware/assert-member";
+import { assertRole, type WorkspaceVars } from "../middleware/assert-member";
 
 // Outreach-аккаунты: ОТПРАВЛЯЮЩИЕ TG-аккаунты для холодных рассылок (multi per
 // workspace). Auth-флоу через TDLib state-machine: HTTP-ручки вызывают
@@ -43,9 +51,16 @@ const AccountSchema = z
     firstName: z.string().nullable(),
     hasPremium: z.boolean(),
     newLeadsDailyLimit: z.number().int(),
+    ownerUserId: z.string(),
     createdAt: z.iso.datetime(),
   })
   .openapi("OutreachAccount");
+
+const TransferAccountBody = z
+  .object({
+    newOwnerUserId: z.string().min(1).max(64),
+  })
+  .openapi("TransferOutreachAccount");
 
 const PatchAccountBody = z
   .object({
@@ -75,6 +90,7 @@ function serializeAccount(r: typeof outreachAccounts.$inferSelect) {
     firstName: r.firstName,
     hasPremium: r.hasPremium,
     newLeadsDailyLimit: r.newLeadsDailyLimit,
+    ownerUserId: r.ownerUserId,
     createdAt: r.createdAt.toISOString(),
   };
 }
@@ -112,10 +128,12 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const rows = await db
       .select()
       .from(outreachAccounts)
-      .where(eq(outreachAccounts.workspaceId, wsId))
+      .where(accountAccessClause(wsId, userId, role))
       .orderBy(outreachAccounts.createdAt);
     return c.json(rows.map(serializeAccount));
   },
@@ -136,18 +154,10 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { accountId } = c.req.valid("param");
-    const [row] = await db
-      .select()
-      .from(outreachAccounts)
-      .where(
-        and(
-          eq(outreachAccounts.id, accountId),
-          eq(outreachAccounts.workspaceId, wsId),
-        ),
-      )
-      .limit(1);
-    if (!row) throw new HTTPException(404, { message: "account not found" });
+    const row = await assertAccountAccess(accountId, wsId, userId, role);
     return c.json(serializeAccount(row));
   },
 );
@@ -173,20 +183,18 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { accountId } = c.req.valid("param");
     const body = c.req.valid("json");
+    await assertAccountAccess(accountId, wsId, userId, role);
     const [row] = await db
       .update(outreachAccounts)
       .set({
         newLeadsDailyLimit: body.newLeadsDailyLimit,
         updatedAt: new Date(),
       })
-      .where(
-        and(
-          eq(outreachAccounts.id, accountId),
-          eq(outreachAccounts.workspaceId, wsId),
-        ),
-      )
+      .where(eq(outreachAccounts.id, accountId))
       .returning();
     if (!row) throw new HTTPException(404, { message: "account not found" });
     return c.json(serializeAccount(row));
@@ -208,18 +216,10 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { accountId } = c.req.valid("param");
-    const [row] = await db
-      .select({ iframeSession: outreachAccounts.iframeSession })
-      .from(outreachAccounts)
-      .where(
-        and(
-          eq(outreachAccounts.id, accountId),
-          eq(outreachAccounts.workspaceId, wsId),
-        ),
-      )
-      .limit(1);
-    if (!row) throw new HTTPException(404, { message: "account not found" });
+    const row = await assertAccountAccess(accountId, wsId, userId, role);
     if (!row.iframeSession) {
       throw new HTTPException(409, {
         message: "iframe session unavailable, re-auth required",
@@ -436,10 +436,71 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { accountId } = c.req.valid("param");
+    await assertAccountAccess(accountId, wsId, userId, role);
     const ok = await deleteOutreachAccount(wsId, accountId);
     if (!ok) throw new HTTPException(404, { message: "account not found" });
     return c.body(null, 204);
+  },
+);
+
+// Перманентная передача аккаунта другому менеджеру (увольнение, реорг).
+// Меняет owner_user_id; делегации остаются. Только admin.
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/outreach/accounts/{accountId}/transfer",
+    tags: ["outreach"],
+    middleware: [assertRole("admin")] as const,
+    request: {
+      params: WsAccountParam,
+      body: {
+        content: { "application/json": { schema: TransferAccountBody } },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: { "application/json": { schema: AccountSchema } },
+        description: "Owner transferred",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const { accountId } = c.req.valid("param");
+    const { newOwnerUserId } = c.req.valid("json");
+    // newOwnerUserId должен быть членом workspace'а — иначе нарушим
+    // tenancy. Проверяем JOIN'ом на workspace_members.
+    const [member] = await db
+      .select({ userId: workspaceMembers.userId })
+      .from(workspaceMembers)
+      .where(
+        and(
+          eq(workspaceMembers.workspaceId, wsId),
+          eq(workspaceMembers.userId, newOwnerUserId),
+        ),
+      )
+      .limit(1);
+    if (!member) {
+      throw new HTTPException(400, {
+        message: "newOwnerUserId is not a member of this workspace",
+      });
+    }
+    const [row] = await db
+      .update(outreachAccounts)
+      .set({ ownerUserId: newOwnerUserId, updatedAt: new Date() })
+      .where(
+        and(
+          eq(outreachAccounts.id, accountId),
+          eq(outreachAccounts.workspaceId, wsId),
+        ),
+      )
+      .returning();
+    if (!row) throw new HTTPException(404, { message: "account not found" });
+    return c.json(serializeAccount(row));
   },
 );
 

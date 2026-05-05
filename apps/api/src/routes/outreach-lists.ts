@@ -7,7 +7,7 @@ import {
   outreachLists,
   outreachListStatus,
 } from "../db/schema";
-import type { WorkspaceVars } from "../middleware/assert-member";
+import { assertRole, type WorkspaceVars } from "../middleware/assert-member";
 
 // Outreach-листы (CSV-импорт): фронт парсит файл локально, шлёт JSON со
 // строками лидов и meta колонок. Сервер валидирует identifier'ы (username/phone),
@@ -112,6 +112,7 @@ app.openapi(
     method: "post",
     path: "/v1/workspaces/{wsId}/outreach/lists",
     tags: ["outreach"],
+    middleware: [assertRole("admin")] as const,
     request: {
       params: WsParam,
       body: {
@@ -348,6 +349,7 @@ app.openapi(
     method: "delete",
     path: "/v1/workspaces/{wsId}/outreach/lists/{listId}",
     tags: ["outreach"],
+    middleware: [assertRole("admin")] as const,
     request: { params: WsListParam },
     responses: { 204: { description: "Deleted" } },
   }),

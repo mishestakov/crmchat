@@ -360,6 +360,13 @@ export const outreachAccounts = pgTable(
     // считает sent-за-сегодня и пропускает аккаунт когда упёрлись. Дефолт 30 —
     // безопасно для не-Premium аккаунта без warmup. Юзер может крутить.
     newLeadsDailyLimit: integer("new_leads_daily_limit").notNull().default(30),
+    // Текущий владелец аккаунта (менеджер). Меняется через transfer
+    // (увольнение/перепередача). Member видит аккаунт если owner_user_id=self
+    // или есть активная делегация (см. outreach_account_delegations).
+    ownerUserId: text("owner_user_id")
+      .notNull()
+      .references(() => users.id),
+    // Audit: кто изначально подключил. Не участвует в access-проверках.
     createdBy: text("created_by")
       .notNull()
       .references(() => users.id),
@@ -368,11 +375,53 @@ export const outreachAccounts = pgTable(
   },
   (t) => [
     index("outreach_accounts_workspace_id_idx").on(t.workspaceId),
+    index("outreach_accounts_owner_idx").on(t.workspaceId, t.ownerUserId),
     // Один и тот же TG-аккаунт нельзя добавить в один workspace дважды.
     unique("outreach_accounts_workspace_tg_unique").on(
       t.workspaceId,
       t.tgUserId,
     ),
+  ],
+);
+
+// Временная передача доступа к аккаунту без смены владельца — отпуск,
+// больничный. Owner остаётся прежним; delegate видит аккаунт и его чаты
+// пока now() ∈ [starts_at, ends_at). Окончание — автоматическое по дате,
+// никаких обратных операций. Перманентная передача (увольнение) делается
+// через UPDATE outreach_accounts.owner_user_id (transfer endpoint).
+//
+// PK (account, delegate, starts_at) — один и тот же делегат может иметь
+// несколько окон в разное время.
+export const outreachAccountDelegations = pgTable(
+  "outreach_account_delegations",
+  {
+    accountId: text("account_id")
+      .notNull()
+      .references(() => outreachAccounts.id, { onDelete: "cascade" }),
+    delegateId: text("delegate_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    startsAt: timestamp("starts_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    // NULL = бессрочное (редкий кейс, например постоянная подмена).
+    endsAt: timestamp("ends_at", { withTimezone: true }),
+    // Свободный текст для UI: 'отпуск', 'больничный', etc.
+    reason: text("reason"),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    primaryKey({
+      columns: [t.accountId, t.delegateId, t.startsAt],
+      name: "outreach_account_delegations_pk",
+    }),
+    // Под лукап «активные делегации этого юзера» при listing'е аккаунтов.
+    index("outreach_account_delegations_delegate_idx").on(t.delegateId),
   ],
 );
 

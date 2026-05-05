@@ -17,7 +17,7 @@ import {
 } from "../db/schema";
 import { subscribeSequence } from "../lib/outreach-events";
 import { substituteVariables } from "../lib/substitute-variables";
-import type { WorkspaceVars } from "../middleware/assert-member";
+import { assertRole, type WorkspaceVars } from "../middleware/assert-member";
 
 // Outreach-sequence: рассылка по одному списку с N сообщениями и задержками.
 // Активация = pre-schedule всех scheduled_messages с round-robin аккаунтом и
@@ -156,6 +156,7 @@ app.openapi(
     method: "post",
     path: "/v1/workspaces/{wsId}/outreach/sequences",
     tags: ["outreach"],
+    middleware: [assertRole("admin")] as const,
     request: {
       params: WsParam,
       body: {
@@ -224,6 +225,7 @@ app.openapi(
     method: "patch",
     path: "/v1/workspaces/{wsId}/outreach/sequences/{seqId}",
     tags: ["outreach"],
+    middleware: [assertRole("admin")] as const,
     request: {
       params: WsSeqParam,
       body: {
@@ -292,6 +294,7 @@ app.openapi(
     method: "delete",
     path: "/v1/workspaces/{wsId}/outreach/sequences/{seqId}",
     tags: ["outreach"],
+    middleware: [assertRole("admin")] as const,
     request: { params: WsSeqParam },
     responses: { 204: { description: "Deleted" } },
   }),
@@ -319,6 +322,7 @@ app.openapi(
     method: "post",
     path: "/v1/workspaces/{wsId}/outreach/sequences/{seqId}/activate",
     tags: ["outreach"],
+    middleware: [assertRole("admin")] as const,
     request: { params: WsSeqParam },
     responses: {
       200: {
@@ -434,6 +438,7 @@ app.openapi(
     method: "post",
     path: "/v1/workspaces/{wsId}/outreach/sequences/{seqId}/pause",
     tags: ["outreach"],
+    middleware: [assertRole("admin")] as const,
     request: { params: WsSeqParam },
     responses: {
       200: {
@@ -468,6 +473,7 @@ app.openapi(
     method: "post",
     path: "/v1/workspaces/{wsId}/outreach/sequences/{seqId}/resume",
     tags: ["outreach"],
+    middleware: [assertRole("admin")] as const,
     request: { params: WsSeqParam },
     responses: {
       200: {

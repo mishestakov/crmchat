@@ -26,7 +26,7 @@ import {
   SectionItemValue,
 } from "../../../../../../../components/section";
 import { pluralize } from "../../../../../../../lib/date-utils";
-import { useEscapeKey, useEventSourceEvent } from "../../../../../../../lib/hooks";
+import { useEscapeKey, useEventSourceEvent, useMyRole } from "../../../../../../../lib/hooks";
 import { useSequence } from "../../../../../../../lib/outreach-queries";
 import { OUTREACH_QK } from "../../../../../../../lib/query-keys";
 import { substituteVariables } from "../../../../../../../lib/substitute-variables";
@@ -60,6 +60,7 @@ function SequenceDetailPage() {
   const { wsId, seqId } = Route.useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const isAdmin = useMyRole(wsId) === "admin";
 
   const seq = useSequence(wsId, seqId);
 
@@ -262,7 +263,7 @@ function SequenceDetailPage() {
               <span className="font-medium">{statusRu(data.status)}</span>
             </SectionItemTitle>
             <SectionItemValue>
-              {isActive && (
+              {isAdmin && isActive && (
                 <button
                   type="button"
                   onClick={() => pause.mutate()}
@@ -272,7 +273,7 @@ function SequenceDetailPage() {
                   <Pause size={12} /> Пауза
                 </button>
               )}
-              {isPaused && (
+              {isAdmin && isPaused && (
                 <button
                   type="button"
                   onClick={() => resume.mutate()}
@@ -282,7 +283,7 @@ function SequenceDetailPage() {
                   <Play size={12} /> Продолжить
                 </button>
               )}
-              {isDraft && (
+              {isAdmin && isDraft && (
                 <button
                   type="button"
                   onClick={() => activate.mutate()}

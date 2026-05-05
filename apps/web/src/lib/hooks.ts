@@ -1,4 +1,6 @@
 import { useEffect, useRef, type RefObject } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "./api";
 
 // Закрытие модалки на ESC. handler пересохраняем в ref, чтобы effect не
 // перецеплялся при каждом ререндере вызывающего.
@@ -30,6 +32,31 @@ export function useClickOutside(
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, [elRef]);
+}
+
+// Роль текущего юзера в workspace'е. Возвращает 'admin' | 'member' | undefined
+// (пока запросы грузятся). Кэш `me` и `members` шарится с другими местами.
+export function useMyRole(wsId: string): "admin" | "member" | undefined {
+  const me = useQuery({
+    queryKey: ["me"],
+    queryFn: async () => {
+      const { data, error, response } = await api.GET("/v1/auth/me");
+      if (response.status === 401) return null;
+      if (error) throw error;
+      return data;
+    },
+  });
+  const members = useQuery({
+    queryKey: ["workspaces", wsId, "members"],
+    queryFn: async () => {
+      const { data, error } = await api.GET("/v1/workspaces/{id}/members", {
+        params: { path: { id: wsId } },
+      });
+      if (error) throw error;
+      return data;
+    },
+  });
+  return members.data?.find((m) => m.id === me.data?.id)?.role;
 }
 
 // EventSource-подписка на конкретное событие. url=null → не подключаемся

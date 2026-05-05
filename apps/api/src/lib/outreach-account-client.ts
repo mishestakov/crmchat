@@ -149,6 +149,7 @@ export async function persistOutreachAccount(
       phoneNumber: profile.phoneNumber,
       firstName: profile.firstName,
       hasPremium: profile.hasPremium,
+      ownerUserId: userId,
       createdBy: userId,
     })
     .onConflictDoUpdate({
@@ -160,6 +161,9 @@ export async function persistOutreachAccount(
         hasPremium: profile.hasPremium,
         status: "active",
         updatedAt: new Date(),
+        // ownerUserId не трогаем при reconnect: если аккаунт был передан
+        // другому менеджеру (transfer/делегация), не отбираем обратно
+        // молча — UI покажет «аккаунт у Маши», переподключающий разберётся.
       },
     })
     .returning({ id: outreachAccounts.id });

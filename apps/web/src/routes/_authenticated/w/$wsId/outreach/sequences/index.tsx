@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Plus } from "lucide-react";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
+import { useMyRole } from "../../../../../../lib/hooks";
 import { useOutreachAccounts } from "../../../../../../lib/outreach-queries";
 import { OUTREACH_QK } from "../../../../../../lib/query-keys";
 
@@ -30,6 +31,7 @@ function CampaignsPage() {
   const { wsId } = Route.useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const isAdmin = useMyRole(wsId) === "admin";
 
   const sequences = useQuery({
     queryKey: OUTREACH_QK.sequences(wsId),
@@ -129,33 +131,37 @@ function CampaignsPage() {
                   >
                     {STATUS_LABELS[seq.status] ?? seq.status}
                   </span>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (confirm(`Удалить кампанию «${seq.name}»?`)) {
-                        remove.mutate(seq.id);
-                      }
-                    }}
-                    disabled={remove.isPending}
-                    className="text-xs text-zinc-400 hover:text-red-600 disabled:opacity-50"
-                  >
-                    Удалить
-                  </button>
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (confirm(`Удалить кампанию «${seq.name}»?`)) {
+                          remove.mutate(seq.id);
+                        }
+                      }}
+                      disabled={remove.isPending}
+                      className="text-xs text-zinc-400 hover:text-red-600 disabled:opacity-50"
+                    >
+                      Удалить
+                    </button>
+                  )}
                   <ChevronRight size={16} className="text-zinc-400" />
                 </li>
               ))}
-              <li>
-                <Link
-                  to="/w/$wsId/outreach/sequences/new"
-                  params={{ wsId }}
-                  className="flex items-center px-5 py-3 text-sm text-zinc-600 hover:bg-zinc-50"
-                >
-                  <Plus size={16} className="mr-3 text-zinc-400" />
-                  <span className="flex-1">Новая кампания</span>
-                  <ChevronRight size={16} className="text-zinc-400" />
-                </Link>
-              </li>
+              {isAdmin && (
+                <li>
+                  <Link
+                    to="/w/$wsId/outreach/sequences/new"
+                    params={{ wsId }}
+                    className="flex items-center px-5 py-3 text-sm text-zinc-600 hover:bg-zinc-50"
+                  >
+                    <Plus size={16} className="mr-3 text-zinc-400" />
+                    <span className="flex-1">Новая кампания</span>
+                    <ChevronRight size={16} className="text-zinc-400" />
+                  </Link>
+                </li>
+              )}
             </ul>
           </div>
         )}
