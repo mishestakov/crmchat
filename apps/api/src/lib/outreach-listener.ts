@@ -14,6 +14,16 @@ import { errMsg } from "./errors";
 import { emitSequenceChanged } from "./outreach-events";
 import { extractActiveUsername, type TdClient, type TdUser } from "./tdlib";
 
+// In-memory map (account+chat+placeholder → scheduledMessageId) для
+// updateMessageSendFailed. Worker оптимистично пишет sent; failed-апдейт
+// переводит row в failed. После рестарта map пуст, единичный апдейт может
+// потеряться — окно секунды, принимаем.
+const pendingSends = new Map<string, string>();
+const k = (a: string, c: string, p: string) => `${a}:${c}:${p}`;
+export function rememberPendingSend(a: string, c: string, p: string, id: string) {
+  pendingSends.set(k(a, c, p), id);
+}
+
 // Inbound listener: подписываем глобальный update-handler за каждый authorized
 // outreach-account TDLib-инстанс. На каждое incoming DM от человека, который у
 // нас в outreach_leads (по tg_user_id + workspace_id), помечаем `replied_at` и
@@ -77,6 +87,32 @@ export function attachListener(
         case "updateChatReadOutbox": {
           const x = update as { chat_id: number };
           void onReadOutbox(workspaceId, x.chat_id);
+          return;
+        }
+        case "updateMessageSendSucceeded": {
+          // Worker уже написал sent — нам нужно только убрать ключ из map,
+          // иначе на typical-path (>99% sends) Map течёт навсегда.
+          const x = update as {
+            message: { chat_id: number | string };
+            old_message_id: number | string;
+          };
+          pendingSends.delete(
+            k(accountId, String(x.message.chat_id), String(x.old_message_id)),
+          );
+          return;
+        }
+        case "updateMessageSendFailed": {
+          const x = update as {
+            message: { chat_id: number | string };
+            old_message_id: number | string;
+            error?: { message?: string };
+          };
+          void onSendFailed(
+            accountId,
+            String(x.message.chat_id),
+            String(x.old_message_id),
+            x.error?.message ?? "send failed",
+          );
           return;
         }
       }
@@ -258,6 +294,28 @@ async function onReadInbox(
     }
   } catch (e) {
     console.error("[outreach-listener] onReadInbox:", errMsg(e));
+  }
+}
+
+async function onSendFailed(
+  accountId: string,
+  chatId: string,
+  oldMessageId: string,
+  errText: string,
+): Promise<void> {
+  const key = k(accountId, chatId, oldMessageId);
+  const id = pendingSends.get(key);
+  if (!id) return;
+  pendingSends.delete(key);
+  try {
+    const rows = await db
+      .update(scheduledMessages)
+      .set({ status: "failed", error: errText, sentAt: null })
+      .where(eq(scheduledMessages.id, id))
+      .returning({ sequenceId: scheduledMessages.sequenceId });
+    if (rows[0]) emitSequenceChanged(rows[0].sequenceId);
+  } catch (e) {
+    console.error("[outreach-listener] onSendFailed:", errMsg(e));
   }
 }
 

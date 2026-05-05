@@ -14,7 +14,7 @@ import {
   getOutreachWorkerClient,
 } from "./outreach-account-client";
 import { emitSequenceChanged } from "./outreach-events";
-import { convertLeadToContact } from "./outreach-listener";
+import { convertLeadToContact, rememberPendingSend } from "./outreach-listener";
 import { isNowInWindow, startOfDayInTz } from "./outreach-schedule";
 import type { TdClient } from "./tdlib";
 
@@ -269,12 +269,21 @@ async function processAccount(accountId: string, items: DueItem[]) {
     }
 
     try {
-      const { tgUserId } = await sendOne(client, lead, item.text);
+      const { tgUserId, tgChatId, tgPlaceholderId } = await sendOne(
+        client,
+        lead,
+        item.text,
+      );
+      // Оптимистично sent; updateMessageSendFailed → listener переключит
+      // на failed (см. outreach-listener.ts). Порядок важен: сначала
+      // db.update, потом rememberPendingSend — иначе failed-update,
+      // прилетевший до завершения update'а, был бы перетёрт нашим sent.
       const now = new Date();
       await db
         .update(scheduledMessages)
         .set({ status: "sent", sentAt: now })
         .where(eq(scheduledMessages.id, item.id));
+      rememberPendingSend(accountId, tgChatId, tgPlaceholderId, item.id);
       if (tgUserId && !lead.tgUserId) {
         await db
           .update(outreachLeads)
@@ -343,7 +352,11 @@ async function sendOne(
   client: TdClient,
   lead: LeadRow,
   text: string,
-): Promise<{ tgUserId: string | null }> {
+): Promise<{
+  tgUserId: string | null;
+  tgChatId: string;
+  tgPlaceholderId: string;
+}> {
   if (!lead.username) {
     throw new Error(
       "PHONE_NOT_SUPPORTED — phone-only лиды пока нельзя отправлять, нужен @username",
@@ -357,7 +370,9 @@ async function sendOne(
     username: stripAt(lead.username),
   } as never)) as { id: number | string; type?: { _?: string; user_id?: number } };
 
-  await client.invoke({
+  // sendMessage возвращает Message с placeholder id; failed-апдейт
+  // прилетит позже (см. outreach-listener.ts:onSendFailed).
+  const sentMsg = (await client.invoke({
     _: "sendMessage",
     chat_id: chat.id,
     input_message_content: {
@@ -366,7 +381,7 @@ async function sendOne(
       link_preview_options: { _: "linkPreviewOptions", is_disabled: true },
       clear_draft: false,
     },
-  } as never);
+  } as never)) as { id: number | string; chat_id: number | string };
 
   let tgUserId: string | null = null;
   if (chat.type?._ === "chatTypePrivate" && chat.type.user_id != null) {
@@ -374,7 +389,11 @@ async function sendOne(
   } else if (typeof chat.id === "number" && chat.id > 0) {
     tgUserId = String(chat.id);
   }
-  return { tgUserId };
+  return {
+    tgUserId,
+    tgChatId: String(sentMsg.chat_id),
+    tgPlaceholderId: String(sentMsg.id),
+  };
 }
 
 function stripAt(s: string): string {

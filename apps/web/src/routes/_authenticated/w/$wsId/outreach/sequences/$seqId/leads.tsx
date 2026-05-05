@@ -250,12 +250,13 @@ function MessageStatusCell(props: {
   }
 
   if (msg.status === "failed") {
+    const reason = humanizeSendError(msg.error);
     return (
       <StatusBadge
         icon={<AlertCircle size={12} />}
         color="red"
         title={msg.error ?? "Ошибка отправки"}
-        label="Ошибка"
+        label={reason}
       />
     );
   }
@@ -310,5 +311,25 @@ function StatusBadge(props: {
       <span className="whitespace-nowrap">{props.label}</span>
     </span>
   );
+}
+
+// Маппинг типичных TG/TDLib-ошибок sendMessage в краткий ru-label для плашки.
+// Полный текст остаётся в title (tooltip) — менеджер видит причину сразу,
+// технические детали — по hover.
+function humanizeSendError(raw: string | null): string {
+  if (!raw) return "Ошибка";
+  if (/USERNAME_INVALID|USERNAME_NOT_OCCUPIED|No such public user|Username not occupied/i.test(raw)) {
+    return "@username не существует";
+  }
+  if (/USER_PRIVACY_RESTRICTED/i.test(raw)) return "Закрытая приватность";
+  if (/USER_IS_BLOCKED|YOU_BLOCKED_USER/i.test(raw)) return "Заблокирован";
+  if (/PEER_FLOOD/i.test(raw)) return "Аккаунт зарезан TG";
+  if (/USER_DEACTIVATED|INPUT_USER_DEACTIVATED/i.test(raw)) return "Аккаунт удалён";
+  if (/CHAT_WRITE_FORBIDDEN/i.test(raw)) return "Писать запрещено";
+  if (/PHONE_NOT_SUPPORTED/i.test(raw)) return "Только @username";
+  if (/Bot can't initiate conversation/i.test(raw)) return "Бот не пишет первым";
+  if (/MESSAGE_EMPTY|MESSAGE_TOO_LONG/i.test(raw)) return "Длина сообщения";
+  if (/send update lost/i.test(raw)) return "Подтверждение потеряно";
+  return "Ошибка";
 }
 
