@@ -5,6 +5,7 @@ import { shortId } from "../db/short-id";
 import { encrypt } from "./crypto";
 import { errMsg } from "./errors";
 import { attachListener, detachListener } from "./outreach-listener";
+import { attachReplicator, type ReplicatorHandle } from "./tg-replicator";
 import {
   attachAuthStateBus,
   createPendingTdStore,
@@ -32,6 +33,7 @@ import {
 type WorkerEntry = {
   client: TdClient;
   authBus: AuthStateBus;
+  replicator: ReplicatorHandle;
 };
 
 const workerClients = new Map<string, WorkerEntry>();
@@ -189,6 +191,7 @@ export async function persistOutreachAccount(
         if (workerPaused) return;
         workerPaused = true;
         detachListener(finalAccountId, worker.client);
+        worker.replicator.detach();
         worker.authBus.detach();
         try {
           await worker.client.close();
@@ -252,7 +255,10 @@ async function spawnWorker(
     }
   });
   if (workspaceId) attachListener(accountId, workspaceId, client);
-  return { client, authBus };
+  // TG-репликация: пишем chat list / user directory в Postgres (см.
+  // tg-replicator.ts). Подцепляем здесь — после ready, до возврата клиента.
+  const replicator = attachReplicator(accountId, client);
+  return { client, authBus, replicator };
 }
 
 async function markUnauthorized(accountId: string): Promise<void> {
@@ -399,6 +405,7 @@ export async function evictWorkerClient(accountId: string): Promise<void> {
   workerClients.delete(accountId);
   accountCooldownUntil.delete(accountId);
   detachListener(accountId, entry.client);
+  entry.replicator.detach();
   entry.authBus.detach();
   try {
     await entry.client.close();

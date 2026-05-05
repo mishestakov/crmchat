@@ -735,3 +735,76 @@ export const activities = pgTable(
   },
   (t) => [index("activities_contact_id_idx").on(t.contactId)],
 );
+
+// === TG-репликация (этап 9.2) ===
+// Локальная копия Telegram chat list / user directory, обновляемая push'ом
+// через client.on('update'). Read-сценарии (поиск контактов, импорт, аналитика)
+// идут SQL'ом вместо RPC. См. tg-replicator.ts.
+
+export const tgChatType = pgEnum("tg_chat_type", [
+  "private",
+  "basic_group",
+  "supergroup",
+  "secret",
+]);
+
+// tg_chats — per-account: каждый outreach-аккаунт видит свой набор диалогов
+// (chat_id уникальны в рамках клиента, не глобально). Один и тот же блогер
+// у двух наших аккаунтов = две строки с разным account_id.
+//
+// peer_user_id NULL для групп; для private DM = peer'а в TG.
+// raw — полный chat-payload TDLib для будущих фич без пере-репликации.
+export const tgChats = pgTable(
+  "tg_chats",
+  {
+    accountId: text("account_id")
+      .notNull()
+      .references(() => outreachAccounts.id, { onDelete: "cascade" }),
+    chatId: text("chat_id").notNull(),
+    peerUserId: text("peer_user_id"),
+    chatType: tgChatType("chat_type").notNull(),
+    title: text("title"),
+    lastMessageId: text("last_message_id"),
+    lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
+    unreadCount: integer("unread_count").notNull().default(0),
+    raw: jsonb("raw").$type<Record<string, unknown>>().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.accountId, t.chatId], name: "tg_chats_pk" }),
+    // Под sticky lead assignment (9.1.5+) и поиск «кто из наших общался с
+    // peer_user_id»: WHERE peer_user_id = ?.
+    index("tg_chats_peer_user_id_idx").on(t.peerUserId),
+    // Под фильтр «диалоги аккаунта, отсортированные по свежести» — основной
+    // запрос для импорт-флоу 9.4 («все собеседники последних 30 дней»).
+    index("tg_chats_account_last_msg_idx").on(t.accountId, t.lastMessageAt),
+  ],
+);
+
+// tg_users — глобальный словарь TG-юзеров. user_id уникален в TG, поэтому
+// общая таблица: один блогер у пяти наших аккаунтов = одна строка.
+// Tenancy isolation на уровне tg_users не нужна — данные публичные (username
+// блогера == public-инфа). Чувствительное (phone) только заполняется если
+// TDLib его видит, и только для контактов из address book.
+export const tgUsers = pgTable(
+  "tg_users",
+  {
+    userId: text("user_id").primaryKey(),
+    username: text("username"),
+    fullName: text("full_name"),
+    phone: text("phone"),
+    isBot: boolean("is_bot").notNull().default(false),
+    isDeleted: boolean("is_deleted").notNull().default(false),
+    raw: jsonb("raw").$type<Record<string, unknown>>().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    // Под lookup «найти юзера по @username» (заменит searchPublicChat в 9.3).
+    // lower() — username case-insensitive.
+    index("tg_users_username_lower_idx").on(sql`lower(${t.username})`),
+  ],
+);
