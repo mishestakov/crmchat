@@ -740,20 +740,13 @@ export const activities = pgTable(
 // Локальная копия Telegram chat list / user directory, обновляемая push'ом
 // через client.on('update'). Read-сценарии (поиск контактов, импорт, аналитика)
 // идут SQL'ом вместо RPC. См. tg-replicator.ts.
-
-export const tgChatType = pgEnum("tg_chat_type", [
-  "private",
-  "basic_group",
-  "supergroup",
-  "secret",
-]);
-
-// tg_chats — per-account: каждый outreach-аккаунт видит свой набор диалогов
-// (chat_id уникальны в рамках клиента, не глобально). Один и тот же блогер
-// у двух наших аккаунтов = две строки с разным account_id.
 //
-// peer_user_id NULL для групп; для private DM = peer'а в TG.
-// raw — полный chat-payload TDLib для будущих фич без пере-репликации.
+// Скоп: только private DM с реальными юзерами (chatTypePrivate, userTypeRegular).
+// Группы/каналы/секретные/боты/удалённые не реплицируем — CRM в них не работает.
+
+// tg_chats — per-account private DM. Один и тот же блогер у двух наших
+// аккаунтов = две строки с разным account_id. raw — полный chat-payload
+// TDLib для будущих фич без пере-репликации.
 export const tgChats = pgTable(
   "tg_chats",
   {
@@ -761,8 +754,7 @@ export const tgChats = pgTable(
       .notNull()
       .references(() => outreachAccounts.id, { onDelete: "cascade" }),
     chatId: text("chat_id").notNull(),
-    peerUserId: text("peer_user_id"),
-    chatType: tgChatType("chat_type").notNull(),
+    peerUserId: text("peer_user_id").notNull(),
     title: text("title"),
     lastMessageId: text("last_message_id"),
     lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
@@ -774,20 +766,26 @@ export const tgChats = pgTable(
   },
   (t) => [
     primaryKey({ columns: [t.accountId, t.chatId], name: "tg_chats_pk" }),
-    // Под sticky lead assignment (9.1.5+) и поиск «кто из наших общался с
-    // peer_user_id»: WHERE peer_user_id = ?.
+    // Под sticky lead assignment и поиск «кто из наших общался с peer_user_id».
     index("tg_chats_peer_user_id_idx").on(t.peerUserId),
-    // Под фильтр «диалоги аккаунта, отсортированные по свежести» — основной
-    // запрос для импорт-флоу 9.4 («все собеседники последних 30 дней»).
+    // Под фильтр «диалоги аккаунта, отсортированные по свежести» — импорт-флоу
+    // 9.4 («все собеседники последних 30 дней»).
     index("tg_chats_account_last_msg_idx").on(t.accountId, t.lastMessageAt),
   ],
 );
 
-// tg_users — глобальный словарь TG-юзеров. user_id уникален в TG, поэтому
-// общая таблица: один блогер у пяти наших аккаунтов = одна строка.
-// Tenancy isolation на уровне tg_users не нужна — данные публичные (username
-// блогера == public-инфа). Чувствительное (phone) только заполняется если
-// TDLib его видит, и только для контактов из address book.
+// tg_users — глобальный словарь TG-собеседников. Реплицируем не-ботов
+// (Regular + Deleted/Unknown). Боты — out of scope (защита от bot-trap'а
+// делается отдельно по суффиксу @username).
+//
+// is_deleted=true для userTypeDeleted/Unknown — TG отозвал юзера или потерял
+// к нему доступ. Строку НЕ удаляем чтобы при повторном импорте CSV не идти
+// в searchPublicChat для известно-мёртвых аккаунтов; lookup'ы отсеивают
+// через WHERE is_deleted = false.
+//
+// Один блогер у пяти аккаунтов = одна строка. Tenancy isolation не нужна —
+// данные публичные. Phone заполняется только если TDLib его видит
+// (контакт из address book аккаунта).
 export const tgUsers = pgTable(
   "tg_users",
   {
@@ -795,7 +793,6 @@ export const tgUsers = pgTable(
     username: text("username"),
     fullName: text("full_name"),
     phone: text("phone"),
-    isBot: boolean("is_bot").notNull().default(false),
     isDeleted: boolean("is_deleted").notNull().default(false),
     raw: jsonb("raw").$type<Record<string, unknown>>().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
@@ -803,8 +800,7 @@ export const tgUsers = pgTable(
       .defaultNow(),
   },
   (t) => [
-    // Под lookup «найти юзера по @username» (заменит searchPublicChat в 9.3).
-    // lower() — username case-insensitive.
+    // Под lookup «найти юзера по @username» (заменяет searchPublicChat).
     index("tg_users_username_lower_idx").on(sql`lower(${t.username})`),
   ],
 );

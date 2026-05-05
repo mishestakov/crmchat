@@ -7,12 +7,13 @@ import {
   outreachSequences,
   properties as propsTable,
   scheduledMessages,
+  tgUsers,
 } from "../db/schema";
 import { validateContactProperties } from "./contact-properties";
 import { emitContactChanged } from "./contact-events";
 import { errMsg } from "./errors";
 import { emitSequenceChanged } from "./outreach-events";
-import { extractActiveUsername, type TdClient, type TdUser } from "./tdlib";
+import type { TdClient } from "./tdlib";
 
 // In-memory map (account+chat+placeholder → scheduledMessageId) для
 // updateMessageSendFailed. Worker оптимистично пишет sent; failed-апдейт
@@ -216,15 +217,16 @@ async function onNewMessage(
         unreadCount: contacts.unreadCount,
       });
 
-    // Fallback: контакт может быть создан вручную с одним telegram_username,
-    // без tg_user_id. Резолвим sender'а через getUser, ищем по username, и
-    // заодно инжектим tg_user_id в properties — следующий incoming сразу
-    // попадёт в быстрый путь по tg_user_id.
+    // Fallback: контакт может быть создан вручную с telegram_username, но без
+    // tg_user_id. Резолвим через реплику и инжектим tg_user_id в properties —
+    // следующий incoming сразу попадёт в быстрый путь.
     if (touched.length === 0) {
-      const user = (await client
-        .invoke({ _: "getUser", user_id: senderUserId } as never)
-        .catch(() => null)) as TdUser | null;
-      const username = user ? extractActiveUsername(user) : null;
+      const [u] = await db
+        .select({ username: tgUsers.username })
+        .from(tgUsers)
+        .where(eq(tgUsers.userId, senderIdStr))
+        .limit(1);
+      const username = u?.username ?? null;
       if (username) {
         touched = await db
           .update(contacts)

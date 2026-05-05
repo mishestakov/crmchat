@@ -67,6 +67,12 @@ export function attachReplicator(
   const chatBuf = new Map<string, ChatRow>();
   const partialChat = new Map<string, Partial<ChatRow>>();
   const userBuf = new Map<string, UserRow>();
+  // botPeers — user_id'ы ботов. DM с ботами не реплицируем в tg_chats.
+  // TDLib гарантирует updateUser до updateNewChat для того же user_id —
+  // к моменту handleChat бот уже здесь. Set не персистится, но это ок:
+  // на рестарте TDLib пере-пушит updateUser → пере-наполнит set до
+  // обработки соответствующих updateNewChat.
+  const botPeers = new Set<string>();
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
   function scheduleFlush(): void {
@@ -90,7 +96,6 @@ export function attachReplicator(
           target: [tgChats.accountId, tgChats.chatId],
           set: {
             peerUserId: sql`excluded.peer_user_id`,
-            chatType: sql`excluded.chat_type`,
             title: sql`excluded.title`,
             lastMessageId: sql`excluded.last_message_id`,
             lastMessageAt: sql`excluded.last_message_at`,
@@ -112,7 +117,6 @@ export function attachReplicator(
             username: sql`excluded.username`,
             fullName: sql`excluded.full_name`,
             phone: sql`excluded.phone`,
-            isBot: sql`excluded.is_bot`,
             isDeleted: sql`excluded.is_deleted`,
             raw: sql`excluded.raw`,
             updatedAt: sql`now()`,
@@ -142,6 +146,9 @@ export function attachReplicator(
   function handleChat(chat: ChatPayload): void {
     const row = mapChat(accountId, chat);
     if (!row) return;
+    // DM с ботом — не реплицируем (одно правило с tg_users: только
+    // реальные собеседники).
+    if (botPeers.has(row.peerUserId)) return;
     chatBuf.set(row.chatId, row);
     // Если был накоплен partial — full row его перекрывает.
     partialChat.delete(row.chatId);
@@ -158,11 +165,18 @@ export function attachReplicator(
 
   function handleUser(user: UserPayload): void {
     const userId = String(user.id);
+    if (user.type._ === "userTypeBot") {
+      botPeers.add(userId);
+      return;
+    }
+    botPeers.delete(userId);
+    const row = mapUser(user);
+    if (!row) return;
     const payloadStr = JSON.stringify(user);
     const hash = sha1(payloadStr);
     if (userPayloadHash.get(userId) === hash) return;
     userPayloadHash.set(userId, hash);
-    userBuf.set(userId, mapUser(user));
+    userBuf.set(userId, row);
   }
 
   function onUpdate(u: Update): void {
@@ -263,31 +277,14 @@ async function bootstrap(client: TdClient): Promise<void> {
 }
 
 function mapChat(accountId: string, chat: ChatPayload): ChatRow | null {
-  let chatType: "private" | "basic_group" | "supergroup" | "secret";
-  let peerUserId: string | null = null;
-  switch (chat.type._) {
-    case "chatTypePrivate":
-      chatType = "private";
-      peerUserId =
-        chat.type.user_id != null ? String(chat.type.user_id) : null;
-      break;
-    case "chatTypeBasicGroup":
-      chatType = "basic_group";
-      break;
-    case "chatTypeSupergroup":
-      chatType = "supergroup";
-      break;
-    case "chatTypeSecret":
-      chatType = "secret";
-      break;
-    default:
-      return null;
+  // Реплицируем только private DM. Группы/каналы/секретные — out of scope CRM.
+  if (chat.type._ !== "chatTypePrivate" || chat.type.user_id == null) {
+    return null;
   }
   return {
     accountId,
     chatId: String(chat.id),
-    peerUserId,
-    chatType,
+    peerUserId: String(chat.type.user_id),
     title: chat.title || null,
     lastMessageId: chat.last_message ? String(chat.last_message.id) : null,
     lastMessageAt: chat.last_message
@@ -298,7 +295,14 @@ function mapChat(accountId: string, chat: ChatPayload): ChatRow | null {
   };
 }
 
-function mapUser(user: UserPayload): UserRow {
+function mapUser(user: UserPayload): UserRow | null {
+  // Bot фильтруется снаружи (handleUser → botPeers), сюда уже не доходит.
+  // Regular — живой собеседник; Deleted/Unknown — мёртвый, помечаем флагом
+  // (см. tg_users.is_deleted в schema.ts), чтобы lookup'ы могли отсеивать
+  // без повторного searchPublicChat.
+  const isDeleted =
+    user.type._ === "userTypeDeleted" || user.type._ === "userTypeUnknown";
+  if (!isDeleted && user.type._ !== "userTypeRegular") return null;
   const username =
     user.usernames?.active_usernames[0] ||
     user.usernames?.editable_username ||
@@ -310,8 +314,7 @@ function mapUser(user: UserPayload): UserRow {
     username,
     fullName,
     phone: user.phone_number || null,
-    isBot: user.type._ === "userTypeBot",
-    isDeleted: user.type._ === "userTypeDeleted",
+    isDeleted,
     raw: user as unknown as Record<string, unknown>,
   };
 }

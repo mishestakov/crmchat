@@ -8,7 +8,12 @@ import {
   UpdateContactSchema as BaseUpdate,
 } from "@repo/core";
 import { db } from "../db/client";
-import { contacts, outreachAccounts, properties as propsTable } from "../db/schema";
+import {
+  contacts,
+  outreachAccounts,
+  properties as propsTable,
+  tgChats,
+} from "../db/schema";
 import { emitContactChanged, subscribeContacts } from "../lib/contact-events";
 import {
   enforceRequiredProperties,
@@ -465,26 +470,25 @@ async function readOnTelegram(
     .limit(1);
   if (!acc) return;
 
+  // tgUserId == chat_id для chatTypePrivate (TDLib convention).
+  const [chatRow] = await db
+    .select({ lastMessageId: tgChats.lastMessageId })
+    .from(tgChats)
+    .where(and(eq(tgChats.accountId, acc.id), eq(tgChats.chatId, tgUserId)))
+    .limit(1);
+  const lastId = chatRow?.lastMessageId;
+  if (!lastId) return;
+
   const client = await getOutreachWorkerClient({
     id: acc.id,
     workspaceId: wsId,
   });
   if (!client) return;
 
-  // В TDLib для приватных DM chat_id == user_id. Берём last_message из getChat
-  // и зовём viewMessages с force_read — это то, что делает Telegram-клиент
-  // когда юзер открывает чат и видит сообщения.
-  const chatId = Number(tgUserId);
-  const chat = (await client.invoke({
-    _: "getChat",
-    chat_id: chatId,
-  } as never)) as { last_message?: { id: number } };
-  const lastId = chat.last_message?.id;
-  if (!lastId) return;
   await client.invoke({
     _: "viewMessages",
-    chat_id: chatId,
-    message_ids: [lastId],
+    chat_id: Number(tgUserId),
+    message_ids: [Number(lastId)],
     source: { _: "messageSourceChatHistory" },
     force_read: true,
   } as never);

@@ -5,6 +5,7 @@ import {
   outreachLeads,
   outreachSequences,
   scheduledMessages,
+  tgUsers,
   workspaces,
 } from "../db/schema";
 import { errMsg } from "./errors";
@@ -348,6 +349,13 @@ async function processAccount(accountId: string, items: DueItem[]) {
 
 type LeadRow = typeof outreachLeads.$inferSelect;
 
+// Узкое подмножество TDLib Chat — только то, что использует sendOne. Чтобы
+// не повторять inline тип в двух ветках (cached / searchPublicChat).
+type TdChatLike = {
+  id: number | string;
+  type?: { _?: string; user_id?: number };
+};
+
 async function sendOne(
   client: TdClient,
   lead: LeadRow,
@@ -363,12 +371,34 @@ async function sendOne(
     );
   }
 
-  // searchPublicChat резолвит @username в Chat. Для DM chat.id == user_id
-  // получателя (TDLib convention для chatTypePrivate).
-  const chat = (await client.invoke({
-    _: "searchPublicChat",
-    username: stripAt(lead.username),
-  } as never)) as { id: number | string; type?: { _?: string; user_id?: number } };
+  // Bot-skip (M8): TG не даёт регистрировать `*bot` суффикс не-боту, поэтому
+  // строковая проверка надёжна и закрывает риск bot-trap'а до любых запросов.
+  const usernameKey = stripAt(lead.username).toLowerCase();
+  if (usernameKey.endsWith("bot")) {
+    throw new Error(`BOT_SKIPPED — @${lead.username} is a bot`);
+  }
+
+  // TDLib convention: для chatTypePrivate chat_id == user_id, sendMessage
+  // принимает user_id как chat_id напрямую. Реплика знает: live (быстрый
+  // путь без RPC), deleted (TG отозвал — сразу skip, не дёргаем сеть для
+  // заведомо мёртвого), unknown (fallback на searchPublicChat).
+  const [cached] = await db
+    .select({ userId: tgUsers.userId, isDeleted: tgUsers.isDeleted })
+    .from(tgUsers)
+    .where(sql`lower(${tgUsers.username}) = ${usernameKey}`)
+    .limit(1);
+  if (cached?.isDeleted) {
+    throw new Error(`DELETED_SKIPPED — @${lead.username} no longer exists`);
+  }
+  const chat: TdChatLike = cached
+    ? {
+        id: Number(cached.userId),
+        type: { _: "chatTypePrivate", user_id: Number(cached.userId) },
+      }
+    : ((await client.invoke({
+        _: "searchPublicChat",
+        username: stripAt(lead.username),
+      } as never)) as TdChatLike);
 
   // sendMessage возвращает Message с placeholder id; failed-апдейт
   // прилетит позже (см. outreach-listener.ts:onSendFailed).
