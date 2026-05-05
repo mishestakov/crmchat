@@ -9,30 +9,39 @@ import type { TdClient } from "./client";
 // сами читаем state и в HTTP-ручках invoke'аем нужный метод (sendCode →
 // setAuthenticationPhoneNumber, signIn → checkAuthenticationCode, etc).
 
+// Полный список AuthorizationState — td_api.tl:155-207. Парсим только те, что
+// возникают в наших флоу (phone-code, QR, 2FA, lifecycle). Email-auth и
+// premium-purchase в наших сценариях не должны приходить — если приходят,
+// это аномалия (TDLib что-то сменил, или мы случайно зацепили чужой флоу),
+// и она должна быть видна в логах, не маскироваться silent default'ом.
 export type AuthState =
-  // Сразу после createClient — TDLib ещё не получил setTdlibParameters.
-  // tdl делает это сам из ClientOptions, так что эта стадия очень короткая.
+  // Стартовое состояние; tdl сам шлёт setTdlibParameters через ClientOptions.
   | { kind: "wait_tdlib_parameters" }
-  // Готов принять номер телефона ИЛИ QR (через requestQrCodeAuthentication).
+  // td_api.tl:159 — готов принять номер телефона ИЛИ QR (через requestQrCodeAuthentication).
   | { kind: "wait_phone_or_qr" }
-  // QR-флоу: TDLib сгенерил qr-link, ждём подтверждения с другого устройства.
+  // td_api.tl:183 — TDLib сгенерил qr-link, ждём подтверждения с другого устройства.
   | { kind: "wait_qr"; link: string }
-  // Phone-флоу: SMS/TG-app код запрошен, ждём checkAuthenticationCode.
+  // td_api.tl:180 — SMS/TG-app код запрошен, ждём checkAuthenticationCode.
   | { kind: "wait_code"; isCodeViaApp: boolean }
-  // 2FA: ждём checkAuthenticationPassword.
+  // td_api.tl:194 — 2FA: ждём checkAuthenticationPassword.
   | { kind: "wait_password" }
-  // Бессигнальный регистрационный sign-up (мы его не поддерживаем).
+  // td_api.tl:186 — sign-up (новый юзер), мы не поддерживаем.
   | { kind: "wait_registration" }
+  // td_api.tl:197.
   | { kind: "ready" }
+  // td_api.tl:200.
   | { kind: "logging_out" }
-  | { kind: "closed" };
+  // td_api.tl:203 + 207 — Closing/Closed схлопываем в одно состояние.
+  | { kind: "closed" }
+  // Любой неизвестный/неподдерживаемый authorizationState* (см. default-ветку
+  // ниже). Логируется error'ом — caller'у уйдёт в timeout.
+  | { kind: "unknown"; raw: string };
 
 type RawAuthState = { _: string; [key: string]: unknown };
 
 function parseAuthState(raw: RawAuthState): AuthState {
   switch (raw._) {
     case "authorizationStateWaitTdlibParameters":
-    case "authorizationStateWaitEncryptionKey":
       return { kind: "wait_tdlib_parameters" };
     case "authorizationStateWaitPhoneNumber":
       return { kind: "wait_phone_or_qr" };
@@ -56,7 +65,10 @@ function parseAuthState(raw: RawAuthState): AuthState {
     case "authorizationStateClosed":
       return { kind: "closed" };
     default:
-      return { kind: "wait_tdlib_parameters" };
+      console.error(
+        `[tdlib auth-state] unsupported authorizationState: ${raw._}`,
+      );
+      return { kind: "unknown", raw: raw._ };
   }
 }
 

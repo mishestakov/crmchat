@@ -644,7 +644,7 @@ async function runSync(
     for (let j = 0; j < users.length; j++) {
       const user = users[j];
       if (!user) continue;
-      if (user.type?._ === "userTypeBot" || user.type?._ === "userTypeDeleted") {
+      if (user.type._ === "userTypeBot" || user.type._ === "userTypeDeleted") {
         continue;
       }
       const username = extractActiveUsername(user);

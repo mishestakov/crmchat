@@ -129,11 +129,13 @@ export async function persistPersonalAccount(
   }
 
   const me = (await pending.client.invoke({ _: "getMe" } as never)) as TdUser;
+  // По TL все поля required; пустая строка для deleted-юзера — нормальный
+  // case, мапим в null.
   const profile = {
     tgUserId: String(me.id),
     tgUsername: extractActiveUsername(me),
     phoneNumber: me.phone_number ? `+${me.phone_number}` : null,
-    firstName: me.first_name ?? null,
+    firstName: me.first_name || null,
   };
 
   // Promote pending → personalClients (без close + reconnect): databaseDirectory

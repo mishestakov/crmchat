@@ -185,13 +185,10 @@ async function onNewMessage(
     // заодно инжектим tg_user_id в properties — следующий incoming сразу
     // попадёт в быстрый путь по tg_user_id.
     if (touched.length === 0) {
-      const user = await client
+      const user = (await client
         .invoke({ _: "getUser", user_id: senderUserId } as never)
-        .catch(() => null);
-      const username =
-        user && typeof user === "object"
-          ? extractActiveUsername(user as TdUser)
-          : null;
+        .catch(() => null)) as TdUser | null;
+      const username = user ? extractActiveUsername(user) : null;
       if (username) {
         touched = await db
           .update(contacts)

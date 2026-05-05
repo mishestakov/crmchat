@@ -81,12 +81,14 @@ export async function persistOutreachAccount(
   // 1) Извлекаем профиль пока pending-клиент ещё открыт.
   const me = (await pending.client.invoke({ _: "getMe" } as never)) as TdUser;
   const tgUserId = String(me.id);
+  // По TL все поля required; пустая строка для deleted-юзера — нормальный
+  // case, мапим в null чтобы хранить аккуратные null'ы в БД.
   const profile = {
     tgUserId,
     tgUsername: extractActiveUsername(me),
     phoneNumber: me.phone_number ? `+${me.phone_number}` : null,
-    firstName: me.first_name ?? null,
-    hasPremium: !!me.is_premium,
+    firstName: me.first_name || null,
+    hasPremium: me.is_premium,
   };
 
   // 2) Решаем: новый аккаунт или re-auth существующего.
@@ -233,9 +235,12 @@ async function spawnWorker(
   );
   // td-database уже содержит auth-key, ждём пока state раскрутится до ready.
   await waitForAuthState(authBus, (s) => s.kind === "ready", 30_000);
-  // TG отзывает session → mark account unauthorized + evict.
+  // Только LoggingOut = TG явно отозвал session (см. td_api.tl:200). Closing/
+  // Closed — наш собственный teardown (HMR-restart, evictWorkerClient,
+  // process exit) и НЕ должен пометить аккаунт unauthorized; иначе после
+  // рестарта api все active outreach-аккаунты ушли бы в unauthorized.
   authBus.subscribe((s) => {
-    if (s.kind === "logging_out" || s.kind === "closed") {
+    if (s.kind === "logging_out") {
       void markUnauthorized(accountId);
     }
   });
