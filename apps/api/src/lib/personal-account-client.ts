@@ -19,10 +19,75 @@ import {
 // Personal CRM-аккаунт юзера (один на user, для импорта чатов из TG-папок в
 // контакты). TDLib-инстанс c databaseDirectory'ом `personal/<userId>/`.
 
+// chatFolderInfo (td_api.tl:3181):
+//   id:int32 name:chatFolderName icon:chatFolderIcon color_id:int32
+//   is_shareable:Bool has_my_invite_links:Bool = ChatFolderInfo;
+// Берём только то, что используем в /folders UI.
+export type TdChatFolderInfo = {
+  id: number;
+  name: { text: { text: string } };
+  is_shareable: boolean;
+  has_my_invite_links: boolean;
+};
+
+// updateChatFolders приходит push'ем после ready (см. td_api.tl:9933).
+// RPC `getChatFolders` в TDLib master нет — список доступен только через
+// апдейт. Поэтому держим persistent listener: ловим updateChatFolders при
+// каждом фьюрнаусе TDLib (на старте, на правках папок) и кэшируем в memory.
+type ChatFoldersCache = {
+  folders: TdChatFolderInfo[] | null;
+  waiters: Set<(folders: TdChatFolderInfo[]) => void>;
+};
+
 type PersonalEntry = {
   client: TdClient;
   authBus: AuthStateBus;
+  chatFolders: ChatFoldersCache;
+  detachUpdate: () => void;
 };
+
+function attachChatFoldersListener(client: TdClient): {
+  cache: ChatFoldersCache;
+  detach: () => void;
+} {
+  const cache: ChatFoldersCache = { folders: null, waiters: new Set() };
+  const handler = (update: unknown) => {
+    if ((update as { _: string })._ !== "updateChatFolders") return;
+    const u = update as { chat_folders?: TdChatFolderInfo[] };
+    cache.folders = u.chat_folders ?? [];
+    for (const w of cache.waiters) {
+      try {
+        w(cache.folders);
+      } catch {
+        // игнорим — никогда не ронять loop из-за подписчика
+      }
+    }
+    cache.waiters.clear();
+  };
+  client.on("update", handler);
+  return { cache, detach: () => client.off("update", handler) };
+}
+
+// Достать список папок: либо отдать кэш, либо подождать ближайший update до
+// `timeoutMs`. После Ready'а TDLib шлёт первый updateChatFolders в течение
+// ~секунды.
+export async function awaitChatFolders(
+  cache: ChatFoldersCache,
+  timeoutMs: number,
+): Promise<TdChatFolderInfo[]> {
+  if (cache.folders) return cache.folders;
+  return new Promise<TdChatFolderInfo[]>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cache.waiters.delete(once);
+      reject(new Error("updateChatFolders timeout"));
+    }, timeoutMs);
+    const once = (folders: TdChatFolderInfo[]) => {
+      clearTimeout(timer);
+      resolve(folders);
+    };
+    cache.waiters.add(once);
+  });
+}
 
 const personalClients = new Map<string, PersonalEntry>();
 // Single-flight: одновременные getPersonalClient до того как первый запишет
@@ -85,11 +150,15 @@ export async function persistPersonalAccount(
       // ignore
     }
     old.authBus.detach();
+    old.detachUpdate();
   }
 
+  const { cache, detach } = attachChatFoldersListener(pending.client);
   personalClients.set(userId, {
     client: pending.client,
     authBus: pending.authBus,
+    chatFolders: cache,
+    detachUpdate: detach,
   });
 
   await db
@@ -135,6 +204,7 @@ export async function getPersonalClient(
       // ignore
     }
     cached.authBus.detach();
+    cached.detachUpdate();
     personalClients.delete(userId);
   }
 
@@ -160,7 +230,13 @@ export async function getPersonalClient(
         console.error(`[personal] tdlib error ${userId}:`, e),
       );
       await waitForAuthState(authBus, (s) => s.kind === "ready", 30_000);
-      personalClients.set(userId, { client, authBus });
+      const { cache, detach } = attachChatFoldersListener(client);
+      personalClients.set(userId, {
+        client,
+        authBus,
+        chatFolders: cache,
+        detachUpdate: detach,
+      });
       return client;
     } catch (e) {
       console.error(`[personal] revive failed for ${userId}:`, errMsg(e));
@@ -171,6 +247,15 @@ export async function getPersonalClient(
   })();
   personalInflight.set(userId, promise);
   return promise;
+}
+
+// Возвращает кэш chat-folders для юзера. null = клиент ещё не поднят / не
+// authorized. Если кэш пуст (folders === null), вызывающий должен дождаться
+// updateChatFolders через awaitChatFolders(cache, timeoutMs).
+export function getPersonalChatFoldersCache(
+  userId: string,
+): ChatFoldersCache | null {
+  return personalClients.get(userId)?.chatFolders ?? null;
 }
 
 export async function dropPersonalClient(userId: string): Promise<void> {
@@ -187,6 +272,7 @@ export async function dropPersonalClient(userId: string): Promise<void> {
       // ignore
     }
     entry.authBus.detach();
+    entry.detachUpdate();
     personalClients.delete(userId);
   }
   await destroyTdAccount({ kind: "personal", userId }).catch((e) =>

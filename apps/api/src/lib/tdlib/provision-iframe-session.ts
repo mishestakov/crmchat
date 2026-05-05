@@ -13,6 +13,17 @@ type TdRawAuthKey = {
   auth_key: Buffer | Uint8Array | string;
 };
 
+// TDL (node-обёртка) сериализует TL-поле `bytes` как base64-строку, а не raw
+// Buffer. Если просто Buffer.from(value as Uint8Array) — оно интерпретирует
+// строку как utf8 и даёт 344 байта (256/3*4 ровно), вместо 256. См. также
+// playground/04-getRawAuthKey.ts (там этот fallback уже стоял, но в
+// production-коде потеряли при миграции gramjs→TDLib).
+function toAuthKeyBuffer(value: Buffer | Uint8Array | string): Buffer {
+  if (typeof value === "string") return Buffer.from(value, "base64");
+  if (Buffer.isBuffer(value)) return value;
+  return Buffer.from(value);
+}
+
 // home_dc_id для второго (multi-device) TDLib-инстанса не публикуется ни через
 // updateOption, ни через getOption (проверено в playground/06 — после Ready там
 // optionValueEmpty). Зато наш патч `getRawAuthKey dc_id` отдаёт 256 байт для
@@ -27,7 +38,13 @@ async function findHomeDc(
         _: "getRawAuthKey",
         dc_id: dc,
       } as never)) as TdRawAuthKey;
-      return { dcId: dc, authKey: Buffer.from(r.auth_key as Uint8Array) };
+      const authKey = toAuthKeyBuffer(r.auth_key);
+      if (authKey.length !== 256) {
+        throw new Error(
+          `getRawAuthKey DC${dc}: expected 256-byte auth_key, got ${authKey.length}`,
+        );
+      }
+      return { dcId: dc, authKey };
     } catch {
       // 404 — норма для DC без auth_key, идём к следующему.
     }

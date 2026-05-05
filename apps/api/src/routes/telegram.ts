@@ -11,9 +11,11 @@ import {
 } from "../db/schema";
 import { errMsg } from "../lib/errors";
 import {
+  awaitChatFolders,
   clearPendingPersonalClient,
   dropPersonalClient,
   getOrCreatePendingPersonalClient,
+  getPersonalChatFoldersCache,
   getPersonalClient,
   persistPersonalAccount,
 } from "../lib/personal-account-client";
@@ -289,15 +291,11 @@ const SyncConfigSchema = z
   })
   .openapi("TelegramSyncConfig");
 
-type TdChatFolderInfo = {
-  id: number;
-  title: { text?: string } | string;
-  is_shareable?: boolean;
-  has_my_invite_links?: boolean;
-};
+import type { TdChatFolderInfo } from "../lib/personal-account-client";
 
+// chatFolder (td_api.tl:3172) — полный объект, который возвращает getChatFolder.
 type TdChatFolder = {
-  title: { text?: string } | string;
+  name: { text: { text: string } };
   included_chat_ids: number[];
   excluded_chat_ids: number[];
   pinned_chat_ids: number[];
@@ -333,20 +331,33 @@ app.openapi(
     if (!client) {
       throw new HTTPException(400, { message: "telegram not connected" });
     }
-    const result = (await client.invoke({ _: "getChatFolders" } as never)) as {
-      chat_folders: TdChatFolderInfo[];
-    };
+    // RPC `getChatFolders` нет в TDLib master — список доставляется push'ем
+    // через updateChatFolders. Listener в personal-account-client кэширует
+    // последний апдейт; ждём его до 10s, если ещё не пришёл (аккаунт только
+    // что поднялся, TDLib инициализируется).
+    const cache = getPersonalChatFoldersCache(userId);
+    if (!cache) {
+      throw new HTTPException(400, { message: "telegram not connected" });
+    }
+    let chatFolders: TdChatFolderInfo[];
+    try {
+      chatFolders = await awaitChatFolders(cache, 10_000);
+    } catch {
+      throw new HTTPException(503, {
+        message: "chat folders not yet available, retry in a moment",
+      });
+    }
 
     // Каждая folder через getChatFolder — full фильтр-объект с wildcard-флагами.
     // «Динамические» папки (любой include_* wildcard) помечаем supported=false:
     // sync втянул бы всех, кому юзер когда-либо писал, плюс ботов. Только static
     // папки (только explicit included_chat_ids) импортим.
     const out: { id: number; title: string; supported: boolean }[] = [];
-    for (const f of result.chat_folders ?? []) {
+    for (const f of chatFolders) {
       const full = (await client
         .invoke({ _: "getChatFolder", chat_folder_id: f.id } as never)
         .catch(() => null)) as TdChatFolder | null;
-      const title = extractFolderTitle(f.title);
+      const title = extractFolderTitle(f);
       if (!full) {
         out.push({ id: f.id, title, supported: false });
         continue;
@@ -357,7 +368,7 @@ app.openapi(
         full.include_groups ||
         full.include_channels ||
         full.include_bots;
-      const isShareable = !!f.is_shareable || !!f.has_my_invite_links;
+      const isShareable = f.is_shareable || f.has_my_invite_links;
       out.push({
         id: f.id,
         title,
@@ -675,12 +686,12 @@ async function markSynced(
     );
 }
 
-function extractFolderTitle(title: TdChatFolder["title"]): string {
-  if (typeof title === "string") return title;
-  if (title && typeof title === "object" && "text" in title) {
-    return String(title.text ?? "Без названия");
-  }
-  return "Без названия";
+// chatFolderInfo.name (td_api.tl:3181) = chatFolderName (td_api.tl:3154):
+//   chatFolderName text:formattedText animate_custom_emoji:Bool
+//   formattedText  text:string entities:vector<textEntity>
+// Все три поля required по TL — папка без названия невозможна, нет fallback.
+function extractFolderTitle(folder: { name: { text: { text: string } } }): string {
+  return folder.name.text.text;
 }
 
 export default app;
