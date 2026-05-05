@@ -1,12 +1,90 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { getCookie } from "hono/cookie";
+import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { eq } from "drizzle-orm";
 import { db } from "../db/client";
 import { users } from "../db/schema";
 import { createSession, destroySession } from "../lib/sessions";
+import {
+  buildAuthorizationUrl,
+  exchangeCodeForIdToken,
+  makePkceChallenge,
+  makePkceVerifier,
+  makeState,
+} from "../lib/tg-oidc";
+import { issueBridgeToken, consumeBridgeToken } from "../lib/bridge-tokens";
 
 const app = new OpenAPIHono();
+
+const OIDC_COOKIE = "tg_oidc";
+const WEB_ORIGIN = (process.env.WEB_ORIGIN ?? "http://localhost:5173").replace(/\/$/, "");
+
+app.get("/v1/auth/telegram/start", async (c) => {
+  const verifier = makePkceVerifier();
+  const state = makeState();
+  setCookie(c, OIDC_COOKIE, JSON.stringify({ verifier, state }), {
+    httpOnly: true,
+    sameSite: "Lax",
+    path: "/",
+    secure: process.env.NODE_ENV === "production",
+    maxAge: 600,
+  });
+  return c.redirect(
+    buildAuthorizationUrl({ state, codeChallenge: makePkceChallenge(verifier) }),
+    302,
+  );
+});
+
+app.get("/v1/auth/telegram/callback", async (c) => {
+  const code = c.req.query("code");
+  const state = c.req.query("state");
+  const oidcCookie = getCookie(c, OIDC_COOKIE);
+  deleteCookie(c, OIDC_COOKIE, { path: "/" });
+
+  const fail = () => c.redirect(`${WEB_ORIGIN}/login?error=1`, 302);
+  if (!code || !state || !oidcCookie) return fail();
+  const stored = JSON.parse(oidcCookie) as { verifier: string; state: string };
+  if (stored.state !== state) return fail();
+
+  const claims = await exchangeCodeForIdToken({ code, codeVerifier: stored.verifier });
+  const profile = { name: claims.name, username: claims.preferred_username };
+  const [row] = await db
+    .insert(users)
+    .values({ tgUserId: claims.sub, ...profile })
+    .onConflictDoUpdate({
+      target: users.tgUserId,
+      set: { ...profile, updatedAt: new Date() },
+    })
+    .returning({ id: users.id });
+
+  // В prod заменить на createSession(c, row!.id) + redirect "/", см. bridge-tokens.ts.
+  const bt = issueBridgeToken(row!.id);
+  return c.redirect(`${WEB_ORIGIN}/auth/finish?bt=${encodeURIComponent(bt)}`, 302);
+});
+
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/auth/finish",
+    tags: ["auth"],
+    request: {
+      body: {
+        content: {
+          "application/json": { schema: z.object({ bt: z.string().min(1).max(128) }) },
+        },
+        required: true,
+      },
+    },
+    responses: { 204: { description: "Session cookie set" } },
+  }),
+  async (c) => {
+    const { bt } = c.req.valid("json");
+    const userId = consumeBridgeToken(bt);
+    if (!userId) throw new HTTPException(401, { message: "invalid bridge token" });
+    await createSession(c, userId);
+    return c.body(null, 204);
+  },
+);
 
 // Двойной гейт: одной env-переменной не хватит на prod-страховку.
 // NODE_ENV должен быть строго "development" (не "test", не "staging"), И
@@ -19,7 +97,6 @@ if (isDevAuthEnabled) {
   const DevUser = z
     .object({
       id: z.string().min(1).max(64),
-      email: z.string(),
       name: z.string().nullable(),
     })
     .openapi("DevUser");
@@ -38,9 +115,9 @@ if (isDevAuthEnabled) {
     }),
     async (c) => {
       const rows = await db
-        .select({ id: users.id, email: users.email, name: users.name })
+        .select({ id: users.id, name: users.name })
         .from(users)
-        .orderBy(users.email);
+        .orderBy(users.id);
       return c.json(rows);
     },
   );

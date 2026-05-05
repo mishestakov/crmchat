@@ -129,7 +129,7 @@ function ContactSettingsPage() {
       ? "Создатель рассылки"
       : ownerIds.length === 1
       ? members.data?.find((m) => m.id === ownerIds[0])?.name
-        ?? members.data?.find((m) => m.id === ownerIds[0])?.email
+        ?? members.data?.find((m) => m.id === ownerIds[0])?.username
         ?? "1 ответственный"
       : `${ownerIds.length} ответственных`;
 

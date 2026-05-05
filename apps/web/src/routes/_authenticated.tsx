@@ -187,7 +187,7 @@ function SidebarFooter() {
   return (
     <div className="space-y-2 border-t border-zinc-200 p-3 text-sm">
       <div className="truncate text-xs text-zinc-500">
-        {me.data ? me.data.name ?? me.data.email : "…"}
+        {me.data ? me.data.name ?? me.data.username ?? me.data.id : "…"}
       </div>
       {import.meta.env.DEV && <DevUserSwitcher currentUserId={me.data?.id} />}
       <button
@@ -230,7 +230,7 @@ function DevUserSwitcher({ currentUserId }: { currentUserId?: string }) {
     >
       {devUsers.data?.map((u) => (
         <option key={u.id} value={u.id}>
-          {u.name ?? u.email}
+          {u.name ?? u.id}
         </option>
       ))}
     </select>

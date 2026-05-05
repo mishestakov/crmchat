@@ -97,8 +97,8 @@ function OwnersPage() {
                   className="shrink-0"
                 />
                 <SectionItemTitle>
-                  <div className="font-medium">{m.name ?? m.email}</div>
-                  <div className="text-xs text-zinc-500">{m.email}</div>
+                  <div className="font-medium">{m.name ?? m.username ?? m.id}</div>
+                  {m.username && <div className="text-xs text-zinc-500">@{m.username}</div>}
                 </SectionItemTitle>
               </SectionItem>
             );

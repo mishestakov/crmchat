@@ -55,13 +55,27 @@
 
 ---
 
-## Яндекс OAuth вместо Firebase Auth
+## Telegram OIDC вместо Firebase Auth
 
-**Решение.** Логин через Яндекс OAuth 2.0 (Authorization Code Flow), session-id в httpOnly cookie, `sessions`-таблица в Postgres. API-keys — отдельный канал для внешних интеграций.
+**Решение.** Логин через Telegram OpenID Connect (`oauth.telegram.org`),
+Authorization Code Flow + PKCE, валидация id_token через `jose` + JWKS.
+Session-id в httpOnly cookie, `sessions`-таблица в Postgres. API-keys —
+отдельный канал для внешних интеграций.
 
-**В оригинале.** Firebase Auth + Telegram initData; мост через `authSessions/{id}` в Firestore для веб-логина; custom-token flow.
+**В оригинале.** Firebase Auth + Telegram initData; мост через
+`authSessions/{id}` в Firestore для веб-логина; custom-token flow.
 
-**Почему.** Тот же корпоративный контекст: Firebase Auth недоступен. Яндекс — штатный корпоративный IdP, всё равно единая учётка. OAuth2 — три `fetch`'а на бэке, SDK не нужен.
+**Почему.** Корпоративный контекст исключает Firebase. Сначала закладывали
+Яндекс OAuth (как штатный корпоративный IdP), но CRM построена вокруг
+Telegram — у всех юзеров уже есть TG-аккаунт, второй идентификатор излишен.
+Плюс TG OIDC даёт `phone_number` claim из коробки (вместо отдельного SMS-
+flow). 30 строк кода через `jose` + 1 кнопка на `/login` (`<a href>` →
+oauth.telegram.org).
+
+**Что НЕ берём:** `openid-client` библиотека — overhead под наш сценарий
+(один провайдер, один redirect_uri, один client). PKCE + state + JWT verify
+делаем напрямую через `node:crypto` + `jose.jwtVerify`. Если когда-нибудь
+появится второй OIDC IdP — пересмотрим.
 
 ---
 

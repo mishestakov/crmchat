@@ -1,63 +1,37 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../lib/api";
-import { errorMessage } from "../lib/errors";
+import { createFileRoute } from "@tanstack/react-router";
+import { Send } from "lucide-react";
 
 export const Route = createFileRoute("/login")({
   component: Login,
+  validateSearch: (search: Record<string, unknown>): { error?: string } => ({
+    error: typeof search.error === "string" ? search.error : undefined,
+  }),
 });
 
 function Login() {
-  const navigate = useNavigate();
-  const qc = useQueryClient();
-
-  const users = useQuery({
-    queryKey: ["devUsers"],
-    queryFn: async () => {
-      const { data, error } = await api.GET("/v1/_dev/users");
-      if (error) throw error;
-      return data;
-    },
-  });
-
-  const login = useMutation({
-    mutationFn: async (userId: string) => {
-      const { error } = await api.POST("/v1/_dev/login", { body: { userId } });
-      if (error) throw error;
-    },
-    onSuccess: async () => {
-      await qc.invalidateQueries();
-      navigate({ to: "/", search: { new: false } });
-    },
-  });
-
+  const { error } = Route.useSearch();
+  const apiBase = (import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "");
   return (
     <div className="mx-auto max-w-md p-8 space-y-6">
-      <h1 className="text-2xl font-semibold">Войти как</h1>
+      <h1 className="text-2xl font-semibold">Войти в crmchat</h1>
       <p className="text-sm text-zinc-500">
-        Dev-режим: реального логина нет, выбираешь юзера из списка.
+        Через ваш Telegram-аккаунт. Откроется страница подтверждения, потом
+        вернёмся обратно.
       </p>
 
-      {users.isLoading && <p>Загрузка…</p>}
-      {users.error && (
-        <p className="text-red-600">{errorMessage(users.error)}</p>
+      {error && (
+        <p className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+          Не получилось войти. Попробуйте ещё раз.
+        </p>
       )}
-      {users.data && (
-        <ul className="space-y-2">
-          {users.data.map((u) => (
-            <li key={u.id}>
-              <button
-                onClick={() => login.mutate(u.id)}
-                disabled={login.isPending}
-                className="w-full rounded border border-zinc-300 p-3 text-left hover:bg-zinc-100 disabled:opacity-50"
-              >
-                <div className="font-medium">{u.name ?? u.email}</div>
-                <div className="text-xs text-zinc-500">{u.email}</div>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+
+      <a
+        href={`${apiBase}/v1/auth/telegram/start`}
+        className="flex w-full items-center justify-center gap-3 rounded-xl bg-sky-500 px-4 py-3 text-sm font-medium text-white hover:bg-sky-600"
+      >
+        <Send size={18} />
+        Войти через Telegram
+      </a>
     </div>
   );
 }

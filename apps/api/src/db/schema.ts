@@ -18,8 +18,9 @@ import { shortId } from "./short-id";
 
 export const users = pgTable("users", {
   id: text("id").primaryKey().$defaultFn(shortId),
-  email: text("email").notNull().unique(),
+  tgUserId: text("tg_user_id").notNull().unique(),
   name: text("name"),
+  username: text("username"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

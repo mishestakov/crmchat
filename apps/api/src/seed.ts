@@ -9,12 +9,13 @@ import {
 import { seedDefaultProperties } from "./lib/workspace-presets";
 
 // Фиксированные id — чтобы dev-данные были предсказуемы между перезапусками.
-// Формат — читаемый префикс (usr_/ws_/cont_), не как 12-hex рантайм-id (см.
-// short-id.ts). Так в логах сразу видно, что строка из seed'а.
+// `tgUserId` — синтетические отрицательные строки, чтобы не пересечься с
+// реальным TG user_id (positive int64). При логине через TG-OIDC sub будет
+// положительный → seed-юзеры не сматчатся, создастся новая row.
 const DEV_USERS = [
-  { id: "usr_anna", email: "anna@local", name: "Анна" },
-  { id: "usr_boris", email: "boris@local", name: "Борис" },
-  { id: "usr_vera", email: "vera@local", name: "Вера" },
+  { id: "usr_anna", tgUserId: "-1", name: "Анна" },
+  { id: "usr_boris", tgUserId: "-2", name: "Борис" },
+  { id: "usr_vera", tgUserId: "-3", name: "Вера" },
 ] as const;
 
 for (const u of DEV_USERS) {
@@ -23,9 +24,9 @@ for (const u of DEV_USERS) {
     .values(u)
     .onConflictDoUpdate({
       target: users.id,
-      set: { email: u.email, name: u.name, updatedAt: new Date() },
+      set: { name: u.name, updatedAt: new Date() },
     });
-  console.log(`upserted user ${u.email}`);
+  console.log(`upserted user ${u.id}`);
 }
 
 // Каждому dev-user — своя organization, чтобы он мог создавать workspaces.
@@ -37,13 +38,13 @@ for (const u of DEV_USERS) {
     .where(eq(organizations.createdBy, u.id))
     .limit(1);
   if (existingOrg) {
-    console.log(`org for ${u.email} already exists`);
+    console.log(`org for ${u.id} already exists`);
     continue;
   }
   await db
     .insert(organizations)
     .values({ name: `${u.name} Org`, createdBy: u.id });
-  console.log(`seeded org for ${u.email}`);
+  console.log(`seeded org for ${u.id}`);
 }
 
 // Demo workspace для Анны: фикс-id, идемпотентно.

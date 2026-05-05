@@ -128,8 +128,8 @@ app.openapi(
 // в CRM-автоматизациях sequence как кандидаты в default owners.
 const MemberSchema = z.object({
   id: z.string(),
-  email: z.string(),
   name: z.string().nullable(),
+  username: z.string().nullable(),
 });
 
 app.openapi(
@@ -156,7 +156,11 @@ app.openapi(
       throw new HTTPException(404, { message: "workspace not found" });
     }
     const rows = await db
-      .select({ id: users.id, email: users.email, name: users.name })
+      .select({
+        id: users.id,
+        name: users.name,
+        username: users.username,
+      })
       .from(users)
       .where(eq(users.id, ws.createdBy));
     return c.json(rows);

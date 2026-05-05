@@ -8,45 +8,65 @@ stage: 0 (infra, до любой US)
 
 Shared pre-condition для всех `US-*`. Любой `/_protected/*` требует активной server-side сессии.
 
-## Канал входа: Яндекс OAuth2
+## Канал входа: Telegram OIDC
 
-Единственный путь логина — OAuth 2.0 Authorization Code Flow с Яндекс ID.
+Единственный путь логина — OpenID Connect Authorization Code Flow + PKCE с
+`oauth.telegram.org`. См. https://core.telegram.org/widgets/login.
 
 ### Регистрация приложения
 
-В [oauth.yandex.ru](https://oauth.yandex.ru) создаётся приложение:
-- **Redirect URI**: `https://<домен>/auth/yandex/callback`
-- **Scopes**: `login:email login:info` (этого достаточно для идентификации; avatar по желанию `login:avatar`)
-- Сохраняются `client_id` и `client_secret` — `client_secret` живёт только в серверных переменных окружения.
+В [@BotFather](https://t.me/botfather) создаётся бот для login:
+- `/newbot` → имя + username.
+- Регистрируем Allowed URL = `TELEGRAM_LOGIN_REDIRECT_URI`. Для prod —
+  `https://<домен>/v1/auth/telegram/callback`, для dev —
+  `http://localhost:3000/v1/auth/telegram/callback`.
+- Получаем `Client ID` (= bot ID) и `Client Secret`. Secret живёт только в
+  серверных env-переменных.
 
 ### Flow
 
-1. **Старт.** Пользователь нажимает «Войти через Яндекс» на `/login`.
-   Клиент делает `GET /auth/yandex/start`.
-   Бэкенд генерит `state` (CSRF-токен, кладёт в короткоживущий cookie) и 302-редиректит на:
-   ```
-   https://oauth.yandex.ru/authorize
-     ?response_type=code
-     &client_id={CLIENT_ID}
-     &redirect_uri={REDIRECT_URI}
-     &scope=login:email+login:info
-     &state={STATE}
-   ```
-2. **Подтверждение.** Пользователь видит стандартный экран согласия Яндекса, подтверждает.
-3. **Callback.** Яндекс редиректит на `/auth/yandex/callback?code=...&state=...`.
+1. **Старт.** Пользователь нажимает «Войти через Telegram» на `/login`.
+   Это обычная навигация: `<a href="/v1/auth/telegram/start">`.
    Бэкенд:
-   - Проверяет `state` против cookie (CSRF).
-   - `POST oauth.yandex.ru/token` с `grant_type=authorization_code`, `code`, `client_id`, `client_secret`, `redirect_uri` → `{ access_token, ... }`.
-   - `GET login.yandex.ru/info?format=json` с `Authorization: OAuth {access_token}` → `{ id, login, default_email, first_name, last_name, ... }`.
-4. **Матчинг пользователя.** По `default_email` ищем запись в `users`:
-   - Найдено → обновляем profile-поля (имя, avatar).
-   - Нет → создаём нового пользователя.
-5. **Сессия.** Генерим случайный `session_id` (32 байта, base64url), пишем в таблицу `sessions` (`{ id, user_id, created_at, expires_at, user_agent, ip }`), ставим httpOnly cookie:
+   - Генерит `state` (CSRF, 16 байт base64url) и PKCE `verifier` (32 байта) +
+     `challenge = base64url(SHA256(verifier))`.
+   - Кладёт `{state, verifier}` в short-lived httpOnly cookie `tg_oidc`
+     (TTL 10 мин).
+   - 302 → `https://oauth.telegram.org/auth?client_id=...&redirect_uri=...&response_type=code&scope=openid+profile&state=...&code_challenge=...&code_challenge_method=S256`.
+2. **Подтверждение.** Пользователь видит экран Telegram «Разрешить
+   `<имя бота>` войти», подтверждает.
+3. **Callback.** TG редиректит на `/v1/auth/telegram/callback?code=...&state=...`.
+   Бэкенд:
+   - Читает `tg_oidc` cookie, удаляет её.
+   - Проверяет `state` против сохранённого (CSRF).
+   - `POST oauth.telegram.org/token` с `grant_type=authorization_code`,
+     `code`, `redirect_uri`, `client_id`, `code_verifier` (PKCE) и
+     `Authorization: Basic base64(client_id:client_secret)` → `{ id_token, ... }`.
+   - Валидирует `id_token` через `jose.jwtVerify` + JWKS
+     (`oauth.telegram.org/.well-known/jwks.json`): подпись RS256, `iss`,
+     `aud === client_id`, `exp`, `iat`.
+   - Извлекает claims: `sub` (TG user_id), `name`, `preferred_username`,
+     `picture`, опционально `phone_number` (если запрошен scope `phone`).
+4. **Upsert юзера.** По `tg_user_id` (= `sub`) ищем запись в `users`:
+   - Найдено → обновляем `name`/`username`/`avatar_url`/`phone`/`updated_at`.
+   - Нет → создаём новую row.
+5. **Сессия.** Через `createSession` (см. `apps/api/src/lib/sessions.ts`):
+   случайный `session_id` (32 байта base64url) → row в `sessions` →
+   httpOnly cookie:
    ```
    Set-Cookie: sid={session_id}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000
    ```
    TTL сессии — 30 дней с rolling renewal на каждом запросе.
-6. **Redirect.** Бэкенд 302 на `/` или на сохранённый `returnTo`.
+6. **Redirect.** 302 на `${WEB_ORIGIN}/`.
+
+### Scopes
+
+- `openid` — обязательно. Возвращает `sub`, `iss`, `iat`, `exp`.
+- `profile` — `name`, `preferred_username`, `picture`.
+- `phone` — `phone_number`. По умолчанию **НЕ запрашиваем** (требует
+  отдельного consent юзера); включить точечно когда понадобится.
+- `telegram:bot_access` — НЕ запрашиваем. Это разрешение боту слать DM юзеру,
+  для login-only сценария излишне.
 
 ### Авторизация запросов
 
@@ -60,9 +80,12 @@ Middleware на каждом `/v1/*`:
 
 ### Logout
 
-`POST /auth/logout`:
+`POST /v1/auth/logout`:
 - `DELETE FROM sessions WHERE id = $1`.
 - Очищает cookie (`Set-Cookie: sid=; Max-Age=0`).
+
+Note: TG-side session не отзывается — login-flow не выдавал bot-access токен,
+чистить нечего.
 
 ---
 
@@ -82,8 +105,10 @@ Middleware на каждом `/v1/*`:
 | Условие | Ответ |
 |--------|-------|
 | Нет cookie / протухла | `401 Unauthorized`, фронт редиректит на `/login` |
-| `state` не совпал (CSRF) | `400 Bad Request`, экран «Сессия авторизации устарела, попробуйте ещё раз» |
-| Яндекс отдал ошибку при `token` exchange | `502 Bad Gateway`, экран «Не удалось войти, попробуйте позже» |
+| `state` не совпал (CSRF) | `400 Bad Request` с message `oidc state mismatch` |
+| `tg_oidc` cookie отсутствует / corrupted | `400 Bad Request`, юзер начинает /start заново |
+| TG отдал ошибку при `token` exchange | `502 Bad Gateway` с message `telegram login failed` |
+| `id_token` не прошёл JWT-валидацию | `502 Bad Gateway` (то же сообщение) |
 | API-key неверный / отозван | `401 Unauthorized` c `WWW-Authenticate: Bearer error="invalid_token"` |
 | API-key не имеет доступа к ресурсу | `403 Forbidden` |
 
@@ -91,9 +116,11 @@ Middleware на каждом `/v1/*`:
 
 ## Критерии приёмки
 
-- [ ] Успешный OAuth flow создаёт сессию и редиректит на главный экран без ручных шагов.
-- [ ] Повторный заход из того же браузера (с живым cookie) не требует повторного OAuth.
+- [ ] Кнопка «Войти через Telegram» на `/login` редиректит на `oauth.telegram.org/auth`, после подтверждения юзер возвращается на главный экран авторизованным.
+- [ ] Повторный заход из того же браузера (с живым cookie) не требует повторного OIDC-флоу.
 - [ ] Logout очищает сессию в БД и cookie; следующий запрос → 401.
 - [ ] `state` CSRF-токен проверяется; подмена `state` → 400.
+- [ ] PKCE `code_verifier` хранится в short-lived cookie, не передаётся в открытом виде в URL.
+- [ ] `id_token` валидируется через JWKS (signature, iss, aud, exp); подменённый токен → 502.
 - [ ] API-key с валидным секретом и правильным workspace-scope проходит; с неверным — 401/403.
 - [ ] Протухший session (TTL) → 401, frontend показывает «Вы вышли из системы» и предлагает логин.
