@@ -1,7 +1,7 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { streamSSE } from "hono/streaming";
-import { and, asc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import {
   contactCreationTrigger,
@@ -395,10 +395,53 @@ app.openapi(
     // delay у первого сообщения (idx=0) — это пауза от момента активации.
     const offsetsMs = cumulativeOffsetsMs(seq.messages);
 
-    // Round-robin lead → account. Заранее: лид с тем же индексом всегда получит
-    // тот же аккаунт по всей последовательности (continuity-of-identity).
-    const rows = leads.flatMap((lead, leadIdx) => {
-      const accountId = accountIds[leadIdx % accountIds.length]!;
+    // Sticky lead → account: «с каким аккаунтом блогер общался, с тем и
+    // продолжает». Для лидов с tg_user_id ищем последний sent в этом
+    // workspace'е; если нашли — безусловно sticky на тот аккаунт (даже если
+    // он сейчас вне пула или неактивен — отношения принадлежат аккаунту,
+    // ловить ошибку отправки будем в worker'е). Round-robin — только для
+    // новых лидов без истории.
+    const tgUserIds = leads
+      .map((l) => l.tgUserId)
+      .filter((x): x is string => x !== null);
+    const priorByTgUserId = new Map<string, string>();
+    if (tgUserIds.length > 0) {
+      const priors = await db
+        .select({
+          tgUserId: outreachLeads.tgUserId,
+          accountId: scheduledMessages.accountId,
+          sentAt: scheduledMessages.sentAt,
+        })
+        .from(scheduledMessages)
+        .innerJoin(
+          outreachLeads,
+          eq(scheduledMessages.leadId, outreachLeads.id),
+        )
+        .where(
+          and(
+            eq(scheduledMessages.workspaceId, wsId),
+            eq(scheduledMessages.status, "sent"),
+            inArray(outreachLeads.tgUserId, tgUserIds),
+          ),
+        )
+        .orderBy(desc(scheduledMessages.sentAt));
+      // Первое попадание на каждый tg_user_id = самое свежее (rows
+      // отсортированы DESC по sent_at).
+      for (const p of priors) {
+        if (!p.tgUserId) continue;
+        if (!priorByTgUserId.has(p.tgUserId)) {
+          priorByTgUserId.set(p.tgUserId, p.accountId);
+        }
+      }
+    }
+
+    let rrIdx = 0;
+    const rows = leads.flatMap((lead) => {
+      const prior = lead.tgUserId
+        ? priorByTgUserId.get(lead.tgUserId)
+        : undefined;
+      const accountId = prior ?? accountIds[rrIdx % accountIds.length]!;
+      if (!prior) rrIdx++;
       return seq.messages.map((msg, msgIdx) => ({
         workspaceId: wsId,
         sequenceId: seq.id,

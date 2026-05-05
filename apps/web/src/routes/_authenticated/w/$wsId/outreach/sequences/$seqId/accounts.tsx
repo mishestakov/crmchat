@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { Sparkles } from "lucide-react";
+import { Info, Sparkles } from "lucide-react";
 import { api } from "../../../../../../../lib/api";
 import { errorMessage } from "../../../../../../../lib/errors";
 import { BackButton } from "../../../../../../../components/back-button";
@@ -91,6 +91,20 @@ function AccountsPage() {
       <BackButton />
       <div className="mx-auto w-full max-w-2xl space-y-4">
         <h1 className="text-2xl font-semibold">Аккаунты</h1>
+
+        <div className="flex gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-900">
+          <Info size={14} className="mt-0.5 shrink-0" />
+          <div className="space-y-1">
+            <div>
+              <span className="font-medium">Если с лидом раньше уже общались</span> —
+              рассылку продолжит тот же аккаунт, что и в прошлый раз. Независимо от
+              выбранного здесь пула: разговор остаётся за тем, кто его начал.
+            </div>
+            <div>
+              Лиды без истории распределяются между аккаунтами из пула ниже.
+            </div>
+          </div>
+        </div>
 
         <Section>
           <SectionItem
