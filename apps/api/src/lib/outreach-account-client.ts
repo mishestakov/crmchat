@@ -177,7 +177,7 @@ export async function persistOutreachAccount(
   // блокирует iframe finalize на минуты. После провижна re-spawn worker'а.
   let workerPaused = false;
   try {
-    const twa = await provisionIframeSession(
+    const { twa, sessionId } = await provisionIframeSession(
       worker.client,
       finalAccountId,
       pending.lastPassword,
@@ -196,7 +196,10 @@ export async function persistOutreachAccount(
     );
     await db
       .update(outreachAccounts)
-      .set({ iframeSession: encrypt(JSON.stringify(twa)) })
+      .set({
+        iframeSession: encrypt(JSON.stringify(twa)),
+        iframeSessionId: sessionId,
+      })
       .where(eq(outreachAccounts.id, finalAccountId));
   } catch (e) {
     console.error(
@@ -269,7 +272,10 @@ export async function deleteOutreachAccount(
   accountId: string,
 ): Promise<boolean> {
   const [row] = await db
-    .select({ id: outreachAccounts.id })
+    .select({
+      id: outreachAccounts.id,
+      iframeSessionId: outreachAccounts.iframeSessionId,
+    })
     .from(outreachAccounts)
     .where(
       and(
@@ -280,11 +286,13 @@ export async function deleteOutreachAccount(
     .limit(1);
   if (!row) return false;
 
-  // Перед logOut'ом worker'а — убиваем iframe-сессию через getActiveSessions
-  // → terminateSession (device_model='CRM iframe'). После logOut worker'а
-  // session_id уже невалиден, поэтому порядок строгий.
-  // Если worker нет в кэше (api рестартанул и warmup упал) — поднимаем
-  // временно, чтобы успеть сделать logOut/terminate перед удалением.
+  // Перед logOut'ом worker'а — убиваем iframe-сессию через terminateSession
+  // по сохранённому session_id (его вернул confirmQrCodeAuthentication при
+  // provision'е). После logOut worker'а session невалиден, поэтому порядок
+  // строгий. Если worker нет в кэше (api рестартанул и warmup упал) —
+  // поднимаем временно. Если iframeSessionId пуст (legacy-аккаунт до этого
+  // фикса) — пропускаем terminate; logOut worker'а сам отзовёт все
+  // зависимые device-сессии.
   let worker = workerClients.get(accountId);
   if (!worker) {
     try {
@@ -298,33 +306,18 @@ export async function deleteOutreachAccount(
     }
   }
   if (worker) {
-    try {
-      const sessions = (await worker.client.invoke({
-        _: "getActiveSessions",
-      } as never)) as {
-        sessions?: Array<{ id: string | number; device_model?: string; is_current?: boolean }>;
-      };
-      for (const s of sessions.sessions ?? []) {
-        if (s.is_current) continue;
-        if (s.device_model === "CRM iframe") {
-          await worker.client
-            .invoke({
-              _: "terminateSession",
-              session_id: s.id,
-            } as never)
-            .catch((e: unknown) =>
-              console.error(
-                "[deleteOutreachAccount] terminate iframe session:",
-                errMsg(e),
-              ),
-            );
-        }
-      }
-    } catch (e) {
-      console.error(
-        "[deleteOutreachAccount] getActiveSessions:",
-        errMsg(e),
-      );
+    if (row.iframeSessionId) {
+      await worker.client
+        .invoke({
+          _: "terminateSession",
+          session_id: row.iframeSessionId,
+        } as never)
+        .catch((e: unknown) =>
+          console.error(
+            "[deleteOutreachAccount] terminate iframe session:",
+            errMsg(e),
+          ),
+        );
     }
     try {
       await worker.client.invoke({ _: "logOut" } as never);

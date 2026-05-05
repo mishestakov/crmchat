@@ -345,6 +345,12 @@ export const outreachAccounts = pgTable(
     // NULL (provision упал) — UI зовёт /twa-session, ловит 409 и просит
     // re-auth.
     iframeSession: text("iframe_session"),
+    // session_id (TG int64) iframe-сессии, возвращённый
+    // confirmQrCodeAuthentication. Используется при удалении аккаунта для
+    // точечного terminateSession({session_id}) — иначе пришлось бы искать
+    // по device_model="CRM iframe" через getActiveSessions, что fragile при
+    // повторных привязках (висящие старые сессии с тем же device_model).
+    iframeSessionId: text("iframe_session_id"),
     tgUserId: text("tg_user_id").notNull(),
     tgUsername: text("tg_username"),
     phoneNumber: text("phone_number"),

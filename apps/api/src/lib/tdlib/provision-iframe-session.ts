@@ -24,32 +24,31 @@ function toAuthKeyBuffer(value: Buffer | Uint8Array | string): Buffer {
   return Buffer.from(value);
 }
 
-// home_dc_id для второго (multi-device) TDLib-инстанса не публикуется ни через
-// updateOption, ни через getOption (проверено в playground/06 — после Ready там
-// optionValueEmpty). Зато наш патч `getRawAuthKey dc_id` отдаёт 256 байт для
-// DC1 (bootstrap-сервер) и для home_dc, на остальных DC — 404. Перебираем
-// DC2..5 (DC1 — это auth-server, TWA с ним не работает), первый успешный = home_dc.
-async function findHomeDc(
-  client: TdClient,
-): Promise<{ dcId: number; authKey: Buffer }> {
-  for (let dc = 2; dc <= 5; dc++) {
-    try {
-      const r = (await client.invoke({
-        _: "getRawAuthKey",
-        dc_id: dc,
-      } as never)) as TdRawAuthKey;
-      const authKey = toAuthKeyBuffer(r.auth_key);
-      if (authKey.length !== 256) {
-        throw new Error(
-          `getRawAuthKey DC${dc}: expected 256-byte auth_key, got ${authKey.length}`,
-        );
-      }
-      return { dcId: dc, authKey };
-    } catch {
-      // 404 — норма для DC без auth_key, идём к следующему.
-    }
+// home_dc_id хостится только у авторизованного клиента (worker). У свежего
+// iframe-инстанса getOption("home_dc_id") отдаёт optionValueEmpty (проверено
+// playground/06). Worker и iframe — один и тот же TG-аккаунт, значит home_dc
+// общий: спрашиваем worker, потом дёргаем getRawAuthKey строго для этого DC.
+async function getHomeDcId(workerClient: TdClient): Promise<number> {
+  const opt = (await workerClient.invoke({
+    _: "getOption",
+    name: "home_dc_id",
+  } as never)) as { _: "optionValueInteger"; value: string | number } | { _: "optionValueEmpty" };
+  if (opt._ !== "optionValueInteger") {
+    throw new Error(`worker getOption(home_dc_id) → ${opt._}, ожидали optionValueInteger`);
   }
-  throw new Error("getRawAuthKey: ни один DC2..5 не отдал auth_key");
+  const dcId = typeof opt.value === "string" ? Number(opt.value) : opt.value;
+  if (!Number.isInteger(dcId) || dcId < 1 || dcId > 5) {
+    throw new Error(`home_dc_id вне диапазона 1..5: ${dcId}`);
+  }
+  return dcId;
+}
+
+async function getAuthKeyForDc(client: TdClient, dcId: number): Promise<Buffer> {
+  const r = (await client.invoke({
+    _: "getRawAuthKey",
+    dc_id: dcId,
+  } as never)) as TdRawAuthKey;
+  return toAuthKeyBuffer(r.auth_key);
 }
 
 // ВТОРОЙ auth_key на тот же TG-аккаунт, специально для TWA-iframe в браузере.
@@ -58,21 +57,31 @@ async function findHomeDc(
 // NewMessage / readInbox / readOutbox.
 //
 // Поток: anon TDLib-инстанс → requestQrCodeAuthentication → worker делает
-// confirmQrCodeAuthentication. При 2FA TG требует SRP-проверку даже от
-// confirmed-устройства; переюзаем `password` (RAM-only из pending.lastPassword).
-// Финал: getRawAuthKey 2..5 → TwaSession. device_model="CRM iframe" нужен,
-// чтобы при delete account найти эту сессию через getActiveSessions.
+// confirmQrCodeAuthentication, получает Session-объект (TL:10692 → Session) и
+// возвращает его id наверх для точечного terminateSession при удалении
+// аккаунта. При 2FA TG требует SRP-проверку даже от confirmed-устройства;
+// переюзаем `password` (RAM-only из pending.lastPassword). Финал:
+// getRawAuthKey строго для home_dc (worker'овского) → TwaSession.
 //
 // pauseWorker вызывается ИСКЛЮЧИТЕЛЬНО на 2FA-ветке — TDLib не переваривает
 // параллельные клиенты на одном TG-аккаунте во время checkAuthenticationPassword
 // второго инстанса (playground/05 vs 06). На non-2FA пути worker не трогаем,
 // поэтому caller вызывает re-spawn только если pauseWorker вернул true.
+export type IframeProvisionResult = {
+  twa: TwaSession;
+  // session_id новой iframe-сессии (TG int64 → строка для безопасности
+  // от потери точности в JS Number). Используется при deleteOutreachAccount
+  // для точечного terminateSession({session_id}) — без перебора getActiveSessions
+  // и fragile match'a по device_model.
+  sessionId: string;
+};
+
 export async function provisionIframeSession(
   workerClient: TdClient,
   accountId: string,
   password: string | undefined,
   pauseWorker: () => Promise<void>,
-): Promise<TwaSession> {
+): Promise<IframeProvisionResult> {
   const tmpKey: TdAccountKey = {
     kind: "raw",
     key: `outreach/${accountId}/iframe-tmp-${Date.now()}`,
@@ -109,10 +118,16 @@ export async function provisionIframeSession(
       throw new Error(`unexpected iframe state: ${qr.kind}`);
     }
 
-    await workerClient.invoke({
+    // home_dc определяем у worker'а ДО confirmQrCodeAuthentication — после
+    // confirm worker может продолжить работать параллельно (на non-2FA пути),
+    // но в этот момент он точно ready и опция выставлена.
+    const homeDcId = await getHomeDcId(workerClient);
+
+    const confirmedSession = (await workerClient.invoke({
       _: "confirmQrCodeAuthentication",
       link: qr.link,
-    } as never);
+    } as never)) as { _: "session"; id: string | number };
+    const sessionId = String(confirmedSession.id);
 
     const next = await waitForAuthState(
       authBus,
@@ -135,10 +150,13 @@ export async function provisionIframeSession(
       await waitForAuthState(authBus, (s) => s.kind === "ready", 30_000);
     }
 
-    const { dcId, authKey } = await findHomeDc(iframeClient);
+    const authKey = await getAuthKeyForDc(iframeClient, homeDcId);
     return {
-      mainDcId: dcId,
-      keys: { [dcId]: authKey.toString("hex") },
+      twa: {
+        mainDcId: homeDcId,
+        keys: { [homeDcId]: authKey.toString("hex") },
+      },
+      sessionId,
     };
   } finally {
     authBus.detach();
