@@ -11,6 +11,7 @@ import {
 import type { Contact, Property } from "@repo/core";
 import { api } from "../../../../../lib/api";
 import { errorMessage } from "../../../../../lib/errors";
+import { useEventSourceEvent } from "../../../../../lib/hooks";
 
 // list-view выпилен — продуктово не несёт ценности (см. donor list-view.tsx —
 // тот же ContactCardRoot, только в один столбец). У нас один view = kanban.
@@ -34,52 +35,42 @@ function ContactsList() {
   // Patch'им cache в-place вместо invalidate — не дёргаем GET всех контактов
   // на каждый чужой message. Поток событий — `{contactId, unreadCount,
   // lastMessageAt}`, фильтруем известных нам контактов в кэше.
-  useEffect(() => {
-    const url = `/v1/workspaces/${wsId}/contact-stream`;
-    const es = new EventSource(url, { withCredentials: true });
-    const onContact = (e: MessageEvent) => {
-      const ev = JSON.parse(e.data) as {
-        contactId: string;
-        unreadCount: number;
-        lastMessageAt: string | null;
-      };
-      // Сначала пытаемся patch'нуть существующую карточку. Если её нет в кэше
-      // (новый контакт от listener'а при ответе лида / при on-first-message-sent
-      // trigger'е) — invalidate, чтобы canban перетянул свежий список.
-      let foundInCache = false;
-      qc.setQueriesData<Contact[]>(
-        { queryKey: ["contacts", wsId] },
-        (prev) => {
-          if (!prev) return prev;
-          let changed = false;
-          const next = prev.map((c) => {
-            if (c.id !== ev.contactId) return c;
-            foundInCache = true;
-            if (
-              c.unreadCount === ev.unreadCount
-              && c.lastMessageAt === ev.lastMessageAt
-            )
-              return c;
-            changed = true;
-            return {
-              ...c,
-              unreadCount: ev.unreadCount,
-              lastMessageAt: ev.lastMessageAt,
-            };
-          });
-          return changed ? next : prev;
-        },
-      );
-      if (!foundInCache) {
-        qc.invalidateQueries({ queryKey: ["contacts", wsId] });
-      }
-    };
-    es.addEventListener("contact", onContact);
-    return () => {
-      es.removeEventListener("contact", onContact);
-      es.close();
-    };
-  }, [wsId, qc]);
+  useEventSourceEvent<{
+    contactId: string;
+    unreadCount: number;
+    lastMessageAt: string | null;
+  }>(`/v1/workspaces/${wsId}/contact-stream`, "contact", (ev) => {
+    // Сначала пытаемся patch'нуть существующую карточку. Если её нет в кэше
+    // (новый контакт от listener'а при ответе лида / при on-first-message-sent
+    // trigger'е) — invalidate, чтобы canban перетянул свежий список.
+    let foundInCache = false;
+    qc.setQueriesData<Contact[]>(
+      { queryKey: ["contacts", wsId] },
+      (prev) => {
+        if (!prev) return prev;
+        let changed = false;
+        const next = prev.map((c) => {
+          if (c.id !== ev.contactId) return c;
+          foundInCache = true;
+          if (
+            c.unreadCount === ev.unreadCount
+            && c.lastMessageAt === ev.lastMessageAt
+          )
+            return c;
+          changed = true;
+          return {
+            ...c,
+            unreadCount: ev.unreadCount,
+            lastMessageAt: ev.lastMessageAt,
+          };
+        });
+        return changed ? next : prev;
+      },
+    );
+    if (!foundInCache) {
+      qc.invalidateQueries({ queryKey: ["contacts", wsId] });
+    }
+  });
 
   const properties = useQuery({
     queryKey: ["properties", wsId],

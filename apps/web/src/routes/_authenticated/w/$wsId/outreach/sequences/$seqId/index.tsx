@@ -26,6 +26,7 @@ import {
   SectionItemValue,
 } from "../../../../../../../components/section";
 import { pluralize } from "../../../../../../../lib/date-utils";
+import { useEscapeKey, useEventSourceEvent } from "../../../../../../../lib/hooks";
 import { useSequence } from "../../../../../../../lib/outreach-queries";
 import { OUTREACH_QK } from "../../../../../../../lib/query-keys";
 import { substituteVariables } from "../../../../../../../lib/substitute-variables";
@@ -91,24 +92,20 @@ function SequenceDetailPage() {
   // SSE-канал апдейтов sequence — invalidate всех зависимых query.
   const seqStatus = seq.data?.status;
   const needsLiveUpdates = seqStatus === "active" || seqStatus === "paused";
-  useEffect(() => {
-    if (!needsLiveUpdates) return;
-    const url = `/v1/workspaces/${wsId}/outreach/sequences/${seqId}/stream`;
-    const es = new EventSource(url, { withCredentials: true });
-    const onChange = () => {
+  useEventSourceEvent(
+    needsLiveUpdates
+      ? `/v1/workspaces/${wsId}/outreach/sequences/${seqId}/stream`
+      : null,
+    "changed",
+    () => {
       qc.invalidateQueries({ queryKey: OUTREACH_QK.sequenceLeads(wsId, seqId) });
       qc.invalidateQueries({ queryKey: OUTREACH_QK.sequence(wsId, seqId) });
       qc.invalidateQueries({
-        queryKey: ["outreach-sequence-analytics", wsId, seqId],
         // partial-key match — accordion'и в dialog'е используют разные period/grouping/viewMode
+        queryKey: ["outreach-sequence-analytics", wsId, seqId],
       });
-    };
-    es.addEventListener("changed", onChange);
-    return () => {
-      es.removeEventListener("changed", onChange);
-      es.close();
-    };
-  }, [wsId, seqId, qc, needsLiveUpdates]);
+    },
+  );
 
   // Local editor state — name + messages. Accounts/CRM-settings правятся
   // на отдельных sub-routes, тут не редактируются.
@@ -743,13 +740,7 @@ function PreviewDialog(props: {
     placeholderData: (prev) => prev,
   });
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") props.onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [props]);
+  useEscapeKey(props.onClose);
 
   const lead = sampleQ.data;
   const rendered = lead
@@ -889,13 +880,7 @@ function AnalyticsDialog(props: {
     placeholderData: (prev) => prev,
   });
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") props.onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [props]);
+  useEscapeKey(props.onClose);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">

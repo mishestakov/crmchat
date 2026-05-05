@@ -6,6 +6,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -25,15 +26,9 @@ export const users = pgTable("users", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-export const organizations = pgTable("organizations", {
-  id: text("id").primaryKey().$defaultFn(shortId),
-  name: text("name").notNull(),
-  createdBy: text("created_by")
-    .notNull()
-    .references(() => users.id),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+// `organizations` была удалена: внутренний CRM, биллинг/wallet/limits отсутствуют,
+// единственная функция org у донора (subscription/wallet/membersCount) у нас не
+// нужна. Workspace теперь top-level tenant. См. DECISIONS.md «Без organizations».
 
 export const sessions = pgTable(
   "sessions",
@@ -81,25 +76,84 @@ export const DEFAULT_OUTREACH_SCHEDULE: OutreachSchedule = {
   },
 };
 
-export const workspaces = pgTable(
-  "workspaces",
+export const workspaces = pgTable("workspaces", {
+  id: text("id").primaryKey().$defaultFn(shortId),
+  name: text("name").notNull(),
+  outreachSchedule: jsonb("outreach_schedule")
+    .$type<OutreachSchedule>()
+    .notNull()
+    .default(DEFAULT_OUTREACH_SCHEDULE),
+  // Метадата «кто создал». В access-проверках НЕ участвует — для этого
+  // workspace_members. Оставлено как audit-поле, чтобы в логах было видно
+  // первого админа.
+  createdBy: text("created_by")
+    .notNull()
+    .references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Роль участника workspace. См. specs/permissions.md §1: две роли — admin
+// (управление командой и workspace'ом) и member (полноценная работа без
+// admin-actions). Третья роль chatter из донора у нас не реализована, см.
+// DECISIONS.md «Workspace-роли: только admin и member».
+export const workspaceRole = pgEnum("workspace_role", ["admin", "member"]);
+
+// Membership: единственный источник истины «у кого есть доступ к workspace'у
+// и в какой роли». assertMember/assertRole делают JOIN сюда. PK на паре
+// (workspace_id, user_id) — один user не может состоять в одном ws дважды.
+//
+// Last-admin invariant (specs/permissions.md): при попытке убрать единственного
+// admin'а DELETE .../members/me возвращает 409. Удалить ws целиком — отдельный
+// endpoint DELETE /v1/workspaces/{wsId}.
+export const workspaceMembers = pgTable(
+  "workspace_members",
+  {
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    role: workspaceRole("role").notNull().default("member"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({
+      columns: [t.workspaceId, t.userId],
+      name: "workspace_members_pk",
+    }),
+    index("workspace_members_user_id_idx").on(t.userId),
+  ],
+);
+
+// Приглашение в workspace. `code` — публичный токен (32 байта base64url) в URL
+// /accept-invite/{wsId}/{code}; генерится в роуте инвайтов через
+// crypto.getRandomValues, не угадывается. `telegramUsername` — hint
+// пригласившему «кому я отправляю», при accept'е НЕ сверяется (любой
+// залогиненный пользователь со ссылкой может принять — иначе invitee должен
+// был бы менять TG-username, плохой UX). `acceptedAt`/`revokedAt` — soft-state:
+// pending, если оба NULL и expiresAt > now(). Cleanup-крон отложен до prod,
+// фильтруем по expires_at в queries.
+export const workspaceInvites = pgTable(
+  "workspace_invites",
   {
     id: text("id").primaryKey().$defaultFn(shortId),
-    organizationId: text("organization_id")
+    workspaceId: text("workspace_id")
       .notNull()
-      .references(() => organizations.id, { onDelete: "restrict" }),
-    name: text("name").notNull(),
-    outreachSchedule: jsonb("outreach_schedule")
-      .$type<OutreachSchedule>()
-      .notNull()
-      .default(DEFAULT_OUTREACH_SCHEDULE),
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    telegramUsername: text("telegram_username").notNull(),
+    role: workspaceRole("role").notNull().default("member"),
+    code: text("code").notNull().unique(),
     createdBy: text("created_by")
       .notNull()
       .references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
   },
-  (t) => [index("workspaces_organization_id_idx").on(t.organizationId)],
+  (t) => [index("workspace_invites_workspace_id_idx").on(t.workspaceId)],
 );
 
 // Custom-property types. По спеке data-model.md §3 — date добавим когда упрёмся.

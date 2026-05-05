@@ -47,33 +47,24 @@ PostgreSQL-схема. Sсurce of truth — Drizzle-определения в `a
 
 ---
 
-## 2. Organizations и workspaces
+## 2. Workspaces
 
-### `organizations`
-| Колонка | Тип |
-|---|---|
-| `id` | uuid (pk) |
-| `name` | text, not null |
-| `created_by` | uuid → `users.id` |
-| `created_at`, `updated_at` | timestamptz |
+`organizations` у нас нет (см. `DECISIONS.md` «Без organizations»). Workspace — top-level tenant. Если когда-нибудь появится multi-tenant биллинг или wallet — пересоздадим уровень над workspace явной миграцией.
 
 ### `workspaces`
 | Колонка | Тип |
 |---|---|
 | `id` | uuid (pk) |
-| `organization_id` | uuid → `organizations.id` ON DELETE RESTRICT |
 | `name` | text, not null |
-| `created_by` | uuid → `users.id` |
+| `created_by` | uuid → `users.id` (audit-метадата, в access-проверках не участвует) |
 | `created_at`, `updated_at` | timestamptz |
-
-Индекс по `organization_id`.
 
 ### `workspace_members`
 | Колонка | Тип |
 |---|---|
 | `workspace_id` | uuid → `workspaces.id` ON DELETE CASCADE |
 | `user_id` | uuid → `users.id` ON DELETE CASCADE |
-| `role` | enum `workspace_role` (`admin` / `member` / `chatter`) |
+| `role` | enum `workspace_role` (`admin` / `member`) |
 | `created_at` | timestamptz |
 
 PK: `(workspace_id, user_id)`. Индекс по `user_id` для «мои воркспейсы».
@@ -328,7 +319,7 @@ CREATE TRIGGER telegram_messages_notify
 
 | Enum | Значения |
 |---|---|
-| `workspace_role` | `admin`, `member`, `chatter` |
+| `workspace_role` | `admin`, `member` |
 | `property_type` | `text`, `number`, `date`, `single_select`, `multi_select` |
 | `property_object_type` | `contact` |
 | `activity_type` | `note`, `reminder` |

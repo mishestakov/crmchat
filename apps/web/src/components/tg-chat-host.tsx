@@ -1,8 +1,8 @@
-import { useEffect } from "react";
 import { Link } from "@tanstack/react-router";
 import { X } from "lucide-react";
 import { useTgChat } from "../lib/chat-store";
 import { errorMessage } from "../lib/errors";
+import { useEscapeKey } from "../lib/hooks";
 import { useOutreachAccounts } from "../lib/outreach-queries";
 import { TgChatIframe } from "./tg-chat-iframe";
 
@@ -25,14 +25,9 @@ export function TgChatHost() {
 
   // ESC закрывает модал — стандартный UX. Backdrop-click НЕ закрываем: легко
   // случайно тапнуть мимо контента и потерять открытый чат.
-  useEffect(() => {
-    if (!visible) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [visible, close]);
+  useEscapeKey(() => {
+    if (visible) close();
+  });
 
   // Не рендерим overlay пока iframe не открывали ни разу — ноль DOM, ноль
   // listener'ов, ноль шансов сломаться при HMR/Fast Refresh.

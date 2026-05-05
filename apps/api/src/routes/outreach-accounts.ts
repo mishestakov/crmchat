@@ -33,31 +33,37 @@ const WsAccountParam = z.object({
   accountId: z.string().min(1).max(64),
 });
 
-const AccountSchema = z.object({
-  id: z.string(),
-  status: z.enum(outreachAccountStatus.enumValues),
-  tgUserId: z.string(),
-  tgUsername: z.string().nullable(),
-  phoneNumber: z.string().nullable(),
-  firstName: z.string().nullable(),
-  hasPremium: z.boolean(),
-  newLeadsDailyLimit: z.number().int(),
-  createdAt: z.iso.datetime(),
-});
+const AccountSchema = z
+  .object({
+    id: z.string(),
+    status: z.enum(outreachAccountStatus.enumValues),
+    tgUserId: z.string(),
+    tgUsername: z.string().nullable(),
+    phoneNumber: z.string().nullable(),
+    firstName: z.string().nullable(),
+    hasPremium: z.boolean(),
+    newLeadsDailyLimit: z.number().int(),
+    createdAt: z.iso.datetime(),
+  })
+  .openapi("OutreachAccount");
 
-const PatchAccountBody = z.object({
-  newLeadsDailyLimit: z.number().int().min(0).max(1000).optional(),
-});
+const PatchAccountBody = z
+  .object({
+    newLeadsDailyLimit: z.number().int().min(0).max(1000).optional(),
+  })
+  .openapi("PatchOutreachAccount");
 
 // TWA session: { mainDcId, keys: { [dcId]: hexAuthKey } } — формат, который
 // принимает apps/tg-client. Получается через TDLib getRawAuthKey patch.
-const TwaSessionResponseSchema = z.object({
-  session: z.object({
-    mainDcId: z.number().int(),
-    keys: z.record(z.string(), z.string()),
-    isTest: z.literal(true).optional(),
-  }),
-});
+const TwaSessionResponseSchema = z
+  .object({
+    session: z.object({
+      mainDcId: z.number().int(),
+      keys: z.record(z.string(), z.string()),
+      isTest: z.literal(true).optional(),
+    }),
+  })
+  .openapi("TwaSessionResponse");
 
 function serializeAccount(r: typeof outreachAccounts.$inferSelect) {
   return {

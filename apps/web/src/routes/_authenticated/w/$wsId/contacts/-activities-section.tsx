@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Bell, Check, MoreHorizontal, StickyNote, X } from "lucide-react";
 import type { Activity, ActivityRepeat } from "@repo/core";
 import { api } from "../../../../../lib/api";
 import { errorMessage } from "../../../../../lib/errors";
+import { useClickOutside, useEscapeKey } from "../../../../../lib/hooks";
 
 const REPEAT_LABELS: Record<ActivityRepeat, string> = {
   none: "Без повтора",
@@ -442,13 +443,7 @@ function Modal(props: {
   onClose: () => void;
   children: React.ReactNode;
 }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") props.onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [props.onClose]);
+  useEscapeKey(props.onClose);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <button
@@ -474,19 +469,6 @@ function Modal(props: {
       </div>
     </div>
   );
-}
-
-function useClickOutside(
-  ref: React.RefObject<HTMLElement | null>,
-  handler: () => void,
-) {
-  useEffect(() => {
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) handler();
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [ref, handler]);
 }
 
 function toLocalInputValue(d: Date): string {

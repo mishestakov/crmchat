@@ -7,7 +7,11 @@ import {
   UpdateWorkspaceSchema as BaseUpdateWorkspaceSchema,
 } from "@repo/core";
 import { db } from "../db/client";
-import { organizations, users, workspaces } from "../db/schema";
+import {
+  users,
+  workspaceMembers,
+  workspaces,
+} from "../db/schema";
 import { seedDefaultProperties } from "../lib/workspace-presets";
 import type { SessionVars } from "../middleware/require-session";
 
@@ -32,11 +36,19 @@ const listRoute = createRoute({
 
 app.openapi(listRoute, async (c) => {
   const userId = c.get("userId");
-  // TODO: replace `createdBy = userId` with workspace_members JOIN once auth/membership lands.
   const rows = await db
-    .select()
+    .select({
+      id: workspaces.id,
+      name: workspaces.name,
+      createdBy: workspaces.createdBy,
+      createdAt: workspaces.createdAt,
+    })
     .from(workspaces)
-    .where(eq(workspaces.createdBy, userId))
+    .innerJoin(
+      workspaceMembers,
+      eq(workspaceMembers.workspaceId, workspaces.id),
+    )
+    .where(eq(workspaceMembers.userId, userId))
     .orderBy(workspaces.createdAt);
   return c.json(rows.map(serialize));
 });
@@ -61,32 +73,31 @@ const createRouteDef = createRoute({
 app.openapi(createRouteDef, async (c) => {
   const userId = c.get("userId");
   const { name } = c.req.valid("json");
-  // TODO: organization выводится из членства user'а; сейчас — единственная org этого user'а
-  // (createdBy = userId). Поменять на membership-based lookup в шаге auth.
-  const [org] = await db
-    .select()
-    .from(organizations)
-    .where(eq(organizations.createdBy, userId))
-    .limit(1);
-  if (!org) {
-    // TODO: вместо 500 — auto-create organization при первом workspace
-    // (или в onboarding после OAuth). Сейчас попадаем сюда только если seed не отработал.
-    throw new HTTPException(500, { message: "User has no organization" });
-  }
-  const [row] = await db
-    .insert(workspaces)
-    .values({ name, organizationId: org.id, createdBy: userId })
-    .returning();
+  const row = await db.transaction(async (tx) => {
+    const [ws] = await tx
+      .insert(workspaces)
+      .values({ name, createdBy: userId })
+      .returning();
+    // Создатель — admin. Это единственная точка автогенерации admin'а; все
+    // остальные admin'ы появляются через ручную смену роли (US-4) или через
+    // принятие инвайта с role='admin' (US-3).
+    await tx.insert(workspaceMembers).values({
+      workspaceId: ws!.id,
+      userId,
+      role: "admin",
+    });
+    return ws!;
+  });
   // 8 preset-properties (full_name, description, email, phone, telegram_username,
   // url, amount, stage). Делаем всегда — без них контакты невозможно создать,
   // и UI ожидает их как identity-секцию карточки.
-  await seedDefaultProperties(row!.id);
-  return c.json(serialize(row!), 201);
+  await seedDefaultProperties(row.id);
+  return c.json(serialize(row), 201);
 });
 
-// PATCH /v1/workspaces/:id — путь не матчится assertMember (тот ждёт /:id/*),
-// поэтому сверяем `createdBy = userId` руками. Когда появится workspace_members,
-// эта проверка переедет в общий middleware.
+// PATCH /v1/workspaces/:id — путь не матчится assertMember (тот ждёт /:wsId/*),
+// поэтому проверяем доступ + роль вручную через workspace_members. Только admin
+// может переименовывать ws (см. specs/permissions.md §2).
 app.openapi(
   createRoute({
     method: "patch",
@@ -109,27 +120,80 @@ app.openapi(
     const userId = c.get("userId");
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
+    const [member] = await db
+      .select({ role: workspaceMembers.role })
+      .from(workspaceMembers)
+      .where(
+        and(
+          eq(workspaceMembers.workspaceId, id),
+          eq(workspaceMembers.userId, userId),
+        ),
+      )
+      .limit(1);
+    if (!member) {
+      // 404 для consistency с assertMember (не различаем "не существует" / "не ваш")
+      throw new HTTPException(404, { message: "workspace not found" });
+    }
+    if (member.role !== "admin") {
+      throw new HTTPException(403, { message: "admin role required" });
+    }
     const [row] = await db
       .update(workspaces)
       .set({ ...body, updatedAt: new Date() })
-      .where(and(eq(workspaces.id, id), eq(workspaces.createdBy, userId)))
+      .where(eq(workspaces.id, id))
       .returning();
     if (!row) {
-      // 404 для consistency с assertMember (не различаем "не существует" / "не ваш")
       throw new HTTPException(404, { message: "workspace not found" });
     }
     return c.json(serialize(row));
   },
 );
 
-// Membership-список workspace'а. В MVP-модели владелец = единственный участник
-// (workspace_members таблицы пока нет; см. TODO в /workspaces). Когда появится
-// настоящая team — здесь будет JOIN на workspace_members. Endpoint используется
-// в CRM-автоматизациях sequence как кандидаты в default owners.
+// DELETE /v1/workspaces/:id — admin only. Каскадно сносит всё (контакты,
+// аккаунты, кампании, members, invites — через ON DELETE CASCADE на
+// workspace_id во всех доменных таблицах). Это единственный способ
+// «избавиться от ws»: leave-self последним admin'ом отдаёт 409. См.
+// DECISIONS.md «Удаление workspace — явное действие».
+app.openapi(
+  createRoute({
+    method: "delete",
+    path: "/v1/workspaces/{id}",
+    request: { params: IdParam },
+    responses: { 204: { description: "Deleted" } },
+  }),
+  async (c) => {
+    const userId = c.get("userId");
+    const { id } = c.req.valid("param");
+    const [member] = await db
+      .select({ role: workspaceMembers.role })
+      .from(workspaceMembers)
+      .where(
+        and(
+          eq(workspaceMembers.workspaceId, id),
+          eq(workspaceMembers.userId, userId),
+        ),
+      )
+      .limit(1);
+    if (!member) {
+      throw new HTTPException(404, { message: "workspace not found" });
+    }
+    if (member.role !== "admin") {
+      throw new HTTPException(403, { message: "admin role required" });
+    }
+    await db.delete(workspaces).where(eq(workspaces.id, id));
+    return c.body(null, 204);
+  },
+);
+
+// Membership-список workspace'а. Открыт всем member'ам (включая роль admin) —
+// чтобы UI мог отрисовать секцию «Команда» и проверять «есть ли ещё admin'ы»
+// перед leave-self-as-admin. Возвращает поле role; используется как
+// кандидаты в default owners CRM-автоматизаций sequence.
 const MemberSchema = z.object({
   id: z.string(),
   name: z.string().nullable(),
   username: z.string().nullable(),
+  role: z.enum(["admin", "member"]),
 });
 
 app.openapi(
@@ -147,12 +211,17 @@ app.openapi(
   async (c) => {
     const userId = c.get("userId");
     const { id } = c.req.valid("param");
-    const [ws] = await db
-      .select({ createdBy: workspaces.createdBy })
-      .from(workspaces)
-      .where(and(eq(workspaces.id, id), eq(workspaces.createdBy, userId)))
+    const [self] = await db
+      .select({ workspaceId: workspaceMembers.workspaceId })
+      .from(workspaceMembers)
+      .where(
+        and(
+          eq(workspaceMembers.workspaceId, id),
+          eq(workspaceMembers.userId, userId),
+        ),
+      )
       .limit(1);
-    if (!ws) {
+    if (!self) {
       throw new HTTPException(404, { message: "workspace not found" });
     }
     const rows = await db
@@ -160,17 +229,24 @@ app.openapi(
         id: users.id,
         name: users.name,
         username: users.username,
+        role: workspaceMembers.role,
       })
-      .from(users)
-      .where(eq(users.id, ws.createdBy));
+      .from(workspaceMembers)
+      .innerJoin(users, eq(users.id, workspaceMembers.userId))
+      .where(eq(workspaceMembers.workspaceId, id))
+      .orderBy(workspaceMembers.createdAt);
     return c.json(rows);
   },
 );
 
-function serialize(row: typeof workspaces.$inferSelect) {
+function serialize(row: {
+  id: string;
+  name: string;
+  createdBy: string;
+  createdAt: Date;
+}) {
   return {
     id: row.id,
-    organizationId: row.organizationId,
     name: row.name,
     createdBy: row.createdBy,
     createdAt: row.createdAt.toISOString(),

@@ -19,10 +19,27 @@ const app = new OpenAPIHono();
 const OIDC_COOKIE = "tg_oidc";
 const WEB_ORIGIN = (process.env.WEB_ORIGIN ?? "http://localhost:5173").replace(/\/$/, "");
 
+// Whitelist для post-login редиректа. Принимаем только same-origin path:
+// начинается с одиночного '/', НЕ начинается с '//' или '/\\' (protocol-relative
+// и backslash-trick ломают same-origin), без CR/LF (header injection),
+// разумная длина. Возвращает path или null. Используется в /auth/start
+// (для сохранения в OIDC-cookie) и в /auth/callback (на финальном редиректе
+// в /auth/finish?next=...) — defense-in-depth: фронт `/auth/finish` тоже
+// валидирует ещё раз.
+function safeNext(raw: string | undefined | null): string | null {
+  if (!raw) return null;
+  if (raw.length > 512) return null;
+  if (!raw.startsWith("/")) return null;
+  if (raw.startsWith("//") || raw.startsWith("/\\")) return null;
+  if (/[\r\n]/.test(raw)) return null;
+  return raw;
+}
+
 app.get("/v1/auth/telegram/start", async (c) => {
   const verifier = makePkceVerifier();
   const state = makeState();
-  setCookie(c, OIDC_COOKIE, JSON.stringify({ verifier, state }), {
+  const next = safeNext(c.req.query("next"));
+  setCookie(c, OIDC_COOKIE, JSON.stringify({ verifier, state, next }), {
     httpOnly: true,
     sameSite: "Lax",
     path: "/",
@@ -43,7 +60,11 @@ app.get("/v1/auth/telegram/callback", async (c) => {
 
   const fail = () => c.redirect(`${WEB_ORIGIN}/login?error=1`, 302);
   if (!code || !state || !oidcCookie) return fail();
-  const stored = JSON.parse(oidcCookie) as { verifier: string; state: string };
+  const stored = JSON.parse(oidcCookie) as {
+    verifier: string;
+    state: string;
+    next?: string | null;
+  };
   if (stored.state !== state) return fail();
 
   const claims = await exchangeCodeForIdToken({ code, codeVerifier: stored.verifier });
@@ -57,9 +78,14 @@ app.get("/v1/auth/telegram/callback", async (c) => {
     })
     .returning({ id: users.id });
 
-  // В prod заменить на createSession(c, row!.id) + redirect "/", см. bridge-tokens.ts.
+  // В prod заменить на createSession(c, row!.id) + redirect (next ?? "/"),
+  // см. bridge-tokens.ts.
   const bt = issueBridgeToken(row!.id);
-  return c.redirect(`${WEB_ORIGIN}/auth/finish?bt=${encodeURIComponent(bt)}`, 302);
+  const next = safeNext(stored.next);
+  const finishUrl = new URL(`${WEB_ORIGIN}/auth/finish`);
+  finishUrl.searchParams.set("bt", bt);
+  if (next) finishUrl.searchParams.set("next", next);
+  return c.redirect(finishUrl.toString(), 302);
 });
 
 app.openapi(

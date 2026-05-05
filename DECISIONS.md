@@ -141,6 +141,7 @@ oauth.telegram.org).
 Поднято в ревью, осознанно НЕ делаем сейчас (MVP-режим, см. `CLAUDE.md`). Возвращаемся, когда упрёмся.
 
 **Безопасность / надёжность:**
+- Last-admin race в `apps/api/src/routes/invites.ts` (DELETE `/members/:userId` и PATCH-демоут): SELECT count(admin) → DELETE/UPDATE без `FOR UPDATE`. Два concurrent leave-запроса от двух admin'ов оба пройдут проверку «admin'ов > 1» и оба уйдут — workspace останется без admin'а. Реальный кейс маловероятен (нужны два admin'а, одновременно leave-ающие через два tab'а), но детерминированный race есть. Фикс — обернуть в транзакцию + `SELECT … FOR UPDATE` на строки админов, или проверка через `WITH cte AS (SELECT count(...)) ... DELETE WHERE cte.count > 1`. Pre-prod.
 - `createSession` удаляет старую row только по `sid`, без сверки `userId`. Sid 256-битный, угадать невозможно — реальный риск ~ноль. Усилить когда появится shared-environment (kiosk, terminal).
 - Rate limit на `/v1/auth/*` и `/v1/_dev/login` — pre-launch чек, не до prod.
 - CSRF-защита через `SameSite=Lax` + CORS-allowlist. На текущих ручках достаточно (мутации только через fetch с CORS). Усиление через double-submit token — когда появится cross-subdomain (`app.crmchat.ai` + `api.crmchat.ai`).
@@ -152,7 +153,7 @@ oauth.telegram.org).
 - GIN-индекс на `contacts.properties` jsonb — нужен когда появится фильтр «contacts where properties.stage='wip'» в UI (US-2).
 - pg-boss schedule `cleanup.expired_sessions` (DELETE WHERE expires_at < now()) — pre-prod cron.
 - Переход с `drizzle-kit push` на `generate + migrate` для prod. Включает `propertyType` enum: `ALTER TYPE ADD VALUE` при добавлении `date`/`multi_select`.
-- Nullable workspace.organizationId / auto-create org при OAuth-callback — сейчас seed создаёт org, новый OAuth-юзер словит 500 на первом workspace.
+- ~~Nullable workspace.organizationId / auto-create org при OAuth-callback~~ — закрыт удалением organizations целиком, см. отдельную запись «Без organizations» выше.
 
 **API контракты:**
 - `updatedAt` в response-схемах `Workspace/Contact/Property` (data shape финальный по `CLAUDE.md`).
@@ -209,6 +210,40 @@ oauth.telegram.org).
 - Reply из CRMChat-интерфейса (embedded TG-чат). Большая отдельная фича.
 - Forward сообщения как лид. Отдельный источник импорта.
 - QR-коды на конференциях. Отдельный источник.
+
+---
+
+## Workspace-роли: только `admin` и `member`, без `chatter`
+
+**Решение.** Enum `workspace_role` = `admin | member`. Роль `chatter` (только чат + чтение контактов, без создания/редактирования) у донора есть, у нас не реализуем.
+
+**В оригинале.** Три роли: `admin / member / chatter`. `chatter` — для саппорта/junior'ов, которые отвечают в чатах, но не лезут в воронку.
+
+**Почему отказались.** Внутренний CRM Yandex'а не имеет юзкейса «дать саппорту доступ к чатам без права править воронку» — все, кто заходят в workspace, либо им управляют, либо полноценно работают с данными. Третья роль усложняет permission-матрицу и UI без выгоды; если юзкейс появится — добавим обратно через миграцию enum (`ALTER TYPE ADD VALUE`, без drop'а данных).
+
+---
+
+## Без organizations: workspace — top-level tenant
+
+**Решение.** Сущность `organizations` удалена из схемы. Workspace стал верхнеуровневым tenant'ом, у него нет родительской организации, FK `workspaces.organization_id` дропнут.
+
+**В оригинале.** `Organization` нёс биллинг: `subscription`, `wallet`, `membersCount`, `telegramAccountsLimit`, `welcomeBonusReceivedAt`. Один admin org'и платит, workspaces внутри org делят счёт.
+
+**Почему отказались.** Внутренний CRM Yandex'а — биллинга нет, тарифов нет, кошельков нет, лимитов на TG-аккаунты нет. У нас org была голой ракушкой `{id, name, createdBy}` без всех полезных полей донора. При этом она ломала core-сценарий приглашений: `POST /v1/workspaces` ищет org по `organizations.created_by = userId`, у приглашённого юзера своей org нет → 500. Вариант «auto-create per-юзер» давал бессмысленную ситуацию «Борис в своей org, видит ws Анны из её org».
+
+**Цена.** Если когда-нибудь Yandex захочет multi-tenant биллинг (разные команды отдельные счета) — это полноценный миграционный проект, а не «не выкинуть колонку на всякий случай». Memory: «до прод-деплоя дропаем БД вместо legacy-костылей» — этот случай ровно про это.
+
+---
+
+## Удаление workspace — явное действие, не побочный эффект leave
+
+**Решение.** Если последний admin покидает workspace — endpoint `DELETE /v1/workspaces/{wsId}/members/{me}` отвечает **409 Conflict** с подсказкой. Чтобы избавиться от workspace, нужно нажать отдельную кнопку «Удалить рабочее пространство» (`DELETE /v1/workspaces/{wsId}`) с confirm-диалогом — каскадно сносит всё.
+
+**В оригинале.** Уход последнего admin'а **молча удалял workspace** вместе со всеми контактами, кампаниями, аккаунтами.
+
+**Почему отказались.** Тихая destructive-операция через side-effect — антипаттерн UX. «Покинуть» и «удалить» — два разных намерения, у каждого свой клик. Случайный admin может не знать, что он последний; восстанавливать удалённый workspace потом некуда.
+
+**Цена.** +1 endpoint (`DELETE /v1/workspaces/{wsId}`) и +1 destructive-кнопка в UI с confirm. Зато нет ситуации «нажал Покинуть, потерял всё».
 
 ---
 

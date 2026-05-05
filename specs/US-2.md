@@ -19,7 +19,6 @@ coverage:
     - web.workspace.invite.successToast
     - web.role.admin
     - web.role.member
-    - web.role.chatter
     - web.common.error.shouldNotEmpty
 ---
 
@@ -39,7 +38,7 @@ coverage:
 | Поле | Label | Placeholder | Описание | Валидация |
 |---|---|---|---|---|
 | `telegramUsername` | **«Имя пользователя Telegram»** | — | — | trim + non-empty («Поле не должно быть пустым») |
-| `role` | **«Роль»** | — | combobox | enum `WorkspaceRoleSchema`: **`member` / `admin` / `chatter`** (отображаются как «Участник», «Админ», «Чаттер»); default `member` |
+| `role` | **«Роль»** | — | combobox | enum `WorkspaceRoleSchema`: **`member` / `admin`** (отображаются как «Участник», «Админ»); default `member`. Роль `chatter` есть у донора, у нас не реализована — см. `DECISIONS.md` |
 
 **Условный warning-alert** над формой — только если в воркспейсе уже подключён хотя бы один TG-аккаунт: **«⚠️ Члены команды в этом рабочем пространстве увидят ваши чаты Telegram»**.
 
@@ -71,7 +70,7 @@ Submit-кнопка: **«Пригласить»** (`web.workspace.invite.inviteB
 ![Settle после инвайта](_screenshots/ProtectedWWorkspaceIdSettingsWorkspaceInviteRouteImport/1776737929674_response-settle.png)
 
 ## Открытые вопросы
-- **OQ-1**: есть ли роль `observer` в продукте? `WorkspaceRoleSchema` из `@repo/core/types` — в capture мы видели `member` и `chatter`; в user-stories.md упомянуты три — `Участник / Админ / Чаттер`. Проверить enum в `@repo/core`.
+- ~~**OQ-1**: есть ли роль `observer`~~ — закрыт. У нас две роли (`admin` / `member`), `chatter` донора не берём, см. `DECISIONS.md`.
 - **OQ-2**: коды ошибок `inviteWorkspaceMember` (несуществующий username, дубликат, rate-limit). Нужен негативный capture.
 
 ## Критерии приёмки

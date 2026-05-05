@@ -16,6 +16,7 @@ import {
 import type { Contact, Property } from "@repo/core";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
+import { useClickOutside } from "../../../../../../lib/hooks";
 import { BackButton } from "../../../../../../components/back-button";
 import {
   ActivitiesList,
@@ -458,14 +459,9 @@ function ActionButton(props: {
 function CardMenu(props: { onEdit: () => void; onDelete: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [open]);
+  useClickOutside(ref, () => {
+    if (open) setOpen(false);
+  });
   return (
     <div ref={ref} className="relative">
       <button

@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lte, max, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import {
   outreachAccounts,
@@ -135,14 +135,11 @@ async function runTick() {
 
   if (due.length === 0) return;
 
-  const byAccount = new Map<string, typeof due>();
-  for (const r of due) {
-    let list = byAccount.get(r.accountId);
-    if (!list) {
-      list = [];
-      byAccount.set(r.accountId, list);
+  const byAccount = Map.groupBy(due, (r) => r.accountId);
+  for (const items of byAccount.values()) {
+    if (items.length > MAX_PER_ACCOUNT_PER_TICK) {
+      items.length = MAX_PER_ACCOUNT_PER_TICK;
     }
-    if (list.length < MAX_PER_ACCOUNT_PER_TICK) list.push(r);
   }
 
   await Promise.all(
@@ -425,9 +422,7 @@ async function getNewLeadsStatsToday(
   const [row] = await db
     .select({
       todayCount: sql<number>`count(*) FILTER (WHERE ${scheduledMessages.sentAt} >= ${startIso}::timestamptz)::int`,
-      // postgres-js за пределами column-mapping не знает тип max(...) и
-      // возвращает строку. Конвертируем сами в Date.
-      lastSentAt: sql<string | null>`max(${scheduledMessages.sentAt})`,
+      lastSentAt: max(scheduledMessages.sentAt),
     })
     .from(scheduledMessages)
     .where(
@@ -439,7 +434,7 @@ async function getNewLeadsStatsToday(
     );
   return {
     newLeadsToday: row?.todayCount ?? 0,
-    lastNewLeadAt: row?.lastSentAt ? new Date(row.lastSentAt) : null,
+    lastNewLeadAt: row?.lastSentAt ?? null,
   };
 }
 

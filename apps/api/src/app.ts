@@ -13,6 +13,7 @@ import activities from "./routes/activities";
 import auth from "./routes/auth";
 import contactViews from "./routes/contact-views";
 import contacts from "./routes/contacts";
+import { memberOps, publicInvites, wsInvites } from "./routes/invites";
 import me from "./routes/me";
 import outreachAccounts from "./routes/outreach-accounts";
 import outreachLists from "./routes/outreach-lists";
@@ -38,6 +39,9 @@ protectedApp.use("/v1/*", requireSession);
 protectedApp.route("/", me);
 protectedApp.route("/", workspaces);
 protectedApp.route("/", telegram);
+// /v1/invites/:code GET + POST accept — только requireSession, без
+// assertMember (приглашённый ещё не member).
+protectedApp.route("/", publicInvites);
 
 // workspace-scoped: requireSession + assertMember
 const wsApp = new OpenAPIHono<{ Variables: WorkspaceVars }>();
@@ -50,6 +54,8 @@ wsApp.route("/", outreachAccounts);
 wsApp.route("/", outreachLists);
 wsApp.route("/", outreachSequences);
 wsApp.route("/", outreachSchedule);
+wsApp.route("/", wsInvites);
+wsApp.route("/", memberOps);
 protectedApp.route("/", wsApp);
 
 app.route("/", protectedApp);

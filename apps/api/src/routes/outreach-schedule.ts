@@ -22,18 +22,20 @@ const DaySchema = z.union([
     }),
 ]);
 
-const ScheduleSchema = z.object({
-  timezone: z.string().min(1),
-  dailySchedule: z.object({
-    mon: DaySchema,
-    tue: DaySchema,
-    wed: DaySchema,
-    thu: DaySchema,
-    fri: DaySchema,
-    sat: DaySchema,
-    sun: DaySchema,
-  }),
-});
+const ScheduleSchema = z
+  .object({
+    timezone: z.string().min(1),
+    dailySchedule: z.object({
+      mon: DaySchema,
+      tue: DaySchema,
+      wed: DaySchema,
+      thu: DaySchema,
+      fri: DaySchema,
+      sat: DaySchema,
+      sun: DaySchema,
+    }),
+  })
+  .openapi("OutreachSchedule");
 
 function isValidTimezone(tz: string): boolean {
   // Intl бросит RangeError для невалидной IANA tz. Не ставим костыль — это

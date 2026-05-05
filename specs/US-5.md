@@ -80,19 +80,9 @@ Inline input + кнопка **«Save»**. Валидация: trim, non-empty.
 
 ---
 
-## 5.3 · Настройки организации
+## 5.3 · Настройки организации — НЕ ДЕЛАЕМ
 
-### Точка входа
-**Путь через UI не найден.** Доступ только по прямому URL `/w/{id}/settings/organization/{organizationId}`. См. [OQ-2](#открытые-вопросы).
-
-### Форма
-Inline-поле **«Название организации»** + кнопка **«Сохранить»**.
-
-### Что вызывается
-В capture — только бутстрэп-вызовы destination-страницы (`workspaces.getMembers` и ко). Сам save-экшен пишет напрямую в Firestore. См. [OQ-3](#открытые-вопросы).
-
-### Скриншот
-![Страница настроек организации](_screenshots/ProtectedWWorkspaceIdSettingsOrganizationOrganizationIdRouteImport/1776736750585_nav+500.png)
+`organizations` у нас нет, см. `DECISIONS.md` «Без organizations». Workspace — top-level tenant, отдельной сущности «организация» в схеме и UI не существует.
 
 ---
 
@@ -101,8 +91,7 @@ Inline-поле **«Название организации»** + кнопка *
 
 ## Открытые вопросы
 - **OQ-1**: Какая именно Firestore-запись обновляется при rename? Документ `workspaces/{id}` или RPC мы просто не перехватили? Нужен более плотный capture с фокусом на этот клик.
-- **OQ-2**: Есть ли в UI пункт меню, ведущий на `/settings/organization/{orgId}`, или это правда только прямой URL?
-- **OQ-3**: Как вообще создаётся organization-сущность и как к ней привязывается воркспейс? В `createWorkspace` мы не видели `organizationId` в input (см. [US-1 OQ](./US-1.md#открытые-вопросы)).
+- ~~**OQ-2/OQ-3** про organizations~~ — закрыты: organizations у нас нет, см. `DECISIONS.md`.
 
 ## Критерии приёмки
 - [ ] **Создание**: пустое имя блокирует submit; успех → ровно один `POST /trpc/workspace.createWorkspace`, `replace`-редирект, toast показан один раз.

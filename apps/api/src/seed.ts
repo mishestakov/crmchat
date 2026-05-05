@@ -1,9 +1,8 @@
-import { eq } from "drizzle-orm";
 import { db, sql } from "./db/client";
 import {
   contacts,
-  organizations,
   users,
+  workspaceMembers,
   workspaces,
 } from "./db/schema";
 import { seedDefaultProperties } from "./lib/workspace-presets";
@@ -29,47 +28,35 @@ for (const u of DEV_USERS) {
   console.log(`upserted user ${u.id}`);
 }
 
-// Каждому dev-user — своя organization, чтобы он мог создавать workspaces.
-// При боевом OAuth onboarding-flow будет создавать org через тот же helper.
-for (const u of DEV_USERS) {
-  const [existingOrg] = await db
-    .select({ id: organizations.id })
-    .from(organizations)
-    .where(eq(organizations.createdBy, u.id))
-    .limit(1);
-  if (existingOrg) {
-    console.log(`org for ${u.id} already exists`);
-    continue;
-  }
-  await db
-    .insert(organizations)
-    .values({ name: `${u.name} Org`, createdBy: u.id });
-  console.log(`seeded org for ${u.id}`);
-}
-
 // Demo workspace для Анны: фикс-id, идемпотентно.
 const ANNA_ID = DEV_USERS[0].id;
 const DEMO_WS_ID = "ws_demo";
 const IVAN_ID = "cont_ivan";
 const MARIA_ID = "cont_maria";
 
-const [annaOrg] = await db
-  .select({ id: organizations.id })
-  .from(organizations)
-  .where(eq(organizations.createdBy, ANNA_ID))
-  .limit(1);
-
-if (!annaOrg) throw new Error("Anna's organization missing — re-run seed");
-
 await db
   .insert(workspaces)
   .values({
     id: DEMO_WS_ID,
-    organizationId: annaOrg.id,
     name: "Demo",
     createdBy: ANNA_ID,
   })
   .onConflictDoNothing({ target: workspaces.id });
+
+// Backfill: каждый существующий workspace должен иметь creator в
+// workspace_members с ролью admin. Без этого после миграции на membership
+// (этап 1 фичи приглашений) creator перестанет видеть свой ws.
+// Идемпотентно через ON CONFLICT — повторный запуск seed безопасен.
+const allWorkspaces = await db
+  .select({ id: workspaces.id, createdBy: workspaces.createdBy })
+  .from(workspaces);
+for (const ws of allWorkspaces) {
+  await db
+    .insert(workspaceMembers)
+    .values({ workspaceId: ws.id, userId: ws.createdBy, role: "admin" })
+    .onConflictDoNothing();
+}
+console.log(`backfilled ${allWorkspaces.length} workspace_members rows`);
 
 // Preset properties для Demo workspace — через тот же helper, что и в POST /workspaces.
 // Идемпотентно (onConflictDoNothing по [workspaceId, key]).

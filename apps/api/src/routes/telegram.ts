@@ -7,7 +7,7 @@ import {
   properties as propsTable,
   telegramAccounts,
   telegramSyncConfigs,
-  workspaces,
+  workspaceMembers,
 } from "../db/schema";
 import { errMsg } from "../lib/errors";
 import {
@@ -33,12 +33,14 @@ import type { SessionVars } from "../middleware/require-session";
 // Auth-флоу делит реализацию с outreach-account через TDLib pending-store
 // (отдельно per userId).
 
-const TgUserSchema = z.object({
-  tgUserId: z.string(),
-  tgUsername: z.string().nullable(),
-  phoneNumber: z.string().nullable(),
-  firstName: z.string().nullable(),
-});
+const TgUserSchema = z
+  .object({
+    tgUserId: z.string(),
+    tgUsername: z.string().nullable(),
+    phoneNumber: z.string().nullable(),
+    firstName: z.string().nullable(),
+  })
+  .openapi("TelegramUser");
 
 const StatusSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("authorized"), user: TgUserSchema }),
@@ -268,20 +270,24 @@ app.openapi(
 
 // ─────────────────────── folders + sync ───────────────────────
 
-const FolderSchema = z.object({
-  id: z.number().int(),
-  title: z.string(),
-  supported: z.boolean(),
-});
+const FolderSchema = z
+  .object({
+    id: z.number().int(),
+    title: z.string(),
+    supported: z.boolean(),
+  })
+  .openapi("TelegramFolder");
 
-const SyncConfigSchema = z.object({
-  id: z.string(),
-  folderId: z.number().int(),
-  folderTitle: z.string(),
-  workspaceId: z.string(),
-  lastSyncAt: z.iso.datetime().nullable(),
-  lastSyncImported: z.number().int().nullable(),
-});
+const SyncConfigSchema = z
+  .object({
+    id: z.string(),
+    folderId: z.number().int(),
+    folderTitle: z.string(),
+    workspaceId: z.string(),
+    lastSyncAt: z.iso.datetime().nullable(),
+    lastSyncImported: z.number().int().nullable(),
+  })
+  .openapi("TelegramSyncConfig");
 
 type TdChatFolderInfo = {
   id: number;
@@ -422,17 +428,17 @@ app.openapi(
   async (c) => {
     const userId = c.get("userId");
     const body = c.req.valid("json");
-    const [ws] = await db
-      .select({ id: workspaces.id })
-      .from(workspaces)
+    const [member] = await db
+      .select({ workspaceId: workspaceMembers.workspaceId })
+      .from(workspaceMembers)
       .where(
         and(
-          eq(workspaces.id, body.workspaceId),
-          eq(workspaces.createdBy, userId),
+          eq(workspaceMembers.workspaceId, body.workspaceId),
+          eq(workspaceMembers.userId, userId),
         ),
       )
       .limit(1);
-    if (!ws) throw new HTTPException(404, { message: "workspace not found" });
+    if (!member) throw new HTTPException(404, { message: "workspace not found" });
 
     const [row] = await db
       .insert(telegramSyncConfigs)

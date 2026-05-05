@@ -45,73 +45,85 @@ const SequenceStatusSchema = z.enum(outreachSequenceStatus.enumValues);
 const AccountsModeSchema = z.enum(outreachAccountsMode.enumValues);
 const ContactCreationTriggerSchema = z.enum(contactCreationTrigger.enumValues);
 
-const SequenceSchema = z.object({
-  id: z.string(),
-  listId: z.string(),
-  name: z.string(),
-  status: SequenceStatusSchema,
-  accountsMode: AccountsModeSchema,
-  accountsSelected: z.array(z.string()),
-  messages: z.array(MessageSchema),
-  contactCreationTrigger: ContactCreationTriggerSchema,
-  contactDefaultOwnerIds: z.array(z.string()),
-  contactDefaults: z.record(z.string(), z.unknown()),
-  activatedAt: z.iso.datetime().nullable(),
-  completedAt: z.iso.datetime().nullable(),
-  createdAt: z.iso.datetime(),
-});
+const SequenceSchema = z
+  .object({
+    id: z.string(),
+    listId: z.string(),
+    name: z.string(),
+    status: SequenceStatusSchema,
+    accountsMode: AccountsModeSchema,
+    accountsSelected: z.array(z.string()),
+    messages: z.array(MessageSchema),
+    contactCreationTrigger: ContactCreationTriggerSchema,
+    contactDefaultOwnerIds: z.array(z.string()),
+    contactDefaults: z.record(z.string(), z.unknown()),
+    activatedAt: z.iso.datetime().nullable(),
+    completedAt: z.iso.datetime().nullable(),
+    createdAt: z.iso.datetime(),
+  })
+  .openapi("OutreachSequence");
 
-const CreateSequenceBody = z.object({
-  listId: z.string().min(1).max(64),
-  name: z.string().min(1).max(200),
-});
+const CreateSequenceBody = z
+  .object({
+    listId: z.string().min(1).max(64),
+    name: z.string().min(1).max(200),
+  })
+  .openapi("CreateOutreachSequence");
 
-const UpdateSequenceBody = z.object({
-  name: z.string().min(1).max(200).optional(),
-  accountsMode: AccountsModeSchema.optional(),
-  accountsSelected: z.array(z.string()).optional(),
-  messages: z.array(MessageSchema).optional(),
-  contactCreationTrigger: ContactCreationTriggerSchema.optional(),
-  contactDefaultOwnerIds: z.array(z.string()).optional(),
-  contactDefaults: z.record(z.string(), z.unknown()).optional(),
-});
+const UpdateSequenceBody = z
+  .object({
+    name: z.string().min(1).max(200).optional(),
+    accountsMode: AccountsModeSchema.optional(),
+    accountsSelected: z.array(z.string()).optional(),
+    messages: z.array(MessageSchema).optional(),
+    contactCreationTrigger: ContactCreationTriggerSchema.optional(),
+    contactDefaultOwnerIds: z.array(z.string()).optional(),
+    contactDefaults: z.record(z.string(), z.unknown()).optional(),
+  })
+  .openapi("UpdateOutreachSequence");
 
 // Расширенный progress: на каждое сообщение sequence у лида либо одно
 // scheduled_messages-row (одна попытка), либо ничего (msg ещё не запланирован).
 // status: pending → sent → (read), либо failed/cancelled.
-const LeadMessageProgressSchema = z.object({
-  messageIdx: z.number().int(),
-  status: z.enum(scheduledMessageStatus.enumValues),
-  sentAt: z.iso.datetime().nullable(),
-  readAt: z.iso.datetime().nullable(),
-  scheduledAt: z.iso.datetime().nullable(),
-  error: z.string().nullable(),
-});
+const LeadMessageProgressSchema = z
+  .object({
+    messageIdx: z.number().int(),
+    status: z.enum(scheduledMessageStatus.enumValues),
+    sentAt: z.iso.datetime().nullable(),
+    readAt: z.iso.datetime().nullable(),
+    scheduledAt: z.iso.datetime().nullable(),
+    error: z.string().nullable(),
+  })
+  .openapi("OutreachLeadMessageProgress");
 
-const LeadAccountSchema = z.object({
-  id: z.string(),
-  firstName: z.string().nullable(),
-  tgUsername: z.string().nullable(),
-  phoneNumber: z.string().nullable(),
-  hasPremium: z.boolean(),
-});
+const LeadAccountSchema = z
+  .object({
+    id: z.string(),
+    firstName: z.string().nullable(),
+    tgUsername: z.string().nullable(),
+    phoneNumber: z.string().nullable(),
+    hasPremium: z.boolean(),
+  })
+  .openapi("OutreachLeadAccount");
 
-const LeadProgressSchema = z.object({
-  id: z.string(),
-  username: z.string().nullable(),
-  phone: z.string().nullable(),
-  // CSV-properties (для toggle «Показать CSV-данные» в leads-таблице).
-  // Сюда уезжают и raw CSV-headers, и mapped-keys.
-  properties: z.record(z.string(), z.string()),
-  // Аккаунт, через который отправляются сообщения этому лиду. Может быть
-  // разным для разных лидов (round-robin distribution при активации).
-  // null если ещё не запланировано (sequence в draft).
-  account: LeadAccountSchema.nullable(),
-  // Прогресс по каждому сообщению sequence. Длина массива = seq.messages.length.
-  messages: z.array(LeadMessageProgressSchema),
-  repliedAt: z.iso.datetime().nullable(),
-  contactId: z.string().nullable(),
-});
+const LeadProgressSchema = z
+  .object({
+    id: z.string(),
+    username: z.string().nullable(),
+    phone: z.string().nullable(),
+    // CSV-properties (для toggle «Показать CSV-данные» в leads-таблице).
+    // Сюда уезжают и raw CSV-headers, и mapped-keys.
+    properties: z.record(z.string(), z.string()),
+    // Аккаунт, через который отправляются сообщения этому лиду. Может быть
+    // разным для разных лидов (round-robin distribution при активации).
+    // null если ещё не запланировано (sequence в draft).
+    account: LeadAccountSchema.nullable(),
+    // Прогресс по каждому сообщению sequence. Длина массива = seq.messages.length.
+    messages: z.array(LeadMessageProgressSchema),
+    repliedAt: z.iso.datetime().nullable(),
+    contactId: z.string().nullable(),
+  })
+  .openapi("OutreachLeadProgress");
 
 const app = new OpenAPIHono<{ Variables: WorkspaceVars }>();
 
@@ -519,16 +531,14 @@ app.openapi(
 
     // repliedAgg + leadRows независимы — параллелим. repliedCount по всему
     // списку (не пагинированному) для шапки «N ответили из M».
-    const [repliedAggRows, leadRows] = await Promise.all([
-      db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(outreachLeads)
-        .where(
-          and(
-            eq(outreachLeads.listId, seq.listId),
-            sql`${outreachLeads.repliedAt} IS NOT NULL`,
-          ),
+    const [repliedCount, leadRows] = await Promise.all([
+      db.$count(
+        outreachLeads,
+        and(
+          eq(outreachLeads.listId, seq.listId),
+          isNotNull(outreachLeads.repliedAt),
         ),
+      ),
       db
         .select({
           id: outreachLeads.id,
@@ -545,7 +555,6 @@ app.openapi(
         .limit(limit)
         .offset(offset),
     ]);
-    const repliedCount = repliedAggRows[0]?.count ?? 0;
 
     if (leadRows.length === 0) {
       return c.json({ total: 0, totalCount, repliedCount, leads: [] });
@@ -593,13 +602,7 @@ app.openapi(
       : [];
     const accountById = new Map(accountRows.map((a) => [a.id, a]));
 
-    type SchedRow = typeof sched[number];
-    const byLead = new Map<string, SchedRow[]>();
-    for (const s of sched) {
-      const arr = byLead.get(s.leadId);
-      if (arr) arr.push(s);
-      else byLead.set(s.leadId, [s]);
-    }
+    const byLead = Map.groupBy(sched, (s) => s.leadId);
 
     return c.json({
       total: leadRows[0]?.total ?? 0,
@@ -648,12 +651,14 @@ app.openapi(
 //   - "sendDate" (по дате отправки): read и replied отнесены к дню sentAt
 //     самого исходящего, к которому относится событие. Удобно для cohort-
 //     анализа «насколько эффективна была отправка такого-то дня».
-const AnalyticsPointSchema = z.object({
-  date: z.string(),
-  sent: z.number().int(),
-  read: z.number().int(),
-  replied: z.number().int(),
-});
+const AnalyticsPointSchema = z
+  .object({
+    date: z.iso.date(),
+    sent: z.number().int(),
+    read: z.number().int(),
+    replied: z.number().int(),
+  })
+  .openapi("OutreachAnalyticsPoint");
 
 const GroupingSchema = z.enum(["day", "week", "month"]);
 const ViewModeSchema = z.enum(["eventDate", "sendDate"]);
@@ -932,12 +937,14 @@ function densifySeries(
 // {{}}-подстановок в редакторе сообщения. Возвращает minimal payload —
 // идентификатор + properties; sequence detail-page использует его в
 // `substituteVariables` чтобы показать «как будет выглядеть текст для лида».
-const SampleLeadSchema = z.object({
-  id: z.string(),
-  username: z.string().nullable(),
-  phone: z.string().nullable(),
-  properties: z.record(z.string(), z.string()),
-});
+const SampleLeadSchema = z
+  .object({
+    id: z.string(),
+    username: z.string().nullable(),
+    phone: z.string().nullable(),
+    properties: z.record(z.string(), z.string()),
+  })
+  .openapi("OutreachSampleLead");
 
 app.openapi(
   createRoute({

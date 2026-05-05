@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Send } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { errorMessage } from "../lib/errors";
+import { useEventSourceEvent } from "../lib/hooks";
 
 // Унифицированный auth-флоу TG-аккаунта. Используется и для user-scoped TG-sync
 // (settings/telegram-sync), и для workspace-scoped outreach-аккаунта
@@ -89,19 +90,7 @@ function ScanQrStep(props: {
 }) {
   const [qrState, setQrState] = useState<QrState | null>(null);
 
-  useEffect(() => {
-    const es = new EventSource(props.api.qrStreamUrl, {
-      withCredentials: true,
-    });
-    const onState = (e: MessageEvent) => {
-      setQrState(JSON.parse(e.data) as QrState);
-    };
-    es.addEventListener("state", onState);
-    return () => {
-      es.removeEventListener("state", onState);
-      es.close();
-    };
-  }, [props.api.qrStreamUrl]);
+  useEventSourceEvent<QrState>(props.api.qrStreamUrl, "state", setQrState);
 
   // onComplete не мемоизирован у вызывающих, deps ловят его ссылку при каждом
   // ререндере родителя. Без guard'а success-state мог бы тригернуть onComplete

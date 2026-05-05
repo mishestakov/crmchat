@@ -27,53 +27,59 @@ const WsListParam = z.object({
   listId: z.string().min(1).max(64),
 });
 
-const ListSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  sourceType: z.literal("csv"),
-  sourceMeta: z.object({
-    fileName: z.string().optional(),
-    usernameColumn: z.string().optional(),
-    phoneColumn: z.string().optional(),
-    columns: z.array(z.string()).optional(),
-  }),
-  status: z.enum(outreachListStatus.enumValues),
-  totalSize: z.number().int().nullable(),
-  importStats: z
-    .object({
-      imported: z.number().int(),
-      skippedMissingIdentifier: z.number().int(),
-      skippedInvalidPhone: z.number().int(),
-      skippedDuplicate: z.number().int(),
-    })
-    .nullable(),
-  createdAt: z.iso.datetime(),
-});
+const ListSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    sourceType: z.literal("csv"),
+    sourceMeta: z.object({
+      fileName: z.string().optional(),
+      usernameColumn: z.string().optional(),
+      phoneColumn: z.string().optional(),
+      columns: z.array(z.string()).optional(),
+    }),
+    status: z.enum(outreachListStatus.enumValues),
+    totalSize: z.number().int().nullable(),
+    importStats: z
+      .object({
+        imported: z.number().int(),
+        skippedMissingIdentifier: z.number().int(),
+        skippedInvalidPhone: z.number().int(),
+        skippedDuplicate: z.number().int(),
+      })
+      .nullable(),
+    createdAt: z.iso.datetime(),
+  })
+  .openapi("OutreachList");
 
-const LeadSchema = z.object({
-  id: z.string(),
-  username: z.string().nullable(),
-  phone: z.string().nullable(),
-  tgUserId: z.string().nullable(),
-  properties: z.record(z.string(), z.string()),
-  createdAt: z.iso.datetime(),
-});
+const LeadSchema = z
+  .object({
+    id: z.string(),
+    username: z.string().nullable(),
+    phone: z.string().nullable(),
+    tgUserId: z.string().nullable(),
+    properties: z.record(z.string(), z.string()),
+    createdAt: z.iso.datetime(),
+  })
+  .openapi("OutreachLead");
 
-const CreateListBody = z.object({
-  name: z.string().min(1).max(200),
-  sourceType: z.literal("csv"),
-  sourceMeta: z.object({
-    fileName: z.string().optional(),
-    usernameColumn: z.string().optional(),
-    phoneColumn: z.string().optional(),
-    columns: z.array(z.string()).optional(),
-    propertyMappings: z.record(z.string(), z.string()).optional(),
-  }),
-  // Сырые строки из распарсенного CSV. Сервер вытаскивает username/phone (для
-  // sending), мапит CSV-колонки на CRM-properties по propertyMappings, остальное
-  // — под raw header в lead.properties (для шаблонов).
-  rows: z.array(z.record(z.string(), z.string())).max(50000),
-});
+const CreateListBody = z
+  .object({
+    name: z.string().min(1).max(200),
+    sourceType: z.literal("csv"),
+    sourceMeta: z.object({
+      fileName: z.string().optional(),
+      usernameColumn: z.string().optional(),
+      phoneColumn: z.string().optional(),
+      columns: z.array(z.string()).optional(),
+      propertyMappings: z.record(z.string(), z.string()).optional(),
+    }),
+    // Сырые строки из распарсенного CSV. Сервер вытаскивает username/phone (для
+    // sending), мапит CSV-колонки на CRM-properties по propertyMappings, остальное
+    // — под raw header в lead.properties (для шаблонов).
+    rows: z.array(z.record(z.string(), z.string())).max(50000),
+  })
+  .openapi("CreateOutreachList");
 
 const app = new OpenAPIHono<{ Variables: WorkspaceVars }>();
 
