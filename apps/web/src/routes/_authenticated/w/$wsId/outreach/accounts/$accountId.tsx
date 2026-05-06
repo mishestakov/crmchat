@@ -85,6 +85,20 @@ function AccountDetailPage() {
     },
   });
 
+  const importContacts = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.POST(
+        "/v1/workspaces/{wsId}/outreach/accounts/{accountId}/import-contacts",
+        { params: { path: { wsId, accountId } } },
+      );
+      if (error) throw error;
+      return data!;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["contacts", wsId] });
+    },
+  });
+
   if (account.isLoading) {
     return (
       <div className="space-y-3 p-6">
@@ -176,6 +190,38 @@ function AccountDetailPage() {
               {save.isPending ? "Сохраняем…" : "Сохранить"}
             </button>
           )}
+        </div>
+
+        <div className="rounded-2xl bg-white p-5 shadow-sm space-y-3">
+          <div>
+            <div className="font-medium text-sm">Импорт собеседников</div>
+            <p className="mt-1 text-xs text-zinc-500">
+              Завести контакты CRM на всех, с кем у этого аккаунта есть личная
+              переписка в Telegram. Боты, удалённые юзеры и Saved Messages
+              пропускаются. Уже существующие контакты не дублируются.
+            </p>
+          </div>
+          {importContacts.error && (
+            <p className="text-sm text-red-600">
+              {errorMessage(importContacts.error)}
+            </p>
+          )}
+          {importContacts.data && (
+            <p className="text-sm text-emerald-700">
+              Импортировано: {importContacts.data.imported}. Пропущено
+              (уже в CRM): {importContacts.data.skipped}.
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => importContacts.mutate()}
+            disabled={importContacts.isPending}
+            className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+          >
+            {importContacts.isPending
+              ? "Импортируем…"
+              : "Импортировать собеседников в CRM"}
+          </button>
         </div>
 
         <div className="rounded-2xl bg-zinc-50 p-5 text-sm text-zinc-500 space-y-2">

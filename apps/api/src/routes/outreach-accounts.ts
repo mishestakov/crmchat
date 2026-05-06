@@ -1,10 +1,14 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import {
+  contacts,
   outreachAccounts,
   outreachAccountStatus,
+  properties as propsTable,
+  tgChats,
+  tgUsers,
   workspaceMembers,
 } from "../db/schema";
 import { errMsg } from "../lib/errors";
@@ -68,8 +72,19 @@ const PatchAccountBody = z
   })
   .openapi("PatchOutreachAccount");
 
+const ImportContactsRespSchema = z
+  .object({
+    imported: z.number().int(),
+    skipped: z.number().int(),
+    // Сколько диалогов сейчас в реплике (tg_chats) — фронт сравнивает между
+    // последовательными вызовами: пока растёт, bootstrap ещё идёт, повторяем.
+    replicaSize: z.number().int(),
+  })
+  .openapi("ImportContactsResp");
+
 // TWA session: { mainDcId, keys: { [dcId]: hexAuthKey } } — формат, который
-// принимает apps/tg-client. Получается через TDLib getRawAuthKey patch.
+// принимает apps/tg-client. Получается через TDLib getMtprotoSession patch
+// (см. tools/tdlib/patches/0001-add-mtproto-extensions.patch).
 const TwaSessionResponseSchema = z
   .object({
     session: z.object({
@@ -447,6 +462,112 @@ app.openapi(
 );
 
 // Перманентная передача аккаунта другому менеджеру (увольнение, реорг).
+// Импорт собеседников аккаунта в contacts. Источник — локальная реплика
+// (tg_chats × tg_users), поэтому offline и быстро. Дедуп через partial unique
+// index по (workspace_id, properties->>'tg_user_id'). Skip: Saved Messages
+// (peer == self) и удалённые TG-юзеры (is_deleted=true). Боты в реплику
+// не пишутся репликатором (см. tg-replicator.ts:botPeers), поэтому отдельной
+// фильтрации тут нет.
+//
+// Идемпотентно: повторный вызов докинет только новые DM. Фронт это эксплуатит
+// для polling'а во время bootstrap'а реплики на свежем аккаунте — отсюда
+// ORDER BY lastMessageAt DESC + LIMIT, чтобы тики были bounded по работе.
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/outreach/accounts/{accountId}/import-contacts",
+    tags: ["outreach"],
+    request: { params: WsAccountParam },
+    responses: {
+      200: {
+        content: {
+          "application/json": { schema: ImportContactsRespSchema },
+        },
+        description: "Imported peers from account's DM list into contacts",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const { accountId } = c.req.valid("param");
+    const acc = await assertAccountAccess(accountId, wsId, userId, role);
+
+    const baseFilter = and(
+      eq(tgChats.accountId, accountId),
+      eq(tgUsers.isDeleted, false),
+      sql`${tgChats.peerUserId} != ${acc.tgUserId}`,
+    );
+
+    const IMPORT_LIMIT = 500;
+
+    const [candidates, stageRows, totalRows] = await Promise.all([
+      db
+        .select({
+          peerUserId: tgChats.peerUserId,
+          fullName: tgUsers.fullName,
+          username: tgUsers.username,
+          phone: tgUsers.phone,
+          lastMessageAt: tgChats.lastMessageAt,
+        })
+        .from(tgChats)
+        .innerJoin(tgUsers, eq(tgUsers.userId, tgChats.peerUserId))
+        .where(baseFilter)
+        .orderBy(sql`${tgChats.lastMessageAt} desc nulls last`)
+        .limit(IMPORT_LIMIT),
+      db
+        .select()
+        .from(propsTable)
+        .where(
+          and(eq(propsTable.workspaceId, wsId), eq(propsTable.key, "stage")),
+        )
+        .limit(1),
+      db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(tgChats)
+        .innerJoin(tgUsers, eq(tgUsers.userId, tgChats.peerUserId))
+        .where(baseFilter),
+    ]);
+
+    const replicaSize = totalRows[0]?.count ?? 0;
+
+    if (candidates.length === 0) {
+      return c.json({ imported: 0, skipped: 0, replicaSize });
+    }
+
+    const defaultStageId = stageRows[0]?.values?.[0]?.id;
+
+    const rows = candidates.map((cand) => {
+      const properties: Record<string, unknown> = {
+        tg_user_id: cand.peerUserId,
+        full_name: cand.fullName || cand.username || "Без имени",
+      };
+      if (cand.username) properties.telegram_username = cand.username;
+      if (cand.phone) properties.phone = cand.phone;
+      if (defaultStageId) properties.stage = defaultStageId;
+      return {
+        workspaceId: wsId,
+        createdBy: userId,
+        lastMessageAt: cand.lastMessageAt,
+        properties,
+      };
+    });
+
+    const inserted = await db
+      .insert(contacts)
+      .values(rows)
+      .onConflictDoNothing()
+      .returning({ id: contacts.id });
+
+    return c.json({
+      imported: inserted.length,
+      skipped: candidates.length - inserted.length,
+      replicaSize,
+    });
+  },
+);
+
 // Меняет owner_user_id; делегации остаются. Только admin.
 app.openapi(
   createRoute({
