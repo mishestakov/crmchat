@@ -745,8 +745,7 @@ export const activities = pgTable(
 // Группы/каналы/секретные/боты/удалённые не реплицируем — CRM в них не работает.
 
 // tg_chats — per-account private DM. Один и тот же блогер у двух наших
-// аккаунтов = две строки с разным account_id. raw — полный chat-payload
-// TDLib для будущих фич без пере-репликации.
+// аккаунтов = две строки с разным account_id.
 export const tgChats = pgTable(
   "tg_chats",
   {
@@ -759,7 +758,6 @@ export const tgChats = pgTable(
     lastMessageId: text("last_message_id"),
     lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
     unreadCount: integer("unread_count").notNull().default(0),
-    raw: jsonb("raw").$type<Record<string, unknown>>().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -794,7 +792,6 @@ export const tgUsers = pgTable(
     fullName: text("full_name"),
     phone: text("phone"),
     isDeleted: boolean("is_deleted").notNull().default(false),
-    raw: jsonb("raw").$type<Record<string, unknown>>().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

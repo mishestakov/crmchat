@@ -285,7 +285,7 @@ async function processAccount(accountId: string, items: DueItem[]) {
         .set({ status: "sent", sentAt: now })
         .where(eq(scheduledMessages.id, item.id));
       rememberPendingSend(accountId, tgChatId, tgPlaceholderId, item.id);
-      if (tgUserId && !lead.tgUserId) {
+      if (!lead.tgUserId) {
         await db
           .update(outreachLeads)
           .set({ tgUserId })
@@ -349,19 +349,12 @@ async function processAccount(accountId: string, items: DueItem[]) {
 
 type LeadRow = typeof outreachLeads.$inferSelect;
 
-// Узкое подмножество TDLib Chat — только то, что использует sendOne. Чтобы
-// не повторять inline тип в двух ветках (cached / searchPublicChat).
-type TdChatLike = {
-  id: number | string;
-  type?: { _?: string; user_id?: number };
-};
-
 async function sendOne(
   client: TdClient,
   lead: LeadRow,
   text: string,
 ): Promise<{
-  tgUserId: string | null;
+  tgUserId: string;
   tgChatId: string;
   tgPlaceholderId: string;
 }> {
@@ -371,40 +364,29 @@ async function sendOne(
     );
   }
 
-  // Bot-skip (M8): TG не даёт регистрировать `*bot` суффикс не-боту, поэтому
-  // строковая проверка надёжна и закрывает риск bot-trap'а до любых запросов.
-  const usernameKey = stripAt(lead.username).toLowerCase();
-  if (usernameKey.endsWith("bot")) {
-    throw new Error(`BOT_SKIPPED — @${lead.username} is a bot`);
-  }
-
-  // TDLib convention: для chatTypePrivate chat_id == user_id, sendMessage
-  // принимает user_id как chat_id напрямую. Реплика знает: live (быстрый
-  // путь без RPC), deleted (TG отозвал — сразу skip, не дёргаем сеть для
-  // заведомо мёртвого), unknown (fallback на searchPublicChat).
+  const username = stripAt(lead.username);
   const [cached] = await db
     .select({ userId: tgUsers.userId, isDeleted: tgUsers.isDeleted })
     .from(tgUsers)
-    .where(sql`lower(${tgUsers.username}) = ${usernameKey}`)
+    .where(sql`lower(${tgUsers.username}) = ${username.toLowerCase()}`)
     .limit(1);
   if (cached?.isDeleted) {
     throw new Error(`DELETED_SKIPPED — @${lead.username} no longer exists`);
   }
-  const chat: TdChatLike = cached
-    ? {
-        id: Number(cached.userId),
-        type: { _: "chatTypePrivate", user_id: Number(cached.userId) },
-      }
-    : ((await client.invoke({
-        _: "searchPublicChat",
-        username: stripAt(lead.username),
-      } as never)) as TdChatLike);
 
-  // sendMessage возвращает Message с placeholder id; failed-апдейт
-  // прилетит позже (см. outreach-listener.ts:onSendFailed).
+  // Реплика знает только живых не-ботов (replicator skip'ает userTypeBot).
+  // Cache hit ⇒ точно регулярный юзер, идём прямо в sendMessage.
+  // Cache miss ⇒ unseen username: резолвим через searchPublicChat и
+  // проверяем тип через getUser (offline после search'а; userTypeBot из
+  // td_api.tl:732 — точная семантика, без эвристики @*bot).
+  const userId = cached
+    ? Number(cached.userId)
+    : await resolveAndCheckNotBot(client, username);
+
+  // chatTypePrivate convention: sendMessage принимает user_id как chat_id.
   const sentMsg = (await client.invoke({
     _: "sendMessage",
-    chat_id: chat.id,
+    chat_id: userId,
     input_message_content: {
       _: "inputMessageText",
       text: { _: "formattedText", text, entities: [] },
@@ -413,17 +395,32 @@ async function sendOne(
     },
   } as never)) as { id: number | string; chat_id: number | string };
 
-  let tgUserId: string | null = null;
-  if (chat.type?._ === "chatTypePrivate" && chat.type.user_id != null) {
-    tgUserId = String(chat.type.user_id);
-  } else if (typeof chat.id === "number" && chat.id > 0) {
-    tgUserId = String(chat.id);
-  }
   return {
-    tgUserId,
+    tgUserId: String(userId),
     tgChatId: String(sentMsg.chat_id),
     tgPlaceholderId: String(sentMsg.id),
   };
+}
+
+async function resolveAndCheckNotBot(
+  client: TdClient,
+  username: string,
+): Promise<number> {
+  const chat = (await client.invoke({
+    _: "searchPublicChat",
+    username,
+  } as never)) as { type?: { _?: string; user_id?: number } };
+  if (chat.type?._ !== "chatTypePrivate" || chat.type.user_id == null) {
+    throw new Error(`NOT_PRIVATE — @${username} is not a user account`);
+  }
+  const user = (await client.invoke({
+    _: "getUser",
+    user_id: chat.type.user_id,
+  } as never)) as { type: { _: string } };
+  if (user.type._ === "userTypeBot") {
+    throw new Error(`BOT_SKIPPED — @${username} is a bot`);
+  }
+  return chat.type.user_id;
 }
 
 function stripAt(s: string): string {
@@ -443,7 +440,7 @@ function parseFloodWaitSeconds(msg: string): number | null {
 }
 
 function isPermanentSendError(msg: string): boolean {
-  return /USERNAME_INVALID|USERNAME_NOT_OCCUPIED|PEER_FLOOD|USER_PRIVACY_RESTRICTED|USER_IS_BLOCKED|USER_DEACTIVATED|YOU_BLOCKED_USER|CHAT_WRITE_FORBIDDEN|INPUT_USER_DEACTIVATED|PHONE_NOT_SUPPORTED|MESSAGE_EMPTY|MESSAGE_TOO_LONG|No such public user|Username not occupied|Bot can't initiate conversation/i.test(
+  return /USERNAME_INVALID|USERNAME_NOT_OCCUPIED|PEER_FLOOD|USER_PRIVACY_RESTRICTED|USER_IS_BLOCKED|USER_DEACTIVATED|YOU_BLOCKED_USER|CHAT_WRITE_FORBIDDEN|INPUT_USER_DEACTIVATED|PHONE_NOT_SUPPORTED|MESSAGE_EMPTY|MESSAGE_TOO_LONG|No such public user|Username not occupied|Bot can't initiate conversation|BOT_SKIPPED|DELETED_SKIPPED|NOT_PRIVATE/i.test(
     msg,
   );
 }

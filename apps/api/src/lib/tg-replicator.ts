@@ -100,7 +100,6 @@ export function attachReplicator(
             lastMessageId: sql`excluded.last_message_id`,
             lastMessageAt: sql`excluded.last_message_at`,
             unreadCount: sql`excluded.unread_count`,
-            raw: sql`excluded.raw`,
             updatedAt: sql`now()`,
           },
         });
@@ -118,7 +117,6 @@ export function attachReplicator(
             fullName: sql`excluded.full_name`,
             phone: sql`excluded.phone`,
             isDeleted: sql`excluded.is_deleted`,
-            raw: sql`excluded.raw`,
             updatedAt: sql`now()`,
           },
         });
@@ -169,7 +167,6 @@ export function attachReplicator(
       botPeers.add(userId);
       return;
     }
-    botPeers.delete(userId);
     const row = mapUser(user);
     if (!row) return;
     const payloadStr = JSON.stringify(user);
@@ -291,7 +288,6 @@ function mapChat(accountId: string, chat: ChatPayload): ChatRow | null {
       ? new Date(chat.last_message.date * 1000)
       : null,
     unreadCount: chat.unread_count ?? 0,
-    raw: chat as unknown as Record<string, unknown>,
   };
 }
 
@@ -315,6 +311,5 @@ function mapUser(user: UserPayload): UserRow | null {
     fullName,
     phone: user.phone_number || null,
     isDeleted,
-    raw: user as unknown as Record<string, unknown>,
   };
 }
