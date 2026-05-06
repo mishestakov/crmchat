@@ -1,6 +1,6 @@
 # crmchat
 
-Internal Yandex CRM (greenfield, MVP). Stack: Bun + Hono + Drizzle + Postgres / React + Vite + TanStack + Tailwind / pnpm workspaces + Turborepo.
+Internal Yandex CRM (greenfield, MVP). Stack: Node 24 + Hono + Drizzle + Postgres / React + Vite + TanStack + Tailwind / pnpm workspaces + Turborepo.
 
 ## Где смотреть
 

@@ -1,15 +1,15 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { db } from "../db/client";
+import { db } from "../db/client.ts";
 import {
   contacts,
   properties as propsTable,
   telegramAccounts,
   telegramSyncConfigs,
   workspaceMembers,
-} from "../db/schema";
-import { errMsg } from "../lib/errors";
+} from "../db/schema.ts";
+import { errMsg } from "../lib/errors.ts";
 import {
   awaitChatFolders,
   clearPendingPersonalClient,
@@ -18,7 +18,7 @@ import {
   getPersonalChatFoldersCache,
   getPersonalClient,
   persistPersonalAccount,
-} from "../lib/personal-account-client";
+} from "../lib/personal-account-client.ts";
 import {
   extractActiveUsername,
   streamAuthState,
@@ -28,8 +28,8 @@ import {
   tdSignInPassword,
   type AuthState,
   type TdUser,
-} from "../lib/tdlib";
-import type { SessionVars } from "../middleware/require-session";
+} from "../lib/tdlib/index.ts";
+import type { SessionVars } from "../middleware/require-session.ts";
 
 // User-scoped TG-аккаунт (один на user) — для импорта папок-чатов в контакты.
 // Auth-флоу делит реализацию с outreach-account через TDLib pending-store
@@ -291,7 +291,7 @@ const SyncConfigSchema = z
   })
   .openapi("TelegramSyncConfig");
 
-import type { TdChatFolderInfo } from "../lib/personal-account-client";
+import type { TdChatFolderInfo } from "../lib/personal-account-client.ts";
 
 // chatFolder (td_api.tl:3172) — полный объект, который возвращает getChatFolder.
 type TdChatFolder = {

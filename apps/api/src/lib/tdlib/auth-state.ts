@@ -1,4 +1,4 @@
-import type { TdClient } from "./client";
+import type { TdClient } from "./client.ts";
 
 // Низкоуровневая обёртка вокруг updateAuthorizationState. TDLib эмитит этот
 // update при каждой смене состояния auth state-machine — от

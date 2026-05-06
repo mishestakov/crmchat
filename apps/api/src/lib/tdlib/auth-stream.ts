@@ -1,7 +1,7 @@
 import type { Context } from "hono";
 import { streamSSE } from "hono/streaming";
-import { errMsg } from "../errors";
-import type { AuthStateBus } from "./auth-state";
+import { errMsg } from "../errors.ts";
+import type { AuthStateBus } from "./auth-state.ts";
 
 // SSE-стрим текущего auth-state для UI. На каждый push событием 'state' летит
 // JSON, переведённый из AuthStateBus в форму, которую ждёт фронт. Heartbeat

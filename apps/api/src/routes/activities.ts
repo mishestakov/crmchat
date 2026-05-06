@@ -6,9 +6,9 @@ import {
   CreateActivitySchema as BaseCreate,
   UpdateActivitySchema as BaseUpdate,
 } from "@repo/core";
-import { db } from "../db/client";
-import { activities, contacts } from "../db/schema";
-import type { WorkspaceVars } from "../middleware/assert-member";
+import { db } from "../db/client.ts";
+import { activities, contacts } from "../db/schema.ts";
+import type { WorkspaceVars } from "../middleware/assert-member.ts";
 
 const ActivitySchema = BaseActivitySchema.openapi("Activity");
 const CreateActivitySchema = BaseCreate.openapi("CreateActivity");

@@ -1,11 +1,11 @@
-import { attachAuthStateBus, waitForAuthState } from "./auth-state";
+import { attachAuthStateBus, waitForAuthState } from "./auth-state.ts";
 import {
   createTdClient,
   destroyTdAccount,
   type TdAccountKey,
   type TdClient,
-} from "./client";
-import { type TwaSession } from "./to-twa-session";
+} from "./client.ts";
+import { type TwaSession } from "./to-twa-session.ts";
 
 // tdl обменивается с tdjson через JSON-строки (tdl/addon/td.cpp + dist/client.js
 // JSON.stringify/parse), а td_json_client сериализует TL-поле `bytes` как

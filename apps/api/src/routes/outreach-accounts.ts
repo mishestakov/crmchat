@@ -1,7 +1,7 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { and, eq, sql } from "drizzle-orm";
-import { db } from "../db/client";
+import { db } from "../db/client.ts";
 import {
   contacts,
   outreachAccounts,
@@ -10,19 +10,19 @@ import {
   tgChats,
   tgUsers,
   workspaceMembers,
-} from "../db/schema";
-import { errMsg } from "../lib/errors";
+} from "../db/schema.ts";
+import { errMsg } from "../lib/errors.ts";
 import {
   clearPendingOutreachClient,
   deleteOutreachAccount,
   getOrCreatePendingOutreachClient,
   persistOutreachAccount,
-} from "../lib/outreach-account-client";
+} from "../lib/outreach-account-client.ts";
 import {
   accountAccessClause,
   assertAccountAccess,
-} from "../lib/outreach-access";
-import { tryDecrypt } from "../lib/crypto";
+} from "../lib/outreach-access.ts";
+import { tryDecrypt } from "../lib/crypto.ts";
 import {
   streamAuthState,
   tdRequestQr,
@@ -30,8 +30,8 @@ import {
   tdSignInCode,
   tdSignInPassword,
   type AuthState,
-} from "../lib/tdlib";
-import { assertRole, type WorkspaceVars } from "../middleware/assert-member";
+} from "../lib/tdlib/index.ts";
+import { assertRole, type WorkspaceVars } from "../middleware/assert-member.ts";
 
 // Outreach-аккаунты: ОТПРАВЛЯЮЩИЕ TG-аккаунты для холодных рассылок (multi per
 // workspace). Auth-флоу через TDLib state-machine: HTTP-ручки вызывают

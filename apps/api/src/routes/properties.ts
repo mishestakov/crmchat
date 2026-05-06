@@ -6,9 +6,9 @@ import {
   CreatePropertySchema as BaseCreate,
   UpdatePropertySchema as BaseUpdate,
 } from "@repo/core";
-import { db } from "../db/client";
-import { contacts, properties } from "../db/schema";
-import type { WorkspaceVars } from "../middleware/assert-member";
+import { db } from "../db/client.ts";
+import { contacts, properties } from "../db/schema.ts";
+import type { WorkspaceVars } from "../middleware/assert-member.ts";
 
 // `type` в UpdatePropertySchema намеренно отсутствует: смена типа = миграция данных
 // (пересборка contacts.properties[key] под другой формат), это отдельный сценарий.

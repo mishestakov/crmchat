@@ -1,4 +1,4 @@
-import type { OutreachSchedule } from "../db/schema";
+import type { OutreachSchedule } from "../db/schema.ts";
 
 // Проверки расписания для outreach-воркера. Чистые функции от now → ответ.
 // Используют Intl.DateTimeFormat с явной timezone — это даёт DST-safe вычисления

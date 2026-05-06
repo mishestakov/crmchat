@@ -1,5 +1,5 @@
-import { waitForAuthState } from "./auth-state";
-import type { PendingEntry } from "./pending-store";
+import { waitForAuthState } from "./auth-state.ts";
+import type { PendingEntry } from "./pending-store.ts";
 
 // HTTP-уровневый auth-флоу поверх TDLib state-machine. Каждый helper делает
 // один invoke и дожидается следующего стабильного auth-state, мапя его в

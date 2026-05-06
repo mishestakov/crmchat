@@ -1,11 +1,11 @@
 import { and, eq, or, sql, type SQL } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
-import { db } from "../db/client";
+import { db } from "../db/client.ts";
 import {
   outreachAccountDelegations,
   outreachAccounts,
-} from "../db/schema";
-import type { WorkspaceRole } from "../middleware/assert-member";
+} from "../db/schema.ts";
+import type { WorkspaceRole } from "../middleware/assert-member.ts";
 
 // Доступ к outreach-аккаунту:
 //   admin  — все аккаунты workspace'а.

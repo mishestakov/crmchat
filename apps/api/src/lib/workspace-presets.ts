@@ -1,10 +1,10 @@
 import type { PropertyType } from "@repo/core";
-import { db } from "../db/client";
+import { db } from "../db/client.ts";
 import {
   properties as propsTable,
   workspaces,
   type PropertyValue,
-} from "../db/schema";
+} from "../db/schema.ts";
 
 // Preset-properties, которые сидятся в каждый workspace при его создании.
 // 1:1 структура с donor (за вычетом avatarUrl) — см. PROPERTY_METADATA в

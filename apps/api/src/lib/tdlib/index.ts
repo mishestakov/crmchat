@@ -3,21 +3,21 @@ export {
   waitForAuthState,
   type AuthState,
   type AuthStateBus,
-} from "./auth-state";
+} from "./auth-state.ts";
 export {
   createTdClient,
   destroyTdAccount,
   renameTdAccount,
   type TdClient,
-} from "./client";
+} from "./client.ts";
 export {
   createPendingTdStore,
   type PendingEntry,
   type PendingStore,
-} from "./pending-store";
-export { type TwaSession } from "./to-twa-session";
-export { provisionIframeSession } from "./provision-iframe-session";
-export { extractActiveUsername, type TdUser } from "./td-user";
+} from "./pending-store.ts";
+export { type TwaSession } from "./to-twa-session.ts";
+export { provisionIframeSession } from "./provision-iframe-session.ts";
+export { extractActiveUsername, type TdUser } from "./td-user.ts";
 export {
   tdRequestQr,
   tdSendCode,
@@ -26,5 +26,5 @@ export {
   type SendCodeResult,
   type SignInPasswordResult,
   type SignInResult,
-} from "./auth";
-export { streamAuthState } from "./auth-stream";
+} from "./auth.ts";
+export { streamAuthState } from "./auth-stream.ts";

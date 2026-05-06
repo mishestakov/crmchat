@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
-import { db } from "../db/client";
-import { tgChats, tgUsers } from "../db/schema";
-import type { TdClient } from "./tdlib";
+import { db } from "../db/client.ts";
+import { tgChats, tgUsers } from "../db/schema.ts";
+import type { TdClient } from "./tdlib/index.ts";
 
 // TG-репликация (этап 9.2). Слушаем client.on('update') и пишем локальную
 // копию chat list / user directory в Postgres. Read-сценарии (sticky, импорт,

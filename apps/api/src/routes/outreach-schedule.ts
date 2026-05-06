@@ -1,9 +1,9 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { eq } from "drizzle-orm";
-import { db } from "../db/client";
-import { workspaces } from "../db/schema";
-import type { WorkspaceVars } from "../middleware/assert-member";
+import { db } from "../db/client.ts";
+import { workspaces } from "../db/schema.ts";
+import type { WorkspaceVars } from "../middleware/assert-member.ts";
 
 // Расписание окон отправки для outreach. Хранится в workspaces.outreach_schedule.
 // Один на workspace — все sequences шлют в одном окне (донор делает так же).

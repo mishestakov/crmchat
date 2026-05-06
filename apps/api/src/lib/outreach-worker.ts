@@ -1,5 +1,5 @@
 import { and, asc, eq, gte, inArray, lte, max, sql } from "drizzle-orm";
-import { db } from "../db/client";
+import { db } from "../db/client.ts";
 import {
   outreachAccounts,
   outreachLeads,
@@ -7,17 +7,17 @@ import {
   scheduledMessages,
   tgUsers,
   workspaces,
-} from "../db/schema";
-import { errMsg } from "./errors";
+} from "../db/schema.ts";
+import { errMsg } from "./errors.ts";
 import {
   accountCooldownUntil,
   evictWorkerClient,
   getOutreachWorkerClient,
-} from "./outreach-account-client";
-import { emitSequenceChanged } from "./outreach-events";
-import { convertLeadToContact, rememberPendingSend } from "./outreach-listener";
-import { isNowInWindow, startOfDayInTz } from "./outreach-schedule";
-import type { TdClient } from "./tdlib";
+} from "./outreach-account-client.ts";
+import { emitSequenceChanged } from "./outreach-events.ts";
+import { convertLeadToContact, rememberPendingSend } from "./outreach-listener.ts";
+import { isNowInWindow, startOfDayInTz } from "./outreach-schedule.ts";
+import type { TdClient } from "./tdlib/index.ts";
 
 // Outbound worker для холодных рассылок. Каждый tick:
 //   1) забирает pending scheduled_messages где send_at<=now AND sequence.status=active

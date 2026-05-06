@@ -1,11 +1,11 @@
-import { db, sql } from "./db/client";
+import { db, sql } from "./db/client.ts";
 import {
   contacts,
   users,
   workspaceMembers,
   workspaces,
-} from "./db/schema";
-import { seedDefaultProperties } from "./lib/workspace-presets";
+} from "./db/schema.ts";
+import { seedDefaultProperties } from "./lib/workspace-presets.ts";
 
 // Фиксированные id — чтобы dev-данные были предсказуемы между перезапусками.
 // `tgUserId` — синтетические отрицательные строки, чтобы не пересечься с

@@ -1,9 +1,9 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { eq } from "drizzle-orm";
-import { db } from "../db/client";
-import { users } from "../db/schema";
-import type { SessionVars } from "../middleware/require-session";
+import { db } from "../db/client.ts";
+import { users } from "../db/schema.ts";
+import type { SessionVars } from "../middleware/require-session.ts";
 
 const Me = z
   .object({

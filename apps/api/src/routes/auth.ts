@@ -2,17 +2,17 @@ import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { eq } from "drizzle-orm";
-import { db } from "../db/client";
-import { users } from "../db/schema";
-import { createSession, destroySession } from "../lib/sessions";
+import { db } from "../db/client.ts";
+import { users } from "../db/schema.ts";
+import { createSession, destroySession } from "../lib/sessions.ts";
 import {
   buildAuthorizationUrl,
   exchangeCodeForIdToken,
   makePkceChallenge,
   makePkceVerifier,
   makeState,
-} from "../lib/tg-oidc";
-import { issueBridgeToken, consumeBridgeToken } from "../lib/bridge-tokens";
+} from "../lib/tg-oidc.ts";
+import { issueBridgeToken, consumeBridgeToken } from "../lib/bridge-tokens.ts";
 
 const app = new OpenAPIHono();
 

@@ -7,14 +7,14 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "generate": "bun run scripts/generate.ts",
+    "generate": "node --experimental-strip-types scripts/generate.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "openapi-fetch": "^0.17.0"
   },
   "devDependencies": {
-    "@types/bun": "latest",
+    "@types/node": "^24.0.0",
     "openapi-typescript": "^7.13.0",
     "typescript": "^6.0.3"
   }

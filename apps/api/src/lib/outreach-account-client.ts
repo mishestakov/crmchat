@@ -1,11 +1,11 @@
 import { and, eq, ne } from "drizzle-orm";
-import { db } from "../db/client";
-import { outreachAccounts } from "../db/schema";
-import { shortId } from "../db/short-id";
-import { encrypt } from "./crypto";
-import { errMsg } from "./errors";
-import { attachListener, detachListener } from "./outreach-listener";
-import { attachReplicator, type ReplicatorHandle } from "./tg-replicator";
+import { db } from "../db/client.ts";
+import { outreachAccounts } from "../db/schema.ts";
+import { shortId } from "../db/short-id.ts";
+import { encrypt } from "./crypto.ts";
+import { errMsg } from "./errors.ts";
+import { attachListener, detachListener } from "./outreach-listener.ts";
+import { attachReplicator, type ReplicatorHandle } from "./tg-replicator.ts";
 import {
   attachAuthStateBus,
   createPendingTdStore,
@@ -20,7 +20,7 @@ import {
   type PendingStore,
   type TdClient,
   type TdUser,
-} from "./tdlib";
+} from "./tdlib/index.ts";
 
 // Outreach-аккаунт = один TDLib-инстанс c databaseDirectory'ом
 // `outreach/<accountId>/`. Persistent FS-state: auth-key, peer cache,

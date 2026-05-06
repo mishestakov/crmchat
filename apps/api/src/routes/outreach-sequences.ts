@@ -2,7 +2,7 @@ import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { streamSSE } from "hono/streaming";
 import { and, asc, desc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
-import { db } from "../db/client";
+import { db } from "../db/client.ts";
 import {
   contactCreationTrigger,
   outreachAccounts,
@@ -14,10 +14,10 @@ import {
   scheduledMessages,
   scheduledMessageStatus,
   type OutreachSequenceMessage,
-} from "../db/schema";
-import { subscribeSequence } from "../lib/outreach-events";
-import { substituteVariables } from "../lib/substitute-variables";
-import { assertRole, type WorkspaceVars } from "../middleware/assert-member";
+} from "../db/schema.ts";
+import { subscribeSequence } from "../lib/outreach-events.ts";
+import { substituteVariables } from "../lib/substitute-variables.ts";
+import { assertRole, type WorkspaceVars } from "../middleware/assert-member.ts";
 
 // Outreach-sequence: рассылка по одному списку с N сообщениями и задержками.
 // Активация = pre-schedule всех scheduled_messages с round-robin аккаунтом и

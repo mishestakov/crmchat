@@ -1,12 +1,12 @@
-import { app } from "./app";
-import { startOutreachWorker } from "./lib/outreach-worker";
-import { syncPresetsForAllWorkspaces } from "./lib/workspace-presets";
+import type { Server as HttpServer } from "node:http";
+import { serve } from "@hono/node-server";
+import { app } from "./app.ts";
+import { startOutreachWorker } from "./lib/outreach-worker.ts";
+import { syncPresetsForAllWorkspaces } from "./lib/workspace-presets.ts";
 
 const port = Number(process.env.PORT ?? 3000);
 
-console.log(`api: http://localhost:${port}`);
-
-// Outbound-воркер крутится в том же Bun-процессе что и HTTP-сервер. Это норм
+// Outbound-воркер крутится в том же Node-процессе что и HTTP-сервер. Это норм
 // для single-instance dev (а у нас pre-prod). Для multi-instance: вынести в
 // отдельный процесс с advisory-lock'ом или по sticky-routing на одну реплику,
 // чтобы две реплики не выбирали одни и те же scheduled_messages.
@@ -15,10 +15,15 @@ if (process.env.NODE_ENV !== "test") {
   void syncPresetsForAllWorkspaces();
 }
 
-export default {
-  port,
-  fetch: app.fetch,
-  // Bun дефолт = 10s; мало для TG-роутов (cold MTProto handshake + ExportLoginToken
-  // легко уходит за 10s). 60s — комфорт без риска повесить worker надолго.
-  idleTimeout: 60,
-};
+// serve() возвращает union Server | Http2Server; HTTP/2 не включаем, так что
+// это всегда node:http Server — кастуем чтобы проставить timeouts.
+const server = serve({ fetch: app.fetch, port }, (info) => {
+  console.log(`api: http://localhost:${info.port}`);
+}) as HttpServer;
+
+// Cold MTProto handshake / ExportLoginToken легко уходит за дефолтный
+// headersTimeout (60s) — поднимаем. requestTimeout = 0 чтобы SSE long-polls
+// (heartbeat 25s) не рвались по таймауту запроса.
+server.headersTimeout = 120_000;
+server.requestTimeout = 0;
+server.keepAliveTimeout = 65_000;

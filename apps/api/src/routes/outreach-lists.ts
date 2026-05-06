@@ -1,13 +1,13 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { and, eq, getTableColumns, sql } from "drizzle-orm";
-import { db } from "../db/client";
+import { db } from "../db/client.ts";
 import {
   outreachLeads,
   outreachLists,
   outreachListStatus,
-} from "../db/schema";
-import { assertRole, type WorkspaceVars } from "../middleware/assert-member";
+} from "../db/schema.ts";
+import { assertRole, type WorkspaceVars } from "../middleware/assert-member.ts";
 
 // Outreach-листы (CSV-импорт): фронт парсит файл локально, шлёт JSON со
 // строками лидов и meta колонок. Сервер валидирует identifier'ы (username/phone),

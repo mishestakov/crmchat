@@ -1,5 +1,5 @@
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
-import { db } from "../db/client";
+import { db } from "../db/client.ts";
 import {
   contacts,
   outreachLeads,
@@ -8,12 +8,12 @@ import {
   properties as propsTable,
   scheduledMessages,
   tgUsers,
-} from "../db/schema";
-import { validateContactProperties } from "./contact-properties";
-import { emitContactChanged } from "./contact-events";
-import { errMsg } from "./errors";
-import { emitSequenceChanged } from "./outreach-events";
-import type { TdClient } from "./tdlib";
+} from "../db/schema.ts";
+import { validateContactProperties } from "./contact-properties.ts";
+import { emitContactChanged } from "./contact-events.ts";
+import { errMsg } from "./errors.ts";
+import { emitSequenceChanged } from "./outreach-events.ts";
+import type { TdClient } from "./tdlib/index.ts";
 
 // In-memory map (account+chat+placeholder → scheduledMessageId) для
 // updateMessageSendFailed. Worker оптимистично пишет sent; failed-апдейт

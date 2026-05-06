@@ -7,22 +7,22 @@ import {
   CreateContactSchema as BaseCreate,
   UpdateContactSchema as BaseUpdate,
 } from "@repo/core";
-import { db } from "../db/client";
+import { db } from "../db/client.ts";
 import {
   contacts,
   outreachAccounts,
   properties as propsTable,
   tgChats,
-} from "../db/schema";
-import { emitContactChanged, subscribeContacts } from "../lib/contact-events";
+} from "../db/schema.ts";
+import { emitContactChanged, subscribeContacts } from "../lib/contact-events.ts";
 import {
   enforceRequiredProperties,
   loadPropertyDefs,
   validateContactProperties,
-} from "../lib/contact-properties";
-import { errMsg } from "../lib/errors";
-import { getOutreachWorkerClient } from "../lib/outreach-account-client";
-import type { WorkspaceVars } from "../middleware/assert-member";
+} from "../lib/contact-properties.ts";
+import { errMsg } from "../lib/errors.ts";
+import { getOutreachWorkerClient } from "../lib/outreach-account-client.ts";
+import type { WorkspaceVars } from "../middleware/assert-member.ts";
 
 // Subquery: ближайший открытый reminder для контакта. Тащим в каждый GET — чтобы
 // kanban-карточки могли показывать NextStep без N+1 запросов. Возвращает null,

@@ -1,8 +1,8 @@
 import { HTTPException } from "hono/http-exception";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { db } from "../db/client";
-import { properties as propsTable } from "../db/schema";
+import { db } from "../db/client.ts";
+import { properties as propsTable } from "../db/schema.ts";
 
 type PropertyDef = typeof propsTable.$inferSelect;
 

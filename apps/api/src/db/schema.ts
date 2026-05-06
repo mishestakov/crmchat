@@ -12,7 +12,7 @@ import {
   unique,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
-import { shortId } from "./short-id";
+import { shortId } from "./short-id.ts";
 
 // Все PK — короткие 12-hex id (см. short-id.ts). Раньше были UUID-36, в URL'ах
 // и логах слишком длинно для нашей шкалы. Тип в БД — обычный text.

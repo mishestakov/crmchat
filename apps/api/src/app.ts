@@ -4,24 +4,24 @@ import { HTTPException } from "hono/http-exception";
 import {
   requireSession,
   type SessionVars,
-} from "./middleware/require-session";
+} from "./middleware/require-session.ts";
 import {
   assertMember,
   type WorkspaceVars,
-} from "./middleware/assert-member";
-import activities from "./routes/activities";
-import auth from "./routes/auth";
-import contactViews from "./routes/contact-views";
-import contacts from "./routes/contacts";
-import { memberOps, publicInvites, wsInvites } from "./routes/invites";
-import me from "./routes/me";
-import outreachAccounts from "./routes/outreach-accounts";
-import outreachLists from "./routes/outreach-lists";
-import outreachSchedule from "./routes/outreach-schedule";
-import outreachSequences from "./routes/outreach-sequences";
-import properties from "./routes/properties";
-import telegram from "./routes/telegram";
-import workspaces from "./routes/workspaces";
+} from "./middleware/assert-member.ts";
+import activities from "./routes/activities.ts";
+import auth from "./routes/auth.ts";
+import contactViews from "./routes/contact-views.ts";
+import contacts from "./routes/contacts.ts";
+import { memberOps, publicInvites, wsInvites } from "./routes/invites.ts";
+import me from "./routes/me.ts";
+import outreachAccounts from "./routes/outreach-accounts.ts";
+import outreachLists from "./routes/outreach-lists.ts";
+import outreachSchedule from "./routes/outreach-schedule.ts";
+import outreachSequences from "./routes/outreach-sequences.ts";
+import properties from "./routes/properties.ts";
+import telegram from "./routes/telegram.ts";
+import workspaces from "./routes/workspaces.ts";
 
 export const app = new OpenAPIHono<{ Variables: SessionVars }>();
 

@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { rename, rm } from "node:fs/promises";
 import * as tdl from "tdl";
 import type { Client as TdlClient } from "tdl";
-import { ensureTdlConfigured, tgApiHash, tgApiId } from "./configure";
+import { ensureTdlConfigured, tgApiHash, tgApiId } from "./configure.ts";
 
 // Базовый каталог под binlog'и + кэшированные файлы. Per-account подкаталог
 // (key = accountId | personal-userId) — TDLib хранит auth-state, peer cache,

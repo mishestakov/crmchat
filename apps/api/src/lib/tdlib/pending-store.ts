@@ -1,13 +1,13 @@
 import {
   attachAuthStateBus,
   type AuthStateBus,
-} from "./auth-state";
+} from "./auth-state.ts";
 import {
   createTdClient,
   destroyTdAccount,
   type TdAccountKey,
   type TdClient,
-} from "./client";
+} from "./client.ts";
 
 // Pending-store для незавершённого auth-флоу (между HTTP-вызовами sendCode →
 // signIn → signInPassword клиент должен выживать). На каждое (workspace|user)

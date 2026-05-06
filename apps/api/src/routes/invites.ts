@@ -1,18 +1,18 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { and, count, eq, gt, isNull } from "drizzle-orm";
-import { db } from "../db/client";
+import { db } from "../db/client.ts";
 import {
   users,
   workspaceInvites,
   workspaceMembers,
   workspaces,
-} from "../db/schema";
+} from "../db/schema.ts";
 import {
   assertRole,
   type WorkspaceVars,
-} from "../middleware/assert-member";
-import type { SessionVars } from "../middleware/require-session";
+} from "../middleware/assert-member.ts";
+import type { SessionVars } from "../middleware/require-session.ts";
 
 const INVITE_TTL_DAYS = 7;
 const INVITE_TTL_MS = INVITE_TTL_DAYS * 24 * 60 * 60 * 1000;

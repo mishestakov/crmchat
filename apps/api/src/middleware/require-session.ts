@@ -2,8 +2,8 @@ import type { MiddlewareHandler } from "hono";
 import { getCookie } from "hono/cookie";
 import { HTTPException } from "hono/http-exception";
 import { and, eq, gt } from "drizzle-orm";
-import { db } from "../db/client";
-import { sessions } from "../db/schema";
+import { db } from "../db/client.ts";
+import { sessions } from "../db/schema.ts";
 
 export type SessionVars = { userId: string; sessionId: string };
 

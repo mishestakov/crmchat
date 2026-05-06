@@ -1,9 +1,9 @@
 import type { MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { and, eq } from "drizzle-orm";
-import { db } from "../db/client";
-import { workspaceMembers } from "../db/schema";
-import type { SessionVars } from "./require-session";
+import { db } from "../db/client.ts";
+import { workspaceMembers } from "../db/schema.ts";
+import type { SessionVars } from "./require-session.ts";
 
 export type WorkspaceRole = "admin" | "member";
 

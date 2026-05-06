@@ -1,8 +1,8 @@
 import type { Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { eq } from "drizzle-orm";
-import { db } from "../db/client";
-import { sessions } from "../db/schema";
+import { db } from "../db/client.ts";
+import { sessions } from "../db/schema.ts";
 
 const SESSION_TTL_SEC = 30 * 24 * 60 * 60;
 

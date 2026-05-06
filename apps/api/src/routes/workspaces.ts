@@ -6,14 +6,14 @@ import {
   CreateWorkspaceSchema as BaseCreateWorkspaceSchema,
   UpdateWorkspaceSchema as BaseUpdateWorkspaceSchema,
 } from "@repo/core";
-import { db } from "../db/client";
+import { db } from "../db/client.ts";
 import {
   users,
   workspaceMembers,
   workspaces,
-} from "../db/schema";
-import { seedDefaultProperties } from "../lib/workspace-presets";
-import type { SessionVars } from "../middleware/require-session";
+} from "../db/schema.ts";
+import { seedDefaultProperties } from "../lib/workspace-presets.ts";
+import type { SessionVars } from "../middleware/require-session.ts";
 
 const WorkspaceSchema = BaseWorkspaceSchema.openapi("Workspace");
 const CreateWorkspaceSchema = BaseCreateWorkspaceSchema.openapi("CreateWorkspace");

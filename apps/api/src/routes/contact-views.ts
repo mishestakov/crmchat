@@ -6,9 +6,9 @@ import {
   CreateContactViewSchema as BaseCreate,
   UpdateContactViewSchema as BaseUpdate,
 } from "@repo/core";
-import { db } from "../db/client";
-import { contactViews } from "../db/schema";
-import type { WorkspaceVars } from "../middleware/assert-member";
+import { db } from "../db/client.ts";
+import { contactViews } from "../db/schema.ts";
+import type { WorkspaceVars } from "../middleware/assert-member.ts";
 
 const ContactViewSchema = BaseSchema.openapi("ContactView");
 const CreateContactViewSchema = BaseCreate.openapi("CreateContactView");

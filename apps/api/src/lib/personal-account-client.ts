@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
-import { db } from "../db/client";
-import { telegramAccounts } from "../db/schema";
-import { errMsg } from "./errors";
+import { db } from "../db/client.ts";
+import { telegramAccounts } from "../db/schema.ts";
+import { errMsg } from "./errors.ts";
 import {
   attachAuthStateBus,
   createPendingTdStore,
@@ -14,7 +14,7 @@ import {
   type PendingStore,
   type TdClient,
   type TdUser,
-} from "./tdlib";
+} from "./tdlib/index.ts";
 
 // Personal CRM-аккаунт юзера (один на user, для импорта чатов из TG-папок в
 // контакты). TDLib-инстанс c databaseDirectory'ом `personal/<userId>/`.
