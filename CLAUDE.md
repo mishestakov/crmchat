@@ -13,8 +13,10 @@ Internal Yandex CRM (greenfield, MVP). Stack: Bun + Hono + Drizzle + Postgres / 
 ```bash
 pnpm install
 cp .env.example .env
-pnpm setup    # docker compose up -d --wait + db:push + db:seed
-pnpm dev      # turbo: api:3000 + web:5173
+pnpm run setup   # docker compose up -d --wait + db:push + db:seed
+                 # Именно `run setup`: голый `pnpm setup` перехватывается
+                 # built-in командой pnpm (настройка pnpm в shell).
+pnpm dev         # turbo: api:3000 + web:5173
 ```
 
 ## Правила разработки в MVP-режиме
