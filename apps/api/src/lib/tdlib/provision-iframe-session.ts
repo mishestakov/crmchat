@@ -7,48 +7,34 @@ import {
 } from "./client";
 import { type TwaSession } from "./to-twa-session";
 
-type TdRawAuthKey = {
-  _: "authKeyData";
-  dc_id: number;
-  auth_key: Buffer | Uint8Array | string;
+// tdl обменивается с tdjson через JSON-строки (tdl/addon/td.cpp + dist/client.js
+// JSON.stringify/parse), а td_json_client сериализует TL-поле `bytes` как
+// base64-строку. Значит auth_key на runtime — всегда string, никогда не Buffer
+// и не Uint8Array. Раньше код делал Buffer.from(value) без encoding — это
+// трактовало base64-string как utf8 и давало 344 байта вместо 256.
+type TdAuthKeyData = { dc_id: number; auth_key: string };
+type TdMtprotoSession = {
+  _: "mtprotoSession";
+  main_dc_id: number;
+  keys: TdAuthKeyData[];
 };
 
-// TDL (node-обёртка) сериализует TL-поле `bytes` как base64-строку, а не raw
-// Buffer. Если просто Buffer.from(value as Uint8Array) — оно интерпретирует
-// строку как utf8 и даёт 344 байта (256/3*4 ровно), вместо 256. См. также
-// playground/04-getRawAuthKey.ts (там этот fallback уже стоял, но в
-// production-коде потеряли при миграции gramjs→TDLib).
-function toAuthKeyBuffer(value: Buffer | Uint8Array | string): Buffer {
-  if (typeof value === "string") return Buffer.from(value, "base64");
-  if (Buffer.isBuffer(value)) return value;
-  return Buffer.from(value);
-}
-
-// home_dc_id хостится только у авторизованного клиента (worker). У свежего
-// iframe-инстанса getOption("home_dc_id") отдаёт optionValueEmpty (проверено
-// playground/06). Worker и iframe — один и тот же TG-аккаунт, значит home_dc
-// общий: спрашиваем worker, потом дёргаем getRawAuthKey строго для этого DC.
-async function getHomeDcId(workerClient: TdClient): Promise<number> {
-  const opt = (await workerClient.invoke({
-    _: "getOption",
-    name: "home_dc_id",
-  } as never)) as { _: "optionValueInteger"; value: string | number } | { _: "optionValueEmpty" };
-  if (opt._ !== "optionValueInteger") {
-    throw new Error(`worker getOption(home_dc_id) → ${opt._}, ожидали optionValueInteger`);
-  }
-  const dcId = typeof opt.value === "string" ? Number(opt.value) : opt.value;
-  if (!Number.isInteger(dcId) || dcId < 1 || dcId > 5) {
-    throw new Error(`home_dc_id вне диапазона 1..5: ${dcId}`);
-  }
-  return dcId;
-}
-
-async function getAuthKeyForDc(client: TdClient, dcId: number): Promise<Buffer> {
+// Атомарный снимок MTProto-state через наш TDLib-патч
+// (tools/tdlib/patches/0001-add-mtproto-extensions.patch). До патча
+// перебирали dc 1..5 и угадывали main по «первому успешному» — это ломалось
+// если у iframe handshake'нулось несколько DC. Теперь TDLib сам говорит
+// main_dc_id + отдаёт ключи всех негоциированных DC.
+async function fetchMtprotoSession(
+  client: TdClient,
+): Promise<{ mainDcId: number; keys: Record<number, string> }> {
   const r = (await client.invoke({
-    _: "getRawAuthKey",
-    dc_id: dcId,
-  } as never)) as TdRawAuthKey;
-  return toAuthKeyBuffer(r.auth_key);
+    _: "getMtprotoSession",
+  } as never)) as TdMtprotoSession;
+  const keys: Record<number, string> = {};
+  for (const k of r.keys) {
+    keys[k.dc_id] = Buffer.from(k.auth_key, "base64").toString("hex");
+  }
+  return { mainDcId: r.main_dc_id, keys };
 }
 
 // ВТОРОЙ auth_key на тот же TG-аккаунт, специально для TWA-iframe в браузере.
@@ -61,7 +47,7 @@ async function getAuthKeyForDc(client: TdClient, dcId: number): Promise<Buffer> 
 // возвращает его id наверх для точечного terminateSession при удалении
 // аккаунта. При 2FA TG требует SRP-проверку даже от confirmed-устройства;
 // переюзаем `password` (RAM-only из pending.lastPassword). Финал:
-// getRawAuthKey строго для home_dc (worker'овского) → TwaSession.
+// getMtprotoSession на iframe → TwaSession (main_dc_id + все DC keys).
 //
 // pauseWorker вызывается ИСКЛЮЧИТЕЛЬНО на 2FA-ветке — TDLib не переваривает
 // параллельные клиенты на одном TG-аккаунте во время checkAuthenticationPassword
@@ -118,11 +104,6 @@ export async function provisionIframeSession(
       throw new Error(`unexpected iframe state: ${qr.kind}`);
     }
 
-    // home_dc определяем у worker'а ДО confirmQrCodeAuthentication — после
-    // confirm worker может продолжить работать параллельно (на non-2FA пути),
-    // но в этот момент он точно ready и опция выставлена.
-    const homeDcId = await getHomeDcId(workerClient);
-
     const confirmedSession = (await workerClient.invoke({
       _: "confirmQrCodeAuthentication",
       link: qr.link,
@@ -150,12 +131,9 @@ export async function provisionIframeSession(
       await waitForAuthState(authBus, (s) => s.kind === "ready", 30_000);
     }
 
-    const authKey = await getAuthKeyForDc(iframeClient, homeDcId);
+    const { mainDcId, keys } = await fetchMtprotoSession(iframeClient);
     return {
-      twa: {
-        mainDcId: homeDcId,
-        keys: { [homeDcId]: authKey.toString("hex") },
-      },
+      twa: { mainDcId, keys },
       sessionId,
     };
   } finally {
