@@ -2,9 +2,11 @@ import * as tdl from "tdl";
 
 // Однократная конфигурация tdl: путь к libtdjson.so и креды my.telegram.org.
 // Импортируется первым кем угодно из tdlib/* — сайд-эффектом настраивает
-// глобальный addon. Флаг живёт на globalThis, потому что bun --hot пересоздаёт
-// module scope при HMR, а native addon (libtdjson) — нет: повторный
-// tdl.configure() ругается «tdjson is already loaded».
+// глобальный addon. Флаг живёт на globalThis: повторный tdl.configure() в
+// одном процессе ругается «tdjson is already loaded» (native addon переживает
+// module scope). Сценарий — re-import модуля в одном процессе (test-runner,
+// experimental-loader). Под `node --watch-path=src` (full restart) не
+// возникает, но флаг безвреден.
 
 const FLAG = "__crmchat_tdl_configured__";
 
@@ -31,8 +33,8 @@ export function ensureTdlConfigured(): void {
       verbosityLevel: 1,
     });
   } catch (e) {
-    // bun --hot и pkill перезапуски: native addon (libtdjson) уже загружен
-    // в адресное пространство процесса, повторный configure ругается
+    // Re-import в одном процессе: native addon (libtdjson) уже загружен
+    // в адресное пространство, повторный configure ругается
     // «tdjson is already loaded». Если так — просто помечаем флаг и идём
     // дальше, addon уже настроен.
     if (

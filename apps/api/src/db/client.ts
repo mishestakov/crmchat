@@ -4,11 +4,10 @@ import { drizzle } from "drizzle-orm/postgres-js";
 const url = process.env.DATABASE_URL;
 if (!url) throw new Error("DATABASE_URL is required");
 
-// Bun --hot переисполняет модуль на каждое сохранение, но НЕ закрывает старый
-// postgres()-пул. Без globalThis-кэша после ~10 правок упираемся в
-// max_connections (по дефолту 100) и БД начинает выдавать "too many clients".
-// В prod (`bun build` + run) модуль исполняется один раз — `??=` сводится
-// к обычному созданию пула.
+// Кэш на globalThis: защита от повторного импорта модуля в одном процессе
+// (test-runner, experimental-loader) — постгрес-пул не пересоздаётся,
+// max_connections не выедается. Под `node --watch-path=src` (full restart)
+// этот сценарий не возникает, но кэш безвреден.
 const g = globalThis as unknown as {
   __crmchatSql?: ReturnType<typeof postgres>;
 };

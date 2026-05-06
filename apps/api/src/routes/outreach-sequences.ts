@@ -664,8 +664,7 @@ app.openapi(
         const accountId = items[0]?.accountId ?? null;
         const account = accountId ? accountById.get(accountId) ?? null : null;
         const messages = items
-          .slice()
-          .sort((a, b) => a.messageIdx - b.messageIdx)
+          .toSorted((a, b) => a.messageIdx - b.messageIdx)
           .map((s) => ({
             messageIdx: s.messageIdx,
             status: s.status,
