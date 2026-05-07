@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Plus, X } from "lucide-react";
+import { X } from "lucide-react";
 import type { Channel, ImportChannelsMapping } from "@repo/core";
 import { api } from "../../../../lib/api";
 import { ChannelCard, formatMembers } from "../../../../components/channel-card";
@@ -293,16 +293,14 @@ function ChannelsPage() {
   );
 }
 
-// Drawer на 560px справа: top-bar (close) + список админов канала с
-// add/remove + ChannelCard (header/sync/history) занимает остаток высоты.
+// Drawer на 560px справа: top-bar с close + ChannelCard на остаток высоты.
+// Карточка сама рендерит hero/meta/admins/posts; drawer'у остался только
+// чрейм и Esc-handler.
 function ChannelDrawer(props: {
   wsId: string;
   channel: Channel;
   onClose: () => void;
 }) {
-  const qc = useQueryClient();
-  const [adding, setAdding] = useState(false);
-
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") props.onClose();
@@ -311,43 +309,6 @@ function ChannelDrawer(props: {
     return () => window.removeEventListener("keydown", onKey);
   }, [props]);
 
-  const removeMut = useMutation({
-    mutationFn: async (contactId: string) => {
-      const { error } = await api.DELETE(
-        "/v1/workspaces/{wsId}/channels/{id}/admins/{contactId}",
-        {
-          params: {
-            path: { wsId: props.wsId, id: props.channel.id, contactId },
-          },
-        },
-      );
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["channels", props.wsId] });
-      qc.invalidateQueries({ queryKey: ["contacts", props.wsId] });
-    },
-  });
-
-  const addMut = useMutation({
-    mutationFn: async (contactId: string) => {
-      const { data, error } = await api.POST(
-        "/v1/workspaces/{wsId}/channels/{id}/admins",
-        {
-          params: { path: { wsId: props.wsId, id: props.channel.id } },
-          body: { contactIds: [contactId] },
-        },
-      );
-      if (error) throw error;
-      return data;
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["channels", props.wsId] });
-      qc.invalidateQueries({ queryKey: ["contacts", props.wsId] });
-      setAdding(false);
-    },
-  });
-
   return (
     <>
       <div
@@ -355,7 +316,7 @@ function ChannelDrawer(props: {
         onClick={props.onClose}
       />
       <aside className="fixed bottom-0 right-0 top-0 z-50 flex w-[560px] max-w-[95vw] flex-col bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-2 text-xs">
+        <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-2 text-xs">
           <button
             type="button"
             onClick={props.onClose}
@@ -364,166 +325,9 @@ function ChannelDrawer(props: {
             ← Закрыть
           </button>
         </div>
-        <div className="border-b border-zinc-200 px-4 py-3">
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-sm font-medium text-zinc-700">
-              Админы ({props.channel.admins.length})
-            </h3>
-            {!adding && (
-              <button
-                type="button"
-                onClick={() => setAdding(true)}
-                className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-700"
-              >
-                <Plus size={12} />
-                Добавить
-              </button>
-            )}
-          </div>
-          {props.channel.admins.length === 0 && !adding && (
-            <p className="text-sm text-zinc-400">Админы пока не привязаны</p>
-          )}
-          <ul className="space-y-1">
-            {props.channel.admins.map((a) => (
-              <li
-                key={a.contactId}
-                className="flex items-center justify-between rounded-md border border-zinc-200 px-3 py-2 text-sm"
-              >
-                <div className="min-w-0">
-                  <div className="truncate font-medium text-zinc-900">
-                    {a.fullName || (a.telegramUsername ? `@${a.telegramUsername}` : a.contactId)}
-                  </div>
-                  {a.telegramUsername && a.fullName && (
-                    <div className="truncate text-xs text-zinc-500">
-                      @{a.telegramUsername}
-                    </div>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => removeMut.mutate(a.contactId)}
-                  disabled={removeMut.isPending}
-                  className="rounded p-1 text-zinc-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
-                  aria-label="Убрать"
-                >
-                  <X size={14} />
-                </button>
-              </li>
-            ))}
-          </ul>
-          {adding && (
-            <ContactPicker
-              wsId={props.wsId}
-              excludeIds={new Set(props.channel.admins.map((a) => a.contactId))}
-              onPick={(contactId) => addMut.mutate(contactId)}
-              onCancel={() => setAdding(false)}
-              loading={addMut.isPending}
-            />
-          )}
-        </div>
         <ChannelCard wsId={props.wsId} channel={props.channel} />
       </aside>
     </>
-  );
-}
-
-function ContactPicker(props: {
-  wsId: string;
-  excludeIds: Set<string>;
-  onPick: (contactId: string) => void;
-  onCancel: () => void;
-  loading: boolean;
-}) {
-  const [q, setQ] = useState("");
-  const [debounced, setDebounced] = useState("");
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(q.trim()), 500);
-    return () => clearTimeout(t);
-  }, [q]);
-
-  // GET /contacts?q= возвращает плоский список; фильтруем уже привязанных
-  // на клиенте, чтобы не плодить особый API.
-  const contactsQ = useQuery({
-    queryKey: ["contacts", props.wsId, debounced] as const,
-    queryFn: async () => {
-      const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/contacts",
-        {
-          params: {
-            path: { wsId: props.wsId },
-            query: { q: debounced || undefined },
-          },
-        },
-      );
-      if (error) throw error;
-      return data;
-    },
-    enabled: debounced.length > 0,
-  });
-
-  const results = (contactsQ.data ?? []).filter(
-    (c) => !props.excludeIds.has(c.id),
-  );
-
-  return (
-    <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50/40 p-3">
-      <div className="mb-2 flex items-center gap-2">
-        <input
-          autoFocus
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Поиск контакта по имени или @"
-          className="flex-1 rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm focus:border-emerald-500 focus:outline-none"
-        />
-        <button
-          type="button"
-          onClick={props.onCancel}
-          className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-        >
-          <X size={14} />
-        </button>
-      </div>
-      {debounced.length === 0 && (
-        <p className="text-xs text-zinc-500">Введите запрос для поиска</p>
-      )}
-      {debounced.length > 0 && contactsQ.isLoading && (
-        <p className="text-xs text-zinc-500">Поиск…</p>
-      )}
-      {debounced.length > 0 && contactsQ.data && results.length === 0 && (
-        <p className="text-xs text-zinc-500">Ничего не найдено</p>
-      )}
-      {results.length > 0 && (
-        <ul className="max-h-64 space-y-1 overflow-y-auto">
-          {results.map((c) => {
-            const v = c.properties as Record<string, unknown>;
-            const name = typeof v.full_name === "string" ? v.full_name : "—";
-            const username =
-              typeof v.telegram_username === "string"
-                ? v.telegram_username
-                : null;
-            return (
-              <li key={c.id}>
-                <button
-                  type="button"
-                  onClick={() => props.onPick(c.id)}
-                  disabled={props.loading}
-                  className="flex w-full items-center justify-between rounded-md bg-white px-2 py-1.5 text-left text-sm hover:bg-emerald-100 disabled:opacity-50"
-                >
-                  <span className="truncate font-medium text-zinc-900">
-                    {name}
-                  </span>
-                  {username && (
-                    <span className="ml-2 shrink-0 text-xs text-zinc-500">
-                      @{username}
-                    </span>
-                  )}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
   );
 }
 

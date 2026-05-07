@@ -505,21 +505,28 @@ const ChannelHistoryQuery = z.object({
   fromMessageId: z.coerce.number().int().nonnegative().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
+const ChannelHistoryReaction = z.object({
+  emoji: z.string(),
+  count: z.number().int().nonnegative(),
+});
 const ChannelHistoryItem = z.object({
   id: z.string(),
   date: z.iso.datetime(),
   text: z.string(),
+  // messageInteractionInfo (td_api.tl:2730). У постов в каналах view_count
+  // почти всегда есть; forward_count и replies — опционально (репост только
+  // если кто-то форварднул, replies — только если у канала есть linked-чат).
+  views: z.number().int().nonnegative().nullable(),
+  forwards: z.number().int().nonnegative().nullable(),
+  replies: z.number().int().nonnegative().nullable(),
+  // Только реакции на стандартные emoji. Custom-emoji (premium) и paid-reactions
+  // скипаем — без download custom-emoji не отрендерим, они станут '?'.
+  reactions: z.array(ChannelHistoryReaction),
+  isForwarded: z.boolean(),
 });
 const ChannelHistoryResponse = z.object({
   messages: z.array(ChannelHistoryItem),
 });
-
-// In-memory маркер «уже спрашивали историю этого канала в текущей сессии».
-// Первый запрос идёт с only_local=false (TDLib подтягивает из сети + наполняет
-// RAM-кеш в фоне), повторные — сразу only_local=true. Set не персистится:
-// после рестарта api → новая TDLib-сессия → всё equally cold. Аналог
-// `historyFetched` в routes/contacts.ts, паттерн скопирован оттуда.
-const channelHistoryFetched = new Set<string>();
 
 app.openapi(
   createRoute({
@@ -564,6 +571,10 @@ app.openapi(
     }
     const tdClient = picked.client;
 
+    type TdReaction = {
+      type: { _: string; emoji?: string };
+      total_count: number;
+    };
     type TdMessage = {
       id: number;
       date: number;
@@ -572,6 +583,15 @@ app.openapi(
         text?: { text: string };
         caption?: { text: string };
       };
+      // td_api.tl §messageInteractionInfo, §messageForwardInfo. Оба
+      // опциональны — без репостов и реакций просто отсутствуют.
+      interaction_info?: {
+        view_count?: number;
+        forward_count?: number;
+        reply_info?: { reply_count: number };
+        reactions?: { reactions: TdReaction[] };
+      };
+      forward_info?: { origin: { _: string }; date: number };
     };
     type TdMessages = { messages: TdMessage[] };
 
@@ -595,38 +615,40 @@ app.openapi(
       }
     }
 
-    // openChat → getChatHistory → closeChat. Без openChat TDLib не считает
-    // чат активным; в supergroup'ах/каналах «all updates are received only
-    // for opened chats» (td_api.tl §openChat) и сервер-fetch менее агрессивный.
-    // closeChat — best-effort в finally, чтобы счётчик opened-chats не рос.
+    // openChat → backfill-loop getChatHistory → closeChat. Без openChat
+    // TDLib не считает чат активным; в supergroup'ах/каналах «all updates
+    // are received only for opened chats» (td_api.tl §openChat) и
+    // сервер-fetch менее агрессивный. closeChat — best-effort в finally,
+    // чтобы счётчик opened-chats не рос.
     //
-    // Первый ever-запрос на канал часто отдаёт 1-2 сообщения из RAM-кэша
-    // TDLib и в фоне качает остаток (td_api.tl §getChatHistory: «can be
-    // smaller than the specified limit»). Через 500ms делаем второй вызов
-    // с only_local=true — БЕЗ нового сетевого RTT, подбираем накопленное.
-    // Паттерн из routes/contacts.ts §chat-history.
-    const cacheKey = `${picked.accountId}:${chatId}`;
-    const onlyLocal = channelHistoryFetched.has(cacheKey);
-    const fetchHistory = (only_local: boolean) =>
+    // Каналы холодные (юзер не подписан → RAM-кэш TDLib пустой), и первый
+    // getChatHistory часто возвращает 1-2 сообщения — TDLib инициирует
+    // фоновый fetch и возвращает что успел (td_api.tl §getChatHistory: «can
+    // be smaller than the specified limit»). Дозваниваемся пагинацией по
+    // from_message_id=oldest_id пока не наберём limit или TDLib не отдаст
+    // empty (конец канала). MAX_ATTEMPTS — защита от бесконечного цикла.
+    const fetchHistory = (from: number, want: number) =>
       tdClient.invoke({
         _: "getChatHistory",
         chat_id: chatId,
-        from_message_id: fromMessageId ?? 0,
+        from_message_id: from,
         offset: 0,
-        limit,
-        only_local,
+        limit: want,
+        only_local: false,
       } as never) as Promise<TdMessages>;
 
-    let result: TdMessages;
+    const MAX_ATTEMPTS = 5;
+    let aggregated: TdMessage[] = [];
+    let from = fromMessageId ?? 0;
     try {
       await tdClient.invoke({ _: "openChat", chat_id: chatId } as never);
-      result = await fetchHistory(onlyLocal);
-      if (!onlyLocal && !fromMessageId && result.messages.length < limit) {
-        await new Promise((r) => setTimeout(r, 500));
-        const second = await fetchHistory(true);
-        if (second.messages.length > result.messages.length) result = second;
+      for (let i = 0; i < MAX_ATTEMPTS; i++) {
+        const r = await fetchHistory(from, limit - aggregated.length);
+        if (r.messages.length === 0) break;
+        aggregated = [...aggregated, ...r.messages];
+        if (aggregated.length >= limit) break;
+        from = Number(r.messages[r.messages.length - 1]!.id);
       }
-      if (!onlyLocal) channelHistoryFetched.add(cacheKey);
     } catch (e) {
       throw new HTTPException(404, {
         message: `history fetch failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -638,6 +660,7 @@ app.openapi(
           console.error(`[channels/history] closeChat ${chatId} failed:`, e),
         );
     }
+    const result: TdMessages = { messages: aggregated };
 
     const items = (result.messages ?? []).map((m) => {
       let text: string;
@@ -649,10 +672,21 @@ app.openapi(
       } else {
         text = "[медиа]";
       }
+      const ii = m.interaction_info;
+      // Только реакции на стандартные emoji — кастомные премиум-стикеры
+      // и paid-reactions (звёзды) пропускаем (отрендерить нечем).
+      const reactions = (ii?.reactions?.reactions ?? [])
+        .filter((r) => r.type._ === "reactionTypeEmoji" && r.type.emoji)
+        .map((r) => ({ emoji: r.type.emoji!, count: r.total_count }));
       return {
         id: String(m.id),
         date: new Date(m.date * 1000).toISOString(),
         text,
+        views: ii?.view_count ?? null,
+        forwards: ii?.forward_count ?? null,
+        replies: ii?.reply_info?.reply_count ?? null,
+        reactions,
+        isForwarded: !!m.forward_info,
       };
     });
 

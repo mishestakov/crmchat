@@ -1,6 +1,6 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import type { Contact } from "@repo/core";
 import { SearchInput } from "../../../../../components/search-input";
@@ -97,6 +97,12 @@ function ContactsList() {
   };
 
   const rows = contacts.data ?? [];
+  // Стабильные ссылки для memo(TableView): открытие/закрытие drawer'а
+  // не должно ре-рендерить таблицу с сотнями <Link>.
+  const accountsForTable = accounts.data ?? EMPTY_ACCOUNTS;
+  const onOpenChat = useCallback((contact: Contact, accountId: string) => {
+    setDrawer({ contact, accountId });
+  }, []);
 
   return (
     <div className="flex h-full flex-col gap-4 overflow-hidden p-6">
@@ -115,8 +121,8 @@ function ContactsList() {
         <TableView
           wsId={wsId}
           rows={rows}
-          accounts={accounts.data ?? []}
-          onOpenChat={(contact, accountId) => setDrawer({ contact, accountId })}
+          accounts={accountsForTable}
+          onOpenChat={onOpenChat}
         />
       )}
 
@@ -143,7 +149,9 @@ type AccountRow = {
   phoneNumber: string | null;
 };
 
-function TableView(props: {
+const EMPTY_ACCOUNTS: AccountRow[] = [];
+
+const TableView = memo(function TableView(props: {
   wsId: string;
   rows: Contact[];
   accounts: AccountRow[];
@@ -240,7 +248,7 @@ function TableView(props: {
       </table>
     </div>
   );
-}
+});
 
 function ChatAccountsCell(props: {
   contact: Contact;
