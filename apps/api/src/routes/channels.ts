@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import {
   type Channel,
   ChannelSchema as BaseChannelSchema,
@@ -8,11 +8,13 @@ import {
   ImportChannelsSchema as BaseImportChannels,
   ImportChannelsResultSchema as BaseImportResult,
 } from "@repo/core";
-import { db } from "../db/client.ts";
+import { db, sql as sqlClient } from "../db/client.ts";
 import {
   channelAdmins,
+  channelThumbnails,
   channels,
   contacts,
+  outreachAccounts,
   tgUsers,
 } from "../db/schema.ts";
 import {
@@ -20,7 +22,44 @@ import {
   channelAccessClause,
 } from "../lib/channels-access.ts";
 import { contactAccessClause } from "../lib/contacts-access.ts";
-import { assertRole, type WorkspaceVars } from "../middleware/assert-member.ts";
+import { getOutreachWorkerClient } from "../lib/outreach-account-client.ts";
+import { accountAccessClause } from "../lib/outreach-access.ts";
+import {
+  assertRole,
+  type WorkspaceRole,
+  type WorkspaceVars,
+} from "../middleware/assert-member.ts";
+import type { TdClient } from "../lib/tdlib/client.ts";
+import { extractActiveUsername } from "../lib/tdlib/td-user.ts";
+
+// Каналы читаются любым outreach-аккаунтом workspace'а — единственный
+// TG-actor у нас. Берём первый available active доступный юзеру (RBAC через
+// accountAccessClause), поднимаем worker'а если ещё не поднят.
+//
+// Round-robin / sticky канал→аккаунт не вводим: один аккаунт прочитает
+// любой канал, thumbnail/member_count кешируется 24h. Если упрёмся в
+// flood-лимиты — добавим выбор по нагрузке.
+async function pickOutreachClient(
+  wsId: string,
+  userId: string,
+  role: WorkspaceRole,
+): Promise<{ client: TdClient; accountId: string } | null> {
+  const [acc] = await db
+    .select({ id: outreachAccounts.id, workspaceId: outreachAccounts.workspaceId })
+    .from(outreachAccounts)
+    .where(
+      and(
+        accountAccessClause(wsId, userId, role),
+        eq(outreachAccounts.status, "active"),
+      ),
+    )
+    .orderBy(outreachAccounts.createdAt)
+    .limit(1);
+  if (!acc) return null;
+  const client = await getOutreachWorkerClient(acc);
+  if (!client) return null;
+  return { client, accountId: acc.id };
+}
 
 const ChannelSchema = BaseChannelSchema.openapi("Channel");
 const CreateChannelSchema = BaseCreateChannel.openapi("CreateChannel");
@@ -28,6 +67,17 @@ const ImportChannelsSchema = BaseImportChannels.openapi("ImportChannels");
 const ImportChannelsResultSchema = BaseImportResult.openapi(
   "ImportChannelsResult",
 );
+
+// Drizzle строит INSERT VALUES (a),(b),… через рекурсивный SQL-builder, на
+// 10k+ строк падает в RangeError (call-stack). Бьём на куски ~500 — Postgres
+// прожуёт каждый чанк за десятки мс, общий импорт остаётся в одном HTTP.
+const INSERT_CHUNK = 500;
+function chunks<T>(arr: T[], size: number): T[][] {
+  if (arr.length <= size) return [arr];
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
 
 const WsParam = z.object({ wsId: z.string().min(1).max(64) });
 const WsIdParam = z.object({
@@ -46,29 +96,76 @@ const AddAdminsBody = z.object({
 
 const app = new OpenAPIHono<{ Variables: WorkspaceVars }>();
 
+// Soft-limit на /channels: на 14k каналов фронт рендерит без боли, но
+// уже на 100k+ JSON станет толстым. 1000 — компромисс: видно достаточно
+// для оценки, а если каналов больше — юзер сужает поиском.
+const CHANNELS_PAGE_LIMIT = 1000;
+
+const ChannelsListQuery = z.object({
+  q: z.string().max(200).optional(),
+});
+
 app.openapi(
   createRoute({
     method: "get",
     path: "/v1/workspaces/{wsId}/channels",
     tags: ["channels"],
-    request: { params: WsParam },
+    request: { params: WsParam, query: ChannelsListQuery },
     responses: {
       200: {
         content: { "application/json": { schema: z.array(ChannelSchema) } },
-        description: "Channels with admins",
+        description: "Channels with admins (limit 1000, see CHANNELS_PAGE_LIMIT)",
       },
     },
   }),
   async (c) => {
     const { wsId } = c.req.valid("param");
+    const { q } = c.req.valid("query");
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
+    // Поиск: ILIKE по title + username. Юзер вводит подстроку, regex не
+    // нужен — escape '%' и '_' чтобы спецсимволы не превращали запрос в
+    // wildcard'ный.
+    const term = q?.trim();
+    const searchClause = term
+      ? sql`(${channels.title} ILIKE ${"%" + term.replace(/[%_]/g, "\\$&") + "%"} OR ${channels.username} ILIKE ${"%" + term.replace(/[%_]/g, "\\$&") + "%"})`
+      : undefined;
+    // Сортировка: member_count desc (NULLS LAST для не-засинканных) — топ
+    // канал сверху, главный сигнал ценности; created_at — tie-breaker.
     const rows = await db
       .select()
       .from(channels)
-      .where(channelAccessClause(wsId, userId, role))
-      .orderBy(sql`${channels.createdAt} desc`);
+      .where(and(channelAccessClause(wsId, userId, role), searchClause))
+      .orderBy(
+        sql`${channels.memberCount} desc nulls last, ${channels.createdAt} desc`,
+      )
+      .limit(CHANNELS_PAGE_LIMIT);
     return c.json(await joinAdmins(rows));
+  },
+);
+
+// Single-channel GET для карточки контакта: блок «Каналы» показывает табы
+// по contact.channels[], клик по табу подгружает полный Channel.
+app.openapi(
+  createRoute({
+    method: "get",
+    path: "/v1/workspaces/{wsId}/channels/{id}",
+    tags: ["channels"],
+    request: { params: WsIdParam },
+    responses: {
+      200: {
+        content: { "application/json": { schema: ChannelSchema } },
+        description: "Channel by id",
+      },
+    },
+  }),
+  async (c) => {
+    const { wsId, id } = c.req.valid("param");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const channel = await assertChannelAccess(id, wsId, userId, role);
+    const [serialized] = await joinAdmins([channel]);
+    return c.json(serialized!);
   },
 );
 
@@ -100,8 +197,11 @@ app.openapi(
       .insert(channels)
       .values({
         workspaceId: wsId,
+        platform: body.platform ?? "telegram",
         title: body.title,
         link: body.link ?? null,
+        username: body.username ?? null,
+        externalId: body.externalId ?? null,
         createdBy: userId,
       })
       .returning();
@@ -225,6 +325,300 @@ app.openapi(
   },
 );
 
+// Pull свежей карточки канала из TG. Lazy: фронт дёргает при открытии
+// drawer'а если synced_at IS NULL или > 24h.
+//
+// Цепочка:
+//   - если есть external_id → getChat(id)
+//   - иначе по username → searchPublicChat(username) → Chat (с id)
+//   - getSupergroup + getSupergroupFullInfo (только chatTypeSupergroup;
+//     private/group/bot → 400)
+// Запись: типизированные колонки + meta (REPLACE целиком) + synced_at.
+// properties и admins не трогаем. Thumbnail (chat.photo.minithumbnail) →
+// channel_thumbnails.
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/channels/{id}/sync",
+    tags: ["channels"],
+    request: { params: WsIdParam },
+    responses: {
+      200: {
+        content: { "application/json": { schema: ChannelSchema } },
+        description: "Channel synced from TG",
+      },
+    },
+  }),
+  async (c) => {
+    const { wsId, id } = c.req.valid("param");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const channel = await assertChannelAccess(id, wsId, userId, role);
+
+    if (channel.platform !== "telegram") {
+      throw new HTTPException(400, {
+        message: `sync supported only for platform=telegram (got ${channel.platform})`,
+      });
+    }
+    if (!channel.externalId && !channel.username) {
+      throw new HTTPException(400, {
+        message: "channel has neither external_id nor username; nothing to look up",
+      });
+    }
+
+    const picked = await pickOutreachClient(wsId, userId, role);
+    if (!picked) {
+      throw new HTTPException(412, {
+        message:
+          "no active Telegram account available — connect one in /outreach/accounts/new",
+      });
+    }
+    const tdClient = picked.client;
+
+    type TdChat = {
+      id: number;
+      title: string;
+      type: { _: string; supergroup_id?: number; is_channel?: boolean };
+      photo?: { minithumbnail?: { data: string } };
+    };
+    type TdSupergroup = {
+      id: number;
+      usernames?: { active_usernames?: string[]; editable_username?: string };
+      date: number;
+      member_count: number;
+      boost_level: number;
+      has_linked_chat: boolean;
+      has_direct_messages_group: boolean;
+      is_channel: boolean;
+      is_broadcast_group: boolean;
+      verification_status?: { is_verified: boolean };
+    };
+    type TdSupergroupFullInfo = {
+      description: string;
+      member_count: number;
+      linked_chat_id: number;
+      direct_messages_chat_id: number;
+      gift_count: number;
+      outgoing_paid_message_star_count: number;
+      photo?: { minithumbnail?: { data: string } };
+    };
+
+    let tdChat: TdChat;
+    try {
+      if (channel.externalId) {
+        tdChat = (await tdClient.invoke({
+          _: "getChat",
+          chat_id: Number(channel.externalId),
+        } as never)) as TdChat;
+      } else {
+        tdChat = (await tdClient.invoke({
+          _: "searchPublicChat",
+          username: channel.username!,
+        } as never)) as TdChat;
+      }
+    } catch (e) {
+      throw new HTTPException(404, {
+        message: `Telegram lookup failed: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    }
+
+    if (tdChat.type._ !== "chatTypeSupergroup" || !tdChat.type.supergroup_id) {
+      throw new HTTPException(400, {
+        message: `chat ${tdChat.id} is not a supergroup (got ${tdChat.type._})`,
+      });
+    }
+
+    const supergroupId = tdChat.type.supergroup_id;
+    const [tdSupergroup, tdFull] = await Promise.all([
+      tdClient.invoke({
+        _: "getSupergroup",
+        supergroup_id: supergroupId,
+      } as never) as Promise<TdSupergroup>,
+      tdClient.invoke({
+        _: "getSupergroupFullInfo",
+        supergroup_id: supergroupId,
+      } as never) as Promise<TdSupergroupFullInfo>,
+    ]);
+
+    const newUsername = extractActiveUsername(tdSupergroup);
+
+    const newMeta: Record<string, unknown> = {
+      supergroup_id: String(supergroupId),
+      boost_level: tdSupergroup.boost_level,
+      is_verified: tdSupergroup.verification_status?.is_verified ?? false,
+      is_channel: tdSupergroup.is_channel,
+      is_broadcast_group: tdSupergroup.is_broadcast_group,
+      has_dm: tdSupergroup.has_direct_messages_group,
+      has_linked_chat: tdSupergroup.has_linked_chat,
+      // supergroup.date — int32 unix timestamp создания канала.
+      created_at_tg: tdSupergroup.date,
+      linked_chat_id: tdFull.linked_chat_id || null,
+      direct_messages_chat_id: tdFull.direct_messages_chat_id || null,
+      gift_count: tdFull.gift_count,
+      outgoing_paid_message_star_count: tdFull.outgoing_paid_message_star_count,
+    };
+
+    // member_count в supergroup и в supergroupFullInfo обычно совпадают;
+    // FullInfo выходит «свежее» при batch-обновлениях, берём его.
+    const memberCount = tdFull.member_count || tdSupergroup.member_count;
+    const description = tdFull.description || null;
+    const externalIdNew = String(tdChat.id);
+    const link = newUsername ? `https://t.me/${newUsername}` : channel.link;
+
+    // Thumbnail: chat.photo.minithumbnail.data приходит как base64-строка
+    // (TDLib bytes-поля в JSON — base64). Если у канала нет аватара — поле
+    // photo отсутствует, прежний кеш не сносим.
+    const minithumb =
+      tdChat.photo?.minithumbnail?.data ?? tdFull.photo?.minithumbnail?.data;
+    const [[updated]] = await Promise.all([
+      db
+        .update(channels)
+        .set({
+          externalId: externalIdNew,
+          title: tdChat.title || channel.title,
+          description,
+          username: newUsername,
+          link,
+          memberCount,
+          meta: newMeta,
+          syncedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(channels.id, id))
+        .returning(),
+      minithumb
+        ? db
+            .insert(channelThumbnails)
+            .values({ channelId: id, b64: minithumb })
+            .onConflictDoUpdate({
+              target: channelThumbnails.channelId,
+              set: { b64: minithumb, updatedAt: new Date() },
+            })
+        : Promise.resolve(),
+    ]);
+    const [serialized] = await joinAdmins([updated!]);
+    return c.json(serialized!);
+  },
+);
+
+// История канала: последние N сообщений (plain-text), через personal-TDLib.
+// Не-текст (фото/видео/forward) → "[медиа]"; этого достаточно для оценки
+// активности канала, full-render медиа — отдельная задача.
+//
+// Pagination: from_message_id=0 на первой странице (TDLib возвращает с
+// last сообщения). На дальнейших передаём id последнего полученного.
+const ChannelHistoryQuery = z.object({
+  fromMessageId: z.coerce.number().int().nonnegative().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+const ChannelHistoryItem = z.object({
+  id: z.string(),
+  date: z.iso.datetime(),
+  text: z.string(),
+});
+const ChannelHistoryResponse = z.object({
+  messages: z.array(ChannelHistoryItem),
+});
+
+app.openapi(
+  createRoute({
+    method: "get",
+    path: "/v1/workspaces/{wsId}/channels/{id}/history",
+    tags: ["channels"],
+    request: { params: WsIdParam, query: ChannelHistoryQuery },
+    responses: {
+      200: {
+        content: {
+          "application/json": { schema: ChannelHistoryResponse },
+        },
+        description: "Last N messages of the channel (plain-text)",
+      },
+    },
+  }),
+  async (c) => {
+    const { wsId, id } = c.req.valid("param");
+    const { fromMessageId, limit } = c.req.valid("query");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const channel = await assertChannelAccess(id, wsId, userId, role);
+
+    if (channel.platform !== "telegram") {
+      throw new HTTPException(400, {
+        message: "history supported only for platform=telegram",
+      });
+    }
+    if (!channel.externalId) {
+      throw new HTTPException(412, {
+        message:
+          "channel not synced yet — POST /sync first (resolves chat_id from username)",
+      });
+    }
+
+    const picked = await pickOutreachClient(wsId, userId, role);
+    if (!picked) {
+      throw new HTTPException(412, {
+        message:
+          "no active Telegram account available — connect one in /outreach/accounts/new",
+      });
+    }
+    const tdClient = picked.client;
+
+    type TdMessage = {
+      id: number;
+      date: number;
+      content: {
+        _: string;
+        text?: { text: string };
+        caption?: { text: string };
+      };
+    };
+    type TdMessages = { messages: TdMessage[] };
+
+    let result: TdMessages;
+    try {
+      result = (await tdClient.invoke({
+        _: "getChatHistory",
+        chat_id: Number(channel.externalId),
+        from_message_id: fromMessageId ?? 0,
+        offset: 0,
+        limit,
+        only_local: false,
+      } as never)) as TdMessages;
+    } catch (e) {
+      throw new HTTPException(404, {
+        message: `history fetch failed: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    }
+
+    const items = (result.messages ?? []).map((m) => {
+      let text: string;
+      if (m.content._ === "messageText") {
+        text = m.content.text?.text ?? "";
+      } else if (m.content.caption?.text) {
+        // messagePhoto/messageVideo с подписью — берём подпись + бейдж медиа.
+        text = `[медиа] ${m.content.caption.text}`;
+      } else {
+        text = "[медиа]";
+      }
+      return {
+        id: String(m.id),
+        date: new Date(m.date * 1000).toISOString(),
+        text,
+      };
+    });
+
+    return c.json({ messages: items });
+  },
+);
+
+// CSV-импорт каналов с column-mapping. Body: {rows, mapping, platform}.
+// Юзер на фронте маппит колонки в ImportWizard, бэк применяет.
+//
+// Правило приоритета: соцсетевой pull всегда побеждает.
+//   - synced_at IS NULL → CSV пишет всё (типизированные поля + properties)
+//   - synced_at IS NOT NULL → CSV пишет только properties; типизированные
+//     поля остаются от соцсети
+// admin_username и properties всегда обновляются — соцсеть их не отдаёт.
 app.openapi(
   createRoute({
     method: "post",
@@ -247,25 +641,211 @@ app.openapi(
   async (c) => {
     const { wsId } = c.req.valid("param");
     const userId = c.get("userId");
-    const { rows } = c.req.valid("json");
+    const { rows, mapping, platform } = c.req.valid("json");
 
-    let skippedNoUrl = 0;
-    let adminContactsCreated = 0;
-    let adminContactsRecognized = 0;
+    // Step 1: применяем mapping к каждой строке CSV → нормализованный staging.
+    // Дедуп внутри батча: ключ = external_id (если есть), иначе lower(username).
+    type Staged = {
+      title: string;
+      externalId: string | null;
+      username: string | null;
+      link: string | null;
+      memberCount: number | null;
+      description: string | null;
+      // lower-case без `@`, для smart-stub резолва.
+      adminUsername: string | null;
+      properties: Record<string, string>;
+    };
+    const stagedByKey = new Map<string, Staged>();
+    let skippedNoIdentifier = 0;
+    const propsMap = mapping.properties ?? {};
 
-    // Дедуп админов по lower(username) — один человек в нескольких строках
-    // CSV = один stub-контакт.
-    const uniqueAdminUsernames = new Set<string>();
+    const pickStr = (r: Record<string, string>, h: string | undefined) =>
+      h ? r[h]?.trim() || null : null;
+    const stagedKey = (s: { externalId: string | null; username: string | null }) =>
+      s.externalId ? `eid:${s.externalId}` : `un:${s.username!.toLowerCase()}`;
+
     for (const r of rows) {
-      const u = r.admin_username?.trim().replace(/^@/, "").toLowerCase();
-      if (u) uniqueAdminUsernames.add(u);
+      const externalId = pickStr(r, mapping.externalId);
+      const usernameRaw = pickStr(r, mapping.username);
+      const username = usernameRaw ? usernameRaw.replace(/^@/, "") : null;
+      if (!externalId && !username) {
+        skippedNoIdentifier++;
+        continue;
+      }
+      const key = stagedKey({ externalId, username });
+
+      // CSV редко даёт явный link, но для публичного TG-канала он
+      // тривиально дерайвится из username. CSV-link имеет приоритет.
+      const linkFromCsv = pickStr(r, mapping.link);
+      const link =
+        linkFromCsv || (username && platform === "telegram" ? `https://t.me/${username}` : null);
+      const description = pickStr(r, mapping.description);
+      const memCntRaw = pickStr(r, mapping.memberCount);
+      const memCntParsed = memCntRaw ? Number(memCntRaw.replace(/\s+/g, "")) : NaN;
+      const memberCount = Number.isFinite(memCntParsed) ? memCntParsed : null;
+      const adminRaw = pickStr(r, mapping.adminUsername);
+      const adminUsername = adminRaw
+        ? adminRaw.replace(/^@/, "").toLowerCase()
+        : null;
+
+      const properties: Record<string, string> = {};
+      for (const [pkey, csvHeader] of Object.entries(propsMap)) {
+        const v = r[csvHeader]?.trim();
+        if (v) properties[pkey] = v;
+      }
+
+      // title без явного маппинга — fallback на @username или externalId,
+      // чтобы NOT NULL constraint не падал.
+      const titleFromCsv = pickStr(r, mapping.title);
+      const title =
+        titleFromCsv || (username ? `@${username}` : `id:${externalId}`);
+
+      const existing = stagedByKey.get(key);
+      if (existing) {
+        // Несколько CSV-строк на тот же канал → склеиваем, ранняя строка
+        // приоритетнее по непустым полям, properties мержатся.
+        stagedByKey.set(key, {
+          title: existing.title || title,
+          externalId: existing.externalId || externalId,
+          username: existing.username || username,
+          link: existing.link || link,
+          memberCount: existing.memberCount ?? memberCount,
+          description: existing.description || description,
+          adminUsername: existing.adminUsername || adminUsername,
+          properties: { ...existing.properties, ...properties },
+        });
+      } else {
+        stagedByKey.set(key, {
+          title,
+          externalId,
+          username,
+          link,
+          memberCount,
+          description,
+          adminUsername,
+          properties,
+        });
+      }
     }
 
-    // Разрешаем админов: contact в воркспейсе → tg_users replica → stub.
+    // Step 2: lookup существующих каналов по external_id ИЛИ lower(username).
+    const stagedList = [...stagedByKey.values()];
+    const externalIds = stagedList
+      .map((s) => s.externalId)
+      .filter((x): x is string => !!x);
+    const usernamesLower = stagedList
+      .map((s) => s.username?.toLowerCase())
+      .filter((x): x is string => !!x);
+
+    const existingChannels =
+      externalIds.length || usernamesLower.length
+        ? await db
+            .select({
+              id: channels.id,
+              externalId: channels.externalId,
+              usernameLower: sql<string | null>`lower(${channels.username})`,
+              syncedAt: channels.syncedAt,
+              properties: channels.properties,
+            })
+            .from(channels)
+            .where(
+              and(
+                eq(channels.workspaceId, wsId),
+                eq(channels.platform, platform),
+                or(
+                  externalIds.length
+                    ? inArray(channels.externalId, externalIds)
+                    : undefined,
+                  usernamesLower.length
+                    ? inArray(
+                        sql`lower(${channels.username})`,
+                        usernamesLower,
+                      )
+                    : undefined,
+                ),
+              ),
+            )
+        : [];
+
+    const byExtId = new Map<
+      string,
+      (typeof existingChannels)[number]
+    >();
+    const byUsernameLower = new Map<
+      string,
+      (typeof existingChannels)[number]
+    >();
+    for (const e of existingChannels) {
+      if (e.externalId) byExtId.set(e.externalId, e);
+      if (e.usernameLower) byUsernameLower.set(e.usernameLower, e);
+    }
+
+    // Step 3: разруливаем INSERT vs UPDATE-typed vs UPDATE-props-only.
+    type ToInsert = Staged & { __ins: true };
+    type ToUpdateFull = Staged & {
+      __upd: "full";
+      id: string;
+      mergedProps: Record<string, unknown>;
+    };
+    type ToUpdatePropsOnly = {
+      __upd: "props";
+      id: string;
+      mergedProps: Record<string, unknown>;
+      adminUsername: string | null;
+      // Прямая ссылка на staged-row, чтобы потом не искать через
+      // O(N²) linear-scan для построения idByKey.
+      staged: Staged;
+    };
+    const toInsert: ToInsert[] = [];
+    const toUpdateFull: ToUpdateFull[] = [];
+    const toUpdatePropsOnly: ToUpdatePropsOnly[] = [];
+
+    for (const staged of stagedList) {
+      const exMatch =
+        (staged.externalId && byExtId.get(staged.externalId)) ||
+        (staged.username &&
+          byUsernameLower.get(staged.username.toLowerCase())) ||
+        null;
+      if (!exMatch) {
+        toInsert.push({ ...staged, __ins: true });
+        continue;
+      }
+      const merged = {
+        ...((exMatch.properties as Record<string, unknown>) ?? {}),
+        ...staged.properties,
+      };
+      if (exMatch.syncedAt) {
+        toUpdatePropsOnly.push({
+          __upd: "props",
+          id: exMatch.id,
+          mergedProps: merged,
+          adminUsername: staged.adminUsername,
+          staged,
+        });
+      } else {
+        toUpdateFull.push({
+          ...staged,
+          __upd: "full",
+          id: exMatch.id,
+          mergedProps: merged,
+        });
+      }
+    }
+
+    // Step 4: stub-контакты для admin'ов (та же логика что была в старом
+    // /import: smart-stub — если @username есть в tg_users replica, контакт
+    // создаётся с tg_user_id сразу).
+    const uniqueAdminUsernames = new Set<string>();
+    for (const s of stagedList) {
+      if (s.adminUsername) uniqueAdminUsernames.add(s.adminUsername);
+    }
+    let adminContactsCreated = 0;
+    let adminContactsRecognized = 0;
     const usernameToContactId = new Map<string, string>();
     if (uniqueAdminUsernames.size > 0) {
       const usernames = [...uniqueAdminUsernames];
-      const existing = await db
+      const existingContacts = await db
         .select({
           id: contacts.id,
           username: sql<string>`lower(${contacts.properties}->>'telegram_username')`,
@@ -280,15 +860,11 @@ app.openapi(
             ),
           ),
         );
-      for (const e of existing) {
+      for (const e of existingContacts) {
         if (e.username) usernameToContactId.set(e.username, e.id);
       }
-
       const missing = usernames.filter((u) => !usernameToContactId.has(u));
       if (missing.length > 0) {
-        // Smart-stub: смотрим в replica подключённых аккаунтов. Те, кого
-        // хоть один аккаунт «видел», получают полноценную карточку с
-        // tg_user_id — sticky-резолвер сразу подхватит при создании задачи.
         const known = await db
           .select({
             userId: tgUsers.userId,
@@ -303,7 +879,6 @@ app.openapi(
             ),
           );
         const knownByUsername = new Map(known.map((k) => [k.username, k]));
-
         const stubInserts = missing.map((u) => {
           const k = knownByUsername.get(u);
           const props: Record<string, unknown> = {
@@ -312,28 +887,23 @@ app.openapi(
           };
           if (k?.userId) props.tg_user_id = k.userId;
           if (k) adminContactsRecognized++;
-          return {
-            workspaceId: wsId,
-            properties: props,
-            createdBy: userId,
-          };
+          return { workspaceId: wsId, properties: props, createdBy: userId };
         });
-
-        const inserted = await db
-          .insert(contacts)
-          .values(stubInserts)
-          .onConflictDoNothing()
-          .returning({
-            id: contacts.id,
-            username: sql<string>`lower(${contacts.properties}->>'telegram_username')`,
-          });
-        for (const ins of inserted) {
-          if (ins.username) usernameToContactId.set(ins.username, ins.id);
+        for (const chunk of chunks(stubInserts, INSERT_CHUNK)) {
+          const inserted = await db
+            .insert(contacts)
+            .values(chunk)
+            .onConflictDoNothing()
+            .returning({
+              id: contacts.id,
+              username: sql<string>`lower(${contacts.properties}->>'telegram_username')`,
+            });
+          for (const ins of inserted) {
+            if (ins.username) usernameToContactId.set(ins.username, ins.id);
+          }
+          adminContactsCreated += inserted.length;
         }
-        adminContactsCreated += inserted.length;
-
-        // ON CONFLICT мог проглотить кого-то (race с параллельным импортом),
-        // дочитаем оставшихся.
+        // ON CONFLICT мог проглотить race — дочитываем.
         const stillMissing = missing.filter((u) => !usernameToContactId.has(u));
         if (stillMissing.length > 0) {
           const reread = await db
@@ -358,140 +928,156 @@ app.openapi(
       }
     }
 
-    // Дедуп по lower(link) внутри батча: одна строка в CSV = одна попытка
-    // upsert'а; повторяющиеся ссылки сливаются в одну операцию.
-    const byLowerLink = new Map<
-      string,
-      { link: string; title: string; adminUsername: string | null }
-    >();
-    for (const r of rows) {
-      const link = r.channel_url?.trim();
-      if (!link) {
-        skippedNoUrl++;
-        continue;
-      }
-      const lowerLink = link.toLowerCase();
-      const adminUsername =
-        r.admin_username?.trim().replace(/^@/, "").toLowerCase() || null;
-      const existing = byLowerLink.get(lowerLink);
-      if (existing) {
-        // Если в нескольких строках разные admin'ы для одного канала —
-        // они оба прилинкуются ниже через allChannelAdminLinks.
-        if (adminUsername && !existing.adminUsername) {
-          existing.adminUsername = adminUsername;
-        }
-        continue;
-      }
-      byLowerLink.set(lowerLink, {
-        link,
-        title: r.title?.trim() || deriveTitle(link),
-        adminUsername,
-      });
-    }
-
-    const lowerLinks = [...byLowerLink.keys()];
-    const existingChannels = lowerLinks.length
-      ? await db
-          .select({
-            id: channels.id,
-            lowerLink: sql<string>`lower(${channels.link})`,
-          })
-          .from(channels)
-          .where(
-            and(
-              eq(channels.workspaceId, wsId),
-              inArray(sql`lower(${channels.link})`, lowerLinks),
-            ),
-          )
-      : [];
-    const existingIdByLower = new Map(
-      existingChannels.map((e) => [e.lowerLink, e.id]),
-    );
-
-    const toInsert: (typeof channels.$inferInsert)[] = [];
-    const toUpdate: { id: string; title: string }[] = [];
-    for (const [lowerLink, row] of byLowerLink) {
-      const existingId = existingIdByLower.get(lowerLink);
-      if (existingId) {
-        toUpdate.push({ id: existingId, title: row.title });
-      } else {
-        toInsert.push({
-          workspaceId: wsId,
-          title: row.title,
-          link: row.link,
-          createdBy: userId,
-        });
-      }
-    }
-
+    // Step 5: bulk INSERT новых каналов чанками по INSERT_CHUNK.
     let channelsCreated = 0;
-    let channelsUpdated = 0;
-    const idByLower = new Map(existingIdByLower);
+    const idByKey = new Map<string, string>();
     if (toInsert.length > 0) {
-      const inserted = await db
-        .insert(channels)
-        .values(toInsert)
-        .returning({
-          id: channels.id,
-          lowerLink: sql<string>`lower(${channels.link})`,
-        });
-      for (const ins of inserted) {
-        if (ins.lowerLink) idByLower.set(ins.lowerLink, ins.id);
+      const allRows = toInsert.map((t) => ({
+        workspaceId: wsId,
+        platform,
+        externalId: t.externalId,
+        title: t.title,
+        description: t.description,
+        username: t.username,
+        link: t.link,
+        memberCount: t.memberCount,
+        properties: t.properties,
+        createdBy: userId,
+      }));
+      for (const chunk of chunks(allRows, INSERT_CHUNK)) {
+        const inserted = await db
+          .insert(channels)
+          .values(chunk)
+          .returning({
+            id: channels.id,
+            externalId: channels.externalId,
+            usernameLower: sql<string | null>`lower(${channels.username})`,
+          });
+        for (const ins of inserted) {
+          if (ins.externalId) idByKey.set(`eid:${ins.externalId}`, ins.id);
+          if (ins.usernameLower) idByKey.set(`un:${ins.usernameLower}`, ins.id);
+        }
+        channelsCreated += inserted.length;
       }
-      channelsCreated = inserted.length;
     }
-    for (const u of toUpdate) {
-      await db
-        .update(channels)
-        .set({ title: u.title, updatedAt: new Date() })
-        .where(eq(channels.id, u.id));
-    }
-    channelsUpdated = toUpdate.length;
 
+    // Также мапим существующих в тот же idByKey — для admin-привязки ниже.
+    for (const u of toUpdateFull) {
+      idByKey.set(stagedKey(u), u.id);
+    }
+    for (const u of toUpdatePropsOnly) {
+      idByKey.set(stagedKey(u.staged), u.id);
+    }
+
+    // Step 6: bulk UPDATE существующих каналов через unnest(). Один SQL на
+    // все строки — даже на 14k без N+1. postgres-js принимает массивы и
+    // авто-сериализует в text[]/int[]/jsonb-массивы.
+    if (toUpdateFull.length > 0) {
+      const ids = toUpdateFull.map((u) => u.id);
+      const titles = toUpdateFull.map((u) => u.title);
+      const externals = toUpdateFull.map((u) => u.externalId);
+      const usernames = toUpdateFull.map((u) => u.username);
+      const links = toUpdateFull.map((u) => u.link);
+      const members = toUpdateFull.map((u) => u.memberCount);
+      const descs = toUpdateFull.map((u) => u.description);
+      const propsJson = toUpdateFull.map((u) => JSON.stringify(u.mergedProps));
+      await sqlClient`
+        UPDATE channels c SET
+          title = u.title,
+          external_id = COALESCE(u.external_id, c.external_id),
+          username = COALESCE(u.username, c.username),
+          link = COALESCE(u.link, c.link),
+          member_count = COALESCE(u.member_count, c.member_count),
+          description = COALESCE(u.description, c.description),
+          properties = u.properties::jsonb,
+          updated_at = now()
+        FROM unnest(
+          ${ids}::text[],
+          ${titles}::text[],
+          ${externals}::text[],
+          ${usernames}::text[],
+          ${links}::text[],
+          ${members}::integer[],
+          ${descs}::text[],
+          ${propsJson}::text[]
+        ) AS u(id, title, external_id, username, link, member_count, description, properties)
+        WHERE c.id = u.id
+      `;
+    }
+
+    if (toUpdatePropsOnly.length > 0) {
+      const ids = toUpdatePropsOnly.map((u) => u.id);
+      const propsJson = toUpdatePropsOnly.map((u) =>
+        JSON.stringify(u.mergedProps),
+      );
+      await sqlClient`
+        UPDATE channels c SET
+          properties = u.properties::jsonb,
+          updated_at = now()
+        FROM unnest(
+          ${ids}::text[],
+          ${propsJson}::text[]
+        ) AS u(id, properties)
+        WHERE c.id = u.id
+      `;
+    }
+
+    // Step 7: channel_admins. Связи для всех staged-row'ов, где есть и
+    // channelId, и contactId.
     const allChannelAdminLinks: { channelId: string; contactId: string }[] = [];
-    for (const [lowerLink, row] of byLowerLink) {
-      if (!row.adminUsername) continue;
-      const channelId = idByLower.get(lowerLink);
-      const contactId = usernameToContactId.get(row.adminUsername);
+    for (const staged of stagedList) {
+      if (!staged.adminUsername) continue;
+      const channelId = idByKey.get(stagedKey(staged));
+      const contactId = usernameToContactId.get(staged.adminUsername);
       if (channelId && contactId) {
         allChannelAdminLinks.push({ channelId, contactId });
       }
     }
-
     if (allChannelAdminLinks.length > 0) {
-      await db
-        .insert(channelAdmins)
-        .values(allChannelAdminLinks)
-        .onConflictDoNothing();
+      for (const chunk of chunks(allChannelAdminLinks, INSERT_CHUNK)) {
+        await db.insert(channelAdmins).values(chunk).onConflictDoNothing();
+      }
     }
 
     return c.json({
       channelsCreated,
-      channelsUpdated,
+      channelsUpdated: toUpdateFull.length,
+      channelsSyncSkipped: toUpdatePropsOnly.length,
       adminContactsCreated,
       adminContactsRecognized,
-      skippedNoUrl,
+      skippedNoIdentifier,
     });
   },
 );
 
 // Достраивает Channel объекты массивом admins (с минимальными полями для
-// рендера колонки «админ» и «закреплён за»).
+// рендера колонки «админ» и «закреплён за») + thumbnail из отдельной
+// таблицы (LEFT JOIN, может быть null если соц-pull ещё не делали).
 async function joinAdmins(
   rows: (typeof channels.$inferSelect)[],
 ): Promise<Channel[]> {
   if (rows.length === 0) return [];
   const channelIds = rows.map((r) => r.id);
-  const adminRows = await db
-    .select({
-      channelId: channelAdmins.channelId,
-      contactId: contacts.id,
-      properties: contacts.properties,
-      primaryAccountId: contacts.primaryAccountId,
-    })
-    .from(channelAdmins)
-    .innerJoin(contacts, eq(channelAdmins.contactId, contacts.id))
-    .where(inArray(channelAdmins.channelId, channelIds));
+  const [adminRows, thumbRows] = await Promise.all([
+    db
+      .select({
+        channelId: channelAdmins.channelId,
+        contactId: contacts.id,
+        properties: contacts.properties,
+        primaryAccountId: contacts.primaryAccountId,
+      })
+      .from(channelAdmins)
+      .innerJoin(contacts, eq(channelAdmins.contactId, contacts.id))
+      .where(inArray(channelAdmins.channelId, channelIds)),
+    db
+      .select({
+        channelId: channelThumbnails.channelId,
+        b64: channelThumbnails.b64,
+      })
+      .from(channelThumbnails)
+      .where(inArray(channelThumbnails.channelId, channelIds)),
+  ]);
+  const thumbByChannel = new Map(thumbRows.map((t) => [t.channelId, t.b64]));
 
   const byChannel = new Map<
     string,
@@ -521,24 +1107,22 @@ async function joinAdmins(
   return rows.map((r) => ({
     id: r.id,
     workspaceId: r.workspaceId,
-    tgChatId: r.tgChatId,
+    platform: r.platform,
+    externalId: r.externalId,
     title: r.title,
+    description: r.description,
+    username: r.username,
     link: r.link,
-    lastMessageAt: r.lastMessageAt?.toISOString() ?? null,
+    memberCount: r.memberCount,
+    meta: r.meta,
     properties: r.properties,
+    syncedAt: r.syncedAt?.toISOString() ?? null,
+    lastMessageAt: r.lastMessageAt?.toISOString() ?? null,
+    thumbnailB64: thumbByChannel.get(r.id) ?? null,
     admins: byChannel.get(r.id) ?? [],
     createdBy: r.createdBy,
     createdAt: r.createdAt.toISOString(),
   }));
-}
-
-// Берём последний сегмент пути или @-имя как заголовок если CSV его не дал.
-// Юзер потом отредактирует — это плейсхолдер, не финальное имя.
-function deriveTitle(link: string): string {
-  const cleaned = link.replace(/^https?:\/\//, "").replace(/\/$/, "");
-  if (cleaned.startsWith("t.me/")) return "@" + cleaned.slice("t.me/".length);
-  if (cleaned.startsWith("@")) return cleaned;
-  return cleaned;
 }
 
 export default app;

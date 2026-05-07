@@ -695,13 +695,25 @@ export const activities = pgTable(
   (t) => [index("activities_contact_id_idx").on(t.contactId)],
 );
 
-// channels — площадки (TG-каналы/группы), которыми занимается бизнес.
-// Связь с админом — через channel_admins (m:n: один канал может иметь
-// несколько админов; один контакт может админить несколько каналов).
+// channels — площадки (TG-каналы/группы и в будущем MAX), которыми занимается
+// бизнес. Связь с админом — через channel_admins (m:n: один канал может
+// иметь несколько админов; один контакт может админить несколько каналов).
 //
-// tg_chat_id опциональный: для каналов из CSV-импорта мы знаем только
-// ссылку, не resolved-id. Заполняется лениво если бот когда-нибудь увидит
-// этот канал в replica (отложено в 11.3).
+// Раскладка по правилу «единый источник истины — соцсеть» (см. plan §11.6):
+//   - Колонки = универсальные поля (есть в любой соцсети): title, description,
+//     username, link, member_count, external_id (id канала в его соцсети).
+//   - `meta` jsonb = proprietary поля конкретной соцсети (TG-specific:
+//     boost_level, is_verified, has_dm, supergroup_id, linked_chat_id,
+//     gift_count, photo_*_id, …). При появлении MAX — туда же ляжет MAX-их
+//     специфика.
+//   - `properties` jsonb = наши computed/csv-импорт поля, которые соцсеть
+//     не отдаёт (ER, ниша, is_rkn, теги). Соцсетевой pull их НЕ ТРОГАЕТ.
+//
+// `synced_at` — общий timestamp последнего pull'а из соцсети. NULL = ни разу
+// не синхронизировались, CSV-импорт пишет всё. NOT NULL = свежие данные из
+// соцсети, CSV пишет только properties + admin_username (TG этого не знает).
+export const channelPlatform = pgEnum("channel_platform", ["telegram", "max"]);
+
 export const channels = pgTable(
   "channels",
   {
@@ -709,14 +721,29 @@ export const channels = pgTable(
     workspaceId: text("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
-    tgChatId: text("tg_chat_id"),
+    platform: channelPlatform("platform").notNull().default("telegram"),
+    // ID канала в его соцсети. Для TG — `chat_id` формата `-100…`. Для MAX —
+    // что-то своё. uniq на (ws, platform, external_id) WHERE NOT NULL.
+    externalId: text("external_id"),
     title: text("title").notNull(),
+    description: text("description"),
+    // Публичный @handle без `@`, в исходном регистре. uniq делается по
+    // lower() для case-insensitive дедупа.
+    username: text("username"),
     link: text("link"),
-    lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
+    memberCount: integer("member_count"),
+    // Proprietary поля соцсети (TG: boost_level, is_verified, has_dm,
+    // supergroup_id, linked_chat_id, photo_small_id, gift_count, …).
+    // Перезатирается ЦЕЛИКОМ при каждом soc-pull.
+    meta: jsonb("meta").$type<Record<string, unknown>>().notNull().default({}),
+    // Наши/CSV-импорт поля, которых нет в соцсети (ER, ниша, is_rkn).
+    // НЕ трогается соц-pull'ом.
     properties: jsonb("properties")
       .$type<Record<string, unknown>>()
       .notNull()
       .default({}),
+    syncedAt: timestamp("synced_at", { withTimezone: true }),
+    lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
     createdBy: text("created_by")
       .notNull()
       .references(() => users.id),
@@ -725,13 +752,31 @@ export const channels = pgTable(
   },
   (t) => [
     index("channels_workspace_id_idx").on(t.workspaceId),
-    // Дедуп при повторном CSV-импорте: одна и та же ссылка в воркспейсе =
-    // один канал. lower() — потому что @Foo и @foo это один TG-канал.
-    uniqueIndex("channels_workspace_link_unique")
-      .on(t.workspaceId, sql`lower(${t.link})`)
-      .where(sql`${t.link} IS NOT NULL`),
+    // Дедуп при повторном CSV-импорте по ID в соцсети.
+    uniqueIndex("channels_workspace_platform_external_id_unique")
+      .on(t.workspaceId, t.platform, t.externalId)
+      .where(sql`${t.externalId} IS NOT NULL`),
+    // Второй идентификатор — публичный @handle, регистр-независимо.
+    uniqueIndex("channels_workspace_platform_username_unique")
+      .on(t.workspaceId, t.platform, sql`lower(${t.username})`)
+      .where(sql`${t.username} IS NOT NULL`),
   ],
 );
+
+// Кеш minithumbnail (base64 jpeg ~200B) из соцсети — лежит отдельной
+// таблицей, чтобы list-запросы по channels не тащили лишние ~3MB на 14k
+// каналов. JOIN'им только там, где UI реально показывает превью.
+// Расширение под полноразмерные аватарки (small_path/big_path для
+// downloadFile) — добавится сюда же отдельным этапом.
+export const channelThumbnails = pgTable("channel_thumbnails", {
+  channelId: text("channel_id")
+    .primaryKey()
+    .references(() => channels.id, { onDelete: "cascade" }),
+  b64: text("b64").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
 
 export const channelAdmins = pgTable(
   "channel_admins",

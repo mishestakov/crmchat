@@ -1,15 +1,34 @@
 import { z } from "zod";
 
-// Площадка = TG-канал/группа, которыми занимается бизнес. Админы — m:n
-// связь на contacts (см. schema.ts channelAdmins).
+// Площадка = канал/группа в соцсети. Сейчас Telegram, в будущем MAX.
+// Раскладка хранилища:
+//   - типизированные поля (title, description, username, link, member_count,
+//     external_id) — универсальные для любой соцсети
+//   - `meta` jsonb — proprietary поля соцсети (TG: boost_level, is_verified,
+//     has_dm, photo_*_id, linked_chat_id, …). Перезатирается соц-pull'ом
+//   - `properties` jsonb — наши computed/csv-импорт поля (ER, ниша, is_rkn).
+//     Соц-pull их НЕ ТРОГАЕТ
+//   - `synced_at` — когда последний раз пулили соцсеть. NULL = ни разу
+export const ChannelPlatformSchema = z.enum(["telegram", "max"]);
+export type ChannelPlatform = z.infer<typeof ChannelPlatformSchema>;
+
 export const ChannelSchema = z.object({
   id: z.string().min(1).max(64),
   workspaceId: z.string().min(1).max(64),
-  tgChatId: z.string().nullable(),
+  platform: ChannelPlatformSchema,
+  externalId: z.string().nullable(),
   title: z.string().min(1).max(256),
+  description: z.string().nullable(),
+  username: z.string().nullable(),
   link: z.string().nullable(),
-  lastMessageAt: z.iso.datetime().nullable(),
+  memberCount: z.number().int().nullable(),
+  meta: z.record(z.string(), z.unknown()),
   properties: z.record(z.string(), z.unknown()),
+  syncedAt: z.iso.datetime().nullable(),
+  lastMessageAt: z.iso.datetime().nullable(),
+  // Минитамбнейл из соцсети (base64 jpeg). Тянется LEFT JOIN'ом из
+  // channel_thumbnails — если ещё не было соц-pull'а или картинки нет.
+  thumbnailB64: z.string().nullable(),
   // Админы канала (плоский список). Sticky-аккаунт берётся из contact'а
   // первого админа (UI-колонка «закреплён за»).
   admins: z.array(
@@ -28,31 +47,60 @@ export type Channel = z.infer<typeof ChannelSchema>;
 export const CreateChannelSchema = z.object({
   title: z.string().min(1).max(256),
   link: z.string().min(1).max(512).nullable().optional(),
+  username: z.string().min(1).max(64).nullable().optional(),
+  externalId: z.string().min(1).max(64).nullable().optional(),
+  platform: ChannelPlatformSchema.optional(),
   adminContactIds: z.array(z.string().min(1).max(64)).optional(),
 });
 export type CreateChannelInput = z.infer<typeof CreateChannelSchema>;
 
-// CSV-импорт каналов: одна строка = один канал.
-// admin_username опционален; если контакта с таким @ нет в воркспейсе и в
-// replica — создадим stub-contact (smart-stub: сначала смотрим в replica,
-// при попадании сразу подставляем tg_user_id).
+// CSV-импорт каналов с column-mapping. Юзер на фронте парсит CSV и
+// присылает сюда:
+//   - rows: массив объектов { csvHeader: csvValue }
+//   - mapping: какой CSV-header в какой типизированный слот идёт + какие
+//     headers идут в `properties` под их собственным или указанным ключом
+// Бэк применяет mapping. Правило приоритета: если канал уже синхронизирован
+// из соцсети (synced_at IS NOT NULL), CSV пишет только `properties` +
+// admin_username; типизированные поля (title/description/member_count/…)
+// остаются от соцсети.
+export const ImportChannelsMappingSchema = z.object({
+  // Идентифицирующий слот (нужен хотя бы один). external_id или username
+  // используются для дедупа.
+  externalId: z.string().optional(),
+  username: z.string().optional(),
+  link: z.string().optional(),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  memberCount: z.string().optional(),
+  adminUsername: z.string().optional(),
+  // Свободные пользовательские поля: { propertyKey: csvHeader }.
+  // propertyKey — это ключ внутри channels.properties (например 'er', 'niche').
+  // Регексп зеркалит фронтовую валидацию (см. ImportWizard) — без него
+  // через curl можно было бы записать произвольный ключ в jsonb.
+  properties: z
+    .record(
+      z.string().regex(/^[a-z0-9_]+$/i, "propertyKey must match [a-z0-9_]+"),
+      z.string(),
+    )
+    .optional(),
+});
+export type ImportChannelsMapping = z.infer<typeof ImportChannelsMappingSchema>;
+
 export const ImportChannelsSchema = z.object({
-  rows: z.array(
-    z.object({
-      channel_url: z.string().min(1).max(512),
-      title: z.string().max(256).optional(),
-      admin_username: z.string().max(64).optional(),
-      admin_phone: z.string().max(32).optional(),
-    }),
-  ),
+  rows: z.array(z.record(z.string(), z.string())).max(50000),
+  mapping: ImportChannelsMappingSchema,
+  platform: ChannelPlatformSchema.default("telegram"),
 });
 export type ImportChannelsInput = z.infer<typeof ImportChannelsSchema>;
 
 export const ImportChannelsResultSchema = z.object({
   channelsCreated: z.number().int(),
   channelsUpdated: z.number().int(),
+  // Канал уже синхронизирован из соцсети — типизированные поля пропущены,
+  // обновлены только `properties` + admin-привязка.
+  channelsSyncSkipped: z.number().int(),
   adminContactsCreated: z.number().int(),
   adminContactsRecognized: z.number().int(),
-  skippedNoUrl: z.number().int(),
+  skippedNoIdentifier: z.number().int(),
 });
 export type ImportChannelsResult = z.infer<typeof ImportChannelsResultSchema>;

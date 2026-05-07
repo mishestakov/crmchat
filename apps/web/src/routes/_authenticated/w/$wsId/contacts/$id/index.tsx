@@ -28,6 +28,7 @@ import {
 import { useOpenChat } from "../../../../../../components/tg-chat-host";
 import { TgChatIframe } from "../../../../../../components/tg-chat-iframe";
 import type { ChatPeer } from "../../../../../../lib/chat-store";
+import { ChannelCard } from "../../-channel-card";
 
 type Search = { chat?: boolean };
 
@@ -665,13 +666,26 @@ function InlineInput(props: {
   );
 }
 
-// Секция «Каналы» на карточке контакта. Источник — contact.channels[]
-// (subquery в /contacts/{id}). Привязка/отвязка через POST/DELETE
-// /channels/{id}/admins.
+// Секция «Каналы» на карточке контакта. Источник табов — contact.channels[]
+// (subquery в /contacts/{id}, только {id, title}). Выбранный таб подгружает
+// полный Channel через GET /channels/{id} и рендерит ChannelCard (header +
+// история plain-text). Привязка/отвязка через POST/DELETE /channels/{id}/admins.
 function ChannelsSection(props: { wsId: string; contact: Contact }) {
   const { wsId, contact } = props;
   const qc = useQueryClient();
   const [adding, setAdding] = useState(false);
+  // Selected канал — первый из списка по умолчанию. При remove обновляем,
+  // если удалили текущий выбранный.
+  const [selectedId, setSelectedId] = useState<string | null>(
+    contact.channels[0]?.id ?? null,
+  );
+  // contact.channels приходит из /contacts/{id} subquery; синхронизируемся
+  // если список изменился (привязали/отвязали).
+  useEffect(() => {
+    if (!contact.channels.find((ch) => ch.id === selectedId)) {
+      setSelectedId(contact.channels[0]?.id ?? null);
+    }
+  }, [contact.channels, selectedId]);
 
   const removeMut = useMutation({
     mutationFn: async (channelId: string) => {
@@ -727,36 +741,73 @@ function ChannelsSection(props: { wsId: string; contact: Contact }) {
           </button>
         )}
       </div>
-      <div className="px-5 py-3">
-        {contact.channels.length === 0 && !adding && (
-          <p className="text-sm text-zinc-400">
-            Контакт не записан админом ни одного канала
-          </p>
-        )}
-        {contact.channels.length > 0 && (
-          <ul className="space-y-1">
-            {contact.channels.map((ch) => (
-              <li
-                key={ch.id}
-                className="flex items-center justify-between rounded-md border border-zinc-200 px-3 py-2 text-sm"
-              >
-                <span className="truncate font-medium text-zinc-900">
-                  {ch.title}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => removeMut.mutate(ch.id)}
-                  disabled={removeMut.isPending}
-                  className="rounded p-1 text-zinc-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
-                  aria-label="Отвязать"
-                >
-                  <X size={14} />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        {adding && (
+
+      {contact.channels.length === 0 && !adding && (
+        <p className="px-5 py-3 text-sm text-zinc-400">
+          Контакт не записан админом ни одного канала
+        </p>
+      )}
+
+      {contact.channels.length > 0 && (
+        <>
+          {/* Табы. Когда канал один — таб не рисуем, просто карточка ниже. */}
+          {contact.channels.length > 1 && (
+            <div className="flex flex-wrap gap-1 border-b border-zinc-100 px-5 py-2">
+              {contact.channels.map((ch) => {
+                const active = ch.id === selectedId;
+                return (
+                  <span
+                    key={ch.id}
+                    className={
+                      "group inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs " +
+                      (active
+                        ? "bg-zinc-900 text-white"
+                        : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200")
+                    }
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setSelectedId(ch.id)}
+                      className="max-w-[200px] truncate"
+                      title={ch.title}
+                    >
+                      {ch.title}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeMut.mutate(ch.id)}
+                      disabled={removeMut.isPending}
+                      aria-label="Отвязать"
+                      className={
+                        "rounded p-0.5 disabled:opacity-50 " +
+                        (active
+                          ? "text-zinc-300 hover:bg-zinc-700 hover:text-white"
+                          : "text-zinc-400 hover:bg-red-100 hover:text-red-600")
+                      }
+                    >
+                      <X size={11} />
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
+          )}
+          {selectedId && (
+            <ChannelCardLoader
+              wsId={wsId}
+              channelId={selectedId}
+              onUnlink={
+                contact.channels.length === 1
+                  ? () => removeMut.mutate(selectedId)
+                  : undefined
+              }
+            />
+          )}
+        </>
+      )}
+
+      {adding && (
+        <div className="px-5 py-3">
           <ChannelPicker
             wsId={wsId}
             excludeIds={new Set(contact.channels.map((ch) => ch.id))}
@@ -764,7 +815,59 @@ function ChannelsSection(props: { wsId: string; contact: Contact }) {
             onCancel={() => setAdding(false)}
             loading={addMut.isPending}
           />
-        )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Подгружает полный Channel (с meta, thumbnail, syncedAt) и рендерит
+// ChannelCard. Высота фиксированная — секция в карточке контакта не должна
+// «съезжать» при разной длине истории, юзер сам скроллит ленту внутри.
+function ChannelCardLoader(props: {
+  wsId: string;
+  channelId: string;
+  onUnlink?: () => void;
+}) {
+  const channelQ = useQuery({
+    queryKey: ["channel", props.wsId, props.channelId] as const,
+    queryFn: async () => {
+      const { data, error } = await api.GET(
+        "/v1/workspaces/{wsId}/channels/{id}",
+        { params: { path: { wsId: props.wsId, id: props.channelId } } },
+      );
+      if (error) throw error;
+      return data;
+    },
+    // Циклирование табов канала не должно ре-fetch'ить — sync-mutation в
+    // ChannelCard сам инвалидирует этот ключ когда обновляются TG-данные.
+    staleTime: 5 * 60 * 1000,
+  });
+  if (channelQ.isLoading) {
+    return <p className="px-5 py-3 text-sm text-zinc-400">Загрузка канала…</p>;
+  }
+  if (channelQ.error || !channelQ.data) {
+    return (
+      <p className="px-5 py-3 text-sm text-red-600">
+        {channelQ.error ? errorMessage(channelQ.error) : "Канал не найден"}
+      </p>
+    );
+  }
+  return (
+    <div className="flex h-[600px] flex-col">
+      {props.onUnlink && (
+        <div className="flex justify-end px-4 py-1">
+          <button
+            type="button"
+            onClick={props.onUnlink}
+            className="text-xs text-zinc-400 hover:text-red-600"
+          >
+            Отвязать канал
+          </button>
+        </div>
+      )}
+      <div className="min-h-0 flex-1">
+        <ChannelCard wsId={props.wsId} channel={channelQ.data} />
       </div>
     </div>
   );
