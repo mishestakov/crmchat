@@ -10,12 +10,12 @@ import {
 } from "./client.ts";
 
 // Pending-store для незавершённого auth-флоу (между HTTP-вызовами sendCode →
-// signIn → signInPassword клиент должен выживать). На каждое (workspace|user)
+// signIn → signInPassword клиент должен выживать). На каждое (workspace, accountId)
 // — один TdClient + AuthStateBus + TTL.
 //
 // При успехе persist-helper вызывает promote(), и инстанс перемещается в
-// рабочий кэш (workerClients / personalClients). Либо при abandon (TTL,
-// явный sign-out) — clear() закрывает клиент и стирает td-database/<key>/.
+// рабочий кэш (workerClients). Либо при abandon (TTL, явный sign-out) —
+// clear() закрывает клиент и стирает td-database/<key>/.
 
 export type PendingEntry = {
   client: TdClient;
@@ -125,8 +125,6 @@ function describeKey(key: TdAccountKey): string {
   switch (key.kind) {
     case "outreach":
       return `outreach:${key.accountId}`;
-    case "personal":
-      return `personal:${key.userId}`;
     case "raw":
       return `raw:${key.key}`;
   }

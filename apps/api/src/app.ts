@@ -21,7 +21,6 @@ import outreachLists from "./routes/outreach-lists.ts";
 import outreachSchedule from "./routes/outreach-schedule.ts";
 import outreachSequences from "./routes/outreach-sequences.ts";
 import properties from "./routes/properties.ts";
-import telegram from "./routes/telegram.ts";
 import workspaces from "./routes/workspaces.ts";
 
 export const app = new OpenAPIHono<{ Variables: SessionVars }>();
@@ -39,7 +38,6 @@ const protectedApp = new OpenAPIHono<{ Variables: SessionVars }>();
 protectedApp.use("/v1/*", requireSession);
 protectedApp.route("/", me);
 protectedApp.route("/", workspaces);
-protectedApp.route("/", telegram);
 // /v1/invites/:code GET + POST accept — только requireSession, без
 // assertMember (приглашённый ещё не member).
 protectedApp.route("/", publicInvites);

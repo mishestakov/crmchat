@@ -296,31 +296,7 @@ export const contacts = pgTable(
   ],
 );
 
-// Личный CRM-аккаунт юзера: один на user (unique constraint), используется для
-// импорта существующих чатов из TG-папок в CRM (см. /settings/telegram-sync).
-// Outreach-аккаунты (для холодных рассылок) — отдельная сущность в
-// `outreach_accounts`: multi per workspace, со своим proxy, warmup-pipeline,
-// daily rate-limit. Не путать.
-//
-// MTProto-state живёт в `td-database/personal/<userId>/` (TDLib binlog +
-// per-account peer cache). Эта таблица — справочник «у юзера подключен
-// TG-аккаунт + базовый профиль для UI». Удаление row = drop personal client.
-export const telegramAccounts = pgTable("telegram_accounts", {
-  id: text("id").primaryKey().$defaultFn(shortId),
-  userId: text("user_id")
-    .notNull()
-    .unique()
-    .references(() => users.id, { onDelete: "cascade" }),
-  tgUserId: text("tg_user_id").notNull(),
-  tgUsername: text("tg_username"),
-  phoneNumber: text("phone_number"),
-  firstName: text("first_name"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
-
-// Outreach-аккаунт: ОТПРАВЛЯЮЩИЙ TG-аккаунт для холодных рассылок. Не путать
-// с `telegram_accounts` (личный CRM-аккаунт юзера, импорт чатов).
+// Outreach-аккаунт: ОТПРАВЛЯЮЩИЙ TG-аккаунт для холодных рассылок.
 //   - Multi per workspace (не unique по чему-либо identifying).
 //   - Жизненный цикл: расходник; при бане — заводят новый.
 //   - Worker MTProto-state (TDLib binlog) живёт per-account в
@@ -690,33 +666,6 @@ export const scheduledMessages = pgTable(
     index("scheduled_messages_lead_id_idx").on(t.leadId),
     // Composite-индекс под главный запрос воркера: pending по sendAt asc.
     index("scheduled_messages_worker_pick_idx").on(t.status, t.sendAt),
-  ],
-);
-
-// Привязка «папка Telegram → workspace для импорта контактов». Один user может
-// синкать несколько папок, каждую в свой workspace. Удаление = sync прекращается,
-// уже импортированные контакты остаются.
-export const telegramSyncConfigs = pgTable(
-  "telegram_sync_configs",
-  {
-    id: text("id").primaryKey().$defaultFn(shortId),
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    folderId: text("folder_id").notNull(),
-    folderTitle: text("folder_title").notNull(),
-    workspaceId: text("workspace_id")
-      .notNull()
-      .references(() => workspaces.id, { onDelete: "cascade" }),
-    lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
-    // Сколько новых контактов импортировано в последнюю синхронизацию (после
-    // дедупа). Помогает юзеру понять «что-то приехало» vs «всё уже было».
-    lastSyncImported: integer("last_sync_imported"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [
-    unique("tg_sync_user_folder_unique").on(t.userId, t.folderId),
-    index("tg_sync_user_id_idx").on(t.userId),
   ],
 );
 

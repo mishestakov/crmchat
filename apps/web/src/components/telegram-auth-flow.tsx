@@ -5,9 +5,8 @@ import { QRCodeSVG } from "qrcode.react";
 import { errorMessage } from "../lib/errors";
 import { useEventSourceEvent } from "../lib/hooks";
 
-// Унифицированный auth-флоу TG-аккаунта. Используется и для user-scoped TG-sync
-// (settings/telegram-sync), и для workspace-scoped outreach-аккаунта
-// (outreach/accounts/new). Различается endpoint'ами, передаваемыми через `api`.
+// Auth-флоу outreach TG-аккаунта (outreach/accounts/new). Endpoint'ы
+// прокидываются через `api`-prop.
 //
 // State-машина: scan-qr (default) | enter-phone | enter-code | enter-password.
 
@@ -360,8 +359,6 @@ function PasswordStep(props: {
   );
 }
 
-// Re-export'им Card/TelegramLogo для других мест auth-флоу (settings/telegram-sync
-// тоже их использует — это третий повтор по правилу CLAUDE.md, выносим).
 export function Card(props: { children: React.ReactNode }) {
   return (
     <div className="overflow-hidden rounded-2xl bg-white shadow-sm">

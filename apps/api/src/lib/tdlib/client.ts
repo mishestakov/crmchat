@@ -5,9 +5,8 @@ import type { Client as TdlClient } from "tdl";
 import { ensureTdlConfigured, tgApiHash, tgApiId } from "./configure.ts";
 
 // Базовый каталог под binlog'и + кэшированные файлы. Per-account подкаталог
-// (key = accountId | personal-userId) — TDLib хранит auth-state, peer cache,
-// pts/qts/seq для надёжной доставки updates. Persistent FS-state, в проде на
-// volume.
+// (key = accountId) — TDLib хранит auth-state, peer cache, pts/qts/seq для
+// надёжной доставки updates. Persistent FS-state, в проде на volume.
 //
 // Дефолт `.td-database` — относительно cwd Bun-процесса (apps/api/), потому
 // что pnpm dev запускает `bun run` из workspace root апи. В проде override
@@ -16,17 +15,16 @@ const DATA_ROOT = resolve(process.env.TDLIB_DATA_DIR ?? ".td-database");
 
 export type TdClient = TdlClient;
 
+// outreach — постоянный outreach-аккаунт workspace'а (worker-инстанс).
+// raw — временный ключ для коротких задач (provision iframe-сессии, и т.п.).
 export type TdAccountKey =
   | { kind: "outreach"; accountId: string }
-  | { kind: "personal"; userId: string }
   | { kind: "raw"; key: string };
 
 export function tdAccountDir(key: TdAccountKey): string {
   switch (key.kind) {
     case "outreach":
       return resolve(DATA_ROOT, "outreach", key.accountId);
-    case "personal":
-      return resolve(DATA_ROOT, "personal", key.userId);
     case "raw":
       return resolve(DATA_ROOT, key.key);
   }
@@ -34,8 +32,7 @@ export function tdAccountDir(key: TdAccountKey): string {
 
 export type CreateTdClientOptions = {
   key: TdAccountKey;
-  // Имя устройства, видно юзеру в Settings → Devices Telegram. Используем чтобы
-  // отличать outreach-аккаунты ("CRM Outreach") от personal ("CRM Sync").
+  // Имя устройства, видно юзеру в Settings → Devices Telegram.
   deviceModel?: string;
 };
 

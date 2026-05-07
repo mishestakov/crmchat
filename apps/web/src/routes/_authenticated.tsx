@@ -68,9 +68,6 @@ function AuthLayout() {
                 <SidebarLink to="/w/$wsId/properties" wsId={wsId}>
                   Кастомные поля
                 </SidebarLink>
-                <SidebarLink to="/w/$wsId/settings/telegram-sync" wsId={wsId}>
-                  Синк ТГ-папок
-                </SidebarLink>
                 <SidebarLink to="/w/$wsId/settings/workspace" wsId={wsId}>
                   Настройки
                 </SidebarLink>
@@ -155,7 +152,6 @@ function SidebarLink(props: {
     | "/w/$wsId/channels"
     | "/w/$wsId/properties"
     | "/w/$wsId/settings/workspace"
-    | "/w/$wsId/settings/telegram-sync"
     | "/w/$wsId/outreach/accounts"
     | "/w/$wsId/outreach/sequences"
     | "/w/$wsId/outreach/pipeline"
