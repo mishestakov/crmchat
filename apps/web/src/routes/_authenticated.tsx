@@ -199,7 +199,9 @@ function SidebarFooter() {
       <div className="truncate text-xs text-zinc-500">
         {me.data ? me.data.name ?? me.data.username ?? me.data.id : "…"}
       </div>
-      {import.meta.env.DEV && <DevUserSwitcher currentUserId={me.data?.id} />}
+      {import.meta.env.DEV && me.data?.hasAdminRole && (
+        <DevUserSwitcher currentUserId={me.data?.id} />
+      )}
       <button
         onClick={() => logout.mutate()}
         className="w-full rounded border border-zinc-300 px-2 py-1.5 text-left hover:bg-zinc-50"
