@@ -29,6 +29,15 @@ const WsIdParam = z.object({
   wsId: z.string().min(1).max(64),
   id: z.string().min(1).max(64),
 });
+const WsIdContactParam = z.object({
+  wsId: z.string().min(1).max(64),
+  id: z.string().min(1).max(64),
+  contactId: z.string().min(1).max(64),
+});
+
+const AddAdminsBody = z.object({
+  contactIds: z.array(z.string().min(1).max(64)).min(1).max(50),
+});
 
 const app = new OpenAPIHono<{ Variables: WorkspaceVars }>();
 
@@ -120,6 +129,98 @@ app.openapi(
     await db
       .delete(channels)
       .where(and(eq(channels.id, id), eq(channels.workspaceId, wsId)));
+    return c.body(null, 204);
+  },
+);
+
+// Привязка контакт↔канал постфактум: каналы могли прийти из CSV без
+// админов, а контакты автоподтянуться позже из живого трафика — нужен
+// способ связать руками. Возвращает обновлённый channel (с актуальным
+// admins[]) — фронт сразу патчит cache.
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/channels/{id}/admins",
+    tags: ["channels"],
+    request: {
+      params: WsIdParam,
+      body: { content: { "application/json": { schema: AddAdminsBody } } },
+    },
+    responses: {
+      200: {
+        content: { "application/json": { schema: ChannelSchema } },
+        description: "Admins added",
+      },
+    },
+  }),
+  async (c) => {
+    const { wsId, id } = c.req.valid("param");
+    const { contactIds } = c.req.valid("json");
+
+    const [channel] = await db
+      .select()
+      .from(channels)
+      .where(and(eq(channels.id, id), eq(channels.workspaceId, wsId)))
+      .limit(1);
+    if (!channel) {
+      throw new HTTPException(404, { message: "channel not found" });
+    }
+
+    // Проверяем, что все contactIds принадлежат этому workspace — иначе
+    // менеджер может прилинковать чужой контакт через подобранный id.
+    const valid = await db
+      .select({ id: contacts.id })
+      .from(contacts)
+      .where(
+        and(
+          eq(contacts.workspaceId, wsId),
+          inArray(contacts.id, contactIds),
+        ),
+      );
+    if (valid.length !== contactIds.length) {
+      throw new HTTPException(400, {
+        message: "some contacts do not belong to this workspace",
+      });
+    }
+
+    await db
+      .insert(channelAdmins)
+      .values(contactIds.map((contactId) => ({ channelId: id, contactId })))
+      .onConflictDoNothing();
+
+    const [serialized] = await joinAdmins([channel]);
+    return c.json(serialized!);
+  },
+);
+
+app.openapi(
+  createRoute({
+    method: "delete",
+    path: "/v1/workspaces/{wsId}/channels/{id}/admins/{contactId}",
+    tags: ["channels"],
+    request: { params: WsIdContactParam },
+    responses: { 204: { description: "Admin removed" } },
+  }),
+  async (c) => {
+    const { wsId, id, contactId } = c.req.valid("param");
+    // Проверяем, что канал из этого workspace — без этой проверки можно было
+    // бы дёрнуть DELETE по чужому channelId.
+    const [channel] = await db
+      .select({ id: channels.id })
+      .from(channels)
+      .where(and(eq(channels.id, id), eq(channels.workspaceId, wsId)))
+      .limit(1);
+    if (!channel) {
+      throw new HTTPException(404, { message: "channel not found" });
+    }
+    await db
+      .delete(channelAdmins)
+      .where(
+        and(
+          eq(channelAdmins.channelId, id),
+          eq(channelAdmins.contactId, contactId),
+        ),
+      );
     return c.body(null, 204);
   },
 );

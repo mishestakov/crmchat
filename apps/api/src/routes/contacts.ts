@@ -1,10 +1,18 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { streamSSE } from "hono/streaming";
-import { and, eq, getTableColumns, ilike, or, sql, type SQL } from "drizzle-orm";
+import {
+  and,
+  eq,
+  getTableColumns,
+  ilike,
+  isNull,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 import {
   ContactSchema as BaseContactSchema,
-  CreateContactSchema as BaseCreate,
   UpdateContactSchema as BaseUpdate,
 } from "@repo/core";
 import { db } from "../db/client.ts";
@@ -22,6 +30,7 @@ import {
 } from "../lib/contact-properties.ts";
 import { errMsg } from "../lib/errors.ts";
 import { getOutreachWorkerClient } from "../lib/outreach-account-client.ts";
+import { resolveStickyByPeerIds } from "../lib/sticky.ts";
 import type { WorkspaceVars } from "../middleware/assert-member.ts";
 
 // Subquery: ближайший открытый reminder для контакта. Тащим в каждый GET — чтобы
@@ -66,8 +75,16 @@ const chatAccountsSql = sql<ChatAccountRow[]>`(
   ) t
 )`.as("chat_accounts");
 
+// Subquery: каналы, в которых контакт записан админом (m:n channel_admins).
+type ChannelRow = { id: string; title: string };
+const channelsSql = sql<ChannelRow[]>`(
+  SELECT COALESCE(json_agg(json_build_object('id', ch.id, 'title', ch.title) ORDER BY ch.title), '[]'::json)
+  FROM channel_admins ca
+  JOIN channels ch ON ch.id = ca.channel_id
+  WHERE ca.contact_id = contacts.id
+)`.as("channels");
+
 const ContactSchema = BaseContactSchema.openapi("Contact");
-const CreateContactSchema = BaseCreate.openapi("CreateContact");
 const UpdateContactSchema = BaseUpdate.openapi("UpdateContact");
 
 const WsParam = z.object({ wsId: z.string().min(1).max(64) });
@@ -154,50 +171,12 @@ app.openapi(
       ...getTableColumns(contacts),
       nextStep: nextStepSql,
       chatAccounts: chatAccountsSql,
+      channels: channelsSql,
     })
       .from(contacts)
       .where(and(...conditions))
       .orderBy(contacts.createdAt);
     return c.json(rows.map(serialize));
-  },
-);
-
-app.openapi(
-  createRoute({
-    method: "post",
-    path: "/v1/workspaces/{wsId}/contacts",
-    tags: ["contacts"],
-    request: {
-      params: WsParam,
-      body: {
-        content: { "application/json": { schema: CreateContactSchema } },
-        required: true,
-      },
-    },
-    responses: {
-      201: {
-        content: { "application/json": { schema: ContactSchema } },
-        description: "Created",
-      },
-    },
-  }),
-  async (c) => {
-    const wsId = c.get("workspaceId");
-    const userId = c.get("userId");
-    const body = c.req.valid("json");
-    const defs = await loadPropertyDefs(wsId);
-    const validatedProps = validateContactProperties(defs, body.properties);
-    enforceRequiredProperties(defs, validatedProps);
-    const [inserted] = await db
-      .insert(contacts)
-      .values({
-        workspaceId: wsId,
-        properties: validatedProps,
-        createdBy: userId,
-      })
-      .returning({ id: contacts.id });
-    const row = await selectOne(wsId, inserted!.id);
-    return c.json(serialize(row!), 201);
   },
 );
 
@@ -274,6 +253,7 @@ app.openapi(
         ...row,
         nextStep: null,
         chatAccounts: [],
+        channels: [],
       }),
     );
   },
@@ -369,6 +349,7 @@ async function selectOne(wsId: string, id: string) {
       ...getTableColumns(contacts),
       nextStep: nextStepSql,
       chatAccounts: chatAccountsSql,
+      channels: channelsSql,
     })
     .from(contacts)
     .where(and(eq(contacts.id, id), eq(contacts.workspaceId, wsId)))
@@ -381,6 +362,7 @@ type ContactRow = typeof contacts.$inferSelect & {
     | { date: string; text: string; repeat: "none" | "daily" | "weekly" | "monthly" }
     | null;
   chatAccounts: ChatAccountRow[];
+  channels: ChannelRow[];
 };
 
 function serialize(row: ContactRow) {
@@ -393,6 +375,7 @@ function serialize(row: ContactRow) {
     lastMessageAt: row.lastMessageAt ? row.lastMessageAt.toISOString() : null,
     primaryAccountId: row.primaryAccountId,
     chatAccounts: row.chatAccounts,
+    channels: row.channels,
     createdBy: row.createdBy,
     createdAt: row.createdAt.toISOString(),
   };
@@ -517,12 +500,35 @@ async function readOnTelegram(
   } as never);
 }
 
-// Read-only история чата для правой панели на /contacts (10.7). TDLib кэширует
-// getChatHistory в td-database, повторные клики идут из локального кэша без
-// MTProto. only_local=false на первый вызов подкачивает.
+// Read-only история чата для правой панели на /contacts.
+//
+// Стратегия only_local: первый запрос для пары (account, chat) идёт с
+// `only_local=false` — TDLib делает MTProto-запрос и заполняет локальный
+// кэш. Помечаем в module-level Set; последующие запросы (включая
+// pagination через `before`) идут с `only_local=true` — мгновенно из
+// кэша, без сети. По length=0 определять cache-miss нельзя: TDLib почти
+// всегда держит last_message чата в payload, отдаёт его из кэша как 1
+// сообщение даже на свежем чате, и второго RPC не происходит.
+//
+// На первом ответе с only_local=false TDLib часто отдаёт мгновенно то что
+// в кэше (last_message) и параллельно качает остаток. Один retry через
+// 500ms с only_local=true подбирает накопленное.
+//
+// На рестарте api Set теряется → один лишний `only_local=false` на первое
+// открытие после рестарта; принято.
+//
+// Side-effect: после успешного getChatHistory обновляем
+// `tg_chats.last_inbound_at`/`last_outbound_at` MAX'ом из полученных
+// сообщений и пересчитываем sticky для contact'а через
+// resolveStickyByPeerIds. Это естественный backfill: юзер открыл drawer →
+// мы попутно уточнили sticky без отдельного RPC.
 //
 // viewMessages здесь НЕ дёргаем — иначе случайно отметим непрочитанные ИХ
 // сообщения как прочитанные при простом просмотре.
+const historyFetched = new Set<string>();
+const historyKey = (accountId: string, chatId: string) =>
+  `${accountId}:${chatId}`;
+
 const ChatMessageSchema = z.object({
   id: z.string(),
   date: z.iso.datetime(),
@@ -540,6 +546,9 @@ app.openapi(
       query: z.object({
         accountId: z.string().min(1).max(64),
         limit: z.coerce.number().int().min(1).max(100).default(50),
+        // Cursor для pagination: id самого старого сообщения, которое уже
+        // есть на клиенте. Без него — newest 50.
+        before: z.string().min(1).max(64).optional(),
       }),
     },
     responses: {
@@ -556,7 +565,7 @@ app.openapi(
   async (c) => {
     const wsId = c.get("workspaceId");
     const { id } = c.req.valid("param");
-    const { accountId, limit } = c.req.valid("query");
+    const { accountId, limit, before } = c.req.valid("query");
 
     const [contact] = await db
       .select({ properties: contacts.properties })
@@ -597,18 +606,103 @@ app.openapi(
       throw new HTTPException(503, { message: "tg client unavailable" });
     }
 
-    const result = (await client.invoke({
-      _: "getChatHistory",
-      chat_id: Number(chatRow.chatId),
-      from_message_id: 0,
-      offset: 0,
-      limit,
-      only_local: false,
-    } as never)) as { messages: TdMessage[] };
+    const fromMessageId = before ? Number(before) : 0;
+    const fetchHistory = (only_local: boolean) =>
+      client.invoke({
+        _: "getChatHistory",
+        chat_id: Number(chatRow.chatId),
+        from_message_id: fromMessageId,
+        offset: 0,
+        limit,
+        only_local,
+      } as never) as Promise<{ messages: TdMessage[] }>;
+
+    const cacheKey = historyKey(acc.id, chatRow.chatId);
+    const onlyLocal = historyFetched.has(cacheKey);
+    let result = await fetchHistory(onlyLocal);
+
+    // На первом open (cache miss) TDLib часто отдаёт мгновенно last_message
+    // из кэша и параллельно качает остаток. Один retry через 500ms
+    // подбирает накопленное. По td_api.tl §getChatHistory: «can be smaller
+    // than the specified limit» — но pagination и hasMore-логику мы
+    // строим только на пустом ответе, не на «меньше limit».
+    if (!onlyLocal && !before && result.messages.length < limit) {
+      await new Promise((r) => setTimeout(r, 500));
+      const second = await fetchHistory(true);
+      if (second.messages.length > result.messages.length) result = second;
+    }
+    if (!onlyLocal) historyFetched.add(cacheKey);
+
+    // Backfill last_inbound_at / last_outbound_at точными датами.
+    void backfillInboundOutbound(
+      acc.id,
+      chatRow.chatId,
+      tgUserId,
+      wsId,
+      result.messages,
+    ).catch((e) =>
+      console.error("[contacts/chat-history] backfill failed:", errMsg(e)),
+    );
 
     return c.json({ messages: result.messages.map(mapMessage) });
   },
 );
+
+async function backfillInboundOutbound(
+  accountId: string,
+  chatId: string,
+  peerUserId: string,
+  wsId: string,
+  messages: TdMessage[],
+): Promise<void> {
+  if (messages.length === 0) return;
+  let maxInbound = 0;
+  let maxOutbound = 0;
+  for (const m of messages) {
+    if (m.is_outgoing) {
+      if (m.date > maxOutbound) maxOutbound = m.date;
+    } else if (m.date > maxInbound) maxInbound = m.date;
+  }
+  if (maxInbound === 0 && maxOutbound === 0) return;
+
+  // postgres-js не выводит timestamptz для Date через bind-параметр в
+  // GREATEST() — нужно ISO-строкой и явный ::timestamptz cast (та же
+  // штука что в outreach-worker getNewLeadsStatsToday).
+  const set: Record<string, unknown> = {};
+  if (maxInbound > 0) {
+    const atIso = new Date(maxInbound * 1000).toISOString();
+    set.lastInboundAt = sql`greatest(${tgChats.lastInboundAt}, ${atIso}::timestamptz)`;
+    set.hasInbound = true;
+  }
+  if (maxOutbound > 0) {
+    const atIso = new Date(maxOutbound * 1000).toISOString();
+    set.lastOutboundAt = sql`greatest(${tgChats.lastOutboundAt}, ${atIso}::timestamptz)`;
+  }
+  await db
+    .update(tgChats)
+    .set(set as never)
+    .where(and(eq(tgChats.accountId, accountId), eq(tgChats.chatId, chatId)));
+
+  // Если было хотя бы одно incoming — пересчитываем sticky для этого peer'а.
+  // Резолвер посмотрит на свежий last_inbound_at и обновит contact.
+  if (maxInbound === 0) return;
+  const winners = await resolveStickyByPeerIds(wsId, [peerUserId]);
+  const winner = winners.get(peerUserId);
+  if (!winner) return;
+  // Sticky выставляем только если ранее был null. Перетирать существующее
+  // не хотим — sticky закрепляется навсегда после первого определения
+  // (меняется только при следующем import-contacts).
+  await db
+    .update(contacts)
+    .set({ primaryAccountId: winner })
+    .where(
+      and(
+        eq(contacts.workspaceId, wsId),
+        isNull(contacts.primaryAccountId),
+        sql`${contacts.properties}->>'tg_user_id' = ${peerUserId}`,
+      ),
+    );
+}
 
 type TdMessage = {
   id: number | string;

@@ -37,6 +37,15 @@ export const ContactSchema = z.object({
       lastOutboundAt: z.iso.datetime().nullable(),
     }),
   ),
+  // Каналы, в которых этот контакт записан админом (m:n через
+  // channel_admins). Источник — JOIN channels через channel_admins.
+  // Используется секцией «Каналы» на карточке контакта (11.4).
+  channels: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+    }),
+  ),
   createdBy: z.string().min(1).max(64),
   createdAt: z.iso.datetime(),
 });
@@ -45,16 +54,12 @@ export type Contact = z.infer<typeof ContactSchema>;
 // Значения валидируются отдельно на сервере против определений workspace'а
 // (см. apps/api/src/lib/contact-properties.ts) — здесь z.unknown(), потому что
 // схема значения зависит от runtime-определения property.type.
-const ContactInputBase = z.object({
+// Поштучного создания контактов больше нет: 10.8 убрал кнопку «+ Новый» в
+// /contacts и страницу /contacts/new; 10.5 закрыл «Создать лид» в
+// /outreach/chat (контакты автосоздаются listener'ом на первом DM).
+// Контакты появляются через: import собеседников аккаунта, CSV-импорт
+// каналов (smart-stub), листенер на живом трафике, worker convertLeadToContact.
+export const UpdateContactSchema = z.object({
   properties: z.record(z.string(), z.unknown()).optional(),
 });
-
-// CreateContactSchema используется только в /outreach/chat при «Создать лид
-// из открытого TG-чата». Кнопка «+ Новый» в /contacts удалена (10.8) —
-// после этапа 10.5 (живой трафик автосоздаёт contact на первом DM)
-// этот endpoint тоже скорее всего уйдёт.
-export const CreateContactSchema = ContactInputBase;
-export type CreateContactInput = z.infer<typeof CreateContactSchema>;
-
-export const UpdateContactSchema = ContactInputBase;
 export type UpdateContactInput = z.infer<typeof UpdateContactSchema>;

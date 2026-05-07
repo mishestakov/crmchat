@@ -3,7 +3,7 @@ import {
   createFileRoute,
   useNavigate,
 } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { ChevronDown, MessageCircle, Star } from "lucide-react";
 import type { paths } from "@repo/api-client";
@@ -249,8 +249,6 @@ function ContactPanel({
   wsId: string;
   opened: ChatOpenedPayload;
 }) {
-  const navigate = useNavigate();
-  const qc = useQueryClient();
   const tgUserId = opened.userId || opened.info?.peerId;
   const username = opened.username || opened.info?.username;
 
@@ -276,33 +274,6 @@ function ContactPanel({
     enabled: !!(tgUserId || username),
   });
 
-  const create = useMutation({
-    mutationFn: async () => {
-      const properties: Record<string, unknown> = {
-        full_name: opened.info?.fullName || username || "Без имени",
-      };
-      if (tgUserId) properties.tg_user_id = tgUserId;
-      if (username) properties.telegram_username = username.replace(/^@/, "");
-      if (opened.info?.description) {
-        properties.description = opened.info.description;
-      }
-      const { data, error } = await api.POST(
-        "/v1/workspaces/{wsId}/contacts",
-        { params: { path: { wsId } }, body: { properties } },
-      );
-      if (error) throw error;
-      return data!;
-    },
-    onSuccess: (created) => {
-      qc.invalidateQueries({ queryKey: ["contact-by-tg", wsId] });
-      qc.invalidateQueries({ queryKey: ["contacts", wsId] });
-      navigate({
-        to: "/w/$wsId/contacts/$id",
-        params: { wsId, id: created.id },
-      });
-    },
-  });
-
   if (lookup.isLoading) {
     return <Empty>Поиск контакта…</Empty>;
   }
@@ -315,6 +286,9 @@ function ContactPanel({
     return <ExistingContactCard wsId={wsId} contact={contact} />;
   }
 
+  // 10.5: контакт автосоздаётся outreach-listener'ом на первом DM
+  // (входящем или исходящем). Кнопку «Создать лид» убрали — повторный
+  // lookup через 1–2с после первого сообщения уже найдёт контакт.
   return (
     <div className="rounded-2xl bg-white p-4 shadow-sm">
       <div className="text-sm font-medium">
@@ -327,19 +301,9 @@ function ContactPanel({
         <div className="mt-2 text-xs text-zinc-600">{opened.info.description}</div>
       )}
       <p className="mt-3 text-xs text-zinc-500">
-        Этого контакта ещё нет в CRM.
+        Контакта ещё нет в CRM. Он появится автоматически при первом
+        отправленном или полученном сообщении.
       </p>
-      <button
-        type="button"
-        onClick={() => create.mutate()}
-        disabled={create.isPending}
-        className="mt-3 w-full rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-      >
-        {create.isPending ? "Создаём…" : "Создать лид в CRM"}
-      </button>
-      {create.error && (
-        <p className="mt-2 text-xs text-red-600">{errorMessage(create.error)}</p>
-      )}
     </div>
   );
 }

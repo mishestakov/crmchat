@@ -5,10 +5,12 @@ import {
   Bell,
   ChevronDown,
   Globe,
+  Hash,
   Mail,
   MessageCircle,
   MoreHorizontal,
   Phone,
+  Plus,
   Send,
   StickyNote,
   X,
@@ -242,6 +244,8 @@ function ContactDetail() {
             onToggleChat={() => setChatOpen(!isChatOpen)}
             canOpenChat={canOpenChat}
           />
+
+          <ChannelsSection wsId={wsId} contact={contact.data} />
 
           <ActivitiesList wsId={wsId} contactId={id} />
         </div>
@@ -658,5 +662,195 @@ function InlineInput(props: {
       }}
       className={inlineInputClass}
     />
+  );
+}
+
+// Секция «Каналы» на карточке контакта. Источник — contact.channels[]
+// (subquery в /contacts/{id}). Привязка/отвязка через POST/DELETE
+// /channels/{id}/admins.
+function ChannelsSection(props: { wsId: string; contact: Contact }) {
+  const { wsId, contact } = props;
+  const qc = useQueryClient();
+  const [adding, setAdding] = useState(false);
+
+  const removeMut = useMutation({
+    mutationFn: async (channelId: string) => {
+      const { error } = await api.DELETE(
+        "/v1/workspaces/{wsId}/channels/{id}/admins/{contactId}",
+        {
+          params: { path: { wsId, id: channelId, contactId: contact.id } },
+        },
+      );
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["contact", wsId, contact.id] });
+      qc.invalidateQueries({ queryKey: ["contacts", wsId] });
+      qc.invalidateQueries({ queryKey: ["channels", wsId] });
+    },
+  });
+
+  const addMut = useMutation({
+    mutationFn: async (channelId: string) => {
+      const { error } = await api.POST(
+        "/v1/workspaces/{wsId}/channels/{id}/admins",
+        {
+          params: { path: { wsId, id: channelId } },
+          body: { contactIds: [contact.id] },
+        },
+      );
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["contact", wsId, contact.id] });
+      qc.invalidateQueries({ queryKey: ["contacts", wsId] });
+      qc.invalidateQueries({ queryKey: ["channels", wsId] });
+      setAdding(false);
+    },
+  });
+
+  return (
+    <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
+      <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-3">
+        <span className="flex items-center gap-2 text-sm font-medium text-zinc-700">
+          <Hash size={14} className="text-zinc-400" />
+          Каналы ({contact.channels.length})
+        </span>
+        {!adding && (
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-700"
+          >
+            <Plus size={12} />
+            Привязать
+          </button>
+        )}
+      </div>
+      <div className="px-5 py-3">
+        {contact.channels.length === 0 && !adding && (
+          <p className="text-sm text-zinc-400">
+            Контакт не записан админом ни одного канала
+          </p>
+        )}
+        {contact.channels.length > 0 && (
+          <ul className="space-y-1">
+            {contact.channels.map((ch) => (
+              <li
+                key={ch.id}
+                className="flex items-center justify-between rounded-md border border-zinc-200 px-3 py-2 text-sm"
+              >
+                <span className="truncate font-medium text-zinc-900">
+                  {ch.title}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => removeMut.mutate(ch.id)}
+                  disabled={removeMut.isPending}
+                  className="rounded p-1 text-zinc-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                  aria-label="Отвязать"
+                >
+                  <X size={14} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {adding && (
+          <ChannelPicker
+            wsId={wsId}
+            excludeIds={new Set(contact.channels.map((ch) => ch.id))}
+            onPick={(id) => addMut.mutate(id)}
+            onCancel={() => setAdding(false)}
+            loading={addMut.isPending}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ChannelPicker(props: {
+  wsId: string;
+  excludeIds: Set<string>;
+  onPick: (channelId: string) => void;
+  onCancel: () => void;
+  loading: boolean;
+}) {
+  const [q, setQ] = useState("");
+  const channelsQ = useQuery({
+    queryKey: ["channels", props.wsId] as const,
+    queryFn: async () => {
+      const { data, error } = await api.GET(
+        "/v1/workspaces/{wsId}/channels",
+        { params: { path: { wsId: props.wsId } } },
+      );
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const term = q.trim().toLowerCase();
+  const all = channelsQ.data ?? [];
+  const filtered = all.filter((c) => {
+    if (props.excludeIds.has(c.id)) return false;
+    if (!term) return true;
+    if (c.title.toLowerCase().includes(term)) return true;
+    if (c.link && c.link.toLowerCase().includes(term)) return true;
+    return false;
+  });
+
+  return (
+    <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50/40 p-3">
+      <div className="mb-2 flex items-center gap-2">
+        <input
+          autoFocus
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Поиск канала по названию или ссылке"
+          className="flex-1 rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm focus:border-emerald-500 focus:outline-none"
+        />
+        <button
+          type="button"
+          onClick={props.onCancel}
+          className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+        >
+          <X size={14} />
+        </button>
+      </div>
+      {channelsQ.isLoading && (
+        <p className="text-xs text-zinc-500">Загрузка…</p>
+      )}
+      {channelsQ.data && filtered.length === 0 && (
+        <p className="text-xs text-zinc-500">
+          {all.length === 0
+            ? "Каналов в воркспейсе ещё нет"
+            : "Ничего не найдено"}
+        </p>
+      )}
+      {filtered.length > 0 && (
+        <ul className="max-h-64 space-y-1 overflow-y-auto">
+          {filtered.map((ch) => (
+            <li key={ch.id}>
+              <button
+                type="button"
+                onClick={() => props.onPick(ch.id)}
+                disabled={props.loading}
+                className="flex w-full items-center justify-between rounded-md bg-white px-2 py-1.5 text-left text-sm hover:bg-emerald-100 disabled:opacity-50"
+              >
+                <span className="truncate font-medium text-zinc-900">
+                  {ch.title}
+                </span>
+                {ch.link && (
+                  <span className="ml-2 shrink-0 truncate text-xs text-zinc-500">
+                    {ch.link}
+                  </span>
+                )}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

@@ -3,6 +3,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import { tgChats, tgUsers } from "../db/schema.ts";
 import type { TdClient } from "./tdlib/index.ts";
+import { extractActiveUsername, extractFullName } from "./tdlib/td-user.ts";
 
 // TG-репликация (этап 9.2). Слушаем client.on('update') и пишем локальную
 // копию chat list / user directory в Postgres. Read-сценарии (sticky, импорт,
@@ -37,12 +38,16 @@ type Update = { _: string; [k: string]: unknown };
 
 // TDLib chat (td_api.tl): id, type:ChatType, title, last_message?:message,
 // unread_count. last_message — полный Message объект, у него есть is_outgoing.
+// last_read_inbox_message_id — id последнего прочитанного входящего; > 0 значит
+// peer когда-то нам писал. Точную дату из chat payload TDLib не даёт, поэтому
+// держим только bool-сигнал has_inbound.
 type ChatPayload = {
   id: number | string;
   type: { _: string; user_id?: number };
   title: string;
   last_message?: { id: number | string; date: number; is_outgoing: boolean };
   unread_count?: number;
+  last_read_inbox_message_id?: number | string;
 };
 
 // TDLib user (td_api.tl:2175). usernames может отсутствовать (0-юзеров TG старой
@@ -105,6 +110,10 @@ export function attachReplicator(
             // противоположного направления, накопленное updateNewMessage'ами.
             lastInboundAt: sql`greatest(${tgChats.lastInboundAt}, excluded.last_inbound_at)`,
             lastOutboundAt: sql`greatest(${tgChats.lastOutboundAt}, excluded.last_outbound_at)`,
+            // OR-merge: has_inbound никогда не сбрасывается. Раз увидели
+            // признак — храним, для sticky-fallback'а это история не
+            // последнего сообщения, а «вообще когда-либо».
+            hasInbound: sql`${tgChats.hasInbound} OR excluded.has_inbound`,
             unreadCount: sql`excluded.unread_count`,
             updatedAt: sql`now()`,
           },
@@ -233,7 +242,7 @@ export function attachReplicator(
           lastMessageAt: at,
           ...(m.is_outgoing
             ? { lastOutboundAt: at }
-            : { lastInboundAt: at }),
+            : { lastInboundAt: at, hasInbound: true }),
         });
         break;
       }
@@ -301,6 +310,22 @@ function mapChat(accountId: string, chat: ChatPayload): ChatRow | null {
     ? new Date(chat.last_message.date * 1000)
     : null;
   const isOut = chat.last_message?.is_outgoing ?? false;
+  // has_inbound — слабый сигнал «peer когда-либо отвечал». TRUE если:
+  //  - последнее сообщение incoming, ИЛИ
+  //  - last_read_inbox_message_id > 0 (был хотя бы один прочитанный входящий), ИЛИ
+  //  - unread_count > 0 (есть непрочитанные = тоже входящие).
+  // Дату при этом TDLib в chat payload не даёт — для точного last_inbound_at
+  // нужен либо updateNewMessage в этой сессии, либо backfill через
+  // chat-history endpoint при открытии drawer'а.
+  const lastReadInboxId = chat.last_read_inbox_message_id;
+  const hasReadInbox =
+    lastReadInboxId !== undefined &&
+    lastReadInboxId !== null &&
+    String(lastReadInboxId) !== "0";
+  const hasInbound =
+    (lastAt && !isOut) ||
+    hasReadInbox ||
+    (chat.unread_count ?? 0) > 0;
   return {
     accountId,
     chatId: String(chat.id),
@@ -310,6 +335,7 @@ function mapChat(accountId: string, chat: ChatPayload): ChatRow | null {
     lastMessageAt: lastAt,
     lastInboundAt: lastAt && !isOut ? lastAt : null,
     lastOutboundAt: lastAt && isOut ? lastAt : null,
+    hasInbound: !!hasInbound,
     unreadCount: chat.unread_count ?? 0,
   };
 }
@@ -322,16 +348,10 @@ function mapUser(user: UserPayload): UserRow | null {
   const isDeleted =
     user.type._ === "userTypeDeleted" || user.type._ === "userTypeUnknown";
   if (!isDeleted && user.type._ !== "userTypeRegular") return null;
-  const username =
-    user.usernames?.active_usernames[0] ||
-    user.usernames?.editable_username ||
-    null;
-  const fullName =
-    [user.first_name, user.last_name].filter(Boolean).join(" ") || null;
   return {
     userId: String(user.id),
-    username,
-    fullName,
+    username: extractActiveUsername(user),
+    fullName: extractFullName(user),
     phone: user.phone_number || null,
     isDeleted,
   };

@@ -322,6 +322,13 @@ function ChatAccountsCell(props: {
   );
 }
 
+type ChatMessage = {
+  id: string;
+  date: string;
+  isOutgoing: boolean;
+  text: string;
+};
+
 function ChatDrawer(props: {
   wsId: string;
   contact: Contact;
@@ -344,7 +351,12 @@ function ChatDrawer(props: {
     return () => window.removeEventListener("keydown", onKey);
   }, [props]);
 
-  const history = useQuery({
+  // Initial page — через TanStack Query со staleTime=60s: повторное открытие
+  // того же drawer'а (закрыл/открыл, переключился обратно) идёт из кэша,
+  // без TDLib invoke. Защита от flood-wait при быстрой навигации.
+  // Pagination (scroll-up старое) — поверх в локальном state, на смену
+  // accountId сбрасывается через useEffect.
+  const initialQ = useQuery({
     queryKey: [
       "chat-history",
       props.wsId,
@@ -362,12 +374,95 @@ function ChatDrawer(props: {
         },
       );
       if (error) throw error;
-      return data;
+      return data!.messages;
     },
-    // TDLib кэширует историю в td-database — повторное открытие чата ходит из
-    // local cache. На клиенте можно не дёргать тот же accountId×contact заново.
     staleTime: 60_000,
   });
+
+  const [olderPages, setOlderPages] = useState<ChatMessage[]>([]);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadMoreError, setLoadMoreError] = useState<unknown>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const didAutoScrollRef = useRef(false);
+
+  // Reset аккумулятора и флагов на смену accountId. initialQ обновится сам
+  // по новому queryKey.
+  useEffect(() => {
+    setOlderPages([]);
+    setHasMore(true);
+    setLoadMoreError(null);
+    setLoadingMore(false);
+    didAutoScrollRef.current = false;
+  }, [props.accountId]);
+
+  // По td_api.tl §getChatHistory: единственный надёжный сигнал «больше
+  // нет» — пустой ответ. Length < limit может быть chunk-границей TDLib.
+  useEffect(() => {
+    if (initialQ.data && initialQ.data.length === 0) setHasMore(false);
+  }, [initialQ.data]);
+
+  // TDLib отдаёт newest-first → разворачиваем в oldest-first для рендера.
+  // Старые страницы (prepend от scroll-up) идут перед initial.
+  const messages: ChatMessage[] = initialQ.data
+    ? [...olderPages, ...initialQ.data.toReversed()]
+    : olderPages;
+
+  // После initial load — auto-scroll в самый низ (newest message виден).
+  // Один раз на открытие drawer'а; на prepend от scroll-up НЕ скроллим
+  // (сохраняем визуальное место юзера в onScroll).
+  useEffect(() => {
+    if (!initialQ.isSuccess) return;
+    if (didAutoScrollRef.current) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    didAutoScrollRef.current = true;
+  }, [initialQ.isSuccess]);
+
+  // Scroll-up подгрузка: только если юзер реально скроллит, не лезем
+  // на сервер «на всякий случай».
+  const onScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    if (!initialQ.isSuccess || !hasMore || loadingMore) return;
+    const el = e.currentTarget;
+    if (el.scrollTop > 50) return;
+    const oldestId = messages[0]?.id;
+    if (!oldestId) return;
+    setLoadingMore(true);
+    setLoadMoreError(null);
+    const prevHeight = el.scrollHeight;
+    api
+      .GET("/v1/workspaces/{wsId}/contacts/{id}/chat-history", {
+        params: {
+          path: { wsId: props.wsId, id: props.contact.id },
+          query: {
+            accountId: props.accountId,
+            limit: 50,
+            before: oldestId,
+          },
+        },
+      })
+      .then(({ data, error }) => {
+        if (error) throw error;
+        const page = data!.messages;
+        if (page.length === 0) {
+          setHasMore(false);
+        } else {
+          setOlderPages((prev) => [...page.toReversed(), ...prev]);
+          // Сохраняем визуальное место юзера после prepend'а.
+          requestAnimationFrame(() => {
+            if (!scrollRef.current) return;
+            scrollRef.current.scrollTop =
+              scrollRef.current.scrollHeight - prevHeight;
+          });
+        }
+        setLoadingMore(false);
+      })
+      .catch((e) => {
+        setLoadMoreError(e);
+        setLoadingMore(false);
+      });
+  };
 
   return (
     <>
@@ -414,24 +509,42 @@ function ChatDrawer(props: {
             })}
           </div>
         )}
-        <div className="flex-1 overflow-y-auto bg-zinc-50 p-4">
-          {history.isLoading && (
+        <div
+          ref={scrollRef}
+          onScroll={onScroll}
+          className="flex-1 overflow-y-auto bg-zinc-50 p-4"
+        >
+          {initialQ.isLoading && (
             <p className="text-sm text-zinc-400">Загрузка истории…</p>
           )}
-          {history.error && (
+          {initialQ.error && (
             <p className="text-sm text-red-600">
-              {errorMessage(history.error)}
+              {errorMessage(initialQ.error)}
             </p>
           )}
-          {history.data && history.data.messages.length === 0 && (
+          {initialQ.isSuccess && messages.length === 0 && (
             <p className="text-sm text-zinc-400">
               Сообщений нет — этот аккаунт ещё не общался с контактом.
             </p>
           )}
-          {history.data && history.data.messages.length > 0 && (
-            // TDLib отдаёт newest-first, для chat-style рендерим oldest-first.
+          {messages.length > 0 && (
             <div className="flex flex-col gap-2">
-              {history.data.messages.toReversed().map((m) => (
+              {loadingMore && (
+                <p className="text-center text-xs text-zinc-400">
+                  Подгружаем старые…
+                </p>
+              )}
+              {loadMoreError != null && (
+                <p className="text-center text-xs text-red-600">
+                  {errorMessage(loadMoreError)}
+                </p>
+              )}
+              {!hasMore && !loadingMore && (
+                <p className="text-center text-xs text-zinc-400">
+                  Это начало переписки
+                </p>
+              )}
+              {messages.map((m) => (
                 <div
                   key={m.id}
                   className={

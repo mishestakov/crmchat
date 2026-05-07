@@ -831,6 +831,13 @@ export const tgChats = pgTable(
     // Для UI правой панели «N раз писали, ответов нет» (10.7) и аналитики
     // «активность аккаунта в DM».
     lastOutboundAt: timestamp("last_outbound_at", { withTimezone: true }),
+    // Слабый сигнал «когда-то был входящий» — для случаев когда last_message
+    // у нас исходящее, но раньше peer отвечал. TDLib даёт это через
+    // `last_read_inbox_message_id > 0` или `unread_count > 0` в chat payload,
+    // дату при этом не возвращает. Используется sticky-резолвером как
+    // fallback (Уровень 2): если ни у кого нет точного last_inbound_at, но
+    // у кого-то has_inbound=true — выигрывает свежайший last_message_at среди них.
+    hasInbound: boolean("has_inbound").notNull().default(false),
     unreadCount: integer("unread_count").notNull().default(0),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()

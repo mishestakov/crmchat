@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
   contacts,
@@ -12,6 +12,7 @@ import {
   workspaceMembers,
 } from "../db/schema.ts";
 import { errMsg } from "../lib/errors.ts";
+import { resolveStickyByPeerIds } from "../lib/sticky.ts";
 import {
   clearPendingOutreachClient,
   deleteOutreachAccount,
@@ -470,8 +471,7 @@ app.openapi(
 // фильтрации тут нет.
 //
 // Идемпотентно: повторный вызов докинет только новые DM. Фронт это эксплуатит
-// для polling'а во время bootstrap'а реплики на свежем аккаунте — отсюда
-// ORDER BY lastMessageAt DESC + LIMIT, чтобы тики были bounded по работе.
+// для polling'а во время bootstrap'а реплики на свежем аккаунте.
 app.openapi(
   createRoute({
     method: "post",
@@ -500,30 +500,24 @@ app.openapi(
       sql`${tgChats.peerUserId} != ${acc.tgUserId}`,
     );
 
-    const IMPORT_LIMIT = 500;
+    // Без LIMIT: продуктовый потолок ~2k чатов на аккаунт; SELECT JOIN на
+    // эту шкалу — десятки KB ответ, INSERT'у contacts — единицы тысяч строк
+    // с десятком тысяч bind-параметров (под Postgres-лимитом 32k). Polling
+    // на фронте по стабилизации replicaSize безопасен против повторов.
+    const candidates = await db
+      .select({
+        peerUserId: tgChats.peerUserId,
+        fullName: tgUsers.fullName,
+        username: tgUsers.username,
+        phone: tgUsers.phone,
+        lastMessageAt: tgChats.lastMessageAt,
+      })
+      .from(tgChats)
+      .innerJoin(tgUsers, eq(tgUsers.userId, tgChats.peerUserId))
+      .where(baseFilter)
+      .orderBy(sql`${tgChats.lastMessageAt} desc nulls last`);
 
-    const [candidates, totalRows] = await Promise.all([
-      db
-        .select({
-          peerUserId: tgChats.peerUserId,
-          fullName: tgUsers.fullName,
-          username: tgUsers.username,
-          phone: tgUsers.phone,
-          lastMessageAt: tgChats.lastMessageAt,
-        })
-        .from(tgChats)
-        .innerJoin(tgUsers, eq(tgUsers.userId, tgChats.peerUserId))
-        .where(baseFilter)
-        .orderBy(sql`${tgChats.lastMessageAt} desc nulls last`)
-        .limit(IMPORT_LIMIT),
-      db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(tgChats)
-        .innerJoin(tgUsers, eq(tgUsers.userId, tgChats.peerUserId))
-        .where(baseFilter),
-    ]);
-
-    const replicaSize = totalRows[0]?.count ?? 0;
+    const replicaSize = candidates.length;
 
     if (candidates.length === 0) {
       return c.json({ imported: 0, skipped: 0, replicaSize });
@@ -531,34 +525,11 @@ app.openapi(
 
     const peerIds = candidates.map((c) => c.peerUserId);
 
-    // Sticky v2: победитель — аккаунт с MAX(last_inbound_at) среди всех
-    // аккаунтов воркспейса, у кого был входящий ответ от этого peer'а.
-    // Если ни у кого нет — sticky null (никто не «свой», в задаче пойдёт
-    // через round-robin).
-    const stickyWinners = await db
-      .select({
-        peerUserId: tgChats.peerUserId,
-        accountId: tgChats.accountId,
-      })
-      .from(tgChats)
-      .innerJoin(outreachAccounts, eq(outreachAccounts.id, tgChats.accountId))
-      .where(
-        and(
-          eq(outreachAccounts.workspaceId, wsId),
-          isNotNull(tgChats.lastInboundAt),
-          inArray(tgChats.peerUserId, peerIds),
-        ),
-      )
-      .orderBy(
-        tgChats.peerUserId,
-        sql`${tgChats.lastInboundAt} desc`,
-      );
-    const winnerByPeer = new Map<string, string>();
-    for (const w of stickyWinners) {
-      if (!winnerByPeer.has(w.peerUserId)) {
-        winnerByPeer.set(w.peerUserId, w.accountId);
-      }
-    }
+    // Sticky v2: двухуровневый резолвер (см. lib/sticky.ts). Уровень 1 —
+    // MAX(last_inbound_at), уровень 2 — fallback по has_inbound с MAX
+    // last_message_at. Если ни один уровень не сработал — sticky null,
+    // в задаче пойдёт через round-robin.
+    const winnerByPeer = await resolveStickyByPeerIds(wsId, peerIds);
 
     // Стейдж не проставляем: контакт в базе ≠ лид-в-задаче.
     const rows = candidates.map((cand) => {

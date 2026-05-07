@@ -29,12 +29,26 @@ export type TdUser = {
 
 // Активный публичный username юзера. По TL `usernames` — обязательный объект,
 // `active_usernames` всегда массив (может быть пустой), `editable_username`
-// всегда строка (может быть пустой). `||` (не `??`) — пустая строка
-// "no public username" мапится в null.
-export function extractActiveUsername(user: TdUser): string | null {
+// всегда строка (может быть пустой). На `getUser` старых юзеров поле может
+// отсутствовать целиком — допускаем optional. `||` (не `??`) — пустая
+// строка "no public username" мапится в null.
+type WithUsernames = {
+  usernames?: { active_usernames?: string[]; editable_username?: string };
+};
+
+export function extractActiveUsername(user: WithUsernames): string | null {
   return (
-    user.usernames.active_usernames[0] ||
-    user.usernames.editable_username ||
+    user.usernames?.active_usernames?.[0] ||
+    user.usernames?.editable_username ||
     null
   );
+}
+
+// `first_name + last_name` → строка с одним пробелом, пустые поля
+// отфильтрованы. null если оба пустые (deleted-юзер).
+export function extractFullName(user: {
+  first_name: string;
+  last_name: string;
+}): string | null {
+  return [user.first_name, user.last_name].filter(Boolean).join(" ") || null;
 }

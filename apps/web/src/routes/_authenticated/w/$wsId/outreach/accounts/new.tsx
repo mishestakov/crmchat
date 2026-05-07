@@ -27,14 +27,15 @@ function NewOutreachAccountPage() {
   const [importError, setImportError] = useState<string | null>(null);
 
   // Реплика чат-листа на свежем аккаунте догружается асинхронно (loadChats
-  // до 404). Импорт идемпотентный, гонимся в polling-цикле каждые 1.5с —
-  // юзер видит как растёт счётчик. Стоп после двух подряд нулевых тиков:
-  // первый ноль может прилететь до того как bootstrap догрузил первую
-  // страницу, второй уже надёжно «реплика осела».
+  // батчами). Импорт идемпотентный, гонимся в polling-цикле каждые 1.5с —
+  // юзер видит как растёт счётчик. Стоп — когда replicaSize не меняется
+  // три тика подряд (≈4.5с стабильности): значит TDLib догрузил всё.
+  // По imported стопать нельзя: при онконфликтах он = 0, а реплика ещё растёт.
   useEffect(() => {
     if (!connectedId) return;
     let cancelled = false;
-    let zeroTicks = 0;
+    let prevReplicaSize = -1;
+    let stableTicks = 0;
     setIsImporting(true);
 
     const tick = async () => {
@@ -46,10 +47,15 @@ function NewOutreachAccountPage() {
         );
         if (cancelled) return;
         if (error) throw error;
-        setTotalImported((p) => p + data!.imported);
+        if (data!.imported > 0) setTotalImported((p) => p + data!.imported);
         setReplicaSize(data!.replicaSize);
-        zeroTicks = data!.imported === 0 ? zeroTicks + 1 : 0;
-        if (zeroTicks >= 2) {
+        if (data!.replicaSize === prevReplicaSize) {
+          stableTicks++;
+        } else {
+          stableTicks = 0;
+          prevReplicaSize = data!.replicaSize;
+        }
+        if (stableTicks >= 3) {
           setIsImporting(false);
           qc.invalidateQueries({ queryKey: ["contacts", wsId] });
         } else {
@@ -142,15 +148,23 @@ function NewOutreachAccountPage() {
           <div className="font-medium">Импорт собеседников</div>
           {isImporting ? (
             <p className="text-sm text-zinc-600">
-              Загружаем список диалогов из Telegram… найдено {replicaSize},
-              импортировано {totalImported}.
+              Загружаем диалоги из Telegram… подгружено {replicaSize}{" "}
+              собеседников.
             </p>
           ) : importError ? (
             <p className="text-sm text-red-600">{importError}</p>
           ) : (
-            <p className="text-sm text-emerald-700">
-              Готово. Импортировано: {totalImported}.
-            </p>
+            <div className="space-y-1">
+              <p className="text-sm text-emerald-700">
+                Готово. В CRM {totalImported} контактов.
+              </p>
+              {replicaSize - totalImported > 0 && (
+                <p className="text-xs text-zinc-500">
+                  Ещё {replicaSize - totalImported} уже были в CRM от других
+                  аккаунтов.
+                </p>
+              )}
+            </div>
           )}
           <div className="flex gap-2">
             <button

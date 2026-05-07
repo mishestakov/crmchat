@@ -2,6 +2,7 @@ import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
   contacts,
+  outreachAccounts,
   outreachLeads,
   outreachLists,
   outreachSequences,
@@ -9,11 +10,15 @@ import {
   scheduledMessages,
   tgUsers,
 } from "../db/schema.ts";
-import { validateContactProperties } from "./contact-properties.ts";
+import {
+  loadPropertyDefs,
+  validateContactProperties,
+} from "./contact-properties.ts";
 import { emitContactChanged } from "./contact-events.ts";
 import { errMsg } from "./errors.ts";
 import { emitSequenceChanged } from "./outreach-events.ts";
 import type { TdClient } from "./tdlib/index.ts";
+import { extractActiveUsername, extractFullName } from "./tdlib/td-user.ts";
 
 // In-memory map (account+chat+placeholder → scheduledMessageId) для
 // updateMessageSendFailed. Worker оптимистично пишет sent; failed-апдейт
@@ -145,7 +150,29 @@ async function onNewMessage(
   client: TdClient,
   msg: TdMessage,
 ): Promise<void> {
-  if (msg.is_outgoing) return;
+  // Юзер пишет клиенту мимо CRM (с телефона / в TWA-iframe / через worker).
+  // Если контакта ещё нет — создаём, чтобы база автопополнялась. Sticky НЕ
+  // ставим: правило v2 «kто последним получил ответ» — исходящему без
+  // ответа sticky не положен.
+  if (msg.is_outgoing) {
+    if (msg.chat_id <= 0) return; // только private DM
+    try {
+      await ensureContactFromTraffic({
+        workspaceId,
+        accountId,
+        client,
+        peerUserId: String(msg.chat_id),
+        ts: new Date(),
+        isInbound: false,
+      });
+    } catch (e) {
+      console.error(
+        `[outreach-listener] outgoing ensure ${accountId}:`,
+        errMsg(e),
+      );
+    }
+    return;
+  }
   // Только private DM от user'а — sender = messageSenderUser, и в TDLib
   // private chat_id == user_id. Боты технически тоже user'ы, но бот не
   // пишет нам сам, если мы не подписались.
@@ -249,6 +276,29 @@ async function onNewMessage(
             unreadCount: contacts.unreadCount,
           });
       }
+    }
+
+    // Ни fast-path, ни username-fallback не нашли контакт — первое входящее
+    // от незнакомца (бизнес работает мимо CRM). Создаём contact и ставим
+    // sticky на этот аккаунт (правило v2: входящее = «получил ответ»).
+    if (touched.length === 0) {
+      try {
+        await ensureContactFromTraffic({
+          workspaceId,
+          accountId,
+          client,
+          peerUserId: senderIdStr,
+          ts: now,
+          isInbound: true,
+        });
+      } catch (e) {
+        console.error(
+          `[outreach-listener] inbound ensure ${accountId}:`,
+          errMsg(e),
+        );
+      }
+      // emit на новый contact идёт изнутри ensureContactFromTraffic.
+      return;
     }
 
     for (const t of touched) {
@@ -523,4 +573,138 @@ async function findContactByTgUserId(
     )
     .limit(1);
   return row?.id ?? null;
+}
+
+// Автосоздание контакта из живого DM-трафика. peerUserId — собеседник
+// (для входящего = sender, для исходящего = chat_id). Ставит sticky только
+// для входящих (правило v2: kто последним получил ответ; исходящему без
+// ответа sticky не положен).
+//
+// Пользовательскую инфу берём через TDLib `getUser` (offline в TDLib-кэше),
+// чтобы не зависеть от race с replicator-flush'ем (`tg_users` пишется
+// батчем раз в FLUSH_MS, в момент onNewMessage записи может ещё не быть).
+type TdUserPayload = {
+  type: { _: string };
+  first_name: string;
+  last_name: string;
+  phone_number: string;
+  usernames?: { active_usernames: string[]; editable_username: string };
+};
+
+const accountOwnerCache = new Map<string, string>();
+
+async function ensureContactFromTraffic(opts: {
+  workspaceId: string;
+  accountId: string;
+  client: TdClient;
+  peerUserId: string;
+  ts: Date;
+  isInbound: boolean;
+}): Promise<void> {
+  const { workspaceId, accountId, client, peerUserId, ts, isInbound } = opts;
+
+  const existing = await findContactByTgUserId(workspaceId, peerUserId);
+  if (existing) {
+    // Контакт уже есть (worker создал, либо предыдущий ensure). Inbound-ветка
+    // обновит lastMessageAt/sticky сама в основном UPDATE; outbound — нечего
+    // делать сверх того, что worker мог сделать. Здесь — просто выходим.
+    return;
+  }
+
+  // Параллелим всё, что не зависит друг от друга:
+  //  - pendingLead (только outbound) — race-protection с worker.convertLeadToContact
+  //  - getUser в TDLib (offline)
+  //  - account owner (cached) — для contact.created_by
+  //  - property defs — для validateContactProperties
+  const cachedOwner = accountOwnerCache.get(accountId);
+  const [pendingLead, tdUser, ownerRow, defs] = await Promise.all([
+    isInbound
+      ? Promise.resolve(undefined)
+      : db
+          .select({ id: outreachLeads.id })
+          .from(outreachLeads)
+          .where(
+            and(
+              eq(outreachLeads.workspaceId, workspaceId),
+              eq(outreachLeads.tgUserId, peerUserId),
+              isNull(outreachLeads.contactId),
+            ),
+          )
+          .limit(1)
+          .then((rows) => rows[0]),
+    (
+      client.invoke({
+        _: "getUser",
+        user_id: Number(peerUserId),
+      } as never) as Promise<TdUserPayload>
+    ).catch(() => null),
+    cachedOwner
+      ? Promise.resolve(cachedOwner)
+      : db
+          .select({ ownerUserId: outreachAccounts.ownerUserId })
+          .from(outreachAccounts)
+          .where(eq(outreachAccounts.id, accountId))
+          .limit(1)
+          .then((rows) => rows[0]?.ownerUserId),
+    loadPropertyDefs(workspaceId),
+  ]);
+
+  // Worker race-protection: pending outreach-лид с этим peer'ом без contactId
+  // = исходящее worker'а; даём worker.convertLeadToContact создать контакт с
+  // CRM-автоматизациями (contactDefaults + owner round-robin), не опережаем.
+  if (pendingLead) return;
+  if (!tdUser) return; // peer недоступен в TDLib
+  // Реплицируем только живых не-ботов. Bot/Deleted/Unknown — пропускаем.
+  if (tdUser.type._ !== "userTypeRegular") return;
+  if (!ownerRow) return;
+  if (!cachedOwner) accountOwnerCache.set(accountId, ownerRow);
+  const ownerUserId = ownerRow;
+
+  const fullName = extractFullName(tdUser);
+  const username = extractActiveUsername(tdUser);
+  const phone = tdUser.phone_number || null;
+
+  const allKeys = new Set(defs.map((d) => d.key));
+  const rawProps: Record<string, unknown> = {};
+  if (allKeys.has("tg_user_id")) rawProps.tg_user_id = peerUserId;
+  if (allKeys.has("full_name")) {
+    rawProps.full_name = fullName || (username ? `@${username}` : peerUserId);
+  }
+  if (username && allKeys.has("telegram_username")) {
+    rawProps.telegram_username = username;
+  }
+  if (phone && allKeys.has("phone")) rawProps.phone = phone;
+  const validated = validateContactProperties(defs, rawProps);
+  // tg_user_id — internal-поле, может не быть в defs; добавляем вручную для
+  // unique-constraint и lookup'ов.
+  if (!("tg_user_id" in validated)) {
+    validated.tg_user_id = peerUserId;
+  }
+
+  try {
+    const [created] = await db
+      .insert(contacts)
+      .values({
+        workspaceId,
+        properties: validated,
+        lastMessageAt: ts,
+        primaryAccountId: isInbound ? accountId : null,
+        createdBy: ownerUserId,
+      })
+      .onConflictDoNothing()
+      .returning({ id: contacts.id });
+    if (created) {
+      emitContactChanged(workspaceId, {
+        contactId: created.id,
+        unreadCount: 0,
+        lastMessageAt: ts.toISOString(),
+      });
+    }
+    // ON CONFLICT DO NOTHING проглотил → contact создан другим concurrent
+    // handler'ом (например, worker.convertLeadToContact в этот же тик).
+    // Ничего не делаем: следующий incoming/sticky-update пройдёт по основному
+    // пути, sticky встанет через COALESCE.
+  } catch (e) {
+    if (!isUniqueViolation(e)) throw e;
+  }
 }

@@ -3,6 +3,9 @@ __pycache__/
 .venv/
 venv/
 
+# LOC-отчёты (генерятся `scripts/loc-report.sh`)
+scripts/reports/
+
 # raw network dump — 45 MiB, fully reproducible via download_complete.py
 crmchat_dump_full/
 
