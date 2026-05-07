@@ -35,12 +35,13 @@ function sha1(s: string): string {
 
 type Update = { _: string; [k: string]: unknown };
 
-// TDLib chat (td_api.tl): id, type:ChatType, title, last_message?, unread_count.
+// TDLib chat (td_api.tl): id, type:ChatType, title, last_message?:message,
+// unread_count. last_message — полный Message объект, у него есть is_outgoing.
 type ChatPayload = {
   id: number | string;
   type: { _: string; user_id?: number };
   title: string;
-  last_message?: { id: number | string; date: number };
+  last_message?: { id: number | string; date: number; is_outgoing: boolean };
   unread_count?: number;
 };
 
@@ -99,6 +100,11 @@ export function attachReplicator(
             title: sql`excluded.title`,
             lastMessageId: sql`excluded.last_message_id`,
             lastMessageAt: sql`excluded.last_message_at`,
+            // GREATEST: повторный updateNewChat от TDLib приносит только
+            // одно last_message — оно может перетереть свежее значение
+            // противоположного направления, накопленное updateNewMessage'ами.
+            lastInboundAt: sql`greatest(${tgChats.lastInboundAt}, excluded.last_inbound_at)`,
+            lastOutboundAt: sql`greatest(${tgChats.lastOutboundAt}, excluded.last_outbound_at)`,
             unreadCount: sql`excluded.unread_count`,
             updatedAt: sql`now()`,
           },
@@ -192,12 +198,20 @@ export function attachReplicator(
       case "updateChatLastMessage": {
         const x = u as unknown as {
           chat_id: number | string;
-          last_message?: { id: number | string; date: number };
+          last_message?: {
+            id: number | string;
+            date: number;
+            is_outgoing: boolean;
+          };
         };
         if (x.last_message) {
+          const at = new Date(x.last_message.date * 1000);
           mergeChatPartial(String(x.chat_id), {
             lastMessageId: String(x.last_message.id),
-            lastMessageAt: new Date(x.last_message.date * 1000),
+            lastMessageAt: at,
+            ...(x.last_message.is_outgoing
+              ? { lastOutboundAt: at }
+              : { lastInboundAt: at }),
           });
         }
         break;
@@ -209,12 +223,17 @@ export function attachReplicator(
               chat_id: number | string;
               id: number | string;
               date: number;
+              is_outgoing: boolean;
             };
           }
         ).message;
+        const at = new Date(m.date * 1000);
         mergeChatPartial(String(m.chat_id), {
           lastMessageId: String(m.id),
-          lastMessageAt: new Date(m.date * 1000),
+          lastMessageAt: at,
+          ...(m.is_outgoing
+            ? { lastOutboundAt: at }
+            : { lastInboundAt: at }),
         });
         break;
       }
@@ -278,15 +297,19 @@ function mapChat(accountId: string, chat: ChatPayload): ChatRow | null {
   if (chat.type._ !== "chatTypePrivate" || chat.type.user_id == null) {
     return null;
   }
+  const lastAt = chat.last_message
+    ? new Date(chat.last_message.date * 1000)
+    : null;
+  const isOut = chat.last_message?.is_outgoing ?? false;
   return {
     accountId,
     chatId: String(chat.id),
     peerUserId: String(chat.type.user_id),
     title: chat.title || null,
     lastMessageId: chat.last_message ? String(chat.last_message.id) : null,
-    lastMessageAt: chat.last_message
-      ? new Date(chat.last_message.date * 1000)
-      : null,
+    lastMessageAt: lastAt,
+    lastInboundAt: lastAt && !isOut ? lastAt : null,
+    lastOutboundAt: lastAt && isOut ? lastAt : null,
     unreadCount: chat.unread_count ?? 0,
   };
 }

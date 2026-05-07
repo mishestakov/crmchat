@@ -46,9 +46,9 @@ function AuthLayout() {
                 <SidebarLink to="/w/$wsId/contacts" wsId={wsId}>
                   Контакты
                 </SidebarLink>
-                <SidebarLinkDisabled title="Скоро (этап 11)">
+                <SidebarLink to="/w/$wsId/channels" wsId={wsId}>
                   Каналы
-                </SidebarLinkDisabled>
+                </SidebarLink>
               </SidebarGroup>
               <SidebarGroup title="Аутрич">
                 <SidebarLink to="/w/$wsId/outreach/sequences" wsId={wsId}>
@@ -152,6 +152,7 @@ function SidebarGroup({
 function SidebarLink(props: {
   to:
     | "/w/$wsId/contacts"
+    | "/w/$wsId/channels"
     | "/w/$wsId/properties"
     | "/w/$wsId/settings/workspace"
     | "/w/$wsId/settings/telegram-sync"
@@ -174,17 +175,6 @@ function SidebarLink(props: {
     >
       {props.children}
     </Link>
-  );
-}
-
-function SidebarLinkDisabled(props: { title: string; children: ReactNode }) {
-  return (
-    <div
-      title={props.title}
-      className="block cursor-not-allowed rounded px-2 py-1.5 text-zinc-400"
-    >
-      {props.children}
-    </div>
   );
 }
 

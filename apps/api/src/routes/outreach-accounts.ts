@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
   contacts,
@@ -529,8 +529,38 @@ app.openapi(
       return c.json({ imported: 0, skipped: 0, replicaSize });
     }
 
-    // Стейдж не проставляем: контакт в базе ≠ лид-в-задаче. Воронка живёт
-    // на уровне задачи, сюда попадает только когда юзер затащит контакт в неё.
+    const peerIds = candidates.map((c) => c.peerUserId);
+
+    // Sticky v2: победитель — аккаунт с MAX(last_inbound_at) среди всех
+    // аккаунтов воркспейса, у кого был входящий ответ от этого peer'а.
+    // Если ни у кого нет — sticky null (никто не «свой», в задаче пойдёт
+    // через round-robin).
+    const stickyWinners = await db
+      .select({
+        peerUserId: tgChats.peerUserId,
+        accountId: tgChats.accountId,
+      })
+      .from(tgChats)
+      .innerJoin(outreachAccounts, eq(outreachAccounts.id, tgChats.accountId))
+      .where(
+        and(
+          eq(outreachAccounts.workspaceId, wsId),
+          isNotNull(tgChats.lastInboundAt),
+          inArray(tgChats.peerUserId, peerIds),
+        ),
+      )
+      .orderBy(
+        tgChats.peerUserId,
+        sql`${tgChats.lastInboundAt} desc`,
+      );
+    const winnerByPeer = new Map<string, string>();
+    for (const w of stickyWinners) {
+      if (!winnerByPeer.has(w.peerUserId)) {
+        winnerByPeer.set(w.peerUserId, w.accountId);
+      }
+    }
+
+    // Стейдж не проставляем: контакт в базе ≠ лид-в-задаче.
     const rows = candidates.map((cand) => {
       const properties: Record<string, unknown> = {
         tg_user_id: cand.peerUserId,
@@ -542,7 +572,7 @@ app.openapi(
         workspaceId: wsId,
         createdBy: userId,
         lastMessageAt: cand.lastMessageAt,
-        primaryAccountId: accountId,
+        primaryAccountId: winnerByPeer.get(cand.peerUserId) ?? null,
         properties,
       };
     });
@@ -553,19 +583,27 @@ app.openapi(
       .onConflictDoNothing()
       .returning({ id: contacts.id });
 
-    // Существующим контактам с NULL-sticky проставляем этот аккаунт
-    // (first-write-wins; уже занятых не трогаем).
-    const peerIds = candidates.map((c) => c.peerUserId);
-    await db
-      .update(contacts)
-      .set({ primaryAccountId: accountId })
-      .where(
-        and(
-          eq(contacts.workspaceId, wsId),
-          isNull(contacts.primaryAccountId),
-          inArray(sql`${contacts.properties}->>'tg_user_id'`, peerIds),
-        ),
-      );
+    // Существующим контактам с NULL-sticky проставляем winner'а
+    // (если таковой есть). Группируем peer'ов по аккаунту-победителю —
+    // один UPDATE на каждый аккаунт.
+    const byWinnerAccount = new Map<string, string[]>();
+    for (const [peer, acc] of winnerByPeer) {
+      const list = byWinnerAccount.get(acc) ?? [];
+      list.push(peer);
+      byWinnerAccount.set(acc, list);
+    }
+    for (const [acc, peers] of byWinnerAccount) {
+      await db
+        .update(contacts)
+        .set({ primaryAccountId: acc })
+        .where(
+          and(
+            eq(contacts.workspaceId, wsId),
+            isNull(contacts.primaryAccountId),
+            inArray(sql`${contacts.properties}->>'tg_user_id'`, peers),
+          ),
+        );
+    }
 
     return c.json({
       imported: inserted.length,

@@ -746,6 +746,62 @@ export const activities = pgTable(
   (t) => [index("activities_contact_id_idx").on(t.contactId)],
 );
 
+// channels — площадки (TG-каналы/группы), которыми занимается бизнес.
+// Связь с админом — через channel_admins (m:n: один канал может иметь
+// несколько админов; один контакт может админить несколько каналов).
+//
+// tg_chat_id опциональный: для каналов из CSV-импорта мы знаем только
+// ссылку, не resolved-id. Заполняется лениво если бот когда-нибудь увидит
+// этот канал в replica (отложено в 11.3).
+export const channels = pgTable(
+  "channels",
+  {
+    id: text("id").primaryKey().$defaultFn(shortId),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    tgChatId: text("tg_chat_id"),
+    title: text("title").notNull(),
+    link: text("link"),
+    lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
+    properties: jsonb("properties")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("channels_workspace_id_idx").on(t.workspaceId),
+    // Дедуп при повторном CSV-импорте: одна и та же ссылка в воркспейсе =
+    // один канал. lower() — потому что @Foo и @foo это один TG-канал.
+    uniqueIndex("channels_workspace_link_unique")
+      .on(t.workspaceId, sql`lower(${t.link})`)
+      .where(sql`${t.link} IS NOT NULL`),
+  ],
+);
+
+export const channelAdmins = pgTable(
+  "channel_admins",
+  {
+    channelId: text("channel_id")
+      .notNull()
+      .references(() => channels.id, { onDelete: "cascade" }),
+    contactId: text("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.channelId, t.contactId], name: "channel_admins_pk" }),
+    // Под обратный lookup «какие каналы у этого контакта».
+    index("channel_admins_contact_id_idx").on(t.contactId),
+  ],
+);
+
 // === TG-репликация (этап 9.2) ===
 // Локальная копия Telegram chat list / user directory, обновляемая push'ом
 // через client.on('update'). Read-сценарии (поиск контактов, импорт, аналитика)
@@ -767,6 +823,14 @@ export const tgChats = pgTable(
     title: text("title"),
     lastMessageId: text("last_message_id"),
     lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
+    // Время последнего входящего (is_outgoing=false) от peer'а в этот аккаунт.
+    // Source-of-truth для sticky-резолвера v2 («кто последним получил ответ»):
+    // победитель — аккаунт с MAX(last_inbound_at) среди воркспейса.
+    lastInboundAt: timestamp("last_inbound_at", { withTimezone: true }),
+    // Время последнего исходящего (is_outgoing=true) от нашего аккаунта peer'у.
+    // Для UI правой панели «N раз писали, ответов нет» (10.7) и аналитики
+    // «активность аккаунта в DM».
+    lastOutboundAt: timestamp("last_outbound_at", { withTimezone: true }),
     unreadCount: integer("unread_count").notNull().default(0),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
@@ -779,6 +843,9 @@ export const tgChats = pgTable(
     // Под фильтр «диалоги аккаунта, отсортированные по свежести» — импорт-флоу
     // 9.4 («все собеседники последних 30 дней»).
     index("tg_chats_account_last_msg_idx").on(t.accountId, t.lastMessageAt),
+    // Под sticky-резолвер v2: WHERE peer_user_id IN (...) AND last_inbound_at
+    // IS NOT NULL ORDER BY last_inbound_at DESC.
+    index("tg_chats_peer_inbound_idx").on(t.peerUserId, t.lastInboundAt),
   ],
 );
 

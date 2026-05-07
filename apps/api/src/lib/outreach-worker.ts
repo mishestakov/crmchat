@@ -299,7 +299,6 @@ async function processAccount(accountId: string, items: DueItem[]) {
         void maybeCreateContactOnFirstSent(
           item.sequenceId,
           item.leadId,
-          accountId,
         ).catch((e) =>
           console.error(
             `[outreach-worker] convert lead ${item.leadId} on-first-sent:`,
@@ -490,7 +489,6 @@ async function getNewLeadsStatsToday(
 async function maybeCreateContactOnFirstSent(
   sequenceId: string,
   leadId: string,
-  accountId: string,
 ): Promise<void> {
   const [seq] = await db
     .select({
@@ -506,7 +504,9 @@ async function maybeCreateContactOnFirstSent(
     .where(eq(outreachLeads.id, leadId))
     .limit(1);
   if (!lead) return;
-  await convertLeadToContact(lead, sequenceId, accountId);
+  // Sticky НЕ передаём: это исходящее без ответа, по правилу v2 sticky
+  // отдаётся только на входящие (когда контакт реально нам отвечал).
+  await convertLeadToContact(lead, sequenceId);
 }
 
 async function maybeCompleteSequence(seqId: string) {

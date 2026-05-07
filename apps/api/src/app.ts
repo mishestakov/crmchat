@@ -11,6 +11,7 @@ import {
 } from "./middleware/assert-member.ts";
 import activities from "./routes/activities.ts";
 import auth from "./routes/auth.ts";
+import channels from "./routes/channels.ts";
 import contactViews from "./routes/contact-views.ts";
 import contacts from "./routes/contacts.ts";
 import { memberOps, publicInvites, wsInvites } from "./routes/invites.ts";
@@ -46,6 +47,7 @@ protectedApp.route("/", publicInvites);
 // workspace-scoped: requireSession + assertMember
 const wsApp = new OpenAPIHono<{ Variables: WorkspaceVars }>();
 wsApp.use("/v1/workspaces/:wsId/*", assertMember);
+wsApp.route("/", channels);
 wsApp.route("/", contacts);
 wsApp.route("/", contactViews);
 wsApp.route("/", properties);
