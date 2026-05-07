@@ -30,7 +30,6 @@ import {
   type WorkspaceVars,
 } from "../middleware/assert-member.ts";
 import type { TdClient } from "../lib/tdlib/client.ts";
-import { extractActiveUsername } from "../lib/tdlib/td-user.ts";
 
 // Каналы читаются любым outreach-аккаунтом workspace'а — единственный
 // TG-actor у нас. Берём первый available active доступный юзеру (RBAC через
@@ -381,18 +380,6 @@ app.openapi(
       type: { _: string; supergroup_id?: number; is_channel?: boolean };
       photo?: { minithumbnail?: { data: string } };
     };
-    type TdSupergroup = {
-      id: number;
-      usernames?: { active_usernames?: string[]; editable_username?: string };
-      date: number;
-      member_count: number;
-      boost_level: number;
-      has_linked_chat: boolean;
-      has_direct_messages_group: boolean;
-      is_channel: boolean;
-      is_broadcast_group: boolean;
-      verification_status?: { is_verified: boolean };
-    };
     type TdSupergroupFullInfo = {
       description: string;
       member_count: number;
@@ -403,19 +390,23 @@ app.openapi(
       photo?: { minithumbnail?: { data: string } };
     };
 
+    // searchPublicChat — единственный способ зарегистрировать публичный чат
+    // в TDLib-state без подписки. Только после него getSupergroupFullInfo
+    // и getChatHistory получают chat (см. td_api.tl §searchPublicChat,
+    // §getChat — offline-only). getChat(externalId) — fallback для каналов
+    // без @username; в холодной сессии скорее всего тоже упадёт, но другого
+    // выхода нет.
     let tdChat: TdChat;
     try {
-      if (channel.externalId) {
-        tdChat = (await tdClient.invoke({
-          _: "getChat",
-          chat_id: Number(channel.externalId),
-        } as never)) as TdChat;
-      } else {
-        tdChat = (await tdClient.invoke({
-          _: "searchPublicChat",
-          username: channel.username!,
-        } as never)) as TdChat;
-      }
+      tdChat = channel.username
+        ? ((await tdClient.invoke({
+            _: "searchPublicChat",
+            username: channel.username,
+          } as never)) as TdChat)
+        : ((await tdClient.invoke({
+            _: "getChat",
+            chat_id: Number(channel.externalId),
+          } as never)) as TdChat);
     } catch (e) {
       throw new HTTPException(404, {
         message: `Telegram lookup failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -429,41 +420,46 @@ app.openapi(
     }
 
     const supergroupId = tdChat.type.supergroup_id;
-    const [tdSupergroup, tdFull] = await Promise.all([
-      tdClient.invoke({
-        _: "getSupergroup",
-        supergroup_id: supergroupId,
-      } as never) as Promise<TdSupergroup>,
-      tdClient.invoke({
+    // Race-fix: searchPublicChat выше эмитит updateSupergroup, replicator
+    // handler кладёт patch в channelMetaBuf и взводит flush на 500ms.
+    // Если getSupergroupFullInfo (~200-1000ms RPC) затянется и flush
+    // выстрелит до финального UPDATE — flush не найдёт row по
+    // meta->>'supergroup_id' и patch потеряется до следующего sync.
+    // Кладём supergroup_id в meta заранее, чтобы flush точно попал.
+    await db
+      .update(channels)
+      .set({
+        meta: sql`${channels.meta} || ${JSON.stringify({ supergroup_id: String(supergroupId) })}::jsonb`,
+      })
+      .where(eq(channels.id, id));
+
+    // getSupergroup НЕ вызываем — его поля (boost_level, verification, has_dm,
+    // is_channel, …) прилетают как updateSupergroup и пишутся в meta фоновым
+    // handler'ом в tg-replicator.ts. FullInfo же без явного invoke'а update'ом
+    // не приходит (cached for up to 1 minute, см. td_api.tl §getSupergroupFullInfo).
+    let tdFull: TdSupergroupFullInfo;
+    try {
+      tdFull = (await tdClient.invoke({
         _: "getSupergroupFullInfo",
         supergroup_id: supergroupId,
-      } as never) as Promise<TdSupergroupFullInfo>,
-    ]);
+      } as never)) as TdSupergroupFullInfo;
+    } catch (e) {
+      throw new HTTPException(404, {
+        message: `Telegram lookup failed: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    }
 
-    const newUsername = extractActiveUsername(tdSupergroup);
-
-    const newMeta: Record<string, unknown> = {
+    // Только свои поля; nice-to-have от updateSupergroup доедут merge'ем.
+    const metaPatch: Record<string, unknown> = {
       supergroup_id: String(supergroupId),
-      boost_level: tdSupergroup.boost_level,
-      is_verified: tdSupergroup.verification_status?.is_verified ?? false,
-      is_channel: tdSupergroup.is_channel,
-      is_broadcast_group: tdSupergroup.is_broadcast_group,
-      has_dm: tdSupergroup.has_direct_messages_group,
-      has_linked_chat: tdSupergroup.has_linked_chat,
-      // supergroup.date — int32 unix timestamp создания канала.
-      created_at_tg: tdSupergroup.date,
       linked_chat_id: tdFull.linked_chat_id || null,
       direct_messages_chat_id: tdFull.direct_messages_chat_id || null,
       gift_count: tdFull.gift_count,
       outgoing_paid_message_star_count: tdFull.outgoing_paid_message_star_count,
     };
 
-    // member_count в supergroup и в supergroupFullInfo обычно совпадают;
-    // FullInfo выходит «свежее» при batch-обновлениях, берём его.
-    const memberCount = tdFull.member_count || tdSupergroup.member_count;
     const description = tdFull.description || null;
     const externalIdNew = String(tdChat.id);
-    const link = newUsername ? `https://t.me/${newUsername}` : channel.link;
 
     // Thumbnail: chat.photo.minithumbnail.data приходит как base64-строка
     // (TDLib bytes-поля в JSON — base64). Если у канала нет аватара — поле
@@ -477,10 +473,8 @@ app.openapi(
           externalId: externalIdNew,
           title: tdChat.title || channel.title,
           description,
-          username: newUsername,
-          link,
-          memberCount,
-          meta: newMeta,
+          memberCount: tdFull.member_count,
+          meta: sql`${channels.meta} || ${JSON.stringify(metaPatch)}::jsonb`,
           syncedAt: new Date(),
           updatedAt: new Date(),
         })
@@ -519,6 +513,13 @@ const ChannelHistoryItem = z.object({
 const ChannelHistoryResponse = z.object({
   messages: z.array(ChannelHistoryItem),
 });
+
+// In-memory маркер «уже спрашивали историю этого канала в текущей сессии».
+// Первый запрос идёт с only_local=false (TDLib подтягивает из сети + наполняет
+// RAM-кеш в фоне), повторные — сразу only_local=true. Set не персистится:
+// после рестарта api → новая TDLib-сессия → всё equally cold. Аналог
+// `historyFetched` в routes/contacts.ts, паттерн скопирован оттуда.
+const channelHistoryFetched = new Set<string>();
 
 app.openapi(
   createRoute({
@@ -574,20 +575,68 @@ app.openapi(
     };
     type TdMessages = { messages: TdMessage[] };
 
-    let result: TdMessages;
-    try {
-      result = (await tdClient.invoke({
+    const chatId = Number(channel.externalId);
+
+    // Прогрев state'а на каждый запрос: searchPublicChat кладёт чат в TDLib
+    // memory state (см. td_api.tl §searchPublicChat — гарантирует updateNewChat
+    // до возврата). Без него getChatHistory упадёт «Chat not found» в холодной
+    // сессии (после рестарта api). Если username нет — пропускаем, надеемся
+    // что чат уже зарегистрирован (например через подписку юзера).
+    if (channel.username) {
+      try {
+        await tdClient.invoke({
+          _: "searchPublicChat",
+          username: channel.username,
+        } as never);
+      } catch (e) {
+        throw new HTTPException(404, {
+          message: `Telegram lookup failed: ${e instanceof Error ? e.message : String(e)}`,
+        });
+      }
+    }
+
+    // openChat → getChatHistory → closeChat. Без openChat TDLib не считает
+    // чат активным; в supergroup'ах/каналах «all updates are received only
+    // for opened chats» (td_api.tl §openChat) и сервер-fetch менее агрессивный.
+    // closeChat — best-effort в finally, чтобы счётчик opened-chats не рос.
+    //
+    // Первый ever-запрос на канал часто отдаёт 1-2 сообщения из RAM-кэша
+    // TDLib и в фоне качает остаток (td_api.tl §getChatHistory: «can be
+    // smaller than the specified limit»). Через 500ms делаем второй вызов
+    // с only_local=true — БЕЗ нового сетевого RTT, подбираем накопленное.
+    // Паттерн из routes/contacts.ts §chat-history.
+    const cacheKey = `${picked.accountId}:${chatId}`;
+    const onlyLocal = channelHistoryFetched.has(cacheKey);
+    const fetchHistory = (only_local: boolean) =>
+      tdClient.invoke({
         _: "getChatHistory",
-        chat_id: Number(channel.externalId),
+        chat_id: chatId,
         from_message_id: fromMessageId ?? 0,
         offset: 0,
         limit,
-        only_local: false,
-      } as never)) as TdMessages;
+        only_local,
+      } as never) as Promise<TdMessages>;
+
+    let result: TdMessages;
+    try {
+      await tdClient.invoke({ _: "openChat", chat_id: chatId } as never);
+      result = await fetchHistory(onlyLocal);
+      if (!onlyLocal && !fromMessageId && result.messages.length < limit) {
+        await new Promise((r) => setTimeout(r, 500));
+        const second = await fetchHistory(true);
+        if (second.messages.length > result.messages.length) result = second;
+      }
+      if (!onlyLocal) channelHistoryFetched.add(cacheKey);
     } catch (e) {
       throw new HTTPException(404, {
         message: `history fetch failed: ${e instanceof Error ? e.message : String(e)}`,
       });
+    } finally {
+      await tdClient
+        .invoke({ _: "closeChat", chat_id: chatId } as never)
+        .catch((e: unknown) =>
+          console.error(`[channels/history] closeChat ${chatId} failed:`, e),
+        );
     }
 
     const items = (result.messages ?? []).map((m) => {

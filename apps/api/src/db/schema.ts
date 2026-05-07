@@ -734,7 +734,8 @@ export const channels = pgTable(
     memberCount: integer("member_count"),
     // Proprietary поля соцсети (TG: boost_level, is_verified, has_dm,
     // supergroup_id, linked_chat_id, photo_small_id, gift_count, …).
-    // Перезатирается ЦЕЛИКОМ при каждом soc-pull.
+    // JSONB-merge ('meta || patch'): sync endpoint пишет свои поля синхронно,
+    // tg-replicator ловит updateSupergroup и докладывает nice-to-have в фоне.
     meta: jsonb("meta").$type<Record<string, unknown>>().notNull().default({}),
     // Наши/CSV-импорт поля, которых нет в соцсети (ER, ниша, is_rkn).
     // НЕ трогается соц-pull'ом.
@@ -760,6 +761,12 @@ export const channels = pgTable(
     uniqueIndex("channels_workspace_platform_username_unique")
       .on(t.workspaceId, t.platform, sql`lower(${t.username})`)
       .where(sql`${t.username} IS NOT NULL`),
+    // Lookup от tg-replicator updateSupergroup-handler'а: cold-start TDLib
+    // пушит десятки/сотни updateSupergroup, на каждый flush идёт UPDATE
+    // WHERE meta->>'supergroup_id' = $1. Без index'а — full scan на каждый.
+    index("channels_meta_supergroup_id_idx").on(
+      sql`(${t.meta}->>'supergroup_id')`,
+    ),
   ],
 );
 

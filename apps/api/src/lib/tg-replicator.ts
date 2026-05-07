@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
-import { tgChats, tgUsers } from "../db/schema.ts";
+import { channels, tgChats, tgUsers } from "../db/schema.ts";
 import type { TdClient } from "./tdlib/index.ts";
 import { extractActiveUsername, extractFullName } from "./tdlib/td-user.ts";
 
@@ -13,6 +13,10 @@ import { extractActiveUsername, extractFullName } from "./tdlib/td-user.ts";
 //   updateNewChat  → full upsert в tg_chats
 //   updateUser     → full upsert в tg_users (с hash-skip)
 //   updateChatTitle/LastMessage/NewMessage/ReadInbox → partial UPDATE
+//   updateSupergroup → JSONB-merge nice-to-have полей в channels.meta
+//                      (boost_level, verification, has_dm, … — приходят как
+//                      побочный эффект searchPublicChat в sync/history flow,
+//                      см. routes/channels.ts)
 //
 // Буферизация: TDLib на ready пушит 500–2000 update'ов «знакомлю с чатами».
 // Накапливаем в Map'ы, flush раз в FLUSH_MS батчем.
@@ -61,6 +65,19 @@ type UserPayload = {
   type: { _: string };
 };
 
+// TDLib supergroup (td_api.tl:2489). Только нужные нам поля.
+type SupergroupPayload = {
+  id: number | string;
+  date: number;
+  member_count: number;
+  boost_level: number;
+  has_linked_chat: boolean;
+  has_direct_messages_group: boolean;
+  is_channel: boolean;
+  is_broadcast_group: boolean;
+  verification_status?: { is_verified: boolean };
+};
+
 export type ReplicatorHandle = { detach: () => void };
 
 export function attachReplicator(
@@ -73,6 +90,11 @@ export function attachReplicator(
   const chatBuf = new Map<string, ChatRow>();
   const partialChat = new Map<string, Partial<ChatRow>>();
   const userBuf = new Map<string, UserRow>();
+  // Буфер meta-патчей по supergroup_id (string). На flush — серия UPDATE'ов
+  // channels SET meta = meta || patch WHERE meta->>'supergroup_id' = sgId.
+  // Если канала с таким sgId в БД нет (любой канал из подписок юзера) —
+  // UPDATE 0 rows, дёшево.
+  const channelMetaBuf = new Map<string, Record<string, unknown>>();
   // botPeers — user_id'ы ботов. DM с ботами не реплицируем в tg_chats.
   // TDLib гарантирует updateUser до updateNewChat для того же user_id —
   // к моменту handleChat бот уже здесь. Set не персистится, но это ок:
@@ -151,6 +173,22 @@ export function attachReplicator(
             .where(
               and(eq(tgChats.accountId, accountId), eq(tgChats.chatId, chatId)),
             );
+        }
+      });
+    }
+    if (channelMetaBuf.size > 0) {
+      const patches = [...channelMetaBuf.entries()];
+      channelMetaBuf.clear();
+      await db.transaction(async (tx) => {
+        const now = new Date();
+        for (const [sgId, patch] of patches) {
+          await tx
+            .update(channels)
+            .set({
+              meta: sql`${channels.meta} || ${JSON.stringify(patch)}::jsonb`,
+              updatedAt: now,
+            })
+            .where(sql`${channels.meta}->>'supergroup_id' = ${sgId}`);
         }
       });
     }
@@ -254,6 +292,13 @@ export function attachReplicator(
         mergeChatPartial(String(x.chat_id), { unreadCount: x.unread_count });
         break;
       }
+      case "updateSupergroup": {
+        const sg = (u as unknown as { supergroup: SupergroupPayload }).supergroup;
+        const sgId = String(sg.id);
+        const prev = channelMetaBuf.get(sgId) ?? {};
+        channelMetaBuf.set(sgId, { ...prev, ...mapSupergroupMeta(sg) });
+        break;
+      }
       default:
         return;
     }
@@ -337,6 +382,22 @@ function mapChat(accountId: string, chat: ChatPayload): ChatRow | null {
     lastOutboundAt: lastAt && isOut ? lastAt : null,
     hasInbound: !!hasInbound,
     unreadCount: chat.unread_count ?? 0,
+  };
+}
+
+// Только nice-to-have поля, которые sync endpoint синхронно НЕ пишет —
+// их источник истины — этот handler. supergroup_id здесь не пишем: его
+// уже положил sync (это идентификатор, по нему и WHERE).
+function mapSupergroupMeta(sg: SupergroupPayload): Record<string, unknown> {
+  return {
+    boost_level: sg.boost_level,
+    is_verified: sg.verification_status?.is_verified ?? false,
+    is_channel: sg.is_channel,
+    is_broadcast_group: sg.is_broadcast_group,
+    has_dm: sg.has_direct_messages_group,
+    has_linked_chat: sg.has_linked_chat,
+    // supergroup.date — int32 unix timestamp создания канала.
+    created_at_tg: sg.date,
   };
 }
 
