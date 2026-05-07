@@ -98,6 +98,8 @@ function NewOutreachAccountPage() {
 
   const goToList = () =>
     navigate({ to: "/w/$wsId/outreach/accounts", params: { wsId } });
+  const goToContacts = () =>
+    navigate({ to: "/w/$wsId/contacts", params: { wsId } });
 
   if (!connectedId) {
     return (
@@ -150,14 +152,29 @@ function NewOutreachAccountPage() {
               Готово. Импортировано: {totalImported}.
             </p>
           )}
-          <button
-            type="button"
-            onClick={goToList}
-            disabled={isImporting}
-            className="rounded-lg border border-zinc-300 px-4 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
-          >
-            {isImporting ? "Подождите…" : "Готово"}
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={importError ? goToList : goToContacts}
+              disabled={isImporting}
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
+              {isImporting
+                ? "Подождите…"
+                : importError
+                  ? "К списку аккаунтов"
+                  : "Посмотреть контакты"}
+            </button>
+            {!isImporting && !importError && (
+              <button
+                type="button"
+                onClick={goToList}
+                className="rounded-lg border border-zinc-300 px-4 py-2 text-sm hover:bg-zinc-50"
+              >
+                К аккаунтам
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

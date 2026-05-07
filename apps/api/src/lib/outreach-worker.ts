@@ -296,12 +296,15 @@ async function processAccount(accountId: string, items: DueItem[]) {
         newLeadsRemaining--;
         lastNewLeadInTick = now.getTime();
 
-        void maybeCreateContactOnFirstSent(item.sequenceId, item.leadId).catch(
-          (e) =>
-            console.error(
-              `[outreach-worker] convert lead ${item.leadId} on-first-sent:`,
-              errMsg(e),
-            ),
+        void maybeCreateContactOnFirstSent(
+          item.sequenceId,
+          item.leadId,
+          accountId,
+        ).catch((e) =>
+          console.error(
+            `[outreach-worker] convert lead ${item.leadId} on-first-sent:`,
+            errMsg(e),
+          ),
         );
       }
     } catch (e) {
@@ -487,6 +490,7 @@ async function getNewLeadsStatsToday(
 async function maybeCreateContactOnFirstSent(
   sequenceId: string,
   leadId: string,
+  accountId: string,
 ): Promise<void> {
   const [seq] = await db
     .select({
@@ -502,7 +506,7 @@ async function maybeCreateContactOnFirstSent(
     .where(eq(outreachLeads.id, leadId))
     .limit(1);
   if (!lead) return;
-  await convertLeadToContact(lead, sequenceId);
+  await convertLeadToContact(lead, sequenceId, accountId);
 }
 
 async function maybeCompleteSequence(seqId: string) {

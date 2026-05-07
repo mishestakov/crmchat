@@ -185,7 +185,7 @@ async function onNewMessage(
       }
       for (const lead of updated) {
         try {
-          await convertLeadToContact(lead);
+          await convertLeadToContact(lead, undefined, accountId);
         } catch (e) {
           console.error(
             `[outreach-listener] convert lead ${lead.id}:`,
@@ -199,11 +199,15 @@ async function onNewMessage(
     // шлёт парный updateChatReadInbox с новым unread_count, это authoritative
     // (см. td_api.tl: «Incoming messages were read OR the number of unread
     // messages has been changed»). Если делать +1 здесь — гонимся с onReadInbox
-    // и получаем +2 на первое сообщение в чат. Тут только bump lastMessageAt.
+    // и получаем +2 на первое сообщение в чат. Тут только bump lastMessageAt
+    // + first-write-wins sticky (COALESCE).
     const now = new Date();
     let touched = await db
       .update(contacts)
-      .set({ lastMessageAt: now })
+      .set({
+        lastMessageAt: now,
+        primaryAccountId: sql`COALESCE(${contacts.primaryAccountId}, ${accountId})`,
+      })
       .where(
         and(
           eq(contacts.workspaceId, workspaceId),
@@ -230,6 +234,7 @@ async function onNewMessage(
           .update(contacts)
           .set({
             lastMessageAt: now,
+            primaryAccountId: sql`COALESCE(${contacts.primaryAccountId}, ${accountId})`,
             properties: sql`${contacts.properties} || jsonb_build_object('tg_user_id', ${senderIdStr}::text)`,
           })
           .where(
@@ -358,13 +363,14 @@ async function onReadOutbox(workspaceId: string, chatId: number): Promise<void> 
 //   - находит contact по tg_user_id (если уже есть — переиспользует);
 //   - применяет CRM-автоматизации sequence: contactDefaults +
 //     contactDefaultOwnerIds (round-robin);
-//   - upsert'ит contactId в outreach_leads.
+//   - upsert'ит contactId в outreach_leads;
+//   - first-write-wins sticky на primary_account_id (если accountId передан).
 //
-// sequenceId опциональный — для legacy-вызовов из NewMessage без контекста
-// конкретной sequence (эта ветка просто работает по дефолтным правилам).
+// sequenceId опциональный — NewMessage-ветка вызывает без контекста sequence.
 export async function convertLeadToContact(
   lead: typeof outreachLeads.$inferSelect,
   sequenceId?: string,
+  accountId?: string,
 ) {
   if (!lead.tgUserId) return;
 
@@ -470,6 +476,7 @@ export async function convertLeadToContact(
           workspaceId: lead.workspaceId,
           properties: validated,
           createdBy: list.createdBy,
+          primaryAccountId: accountId ?? null,
         })
         .returning({ id: contacts.id });
       contactId = created!.id;
@@ -486,6 +493,13 @@ export async function convertLeadToContact(
       );
       if (!contactId) throw e;
     }
+  } else if (accountId) {
+    await db
+      .update(contacts)
+      .set({ primaryAccountId: accountId })
+      .where(
+        and(eq(contacts.id, contactId), isNull(contacts.primaryAccountId)),
+      );
   }
 
   await db

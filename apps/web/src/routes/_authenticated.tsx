@@ -42,31 +42,39 @@ function AuthLayout() {
         <nav className="flex-1 space-y-4 overflow-y-auto p-3 text-sm">
           {wsId && (
             <>
-              <SidebarGroup title="Лиды">
+              <SidebarGroup title="База">
                 <SidebarLink to="/w/$wsId/contacts" wsId={wsId}>
+                  Контакты
+                </SidebarLink>
+                <SidebarLinkDisabled title="Скоро (этап 11)">
+                  Каналы
+                </SidebarLinkDisabled>
+              </SidebarGroup>
+              <SidebarGroup title="Аутрич">
+                <SidebarLink to="/w/$wsId/outreach/sequences" wsId={wsId}>
+                  Задачи
+                </SidebarLink>
+                <SidebarLink to="/w/$wsId/outreach/pipeline" wsId={wsId}>
                   Воронка
                 </SidebarLink>
+                <SidebarLink to="/w/$wsId/outreach/chat" wsId={wsId}>
+                  Чат
+                </SidebarLink>
+                <SidebarLink to="/w/$wsId/outreach/accounts" wsId={wsId}>
+                  Telegram-аккаунты
+                </SidebarLink>
+              </SidebarGroup>
+              <SidebarGroup title="Конфигурация">
                 <SidebarLink to="/w/$wsId/properties" wsId={wsId}>
                   Кастомные поля
                 </SidebarLink>
                 <SidebarLink to="/w/$wsId/settings/telegram-sync" wsId={wsId}>
                   Синк ТГ-папок
                 </SidebarLink>
-              </SidebarGroup>
-              <SidebarGroup title="Рассылки">
-                <SidebarLink to="/w/$wsId/outreach/chat" wsId={wsId}>
-                  Чат
-                </SidebarLink>
-                <SidebarLink to="/w/$wsId/outreach/sequences" wsId={wsId}>
-                  Кампании
-                </SidebarLink>
-                <SidebarLink to="/w/$wsId/outreach/accounts" wsId={wsId}>
-                  Telegram-аккаунты
+                <SidebarLink to="/w/$wsId/settings/workspace" wsId={wsId}>
+                  Настройки
                 </SidebarLink>
               </SidebarGroup>
-              <SidebarLink to="/w/$wsId/settings/workspace" wsId={wsId}>
-                Настройки
-              </SidebarLink>
             </>
           )}
         </nav>
@@ -149,6 +157,7 @@ function SidebarLink(props: {
     | "/w/$wsId/settings/telegram-sync"
     | "/w/$wsId/outreach/accounts"
     | "/w/$wsId/outreach/sequences"
+    | "/w/$wsId/outreach/pipeline"
     | "/w/$wsId/outreach/chat";
   wsId: string;
   children: ReactNode;
@@ -165,6 +174,17 @@ function SidebarLink(props: {
     >
       {props.children}
     </Link>
+  );
+}
+
+function SidebarLinkDisabled(props: { title: string; children: ReactNode }) {
+  return (
+    <div
+      title={props.title}
+      className="block cursor-not-allowed rounded px-2 py-1.5 text-zinc-400"
+    >
+      {props.children}
+    </div>
   );
 }
 

@@ -370,6 +370,7 @@ function serialize(row: ContactRow) {
     nextStep: row.nextStep,
     unreadCount: row.unreadCount,
     lastMessageAt: row.lastMessageAt ? row.lastMessageAt.toISOString() : null,
+    primaryAccountId: row.primaryAccountId,
     createdBy: row.createdBy,
     createdAt: row.createdAt.toISOString(),
   };

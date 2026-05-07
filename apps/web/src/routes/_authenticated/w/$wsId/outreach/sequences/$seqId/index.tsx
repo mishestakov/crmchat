@@ -321,7 +321,7 @@ function SequenceDetailPage() {
             params={{ wsId, seqId }}
           >
             <SectionItem withChevron>
-              <SectionItemTitle>Детали кампании</SectionItemTitle>
+              <SectionItemTitle>Контакты</SectionItemTitle>
               <SectionItemValue>
                 {leadsCount} {pluralize(leadsCount, "лид", "лида", "лидов")}
               </SectionItemValue>

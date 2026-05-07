@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
   contacts,
@@ -502,7 +502,7 @@ app.openapi(
 
     const IMPORT_LIMIT = 500;
 
-    const [candidates, stageRows, totalRows] = await Promise.all([
+    const [candidates, totalRows] = await Promise.all([
       db
         .select({
           peerUserId: tgChats.peerUserId,
@@ -517,13 +517,6 @@ app.openapi(
         .orderBy(sql`${tgChats.lastMessageAt} desc nulls last`)
         .limit(IMPORT_LIMIT),
       db
-        .select()
-        .from(propsTable)
-        .where(
-          and(eq(propsTable.workspaceId, wsId), eq(propsTable.key, "stage")),
-        )
-        .limit(1),
-      db
         .select({ count: sql<number>`count(*)::int` })
         .from(tgChats)
         .innerJoin(tgUsers, eq(tgUsers.userId, tgChats.peerUserId))
@@ -536,8 +529,8 @@ app.openapi(
       return c.json({ imported: 0, skipped: 0, replicaSize });
     }
 
-    const defaultStageId = stageRows[0]?.values?.[0]?.id;
-
+    // Стейдж не проставляем: контакт в базе ≠ лид-в-задаче. Воронка живёт
+    // на уровне задачи, сюда попадает только когда юзер затащит контакт в неё.
     const rows = candidates.map((cand) => {
       const properties: Record<string, unknown> = {
         tg_user_id: cand.peerUserId,
@@ -545,11 +538,11 @@ app.openapi(
       };
       if (cand.username) properties.telegram_username = cand.username;
       if (cand.phone) properties.phone = cand.phone;
-      if (defaultStageId) properties.stage = defaultStageId;
       return {
         workspaceId: wsId,
         createdBy: userId,
         lastMessageAt: cand.lastMessageAt,
+        primaryAccountId: accountId,
         properties,
       };
     });
@@ -559,6 +552,20 @@ app.openapi(
       .values(rows)
       .onConflictDoNothing()
       .returning({ id: contacts.id });
+
+    // Существующим контактам с NULL-sticky проставляем этот аккаунт
+    // (first-write-wins; уже занятых не трогаем).
+    const peerIds = candidates.map((c) => c.peerUserId);
+    await db
+      .update(contacts)
+      .set({ primaryAccountId: accountId })
+      .where(
+        and(
+          eq(contacts.workspaceId, wsId),
+          isNull(contacts.primaryAccountId),
+          inArray(sql`${contacts.properties}->>'tg_user_id'`, peerIds),
+        ),
+      );
 
     return c.json({
       imported: inserted.length,

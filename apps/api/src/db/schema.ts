@@ -263,6 +263,16 @@ export const contacts = pgTable(
     // Время последнего входящего сообщения от контакта — для сортировки кoлонок
     // канбана «свежий ответ сверху» в будущем + для UI-подсказок «X мин назад».
     lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
+    // Sticky закрепление контакта за outreach-аккаунтом: «кто первый написал —
+    // тот и продолжает». First-write-wins: проставляется на импорте DM, на
+    // первой исходящей рассылке и на первом входящем DM, но никогда не
+    // переписывается (sticky при загрузке нового CSV сначала смотрит сюда —
+    // см. outreach-sequences.ts). ON DELETE SET NULL: удалили аккаунт →
+    // sticky сбрасывается, и резолвер выбирает аккаунт заново.
+    primaryAccountId: text("primary_account_id").references(
+      () => outreachAccounts.id,
+      { onDelete: "set null" },
+    ),
     createdBy: text("created_by")
       .notNull()
       .references(() => users.id),

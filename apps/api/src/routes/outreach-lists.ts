@@ -1,8 +1,9 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { and, eq, getTableColumns, sql } from "drizzle-orm";
+import { and, eq, getTableColumns, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
+  contacts,
   outreachLeads,
   outreachLists,
   outreachListStatus,
@@ -46,6 +47,11 @@ const ListSchema = z
         skippedMissingIdentifier: z.number().int(),
         skippedInvalidPhone: z.number().int(),
         skippedDuplicate: z.number().int(),
+        // Сколько лидов мы узнали в существующих contacts по username/phone:
+        // у них pre-resolved tg_user_id, и sticky-резолвер при активации
+        // задачи сразу повяжет их с primary_account_id контакта (вместо
+        // round-robin).
+        recognized: z.number().int().optional(),
       })
       .nullable(),
     createdAt: z.iso.datetime(),
@@ -218,6 +224,68 @@ app.openapi(
       candidates.push({ username, phone, properties });
     }
 
+    // Pre-resolve sticky: без снимка lead.tg_user_id sticky-резолвер при
+    // активации задачи не находит знакомых (он ходит через outreach_leads.
+    // tg_user_id), и первая активация уходит в round-robin даже для
+    // импортированных собеседников.
+    const usernames = candidates
+      .map((c) => c.username)
+      .filter((x): x is string => x !== null);
+    const phones = candidates
+      .map((c) => c.phone)
+      .filter((x): x is string => x !== null);
+
+    const tgByUsername = new Map<string, string>();
+    const tgByPhone = new Map<string, string>();
+    if (usernames.length > 0 || phones.length > 0) {
+      // CSV нормализует username к lowercase (см. usernameRaw выше); в
+      // contacts он мог быть сохранён в любом регистре (импорт собеседников
+      // пишет как пришло из TG). Match'им через lower() с обеих сторон.
+      const conds: SQL[] = [];
+      if (usernames.length > 0) {
+        conds.push(
+          inArray(
+            sql`lower(${contacts.properties}->>'telegram_username')`,
+            usernames,
+          ),
+        );
+      }
+      if (phones.length > 0) {
+        conds.push(
+          inArray(sql`${contacts.properties}->>'phone'`, phones),
+        );
+      }
+      const known = await db
+        .select({
+          tgUserId: sql<string | null>`${contacts.properties}->>'tg_user_id'`,
+          username: sql<
+            string | null
+          >`lower(${contacts.properties}->>'telegram_username')`,
+          phone: sql<string | null>`${contacts.properties}->>'phone'`,
+        })
+        .from(contacts)
+        .where(and(eq(contacts.workspaceId, wsId), or(...conds)));
+      for (const k of known) {
+        if (!k.tgUserId) continue;
+        if (k.username) tgByUsername.set(k.username, k.tgUserId);
+        if (k.phone) tgByPhone.set(k.phone, k.tgUserId);
+      }
+    }
+
+    const resolved = candidates.map((c) => ({
+      ...c,
+      tgUserId:
+        (c.username && tgByUsername.get(c.username)) ||
+        (c.phone && tgByPhone.get(c.phone)) ||
+        null,
+    }));
+    const recognized = resolved.filter((l) => l.tgUserId !== null).length;
+    const finalStats = {
+      ...stats,
+      imported: candidates.length,
+      recognized,
+    };
+
     // Insert: сначала лист, потом batch leads.
     const [list] = await db
       .insert(outreachLists)
@@ -228,26 +296,30 @@ app.openapi(
         sourceMeta: body.sourceMeta,
         status: "completed",
         totalSize: body.rows.length,
-        importStats: { ...stats, imported: candidates.length },
+        importStats: finalStats,
         createdBy: userId,
       })
       .returning();
 
-    if (candidates.length > 0) {
+    if (resolved.length > 0) {
       // Drizzle insert.values() с большим массивом → один query с N-tuple
       // VALUES; Postgres-js нормально это переваривает до десятков тысяч.
       await db.insert(outreachLeads).values(
-        candidates.map((c) => ({
+        resolved.map((c) => ({
           workspaceId: wsId,
           listId: list!.id,
           username: c.username,
           phone: c.phone,
+          tgUserId: c.tgUserId,
           properties: c.properties,
         })),
       );
     }
 
-    return c.json(serializeList({ ...list!, importStats: { ...stats, imported: candidates.length } }), 201);
+    return c.json(
+      serializeList({ ...list!, importStats: finalStats }),
+      201,
+    );
   },
 );
 

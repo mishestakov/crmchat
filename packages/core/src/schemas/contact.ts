@@ -21,6 +21,11 @@ export const ContactSchema = z.object({
   // на open-карточки или mark-read postMessage из TWA-iframe.
   unreadCount: z.number().int().nonnegative(),
   lastMessageAt: z.iso.datetime().nullable(),
+  // Sticky outreach-аккаунт за этим контактом (см. schema.ts
+  // contacts.primaryAccountId). Колонка таблицы «Контакты» рендерит имя
+  // аккаунта по этому id, новый CSV-резолвер использует как первичный
+  // источник sticky.
+  primaryAccountId: z.string().min(1).max(64).nullable(),
   createdBy: z.string().min(1).max(64),
   createdAt: z.iso.datetime(),
 });

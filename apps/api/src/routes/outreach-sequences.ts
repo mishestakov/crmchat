@@ -5,6 +5,7 @@ import { and, asc, desc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
   contactCreationTrigger,
+  contacts,
   outreachAccounts,
   outreachAccountsMode,
   outreachLeads,
@@ -116,8 +117,13 @@ const LeadProgressSchema = z
     properties: z.record(z.string(), z.string()),
     // Аккаунт, через который отправляются сообщения этому лиду. Может быть
     // разным для разных лидов (round-robin distribution при активации).
-    // null если ещё не запланировано (sequence в draft).
+    // null если sequence ещё в draft и лид незнаком (без sticky).
     account: LeadAccountSchema.nullable(),
+    // Откуда приехал account: "scheduled" — фактический accountId зафиксирован
+    // в scheduled_messages (sequence уже активирована); "sticky" — предсказание
+    // через contacts.primary_account_id, sequence ещё в draft и round-robin
+    // этот лид не зацепит; null — лид незнаком, на активации уйдёт в RR.
+    accountSource: z.enum(["scheduled", "sticky"]).nullable(),
     // Прогресс по каждому сообщению sequence. Длина массива = seq.messages.length.
     messages: z.array(LeadMessageProgressSchema),
     repliedAt: z.iso.datetime().nullable(),
@@ -396,16 +402,22 @@ app.openapi(
     const offsetsMs = cumulativeOffsetsMs(seq.messages);
 
     // Sticky lead → account: «с каким аккаунтом блогер общался, с тем и
-    // продолжает». Для лидов с tg_user_id ищем последний sent в этом
-    // workspace'е; если нашли — безусловно sticky на тот аккаунт (даже если
-    // он сейчас вне пула или неактивен — отношения принадлежат аккаунту,
-    // ловить ошибку отправки будем в worker'е). Round-robin — только для
-    // новых лидов без истории.
+    // продолжает». Round-robin — только для новых лидов без истории.
+    //
+    // Источники в порядке приоритета:
+    //   1. contacts.primary_account_id — first-write-wins sticky на уровне
+    //      контакта (заполняется при импорте DM, первой исходящей и первом
+    //      входящем; см. schema.ts contacts.primaryAccountId).
+    //   2. scheduledMessages — legacy путь по последнему sent. Закрывает
+    //      аккаунты, у которых ещё нет contact-записи (TG-юзер только
+    //      получил холодную, не ответил, не импортировался).
     const tgUserIds = leads
       .map((l) => l.tgUserId)
       .filter((x): x is string => x !== null);
-    const priorByTgUserId = new Map<string, string>();
-    if (tgUserIds.length > 0) {
+    const priorByTgUserId = await resolveStickyByTgUserIds(wsId, tgUserIds);
+
+    const remaining = tgUserIds.filter((id) => !priorByTgUserId.has(id));
+    if (remaining.length > 0) {
       const priors = await db
         .select({
           tgUserId: outreachLeads.tgUserId,
@@ -421,12 +433,10 @@ app.openapi(
           and(
             eq(scheduledMessages.workspaceId, wsId),
             eq(scheduledMessages.status, "sent"),
-            inArray(outreachLeads.tgUserId, tgUserIds),
+            inArray(outreachLeads.tgUserId, remaining),
           ),
         )
         .orderBy(desc(scheduledMessages.sentAt));
-      // Первое попадание на каждый tg_user_id = самое свежее (rows
-      // отсортированы DESC по sent_at).
       for (const p of priors) {
         if (!p.tgUserId) continue;
         if (!priorByTgUserId.has(p.tgUserId)) {
@@ -593,6 +603,7 @@ app.openapi(
           id: outreachLeads.id,
           username: outreachLeads.username,
           phone: outreachLeads.phone,
+          tgUserId: outreachLeads.tgUserId,
           properties: outreachLeads.properties,
           repliedAt: outreachLeads.repliedAt,
           contactId: outreachLeads.contactId,
@@ -635,8 +646,26 @@ app.openapi(
         ),
       );
 
-    // Account info — один SELECT по distinct accountIds.
-    const accountIds = [...new Set(sched.map((s) => s.accountId))];
+    // Sticky-предсказание для draft-лидов (без scheduled_messages):
+    // тот же резолвер, что в /activate — гарантирует, что UI совпадёт с
+    // реальным распределением при активации.
+    const byLead = Map.groupBy(sched, (s) => s.leadId);
+    const tgUserIdsNeedingSticky = leadRows
+      .filter((l) => l.tgUserId && !byLead.has(l.id))
+      .map((l) => l.tgUserId!);
+    const stickyByTgUserId = await resolveStickyByTgUserIds(
+      wsId,
+      tgUserIdsNeedingSticky,
+    );
+
+    // Account info — один SELECT по объединённому множеству:
+    // (фактические из scheduled) ∪ (sticky-предсказания из contacts).
+    const accountIds = [
+      ...new Set([
+        ...sched.map((s) => s.accountId),
+        ...stickyByTgUserId.values(),
+      ]),
+    ];
     const accountRows = accountIds.length
       ? await db
           .select({
@@ -651,8 +680,6 @@ app.openapi(
       : [];
     const accountById = new Map(accountRows.map((a) => [a.id, a]));
 
-    const byLead = Map.groupBy(sched, (s) => s.leadId);
-
     return c.json({
       total: leadRows[0]?.total ?? 0,
       totalCount,
@@ -660,9 +687,21 @@ app.openapi(
       leads: leadRows.map((l) => {
         const items = byLead.get(l.id) ?? [];
         // Аккаунт берём из первого scheduled_message — все сообщения этого
-        // лида ходят через один аккаунт (см. activate logic).
-        const accountId = items[0]?.accountId ?? null;
-        const account = accountId ? accountById.get(accountId) ?? null : null;
+        // лида ходят через один аккаунт (см. activate logic). Если scheduled
+        // ещё нет (draft) — пробуем sticky-предсказание.
+        const scheduledAccountId = items[0]?.accountId ?? null;
+        const stickyAccountId = l.tgUserId
+          ? stickyByTgUserId.get(l.tgUserId) ?? null
+          : null;
+        const accountId = scheduledAccountId ?? stickyAccountId;
+        const account = accountId
+          ? accountById.get(accountId) ?? null
+          : null;
+        const accountSource: "scheduled" | "sticky" | null = scheduledAccountId
+          ? "scheduled"
+          : stickyAccountId
+            ? "sticky"
+            : null;
         const messages = items
           .toSorted((a, b) => a.messageIdx - b.messageIdx)
           .map((s) => ({
@@ -679,6 +718,7 @@ app.openapi(
           phone: l.phone,
           properties: l.properties,
           account,
+          accountSource,
           messages,
           repliedAt: l.repliedAt?.toISOString() ?? null,
           contactId: l.contactId,
@@ -1033,6 +1073,35 @@ app.openapi(
     });
   },
 );
+
+// Sticky-резолвер: для набора tg_user_id возвращает Map → primary_account_id
+// из contacts. Используется в /activate (резолв sticky перед round-robin) и
+// в /leads (sticky-предсказание для draft-sequence — UI должен совпадать с
+// фактическим распределением на activate).
+async function resolveStickyByTgUserIds(
+  wsId: string,
+  tgUserIds: string[],
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (tgUserIds.length === 0) return map;
+  const rows = await db
+    .select({
+      tgUserId: sql<string>`${contacts.properties}->>'tg_user_id'`,
+      accountId: contacts.primaryAccountId,
+    })
+    .from(contacts)
+    .where(
+      and(
+        eq(contacts.workspaceId, wsId),
+        isNotNull(contacts.primaryAccountId),
+        inArray(sql`${contacts.properties}->>'tg_user_id'`, tgUserIds),
+      ),
+    );
+  for (const r of rows) {
+    if (r.tgUserId && r.accountId) map.set(r.tgUserId, r.accountId);
+  }
+  return map;
+}
 
 async function loadSequence(wsId: string, seqId: string) {
   const [row] = await db

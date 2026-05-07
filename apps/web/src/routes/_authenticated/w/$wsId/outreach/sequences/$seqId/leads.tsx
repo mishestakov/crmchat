@@ -75,13 +75,22 @@ function LeadsPage() {
   const totalMsgCount = seq.data?.messages.length ?? 0;
   const total = leadsQ.data?.total ?? 0;
   const replied = leadsQ.data?.repliedCount ?? 0;
+  // Сводка по выбранной странице (200 лидов); при больших задачах нужен
+  // агрегат с бэка.
+  const stickyCount =
+    leadsQ.data?.leads.filter((l) => l.accountSource === "sticky").length ?? 0;
+  const unassignedCount =
+    leadsQ.data?.leads.filter(
+      (l) => l.accountSource === null && l.account === null,
+    ).length ?? 0;
+  const isDraft = seq.data?.status === "draft";
 
   return (
     <div className="space-y-3 p-6">
       <BackButton />
       <div className="mx-auto w-full max-w-6xl space-y-4">
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold">Детали кампании</h1>
+          <h1 className="text-2xl font-semibold">Контакты</h1>
           {csvKeys.length > 0 && (
             <label className="inline-flex items-center gap-2 text-sm text-zinc-600">
               <input
@@ -97,6 +106,20 @@ function LeadsPage() {
         <div className="text-xs text-zinc-500">
           Всего {total} {pluralize(total, "лид", "лида", "лидов")}
           {replied > 0 && ` · ${replied} ответили`}
+          {isDraft && stickyCount > 0 && (
+            <>
+              {" · "}
+              <span className="text-amber-700">
+                {stickyCount} закреплены за аккаунтом
+              </span>
+            </>
+          )}
+          {isDraft && unassignedCount > 0 && (
+            <>
+              {" · "}
+              <span>{unassignedCount} в round-robin</span>
+            </>
+          )}
         </div>
 
         {leadsQ.isLoading && (
@@ -160,7 +183,10 @@ function LeadsPage() {
                         </td>
                       ))}
                     <td className="px-4 py-2 align-top">
-                      <AccountCell account={l.account} />
+                      <AccountCell
+                        account={l.account}
+                        accountSource={l.accountSource}
+                      />
                     </td>
                     {Array.from({ length: totalMsgCount }).map((_, idx) => {
                       const msg = l.messages.find((m) => m.messageIdx === idx);
@@ -207,21 +233,43 @@ function LeadCell({ lead, wsId }: { lead: Lead; wsId: string }) {
   );
 }
 
-function AccountCell({ account }: { account: Lead["account"] }) {
-  if (!account) return <span className="text-xs text-zinc-400">—</span>;
+function AccountCell(props: {
+  account: Lead["account"];
+  accountSource: Lead["accountSource"];
+}) {
+  if (!props.account) {
+    // accountSource=null + account=null → лид незнаком, при активации уйдёт
+    // в round-robin. Показываем явный плейсхолдер вместо пустого «—».
+    return (
+      <span
+        className="text-xs text-zinc-500"
+        title="Этот лид незнаком — при запуске уйдёт к свободному аккаунту (round-robin)"
+      >
+        не закреплён
+      </span>
+    );
+  }
   return (
     <div className="space-y-0.5 text-xs">
       <div className="flex items-center gap-1 font-medium text-zinc-800">
-        {account.firstName ?? "—"}
-        {account.hasPremium && (
+        {props.account.firstName ?? "—"}
+        {props.account.hasPremium && (
           <Sparkles size={10} className="text-amber-500" />
         )}
       </div>
       <div className="text-zinc-500">
-        {account.tgUsername ? `@${account.tgUsername}` : ""}
-        {account.tgUsername && account.phoneNumber ? " · " : ""}
-        {account.phoneNumber ?? ""}
+        {props.account.tgUsername ? `@${props.account.tgUsername}` : ""}
+        {props.account.tgUsername && props.account.phoneNumber ? " · " : ""}
+        {props.account.phoneNumber ?? ""}
       </div>
+      {props.accountSource === "sticky" && (
+        <div
+          className="text-[10px] uppercase tracking-wide text-amber-700"
+          title="Закреплён по истории общения. На активации останется этот же аккаунт."
+        >
+          закреплён
+        </div>
+      )}
     </div>
   );
 }
