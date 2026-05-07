@@ -58,18 +58,66 @@ Owner как отдельная роль не выделяется. Создат
 
 ---
 
-## 3. Privacy между членами команды
+## 3. Видимость данных внутри workspace'а
 
-Принцип: **workspace — security boundary, не user.** Любой member видит:
-- все контакты воркспейса;
-- все сообщения всех подключённых TG-аккаунтов (outreach и personal sync);
-- все кампании, списки, файлы.
+> Раньше принцип был «workspace = security boundary, member видит всё». После
+> встречи 05.05.2026 (см. `product.md`) для multi-team воркспейсов это стало
+> дырой — менеджер видел чужие воронки и вёл бы лиды коллеги. Сейчас:
+> **admin видит всё в workspace, member — только то, что связано с его
+> outreach-аккаунтами.** Реализовано в `apps/api/src/lib/*-access.ts`.
 
-При приглашении нового участника на экране приглашения висит явное предупреждение:
+### Admin
 
-> «Члены команды в этом рабочем пространстве увидят ваши чаты Telegram, если вы подключите личный аккаунт.»
+Видит всё в workspace без фильтра, как было раньше.
 
-Это — продуктовое решение: granular per-chat ACL не делаем. Если нужна приватность — заводится отдельный workspace.
+### Member
+
+Видит подмножество, выводимое из множества «мои аккаунты»:
+- `M(user) = { outreach_accounts.id : owner_user_id = user OR
+              EXISTS активная outreach_account_delegations(account, user) }`.
+
+Затем:
+- **outreach_accounts**: row из M(user). Helper `accountAccessClause`.
+- **contacts**: `primary_account_id ∈ M(user)` ИЛИ
+  `EXISTS (tg_chats c WHERE c.peer_user_id = contact.tg_user_id AND
+   c.account_id ∈ M(user))` — sticky на меня или хоть когда-то DM через
+   мой аккаунт. Helper `contactAccessClause`.
+- **channels**: `EXISTS (channel_admins ca, contacts c
+  WHERE ca.channel_id = channels.id AND c.id = ca.contact_id AND
+  c доступен member'у по правилу выше)`. Helper `channelAccessClause`.
+- **outreach_sequences (задачи)**: `accounts_mode = 'selected' AND
+  accounts_selected ∩ M(user) ≠ ∅` ИЛИ `accounts_mode = 'all' AND
+  M(user) ≠ ∅`. Helper `sequenceAccessClause`.
+- **outreach_lists**: лист виден member'у, если есть видимая ему задача
+  на этот лист. Inline-clause в `routes/outreach-lists.ts`.
+- **activities**: через `contactAccessClause` родителя.
+
+### Намеренные исключения
+
+- **«Кто общался» в правой панели контакта** показывает ВСЕ outreach-аккаунты,
+  у которых был DM с этим контактом, включая чужие. Член видит, что коллега
+  уже общался — чтобы не дублировать «привет, мы про X писали».
+- **`/contacts/:id/chat-history?accountId=X`** не валидирует accountId
+  доступом — если контакт виден, история коллеги через любой аккаунт
+  тоже открыта. TDLib-инстансы все живут в одном `apps/api` процессе,
+  это просто отсутствие второго `assertAccountAccess`.
+- **SSE-стримы** (`/contact-stream`, `/outreach/sequences/:seqId/stream`)
+  открывают канал по проверке access на старте, но события внутри —
+  broadcast по wsId/seqId; member может увидеть ID/счётчик чужого
+  контакта в DevTools, но GET вернёт 404. Если станет проблемой —
+  фильтровать в subscribe-callback'е.
+
+### Личный TG в `telegram_accounts`
+
+Личный sync-аккаунт (импорт чатов в CRM, US-7) у юзера один и привязан к
+user_id, не к workspace'у. Сообщения из него попадают в общий пул контактов
+workspace'а; при приглашении в чужой ws предупреждаем:
+
+> «Члены команды в этом рабочем пространстве увидят ваши чаты Telegram,
+> если вы подключите личный аккаунт.»
+
+Granular per-chat ACL не делаем — если нужна приватность, заводится
+отдельный workspace.
 
 ---
 

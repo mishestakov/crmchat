@@ -21,6 +21,24 @@ const activeDelegationExists = (userId: string): SQL =>
       AND (d.ends_at IS NULL OR now() < d.ends_at)
   )`;
 
+// Subquery «мои аккаунты» — self-contained (не корреллирует с outer'ом),
+// в отличие от accountAccessClause. Используется в каскадных RBAC-чеках.
+export const myAccountIdsSql = (workspaceId: string, userId: string): SQL =>
+  sql`(
+    SELECT oa.id FROM outreach_accounts oa
+    WHERE oa.workspace_id = ${workspaceId}
+      AND (
+        oa.owner_user_id = ${userId}
+        OR EXISTS (
+          SELECT 1 FROM outreach_account_delegations d
+          WHERE d.account_id = oa.id
+            AND d.delegate_id = ${userId}
+            AND now() >= d.starts_at
+            AND (d.ends_at IS NULL OR now() < d.ends_at)
+        )
+      )
+  )`;
+
 // Drizzle WHERE-фрагмент для list-запросов. Использовать как
 // `.where(accountAccessClause(wsId, userId, role))` — уже включает фильтр
 // по workspace_id.

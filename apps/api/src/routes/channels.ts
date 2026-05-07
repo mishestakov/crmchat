@@ -15,7 +15,12 @@ import {
   contacts,
   tgUsers,
 } from "../db/schema.ts";
-import type { WorkspaceVars } from "../middleware/assert-member.ts";
+import {
+  assertChannelAccess,
+  channelAccessClause,
+} from "../lib/channels-access.ts";
+import { contactAccessClause } from "../lib/contacts-access.ts";
+import { assertRole, type WorkspaceVars } from "../middleware/assert-member.ts";
 
 const ChannelSchema = BaseChannelSchema.openapi("Channel");
 const CreateChannelSchema = BaseCreateChannel.openapi("CreateChannel");
@@ -56,10 +61,12 @@ app.openapi(
   }),
   async (c) => {
     const { wsId } = c.req.valid("param");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const rows = await db
       .select()
       .from(channels)
-      .where(eq(channels.workspaceId, wsId))
+      .where(channelAccessClause(wsId, userId, role))
       .orderBy(sql`${channels.createdAt} desc`);
     return c.json(await joinAdmins(rows));
   },
@@ -70,6 +77,7 @@ app.openapi(
     method: "post",
     path: "/v1/workspaces/{wsId}/channels",
     tags: ["channels"],
+    middleware: [assertRole("admin")] as const,
     request: {
       params: WsParam,
       body: {
@@ -121,6 +129,7 @@ app.openapi(
     method: "delete",
     path: "/v1/workspaces/{wsId}/channels/{id}",
     tags: ["channels"],
+    middleware: [assertRole("admin")] as const,
     request: { params: WsIdParam },
     responses: { 204: { description: "Deleted" } },
   }),
@@ -155,31 +164,27 @@ app.openapi(
   }),
   async (c) => {
     const { wsId, id } = c.req.valid("param");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { contactIds } = c.req.valid("json");
 
-    const [channel] = await db
-      .select()
-      .from(channels)
-      .where(and(eq(channels.id, id), eq(channels.workspaceId, wsId)))
-      .limit(1);
-    if (!channel) {
-      throw new HTTPException(404, { message: "channel not found" });
-    }
+    const channel = await assertChannelAccess(id, wsId, userId, role);
 
-    // Проверяем, что все contactIds принадлежат этому workspace — иначе
-    // менеджер может прилинковать чужой контакт через подобранный id.
+    // Проверяем, что все contactIds доступны юзеру (а не просто принадлежат
+    // workspace'у): member не должен прилинковать к каналу контакт коллеги,
+    // которого сам видеть не вправе.
     const valid = await db
       .select({ id: contacts.id })
       .from(contacts)
       .where(
         and(
-          eq(contacts.workspaceId, wsId),
+          contactAccessClause(wsId, userId, role),
           inArray(contacts.id, contactIds),
         ),
       );
     if (valid.length !== contactIds.length) {
       throw new HTTPException(400, {
-        message: "some contacts do not belong to this workspace",
+        message: "some contacts are not accessible",
       });
     }
 
@@ -203,16 +208,11 @@ app.openapi(
   }),
   async (c) => {
     const { wsId, id, contactId } = c.req.valid("param");
-    // Проверяем, что канал из этого workspace — без этой проверки можно было
-    // бы дёрнуть DELETE по чужому channelId.
-    const [channel] = await db
-      .select({ id: channels.id })
-      .from(channels)
-      .where(and(eq(channels.id, id), eq(channels.workspaceId, wsId)))
-      .limit(1);
-    if (!channel) {
-      throw new HTTPException(404, { message: "channel not found" });
-    }
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    // Канал должен быть доступен этому юзеру (без проверки можно было бы
+    // дёрнуть DELETE по подобранному channelId, в том числе чужому).
+    await assertChannelAccess(id, wsId, userId, role);
     await db
       .delete(channelAdmins)
       .where(
@@ -230,6 +230,7 @@ app.openapi(
     method: "post",
     path: "/v1/workspaces/{wsId}/channels/import",
     tags: ["channels"],
+    middleware: [assertRole("admin")] as const,
     request: {
       params: WsParam,
       body: {

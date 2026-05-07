@@ -7,8 +7,12 @@ import {
   UpdateActivitySchema as BaseUpdate,
 } from "@repo/core";
 import { db } from "../db/client.ts";
-import { activities, contacts } from "../db/schema.ts";
+import { activities } from "../db/schema.ts";
+import { assertContactAccess } from "../lib/contacts-access.ts";
 import type { WorkspaceVars } from "../middleware/assert-member.ts";
+
+// Activities привязаны к контактам — RBAC выводится через contact-access:
+// если контакт виден юзеру, активити по нему он тоже видит/правит.
 
 const ActivitySchema = BaseActivitySchema.openapi("Activity");
 const CreateActivitySchema = BaseCreate.openapi("CreateActivity");
@@ -21,15 +25,6 @@ const ListParam = z.object({
 const ItemParam = ListParam.extend({ id: z.string().min(1).max(64) });
 
 const app = new OpenAPIHono<{ Variables: WorkspaceVars }>();
-
-async function ensureContact(wsId: string, contactId: string) {
-  const [row] = await db
-    .select({ id: contacts.id })
-    .from(contacts)
-    .where(and(eq(contacts.id, contactId), eq(contacts.workspaceId, wsId)))
-    .limit(1);
-  if (!row) throw new HTTPException(404, { message: "contact not found" });
-}
 
 app.openapi(
   createRoute({
@@ -46,8 +41,10 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { contactId } = c.req.valid("param");
-    await ensureContact(wsId, contactId);
+    await assertContactAccess(contactId, wsId, userId, role);
     const rows = await db
       .select()
       .from(activities)
@@ -79,9 +76,10 @@ app.openapi(
   async (c) => {
     const wsId = c.get("workspaceId");
     const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { contactId } = c.req.valid("param");
     const body = c.req.valid("json");
-    await ensureContact(wsId, contactId);
+    await assertContactAccess(contactId, wsId, userId, role);
 
     const [row] = await db
       .insert(activities)
@@ -121,9 +119,11 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { contactId, id } = c.req.valid("param");
     const body = c.req.valid("json");
-    await ensureContact(wsId, contactId);
+    await assertContactAccess(contactId, wsId, userId, role);
 
     const [existing] = await db
       .select()
@@ -185,8 +185,10 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { contactId, id } = c.req.valid("param");
-    await ensureContact(wsId, contactId);
+    await assertContactAccess(contactId, wsId, userId, role);
     const result = await db
       .delete(activities)
       .where(and(eq(activities.id, id), eq(activities.contactId, contactId)))

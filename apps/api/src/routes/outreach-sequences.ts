@@ -17,6 +17,10 @@ import {
   type OutreachSequenceMessage,
 } from "../db/schema.ts";
 import { subscribeSequence } from "../lib/outreach-events.ts";
+import {
+  assertSequenceAccess,
+  sequenceAccessClause,
+} from "../lib/sequences-access.ts";
 import { substituteVariables } from "../lib/substitute-variables.ts";
 import { assertRole, type WorkspaceVars } from "../middleware/assert-member.ts";
 
@@ -148,10 +152,12 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const rows = await db
       .select()
       .from(outreachSequences)
-      .where(eq(outreachSequences.workspaceId, wsId))
+      .where(sequenceAccessClause(wsId, userId, role))
       .orderBy(asc(outreachSequences.createdAt));
     return c.json(rows.map(serializeSequence));
   },
@@ -220,8 +226,10 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { seqId } = c.req.valid("param");
-    const row = await loadSequence(wsId, seqId);
+    const row = await assertSequenceAccess(seqId, wsId, userId, role);
     return c.json(serializeSequence(row));
   },
 );
@@ -248,9 +256,11 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { seqId } = c.req.valid("param");
     const body = c.req.valid("json");
-    const existing = await loadSequence(wsId, seqId);
+    const existing = await assertSequenceAccess(seqId, wsId, userId, role);
 
     // Snapshot-fields (зашиваются в scheduled_messages при activate) можно
     // менять только в draft. Contact-settings влияют на ещё-не-созданные
@@ -339,8 +349,10 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { seqId } = c.req.valid("param");
-    const seq = await loadSequence(wsId, seqId);
+    const seq = await assertSequenceAccess(seqId, wsId, userId, role);
     if (seq.status !== "draft") {
       throw new HTTPException(400, {
         message: "Only draft sequences can be activated",
@@ -481,7 +493,7 @@ app.openapi(
         .where(eq(outreachSequences.id, seq.id));
     });
 
-    const refreshed = await loadSequence(wsId, seqId);
+    const refreshed = await assertSequenceAccess(seqId, wsId, userId, role);
     return c.json(serializeSequence(refreshed));
   },
 );
@@ -502,8 +514,10 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { seqId } = c.req.valid("param");
-    const seq = await loadSequence(wsId, seqId);
+    const seq = await assertSequenceAccess(seqId, wsId, userId, role);
     if (seq.status !== "active") {
       throw new HTTPException(400, {
         message: "Only active sequences can be paused",
@@ -516,7 +530,7 @@ app.openapi(
       .update(outreachSequences)
       .set({ status: "paused", updatedAt: new Date() })
       .where(eq(outreachSequences.id, seq.id));
-    const refreshed = await loadSequence(wsId, seqId);
+    const refreshed = await assertSequenceAccess(seqId, wsId, userId, role);
     return c.json(serializeSequence(refreshed));
   },
 );
@@ -537,8 +551,10 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { seqId } = c.req.valid("param");
-    const seq = await loadSequence(wsId, seqId);
+    const seq = await assertSequenceAccess(seqId, wsId, userId, role);
     if (seq.status !== "paused") {
       throw new HTTPException(400, {
         message: "Only paused sequences can be resumed",
@@ -548,7 +564,7 @@ app.openapi(
       .update(outreachSequences)
       .set({ status: "active", updatedAt: new Date() })
       .where(eq(outreachSequences.id, seq.id));
-    const refreshed = await loadSequence(wsId, seqId);
+    const refreshed = await assertSequenceAccess(seqId, wsId, userId, role);
     return c.json(serializeSequence(refreshed));
   },
 );
@@ -583,9 +599,11 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { seqId } = c.req.valid("param");
     const { limit, offset } = c.req.valid("query");
-    const seq = await loadSequence(wsId, seqId);
+    const seq = await assertSequenceAccess(seqId, wsId, userId, role);
     const totalCount = seq.messages.length;
 
     // repliedAgg + leadRows независимы — параллелим. repliedCount по всему
@@ -785,6 +803,8 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { seqId } = c.req.valid("param");
     const { period, grouping, viewMode } = c.req.valid("query");
 
@@ -794,7 +814,8 @@ app.openapi(
     // и date_trunc($2) разными expression'ами → 42803.
     const gKw = sql.raw(`'${grouping}'`);
 
-    // Параллельно: short loadSequence (нужен только listId) + total-агрегаты.
+    // Параллельно: short SELECT (нужен только listId, фильтр через
+    // sequenceAccessClause — RBAC) + total-агрегаты.
     const [seqRows, aggRows] = await Promise.all([
       db
         .select({ listId: outreachSequences.listId })
@@ -802,7 +823,7 @@ app.openapi(
         .where(
           and(
             eq(outreachSequences.id, seqId),
-            eq(outreachSequences.workspaceId, wsId),
+            sequenceAccessClause(wsId, userId, role),
           ),
         )
         .limit(1),
@@ -1051,8 +1072,10 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { seqId } = c.req.valid("param");
-    const seq = await loadSequence(wsId, seqId);
+    const seq = await assertSequenceAccess(seqId, wsId, userId, role);
     const [row] = await db
       .select({
         id: outreachLeads.id,
@@ -1103,20 +1126,6 @@ async function resolveStickyByTgUserIds(
   return map;
 }
 
-async function loadSequence(wsId: string, seqId: string) {
-  const [row] = await db
-    .select()
-    .from(outreachSequences)
-    .where(
-      and(
-        eq(outreachSequences.id, seqId),
-        eq(outreachSequences.workspaceId, wsId),
-      ),
-    )
-    .limit(1);
-  if (!row) throw new HTTPException(404, { message: "sequence not found" });
-  return row;
-}
 
 function serializeSequence(row: typeof outreachSequences.$inferSelect) {
   return {
@@ -1173,16 +1182,18 @@ app.get(
   "/v1/workspaces/:wsId/outreach/sequences/:seqId/stream",
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const seqId = c.req.param("seqId");
     if (!seqId) throw new HTTPException(400, { message: "seqId required" });
-    // Verify sequence принадлежит workspace до открытия стрима.
+    // Verify sequence доступна юзеру до открытия стрима (RBAC).
     const [row] = await db
       .select({ id: outreachSequences.id })
       .from(outreachSequences)
       .where(
         and(
           eq(outreachSequences.id, seqId),
-          eq(outreachSequences.workspaceId, wsId),
+          sequenceAccessClause(wsId, userId, role),
         ),
       )
       .limit(1);

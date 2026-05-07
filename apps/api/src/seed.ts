@@ -30,6 +30,7 @@ for (const u of DEV_USERS) {
 
 // Demo workspace для Анны: фикс-id, идемпотентно.
 const ANNA_ID = DEV_USERS[0].id;
+const BORIS_ID = DEV_USERS[1].id;
 const DEMO_WS_ID = "ws_demo";
 const IVAN_ID = "cont_ivan";
 const MARIA_ID = "cont_maria";
@@ -57,6 +58,12 @@ for (const ws of allWorkspaces) {
     .onConflictDoNothing();
 }
 console.log(`backfilled ${allWorkspaces.length} workspace_members rows`);
+
+// Борис — member в Demo, чтобы было кем тестировать RBAC (этап 11.5).
+await db
+  .insert(workspaceMembers)
+  .values({ workspaceId: DEMO_WS_ID, userId: BORIS_ID, role: "member" })
+  .onConflictDoNothing();
 
 // Preset properties для Demo workspace — через тот же helper, что и в POST /workspaces.
 // Идемпотентно (onConflictDoNothing по [workspaceId, key]).

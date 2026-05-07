@@ -22,6 +22,10 @@ import {
   properties as propsTable,
   tgChats,
 } from "../db/schema.ts";
+import {
+  assertContactAccess,
+  contactAccessClause,
+} from "../lib/contacts-access.ts";
 import { emitContactChanged, subscribeContacts } from "../lib/contact-events.ts";
 import {
   enforceRequiredProperties,
@@ -119,6 +123,8 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { q, filters: filtersStr } = c.req.valid("query");
 
     let filters: Record<string, string> = {};
@@ -135,7 +141,7 @@ app.openapi(
       }
     }
 
-    const conditions: SQL[] = [eq(contacts.workspaceId, wsId)];
+    const conditions: SQL[] = [contactAccessClause(wsId, userId, role)];
 
     if (q && q.trim()) {
       const pat = `%${q.trim()}%`;
@@ -195,8 +201,10 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { id } = c.req.valid("param");
-    const row = await selectOne(wsId, id);
+    const row = await selectOne(wsId, id, userId, role);
     if (!row) throw new HTTPException(404, { message: "contact not found" });
     return c.json(serialize(row));
   },
@@ -226,6 +234,8 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { tgUserId, username } = c.req.valid("query");
     if (!tgUserId && !username) {
       throw new HTTPException(400, {
@@ -245,7 +255,7 @@ app.openapi(
     const [row] = await db
       .select(getTableColumns(contacts))
       .from(contacts)
-      .where(and(eq(contacts.workspaceId, wsId), or(...conds)))
+      .where(and(contactAccessClause(wsId, userId, role), or(...conds)))
       .limit(1);
     if (!row) throw new HTTPException(404, { message: "contact not found" });
     return c.json(
@@ -280,24 +290,19 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
 
     if (body.properties === undefined) {
       // Нечего обновлять — возвращаем текущий контакт без записи.
-      const row = await selectOne(wsId, id);
+      const row = await selectOne(wsId, id, userId, role);
       if (!row) throw new HTTPException(404, { message: "contact not found" });
       return c.json(serialize(row));
     }
 
-    const [existing] = await db
-      .select({ properties: contacts.properties })
-      .from(contacts)
-      .where(and(eq(contacts.id, id), eq(contacts.workspaceId, wsId)))
-      .limit(1);
-    if (!existing) {
-      throw new HTTPException(404, { message: "contact not found" });
-    }
+    const existing = await assertContactAccess(id, wsId, userId, role);
 
     // null / "" / [] в body.properties → удалить ключ; остальное мерджится поверх.
     const merged = { ...existing.properties };
@@ -315,7 +320,7 @@ app.openapi(
       .update(contacts)
       .set({ properties: merged, updatedAt: new Date() })
       .where(and(eq(contacts.id, id), eq(contacts.workspaceId, wsId)));
-    const row = await selectOne(wsId, id);
+    const row = await selectOne(wsId, id, userId, role);
     if (!row) throw new HTTPException(404, { message: "contact not found" });
     return c.json(serialize(row));
   },
@@ -331,7 +336,10 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { id } = c.req.valid("param");
+    await assertContactAccess(id, wsId, userId, role);
     const result = await db
       .delete(contacts)
       .where(and(eq(contacts.id, id), eq(contacts.workspaceId, wsId)))
@@ -343,7 +351,12 @@ app.openapi(
   },
 );
 
-async function selectOne(wsId: string, id: string) {
+async function selectOne(
+  wsId: string,
+  id: string,
+  userId: string,
+  role: "admin" | "member",
+) {
   const [row] = await db
     .select({
       ...getTableColumns(contacts),
@@ -352,7 +365,7 @@ async function selectOne(wsId: string, id: string) {
       channels: channelsSql,
     })
     .from(contacts)
-    .where(and(eq(contacts.id, id), eq(contacts.workspaceId, wsId)))
+    .where(and(eq(contacts.id, id), contactAccessClause(wsId, userId, role)))
     .limit(1);
   return row;
 }
@@ -414,8 +427,14 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { id } = c.req.valid("param");
     const { accountId } = c.req.valid("json");
+
+    // Проверка контакт-доступа: чужой контакт мы не должны помечать прочитанным
+    // (он у коллеги в badge'ах висит). 404 если не виден этому юзеру.
+    await assertContactAccess(id, wsId, userId, role);
 
     // 1) Локальный UPDATE + emit. Главное действие — пользователь увидит сброс
     //    badge'а немедленно, остальные вкладки канбана через SSE.
@@ -564,17 +583,14 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { id } = c.req.valid("param");
     const { accountId, limit, before } = c.req.valid("query");
 
-    const [contact] = await db
-      .select({ properties: contacts.properties })
-      .from(contacts)
-      .where(and(eq(contacts.id, id), eq(contacts.workspaceId, wsId)))
-      .limit(1);
-    if (!contact) {
-      throw new HTTPException(404, { message: "contact not found" });
-    }
+    // accountId намеренно НЕ валидируется по доступу (см.
+    // specs/permissions.md §3 «Намеренные исключения»).
+    const contact = await assertContactAccess(id, wsId, userId, role);
     const tgUserId = (contact.properties as Record<string, unknown>).tg_user_id;
     if (typeof tgUserId !== "string") {
       throw new HTTPException(400, { message: "contact has no telegram id" });
@@ -762,6 +778,13 @@ function extractText(content: TdMessage["content"]): string {
 // NB: путь намеренно НЕ внутри /contacts/{id}/* — иначе stream-сегмент
 // конфликтует с `:id` параметром openapi-роута GET /contacts/{id}
 // (Hono матчит первый зарегистрированный, и openapi-роут шире).
+//
+// RBAC (этап 11.5): broadcast по wsId, member'ы получают события и о
+// недоступных им контактах. Для скрытия пришлось бы либо проверять access
+// на каждый emit (DB-roundtrip на каждое incoming), либо держать кэш
+// «доступные мне contactId» с инвалидацией. На MVP оставляем как есть —
+// member увидит ID чужого контакта в DevTools, но GET вернёт 404. Если
+// окажется проблемой — отфильтровать в subscribeContacts.
 app.get("/v1/workspaces/:wsId/contact-stream", (c) => {
   const wsId = c.get("workspaceId");
   return streamSSE(c, async (stream) => {

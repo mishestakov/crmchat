@@ -8,6 +8,7 @@ import {
   outreachLists,
   outreachListStatus,
 } from "../db/schema.ts";
+import { assertListAccess, listAccessClause } from "../lib/lists-access.ts";
 import { assertRole, type WorkspaceVars } from "../middleware/assert-member.ts";
 
 // Outreach-листы (CSV-импорт): фронт парсит файл локально, шлёт JSON со
@@ -104,10 +105,12 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const rows = await db
       .select()
       .from(outreachLists)
-      .where(eq(outreachLists.workspaceId, wsId))
+      .where(listAccessClause(wsId, userId, role))
       .orderBy(outreachLists.createdAt);
     return c.json(rows.map(serializeList));
   },
@@ -338,18 +341,10 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { listId } = c.req.valid("param");
-    const [row] = await db
-      .select()
-      .from(outreachLists)
-      .where(
-        and(
-          eq(outreachLists.id, listId),
-          eq(outreachLists.workspaceId, wsId),
-        ),
-      )
-      .limit(1);
-    if (!row) throw new HTTPException(404, { message: "list not found" });
+    const row = await assertListAccess(listId, wsId, userId, role);
     return c.json(serializeList(row));
   },
 );
@@ -382,8 +377,14 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const { listId } = c.req.valid("param");
     const { limit, offset } = c.req.valid("query");
+
+    // RBAC pre-check: 404 на чужой/несуществующий лист до подсчёта лидов.
+    await assertListAccess(listId, wsId, userId, role);
+
     // Один query вместо count+select: window-function `COUNT(*) OVER ()` даёт
     // total на каждой строке (одинаковый по всем). Если страница пустая —
     // total=0. Сетевой round-trip 1 вместо 2.
