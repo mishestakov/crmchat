@@ -1,7 +1,7 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { Search as SearchIcon } from "lucide-react";
+import { Search as SearchIcon, X } from "lucide-react";
 import type { Contact } from "@repo/core";
 import { api } from "../../../../../lib/api";
 import { formatRelative } from "../../../../../lib/date-utils";
@@ -27,10 +27,12 @@ function ContactsList() {
   const navigate = useNavigate();
   const qc = useQueryClient();
 
-  // SSE: bumps contact'у unread/lastMessageAt при входящем DM от него
-  // (см. apps/api/src/lib/contact-events.ts) и сбрасывает при mark-read.
-  // Patch'им cache в-place вместо invalidate — не дёргаем GET всех контактов
-  // на каждый чужой message.
+  // Для drawer'а правой панели — id контакта + выбранный аккаунт. null = закрыт.
+  const [drawer, setDrawer] = useState<{
+    contact: Contact;
+    accountId: string;
+  } | null>(null);
+
   useEventSourceEvent<{
     contactId: string;
     unreadCount: number;
@@ -102,13 +104,6 @@ function ContactsList() {
           value={search.q ?? ""}
           onChange={(q) => setSearch({ q: q || undefined })}
         />
-        <Link
-          to="/w/$wsId/contacts/new"
-          params={{ wsId }}
-          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
-        >
-          + Новый
-        </Link>
       </div>
 
       {contacts.isLoading && <p>Загрузка…</p>}
@@ -117,7 +112,25 @@ function ContactsList() {
       )}
 
       {contacts.data && (
-        <TableView wsId={wsId} rows={rows} accounts={accounts.data ?? []} />
+        <TableView
+          wsId={wsId}
+          rows={rows}
+          accounts={accounts.data ?? []}
+          onOpenChat={(contact, accountId) => setDrawer({ contact, accountId })}
+        />
+      )}
+
+      {drawer && (
+        <ChatDrawer
+          wsId={wsId}
+          contact={drawer.contact}
+          accountId={drawer.accountId}
+          accounts={accounts.data ?? []}
+          onSelectAccount={(accountId) =>
+            setDrawer({ contact: drawer.contact, accountId })
+          }
+          onClose={() => setDrawer(null)}
+        />
       )}
     </div>
   );
@@ -172,11 +185,11 @@ function TableView(props: {
   wsId: string;
   rows: Contact[];
   accounts: AccountRow[];
+  onOpenChat: (contact: Contact, accountId: string) => void;
 }) {
   const accountById = new Map(props.accounts.map((a) => [a.id, a]));
   // Сортировка по lastMessageAt DESC NULLS LAST: после импорта собеседников
-  // юзер сразу видит «свежий ответ сверху», созданные руками без TG-истории —
-  // снизу. Совпадает с сортировкой /import-contacts.
+  // юзер сразу видит «свежий ответ сверху».
   const sorted = props.rows.toSorted((a, b) => {
     const ta = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
     const tb = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
@@ -193,13 +206,14 @@ function TableView(props: {
             <th className="px-3 py-2 font-medium">Телефон</th>
             <th className="px-3 py-2 font-medium">Последнее сообщение</th>
             <th className="px-3 py-2 font-medium">Закреплён за</th>
+            <th className="px-3 py-2 font-medium">Кто общался</th>
           </tr>
         </thead>
         <tbody>
           {sorted.length === 0 && (
             <tr>
               <td
-                colSpan={5}
+                colSpan={6}
                 className="px-3 py-12 text-center text-zinc-400"
               >
                 Контактов пока нет — привяжите Telegram-аккаунт и импортируйте
@@ -250,6 +264,13 @@ function TableView(props: {
                 <td className="px-3 py-2 text-zinc-600">
                   {acc ? formatAccount(acc) : "—"}
                 </td>
+                <td className="px-3 py-2">
+                  <ChatAccountsCell
+                    contact={c}
+                    accountById={accountById}
+                    onOpen={(accId) => props.onOpenChat(c, accId)}
+                  />
+                </td>
               </tr>
             );
           })}
@@ -259,9 +280,203 @@ function TableView(props: {
   );
 }
 
+function ChatAccountsCell(props: {
+  contact: Contact;
+  accountById: Map<string, AccountRow>;
+  onOpen: (accountId: string) => void;
+}) {
+  if (props.contact.chatAccounts.length === 0) {
+    return <span className="text-zinc-400">—</span>;
+  }
+  return (
+    <div className="flex flex-wrap gap-1">
+      {props.contact.chatAccounts.map((ca) => {
+        const acc = props.accountById.get(ca.accountId);
+        const replied = ca.lastInboundAt !== null;
+        const label = acc ? accountInitials(acc) : "?";
+        const tooltip =
+          (acc ? formatAccount(acc) : ca.accountId) +
+          (replied
+            ? ` · ответил ${formatRelative(ca.lastInboundAt!)}`
+            : ca.lastOutboundAt
+              ? ` · только наши, последнее ${formatRelative(ca.lastOutboundAt)}`
+              : "");
+        return (
+          <button
+            type="button"
+            key={ca.accountId}
+            onClick={() => props.onOpen(ca.accountId)}
+            title={tooltip}
+            className={
+              "inline-flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-medium hover:ring-2 hover:ring-emerald-300 " +
+              (replied
+                ? "bg-emerald-100 text-emerald-800"
+                : "bg-zinc-100 text-zinc-500")
+            }
+          >
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function ChatDrawer(props: {
+  wsId: string;
+  contact: Contact;
+  accountId: string;
+  accounts: AccountRow[];
+  onSelectAccount: (accountId: string) => void;
+  onClose: () => void;
+}) {
+  const accountById = new Map(props.accounts.map((a) => [a.id, a]));
+  const v = props.contact.properties as Record<string, unknown>;
+  const contactName =
+    typeof v.full_name === "string" && v.full_name ? v.full_name : "—";
+
+  // Esc → закрыть.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") props.onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [props]);
+
+  const history = useQuery({
+    queryKey: [
+      "chat-history",
+      props.wsId,
+      props.contact.id,
+      props.accountId,
+    ] as const,
+    queryFn: async () => {
+      const { data, error } = await api.GET(
+        "/v1/workspaces/{wsId}/contacts/{id}/chat-history",
+        {
+          params: {
+            path: { wsId: props.wsId, id: props.contact.id },
+            query: { accountId: props.accountId, limit: 50 },
+          },
+        },
+      );
+      if (error) throw error;
+      return data;
+    },
+    // TDLib кэширует историю в td-database — повторное открытие чата ходит из
+    // local cache. На клиенте можно не дёргать тот же accountId×contact заново.
+    staleTime: 60_000,
+  });
+
+  return (
+    <>
+      <div
+        className="fixed inset-0 z-40 bg-zinc-900/20"
+        onClick={props.onClose}
+      />
+      <aside className="fixed bottom-0 right-0 top-0 z-50 flex w-[480px] max-w-[90vw] flex-col bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3">
+          <div className="min-w-0">
+            <div className="truncate font-medium">{contactName}</div>
+            <div className="text-xs text-zinc-500">
+              История переписки (read-only)
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={props.onClose}
+            className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+          >
+            <X size={18} />
+          </button>
+        </div>
+        {props.contact.chatAccounts.length > 1 && (
+          <div className="flex gap-1 overflow-x-auto border-b border-zinc-200 px-3 py-2">
+            {props.contact.chatAccounts.map((ca) => {
+              const acc = accountById.get(ca.accountId);
+              const active = ca.accountId === props.accountId;
+              return (
+                <button
+                  type="button"
+                  key={ca.accountId}
+                  onClick={() => props.onSelectAccount(ca.accountId)}
+                  className={
+                    "rounded-md px-2 py-1 text-xs font-medium " +
+                    (active
+                      ? "bg-emerald-600 text-white"
+                      : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200")
+                  }
+                >
+                  {acc ? formatAccount(acc) : ca.accountId}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <div className="flex-1 overflow-y-auto bg-zinc-50 p-4">
+          {history.isLoading && (
+            <p className="text-sm text-zinc-400">Загрузка истории…</p>
+          )}
+          {history.error && (
+            <p className="text-sm text-red-600">
+              {errorMessage(history.error)}
+            </p>
+          )}
+          {history.data && history.data.messages.length === 0 && (
+            <p className="text-sm text-zinc-400">
+              Сообщений нет — этот аккаунт ещё не общался с контактом.
+            </p>
+          )}
+          {history.data && history.data.messages.length > 0 && (
+            // TDLib отдаёт newest-first, для chat-style рендерим oldest-first.
+            <div className="flex flex-col gap-2">
+              {history.data.messages.toReversed().map((m) => (
+                <div
+                  key={m.id}
+                  className={
+                    "max-w-[80%] rounded-lg px-3 py-2 text-sm " +
+                    (m.isOutgoing
+                      ? "ml-auto bg-emerald-600 text-white"
+                      : "mr-auto bg-white text-zinc-900 ring-1 ring-zinc-200")
+                  }
+                >
+                  <div className="whitespace-pre-wrap break-words">
+                    {m.text}
+                  </div>
+                  <div
+                    className={
+                      "mt-1 text-[10px] " +
+                      (m.isOutgoing ? "text-emerald-100" : "text-zinc-400")
+                    }
+                  >
+                    {formatRelative(m.date)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </aside>
+    </>
+  );
+}
+
 function formatAccount(a: AccountRow): string {
   if (a.firstName) return a.firstName;
   if (a.tgUsername) return `@${a.tgUsername}`;
   if (a.phoneNumber) return a.phoneNumber;
   return a.id;
+}
+
+function accountInitials(a: AccountRow): string {
+  if (a.firstName) {
+    return a.firstName
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((s) => s[0]?.toUpperCase() ?? "")
+      .join("") || a.firstName[0]!.toUpperCase();
+  }
+  if (a.tgUsername) return a.tgUsername[0]!.toUpperCase();
+  return "?";
 }

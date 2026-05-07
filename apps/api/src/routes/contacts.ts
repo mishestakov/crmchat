@@ -44,6 +44,28 @@ const nextStepSql = sql<{
   ) a
 )`.as("next_step");
 
+// Subquery: аккаунты с DM-историей. Колонка «Кто общался» рисуется без
+// доп.запросов, табы правой панели сортируются по lastInboundAt.
+type ChatAccountRow = {
+  accountId: string;
+  lastInboundAt: string | null;
+  lastOutboundAt: string | null;
+};
+const chatAccountsSql = sql<ChatAccountRow[]>`(
+  SELECT COALESCE(json_agg(t ORDER BY t."lastInboundAt" DESC NULLS LAST, t."lastOutboundAt" DESC NULLS LAST), '[]'::json)
+  FROM (
+    SELECT
+      tg_chats.account_id AS "accountId",
+      tg_chats.last_inbound_at AS "lastInboundAt",
+      tg_chats.last_outbound_at AS "lastOutboundAt"
+    FROM tg_chats
+    JOIN outreach_accounts ON outreach_accounts.id = tg_chats.account_id
+    WHERE outreach_accounts.workspace_id = contacts.workspace_id
+      AND tg_chats.peer_user_id = (contacts.properties->>'tg_user_id')
+      AND (contacts.properties->>'tg_user_id') IS NOT NULL
+  ) t
+)`.as("chat_accounts");
+
 const ContactSchema = BaseContactSchema.openapi("Contact");
 const CreateContactSchema = BaseCreate.openapi("CreateContact");
 const UpdateContactSchema = BaseUpdate.openapi("UpdateContact");
@@ -128,7 +150,11 @@ app.openapi(
     }
 
     const rows = await db
-      .select({ ...getTableColumns(contacts), nextStep: nextStepSql })
+      .select({
+      ...getTableColumns(contacts),
+      nextStep: nextStepSql,
+      chatAccounts: chatAccountsSql,
+    })
       .from(contacts)
       .where(and(...conditions))
       .orderBy(contacts.createdAt);
@@ -161,17 +187,6 @@ app.openapi(
     const body = c.req.valid("json");
     const defs = await loadPropertyDefs(wsId);
     const validatedProps = validateContactProperties(defs, body.properties);
-
-    // Дефолт для stage: если юзер не задал, ставим первую опцию воронки. Это
-    // обязательное internal-поле; без значения нельзя, а ситуация «нет статуса»
-    // не должна порождать «Без значения» колонку — новый лид = старт воронки.
-    const stage = defs.find(
-      (d) => d.key === "stage" && d.type === "single_select",
-    );
-    if (stage && !validatedProps.stage && stage.values?.[0]) {
-      validatedProps.stage = stage.values[0].id;
-    }
-
     enforceRequiredProperties(defs, validatedProps);
     const [inserted] = await db
       .insert(contacts)
@@ -258,6 +273,7 @@ app.openapi(
       serialize({
         ...row,
         nextStep: null,
+        chatAccounts: [],
       }),
     );
   },
@@ -349,7 +365,11 @@ app.openapi(
 
 async function selectOne(wsId: string, id: string) {
   const [row] = await db
-    .select({ ...getTableColumns(contacts), nextStep: nextStepSql })
+    .select({
+      ...getTableColumns(contacts),
+      nextStep: nextStepSql,
+      chatAccounts: chatAccountsSql,
+    })
     .from(contacts)
     .where(and(eq(contacts.id, id), eq(contacts.workspaceId, wsId)))
     .limit(1);
@@ -360,6 +380,7 @@ type ContactRow = typeof contacts.$inferSelect & {
   nextStep:
     | { date: string; text: string; repeat: "none" | "daily" | "weekly" | "monthly" }
     | null;
+  chatAccounts: ChatAccountRow[];
 };
 
 function serialize(row: ContactRow) {
@@ -371,6 +392,7 @@ function serialize(row: ContactRow) {
     unreadCount: row.unreadCount,
     lastMessageAt: row.lastMessageAt ? row.lastMessageAt.toISOString() : null,
     primaryAccountId: row.primaryAccountId,
+    chatAccounts: row.chatAccounts,
     createdBy: row.createdBy,
     createdAt: row.createdAt.toISOString(),
   };
@@ -493,6 +515,150 @@ async function readOnTelegram(
     source: { _: "messageSourceChatHistory" },
     force_read: true,
   } as never);
+}
+
+// Read-only история чата для правой панели на /contacts (10.7). TDLib кэширует
+// getChatHistory в td-database, повторные клики идут из локального кэша без
+// MTProto. only_local=false на первый вызов подкачивает.
+//
+// viewMessages здесь НЕ дёргаем — иначе случайно отметим непрочитанные ИХ
+// сообщения как прочитанные при простом просмотре.
+const ChatMessageSchema = z.object({
+  id: z.string(),
+  date: z.iso.datetime(),
+  isOutgoing: z.boolean(),
+  text: z.string(),
+});
+
+app.openapi(
+  createRoute({
+    method: "get",
+    path: "/v1/workspaces/{wsId}/contacts/{id}/chat-history",
+    tags: ["contacts"],
+    request: {
+      params: WsIdParam,
+      query: z.object({
+        accountId: z.string().min(1).max(64),
+        limit: z.coerce.number().int().min(1).max(100).default(50),
+      }),
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({ messages: z.array(ChatMessageSchema) }),
+          },
+        },
+        description: "Last N messages, newest first",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const { id } = c.req.valid("param");
+    const { accountId, limit } = c.req.valid("query");
+
+    const [contact] = await db
+      .select({ properties: contacts.properties })
+      .from(contacts)
+      .where(and(eq(contacts.id, id), eq(contacts.workspaceId, wsId)))
+      .limit(1);
+    if (!contact) {
+      throw new HTTPException(404, { message: "contact not found" });
+    }
+    const tgUserId = (contact.properties as Record<string, unknown>).tg_user_id;
+    if (typeof tgUserId !== "string") {
+      throw new HTTPException(400, { message: "contact has no telegram id" });
+    }
+
+    const [acc] = await db
+      .select({ id: outreachAccounts.id })
+      .from(outreachAccounts)
+      .where(
+        and(
+          eq(outreachAccounts.id, accountId),
+          eq(outreachAccounts.workspaceId, wsId),
+        ),
+      )
+      .limit(1);
+    if (!acc) throw new HTTPException(404, { message: "account not found" });
+
+    const [chatRow] = await db
+      .select({ chatId: tgChats.chatId })
+      .from(tgChats)
+      .where(and(eq(tgChats.accountId, acc.id), eq(tgChats.peerUserId, tgUserId)))
+      .limit(1);
+    if (!chatRow) {
+      return c.json({ messages: [] });
+    }
+
+    const client = await getOutreachWorkerClient({ id: acc.id, workspaceId: wsId });
+    if (!client) {
+      throw new HTTPException(503, { message: "tg client unavailable" });
+    }
+
+    const result = (await client.invoke({
+      _: "getChatHistory",
+      chat_id: Number(chatRow.chatId),
+      from_message_id: 0,
+      offset: 0,
+      limit,
+      only_local: false,
+    } as never)) as { messages: TdMessage[] };
+
+    return c.json({ messages: result.messages.map(mapMessage) });
+  },
+);
+
+type TdMessage = {
+  id: number | string;
+  date: number;
+  is_outgoing: boolean;
+  content: { _: string; text?: { text: string }; caption?: { text: string } };
+};
+
+function mapMessage(m: TdMessage) {
+  return {
+    id: String(m.id),
+    date: new Date(m.date * 1000).toISOString(),
+    isOutgoing: m.is_outgoing,
+    text: extractText(m.content),
+  };
+}
+
+function extractText(content: TdMessage["content"]): string {
+  switch (content._) {
+    case "messageText":
+      return content.text?.text ?? "";
+    case "messagePhoto":
+      return content.caption?.text ? `[фото] ${content.caption.text}` : "[фото]";
+    case "messageVideo":
+      return content.caption?.text
+        ? `[видео] ${content.caption.text}`
+        : "[видео]";
+    case "messageDocument":
+      return content.caption?.text
+        ? `[файл] ${content.caption.text}`
+        : "[файл]";
+    case "messageVoiceNote":
+      return "[голосовое]";
+    case "messageVideoNote":
+      return "[видеосообщение]";
+    case "messageSticker":
+      return "[стикер]";
+    case "messageAnimation":
+      return "[gif]";
+    case "messageAudio":
+      return "[аудио]";
+    case "messageLocation":
+      return "[геопозиция]";
+    case "messageContact":
+      return "[контакт]";
+    case "messagePoll":
+      return "[опрос]";
+    default:
+      return `[${content._.replace(/^message/, "")}]`;
+  }
 }
 
 // SSE-стрим контактных апдейтов. Фронт открывает один EventSource на канбан,

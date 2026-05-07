@@ -26,18 +26,33 @@ export const ContactSchema = z.object({
   // аккаунта по этому id, новый CSV-резолвер использует как первичный
   // источник sticky.
   primaryAccountId: z.string().min(1).max(64).nullable(),
+  // Аккаунты воркспейса, у которых есть DM-история с этим контактом.
+  // Источник — tg_chats. Сортировка: свежий last_inbound_at первым,
+  // потом last_outbound_at; первый элемент — «дефолтный» аккаунт для
+  // правой панели (10.7).
+  chatAccounts: z.array(
+    z.object({
+      accountId: z.string(),
+      lastInboundAt: z.iso.datetime().nullable(),
+      lastOutboundAt: z.iso.datetime().nullable(),
+    }),
+  ),
   createdBy: z.string().min(1).max(64),
   createdAt: z.iso.datetime(),
 });
 export type Contact = z.infer<typeof ContactSchema>;
 
+// Значения валидируются отдельно на сервере против определений workspace'а
+// (см. apps/api/src/lib/contact-properties.ts) — здесь z.unknown(), потому что
+// схема значения зависит от runtime-определения property.type.
 const ContactInputBase = z.object({
-  // Значения валидируются отдельно на сервере против определений workspace'а
-  // (см. apps/api/src/lib/contact-properties.ts) — здесь z.unknown(), потому что
-  // схема значения зависит от runtime-определения property.type.
   properties: z.record(z.string(), z.unknown()).optional(),
 });
 
+// CreateContactSchema используется только в /outreach/chat при «Создать лид
+// из открытого TG-чата». Кнопка «+ Новый» в /contacts удалена (10.8) —
+// после этапа 10.5 (живой трафик автосоздаёт contact на первом DM)
+// этот endpoint тоже скорее всего уйдёт.
 export const CreateContactSchema = ContactInputBase;
 export type CreateContactInput = z.infer<typeof CreateContactSchema>;
 
