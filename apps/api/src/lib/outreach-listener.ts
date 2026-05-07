@@ -195,17 +195,15 @@ async function onNewMessage(
       }
     }
 
-    // Bump unread у contact'а. Локальный «оптимистичный» инкремент: на свежий
-    // incoming TG не шлёт UpdateChatReadInbox, только на read action. Когда
-    // юзер прочитает чат на телефоне — TG разошлёт update со stillUnreadCount,
-    // и onReadInbox синхронизирует БД с правдой TG.
+    // unread_count поверх contacts держит onReadInbox: TG на каждое incoming
+    // шлёт парный updateChatReadInbox с новым unread_count, это authoritative
+    // (см. td_api.tl: «Incoming messages were read OR the number of unread
+    // messages has been changed»). Если делать +1 здесь — гонимся с onReadInbox
+    // и получаем +2 на первое сообщение в чат. Тут только bump lastMessageAt.
     const now = new Date();
     let touched = await db
       .update(contacts)
-      .set({
-        unreadCount: sql`${contacts.unreadCount} + 1`,
-        lastMessageAt: now,
-      })
+      .set({ lastMessageAt: now })
       .where(
         and(
           eq(contacts.workspaceId, workspaceId),
@@ -231,7 +229,6 @@ async function onNewMessage(
         touched = await db
           .update(contacts)
           .set({
-            unreadCount: sql`${contacts.unreadCount} + 1`,
             lastMessageAt: now,
             properties: sql`${contacts.properties} || jsonb_build_object('tg_user_id', ${senderIdStr}::text)`,
           })
