@@ -28,7 +28,7 @@ import {
 import { useOpenChat } from "../../../../../../components/tg-chat-host";
 import { TgChatIframe } from "../../../../../../components/tg-chat-iframe";
 import type { ChatPeer } from "../../../../../../lib/chat-store";
-import { ChannelCard } from "../../-channel-card";
+import { ChannelCard } from "../../../../../../components/channel-card";
 
 type Search = { chat?: boolean };
 

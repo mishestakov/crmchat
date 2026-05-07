@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import type { Channel } from "@repo/core";
-import { api } from "../../../../lib/api";
-import { formatRelative } from "../../../../lib/date-utils";
-import { errorMessage } from "../../../../lib/errors";
+import { api } from "../lib/api";
+import { formatRelative } from "../lib/date-utils";
+import { errorMessage } from "../lib/errors";
 
 // Карточка канала: thumbnail/title/meta-шапка + sync-бар + лента истории
 // (50 сообщений plain-text). Используется в drawer'е /channels и в карточке

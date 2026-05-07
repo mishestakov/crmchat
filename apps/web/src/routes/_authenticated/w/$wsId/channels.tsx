@@ -1,14 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Search as SearchIcon, X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import type { Channel, ImportChannelsMapping } from "@repo/core";
 import { api } from "../../../../lib/api";
+import { ChannelCard, formatMembers } from "../../../../components/channel-card";
+import { SearchInput } from "../../../../components/search-input";
 import { parseCsv, type ParsedCsv } from "../../../../lib/csv";
 import { formatRelative } from "../../../../lib/date-utils";
 import { errorMessage } from "../../../../lib/errors";
 import { useOutreachAccounts } from "../../../../lib/outreach-queries";
-import { ChannelCard, formatMembers } from "./-channel-card";
 
 // Slot'ы для column-mapping в импорте. value ∈ ImportChannelsMapping ключи +
 // 'ignore' + 'property'. Порядок = порядок в select-dropdown'е.
@@ -193,9 +194,11 @@ function ChannelsPage() {
         />
       )}
 
-      <div className="flex items-center gap-3">
-        <SearchInput value={search} onChange={setSearch} />
-      </div>
+      <SearchInput
+        value={search}
+        onChange={setSearch}
+        placeholder="Поиск по названию или @username…"
+      />
 
       {channelsQ.isLoading && <p>Загрузка…</p>}
       {channelsQ.error && (
@@ -535,47 +538,6 @@ function AdminCell({ admins }: { admins: Channel["admins"] }) {
     <span title={admins.map((a) => a.fullName ?? a.telegramUsername).join(", ")}>
       {label} <span className="text-zinc-400">+{admins.length - 1}</span>
     </span>
-  );
-}
-
-// SearchInput-копия из contacts/index.tsx — те же дебаунс 500ms, Enter
-// форсирует поиск, Escape сбрасывает к внешнему value. Когда появится
-// третий поиск-инпут в проекте — выносим в components/.
-function SearchInput(props: { value: string; onChange: (v: string) => void }) {
-  const [local, setLocal] = useState(props.value);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const onChangeRef = useRef(props.onChange);
-  onChangeRef.current = props.onChange;
-
-  useEffect(() => {
-    if (document.activeElement === inputRef.current) return;
-    setLocal(props.value);
-  }, [props.value]);
-
-  useEffect(() => {
-    if (local === props.value) return;
-    const t = setTimeout(() => onChangeRef.current(local), 500);
-    return () => clearTimeout(t);
-  }, [local, props.value]);
-
-  return (
-    <div className="relative flex-1">
-      <SearchIcon
-        size={14}
-        className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400"
-      />
-      <input
-        ref={inputRef}
-        value={local}
-        onChange={(e) => setLocal(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") onChangeRef.current(local);
-          else if (e.key === "Escape") setLocal(props.value);
-        }}
-        placeholder="Поиск по названию или @username…"
-        className="w-full rounded-lg border border-zinc-300 bg-white py-2 pl-9 pr-3 text-sm shadow-sm focus:border-emerald-500 focus:outline-none"
-      />
-    </div>
   );
 }
 
