@@ -745,10 +745,14 @@ export const channels = pgTable(
       .default({}),
     syncedAt: timestamp("synced_at", { withTimezone: true }),
     lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
-    // TDLib не нашёл чат (приватный/удалён/потеряли доступ). Sync/history
-    // ставит timestamp при «Chat not found»; успешный resolve чистит в null.
-    // UI рисует бейдж «недоступен» по nullness этого поля.
+    // since — первая неудача (COALESCE при retry'ях, чтобы не терять «X
+    // дней назад начало»). last_check_at — обновляется каждой попыткой,
+    // от него отсчитывается 1h-cooldown в channels.ts.
     unavailableSince: timestamp("unavailable_since", { withTimezone: true }),
+    unavailableLastCheckAt: timestamp("unavailable_last_check_at", {
+      withTimezone: true,
+    }),
+    unavailableReason: text("unavailable_reason"),
     createdBy: text("created_by")
       .notNull()
       .references(() => users.id),

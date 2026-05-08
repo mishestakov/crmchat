@@ -35,6 +35,13 @@ import {
 import { errMsg } from "../lib/errors.ts";
 import { getOutreachWorkerClient } from "../lib/outreach-account-client.ts";
 import { resolveStickyByPeerIds } from "../lib/sticky.ts";
+import {
+  type TdContent,
+  TdMediaThumbSchema,
+  TdMessageEntitySchema,
+  extractFormattedText,
+  extractMediaThumb,
+} from "../lib/td-message.ts";
 import type { WorkspaceVars } from "../middleware/assert-member.ts";
 
 // Subquery: ближайший открытый reminder для контакта. Тащим в каждый GET — чтобы
@@ -99,6 +106,12 @@ const WsIdParam = z.object({ wsId: z.string().min(1).max(64), id: z.string().min
 const SEARCHABLE_KEYS = ["full_name", "telegram_username"];
 
 const app = new OpenAPIHono<{ Variables: WorkspaceVars }>();
+
+// Зеркало CHANNELS_PAGE_LIMIT в channels.ts. Защита от 4-мегабайтного JSON
+// при 10К stub-контактах (CSV-импорт каналов с admin_username создаёт по
+// stub'у на админа). При rows.length === PAGE_LIMIT фронт рисует плашку
+// «уточните поиск».
+const CONTACTS_PAGE_LIMIT = 1000;
 
 app.openapi(
   createRoute({
@@ -181,7 +194,8 @@ app.openapi(
     })
       .from(contacts)
       .where(and(...conditions))
-      .orderBy(contacts.createdAt);
+      .orderBy(contacts.createdAt)
+      .limit(CONTACTS_PAGE_LIMIT);
     return c.json(rows.map(serialize));
   },
 );
@@ -553,6 +567,8 @@ const ChatMessageSchema = z.object({
   date: z.iso.datetime(),
   isOutgoing: z.boolean(),
   text: z.string(),
+  entities: z.array(TdMessageEntitySchema),
+  mediaThumb: TdMediaThumbSchema.nullable(),
 });
 
 app.openapi(
@@ -724,42 +740,36 @@ type TdMessage = {
   id: number | string;
   date: number;
   is_outgoing: boolean;
-  content: { _: string; text?: { text: string }; caption?: { text: string } };
+  content: TdContent;
 };
 
-function mapMessage(m: TdMessage) {
+function mapMessage(m: TdMessage): z.infer<typeof ChatMessageSchema> {
+  const { text, entities } = extractFormattedText(m.content);
+  const mediaThumb = extractMediaThumb(m.content);
   return {
     id: String(m.id),
     date: new Date(m.date * 1000).toISOString(),
     isOutgoing: m.is_outgoing,
-    text: extractText(m.content),
+    // Sticker/voice/audio/location/poll/… — без текста и без thumb;
+    // короткий type-label, чтобы пузырь не был пустым.
+    text: text || (mediaThumb ? "" : fallbackLabel(m.content._)),
+    entities,
+    mediaThumb,
   };
 }
 
-function extractText(content: TdMessage["content"]): string {
-  switch (content._) {
-    case "messageText":
-      return content.text?.text ?? "";
-    case "messagePhoto":
-      return content.caption?.text ? `[фото] ${content.caption.text}` : "[фото]";
-    case "messageVideo":
-      return content.caption?.text
-        ? `[видео] ${content.caption.text}`
-        : "[видео]";
-    case "messageDocument":
-      return content.caption?.text
-        ? `[файл] ${content.caption.text}`
-        : "[файл]";
+function fallbackLabel(contentType: string): string {
+  switch (contentType) {
     case "messageVoiceNote":
       return "[голосовое]";
     case "messageVideoNote":
       return "[видеосообщение]";
     case "messageSticker":
       return "[стикер]";
-    case "messageAnimation":
-      return "[gif]";
     case "messageAudio":
       return "[аудио]";
+    case "messageDocument":
+      return "[файл]";
     case "messageLocation":
       return "[геопозиция]";
     case "messageContact":
@@ -767,7 +777,7 @@ function extractText(content: TdMessage["content"]): string {
     case "messagePoll":
       return "[опрос]";
     default:
-      return `[${content._.replace(/^message/, "")}]`;
+      return `[${contentType.replace(/^message/, "")}]`;
   }
 }
 

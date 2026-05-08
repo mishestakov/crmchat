@@ -1,6 +1,13 @@
-import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { X } from "lucide-react";
 import type { Contact } from "@repo/core";
 import { SearchInput } from "../../../../../components/search-input";
@@ -9,6 +16,12 @@ import { formatRelative } from "../../../../../lib/date-utils";
 import { errorMessage } from "../../../../../lib/errors";
 import { useEventSourceEvent } from "../../../../../lib/hooks";
 import { useOutreachAccounts } from "../../../../../lib/outreach-queries";
+import {
+  type MessageEntity,
+  MessageMediaThumb,
+  type MessageThumb,
+  renderMessageEntities,
+} from "../../../../../lib/tg-message";
 
 // База контактов — плоский реестр людей, с которыми общаются аккаунты.
 // Канбан / стейджи / воронка — на уровне задачи, не здесь:
@@ -21,6 +34,10 @@ export const Route = createFileRoute("/_authenticated/w/$wsId/contacts/")({
   }),
   component: ContactsList,
 });
+
+// Должен совпадать с CONTACTS_PAGE_LIMIT в apps/api/src/routes/contacts.ts —
+// при равенстве показываем плашку «уточните поиск».
+const CONTACTS_PAGE_LIMIT = 1000;
 
 function ContactsList() {
   const { wsId } = Route.useParams();
@@ -117,6 +134,13 @@ function ContactsList() {
         <p className="text-red-600">{errorMessage(contacts.error)}</p>
       )}
 
+      {contacts.data && rows.length === CONTACTS_PAGE_LIMIT && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          Показаны первые {CONTACTS_PAGE_LIMIT.toLocaleString("ru-RU")} контактов.
+          Уточните поиск, чтобы увидеть остальные.
+        </div>
+      )}
+
       {contacts.data && (
         <TableView
           wsId={wsId}
@@ -157,14 +181,22 @@ const TableView = memo(function TableView(props: {
   accounts: AccountRow[];
   onOpenChat: (contact: Contact, accountId: string) => void;
 }) {
-  const accountById = new Map(props.accounts.map((a) => [a.id, a]));
-  // Сортировка по lastMessageAt DESC NULLS LAST: после импорта собеседников
-  // юзер сразу видит «свежий ответ сверху».
-  const sorted = props.rows.toSorted((a, b) => {
-    const ta = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
-    const tb = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
-    return tb - ta;
-  });
+  const navigate = useNavigate();
+  // Мемо чтобы не пересчитывать на каждый родительский render (drawer state и
+  // т.п.). Сортировка — lastMessageAt DESC NULLS LAST.
+  const accountById = useMemo(
+    () => new Map(props.accounts.map((a) => [a.id, a])),
+    [props.accounts],
+  );
+  const sorted = useMemo(
+    () =>
+      props.rows.toSorted((a, b) => {
+        const ta = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+        const tb = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+        return tb - ta;
+      }),
+    [props.rows],
+  );
 
   return (
     <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-zinc-200 bg-white shadow-sm">
@@ -211,9 +243,27 @@ const TableView = memo(function TableView(props: {
                 className="border-t border-zinc-100 hover:bg-zinc-50"
               >
                 <td className="px-3 py-2">
-                  <Link
-                    to="/w/$wsId/contacts/$id"
-                    params={{ wsId: props.wsId, id: c.id }}
+                  {/* Нативный <a> вместо <Link>: TanStack Router'овский Link
+                      на 600+ строках субскрайбит router-context на каждой
+                      строке + готовит prefetch-on-hover, что давало ~1с лаг
+                      на mount таблицы. href сохраняем для middle-click /
+                      Cmd+click; обычный клик перехватываем в navigate(). */}
+                  <a
+                    href={`/w/${props.wsId}/contacts/${c.id}`}
+                    onClick={(e) => {
+                      if (
+                        e.metaKey ||
+                        e.ctrlKey ||
+                        e.shiftKey ||
+                        e.button !== 0
+                      )
+                        return;
+                      e.preventDefault();
+                      void navigate({
+                        to: "/w/$wsId/contacts/$id",
+                        params: { wsId: props.wsId, id: c.id },
+                      });
+                    }}
                     className="flex items-center gap-2 font-medium text-zinc-900 hover:underline"
                   >
                     <span className="truncate">{name}</span>
@@ -222,7 +272,7 @@ const TableView = memo(function TableView(props: {
                         {c.unreadCount > 99 ? "99+" : c.unreadCount}
                       </span>
                     )}
-                  </Link>
+                  </a>
                 </td>
                 <td className="px-3 py-2 text-zinc-600">
                   {username ? `@${username}` : "—"}
@@ -297,6 +347,8 @@ type ChatMessage = {
   date: string;
   isOutgoing: boolean;
   text: string;
+  entities: MessageEntity[];
+  mediaThumb: MessageThumb | null;
 };
 
 function ChatDrawer(props: {
@@ -518,22 +570,28 @@ function ChatDrawer(props: {
                 <div
                   key={m.id}
                   className={
-                    "max-w-[80%] rounded-lg px-3 py-2 text-sm " +
+                    "max-w-[80%] overflow-hidden rounded-lg text-sm " +
                     (m.isOutgoing
                       ? "ml-auto bg-emerald-600 text-white"
                       : "mr-auto bg-white text-zinc-900 ring-1 ring-zinc-200")
                   }
                 >
-                  <div className="whitespace-pre-wrap break-words">
-                    {m.text}
-                  </div>
-                  <div
-                    className={
-                      "mt-1 text-[10px] " +
-                      (m.isOutgoing ? "text-emerald-100" : "text-zinc-400")
-                    }
-                  >
-                    {formatRelative(m.date)}
+                  {m.mediaThumb && <MessageMediaThumb thumb={m.mediaThumb} />}
+                  <div className="px-3 py-2">
+                    {m.text && (
+                      <div className="whitespace-pre-wrap break-words">
+                        {renderMessageEntities(m.text, m.entities)}
+                      </div>
+                    )}
+                    <div
+                      className={
+                        (m.text ? "mt-1 " : "") +
+                        "text-[10px] " +
+                        (m.isOutgoing ? "text-emerald-100" : "text-zinc-400")
+                      }
+                    >
+                      {formatRelative(m.date)}
+                    </div>
                   </div>
                 </div>
               ))}

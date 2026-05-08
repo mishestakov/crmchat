@@ -15,12 +15,24 @@ import type { Channel } from "@repo/core";
 import { api } from "../lib/api";
 import { formatRelative } from "../lib/date-utils";
 import { errorMessage } from "../lib/errors";
+import {
+  type MessageEntity,
+  MessageMediaThumb,
+  type MessageThumb,
+  renderMessageEntities,
+} from "../lib/tg-message";
 import { ContactPicker } from "./contact-picker";
 
 // Карточка канала: sticky-hero (avatar/title/key stats/description/meta-grid/
 // admins) + scrollable feed постов (TG-style: bubble + views/forwards/replies/
 // reactions). Скролл-up подгружает старые страницы. Используется в drawer'е
 // /channels и в карточке контакта.
+//
+// Зеркалит бэковый UNAVAILABLE_COOLDOWN_MS (channels.ts) — пока кулдаун
+// горит, фронт не звонит на api (бэк всё равно вернёт 410). Часовое
+// значение должно совпадать.
+const UNAVAILABLE_COOLDOWN_MS = 60 * 60 * 1000;
+
 export function ChannelCard(props: { wsId: string; channel: Channel }) {
   const { wsId, channel } = props;
   const qc = useQueryClient();
@@ -34,25 +46,62 @@ export function ChannelCard(props: { wsId: string; channel: Channel }) {
     !channel.syncedAt ||
     Date.now() - new Date(channel.syncedAt).getTime() > SYNC_TTL_MS;
 
+  const inUnavailableCooldown =
+    !!channel.unavailableLastCheckAt &&
+    Date.now() - new Date(channel.unavailableLastCheckAt).getTime() <
+      UNAVAILABLE_COOLDOWN_MS;
+
   const syncMut = useMutation({
-    mutationFn: async () => {
+    // force=true → бэк пропустит cooldown-gate. Используется кнопкой
+    // «проверить сейчас» в UnavailableStatus; auto-sync дёргает без force.
+    mutationFn: async (opts: { force?: boolean } = {}) => {
       const { data, error } = await api.POST(
         "/v1/workspaces/{wsId}/channels/{id}/sync",
-        { params: { path: { wsId, id: channel.id } } },
+        {
+          params: {
+            path: { wsId, id: channel.id },
+            query: opts.force ? { force: true } : {},
+          },
+        },
       );
       if (error) throw error;
       return data;
     },
     onSuccess: () => {
-      // Список каналов НЕ инвалидируем намеренно: sync обновляет member_count,
-      // и инвалидация перетряхивала бы порядок (memberCount DESC NULLS LAST)
-      // прямо под рукой юзера, унося строку из-под клика. Свежий список
-      // подъедет при следующем заходе на /channels. Карточка-открытая и
-      // история — обновляем точечно.
       qc.invalidateQueries({ queryKey: ["channel", wsId, channel.id] });
       qc.invalidateQueries({
         queryKey: ["channel-history", wsId, channel.id],
       });
+    },
+    // На auto-sync список НЕ инвалидируем (member_count меняется → строка
+    // прыгает под рукой). На force-sync (кнопка «проверить сейчас») —
+    // инвалидируем независимо от успеха/провала, юзер ждёт обновлённый
+    // статус (бейдж пропал / новая дата проверки).
+    onSettled: (_data, _err, vars) => {
+      if (vars.force) {
+        qc.invalidateQueries({ queryKey: ["channels", wsId] });
+      }
+    },
+  });
+
+  // PATCH /channels/{id} — пока только username. На смене бэк сбрасывает
+  // unavailable_*, поэтому после успешного PATCH даём auto-sync ещё один
+  // шанс (он попытается на новом @ через cooldown-чистый канал).
+  const patchMut = useMutation({
+    mutationFn: async (body: { username: string | null }) => {
+      const { data, error } = await api.PATCH(
+        "/v1/workspaces/{wsId}/channels/{id}",
+        {
+          params: { path: { wsId, id: channel.id } },
+          body,
+        },
+      );
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["channels", wsId] });
+      qc.invalidateQueries({ queryKey: ["channel", wsId, channel.id] });
     },
   });
   const syncFailed = !!syncMut.error;
@@ -65,20 +114,46 @@ export function ChannelCard(props: { wsId: string; channel: Channel }) {
   useEffect(() => {
     if (
       needsSync &&
+      !inUnavailableCooldown &&
       syncedForRef.current !== channel.id &&
       !syncMut.isPending
     ) {
       syncedForRef.current = channel.id;
-      syncMut.mutate();
+      syncMut.mutate({});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channel.id]);
 
+  // Плашка причины из БД сразу при render'е, чтобы не было мерцания
+  // «пустой sidebar → 410 → плашка». Незнакомый код или null reason →
+  // нейтральный текст; не светим raw-код TG в UI.
+  const persistedReason = channel.unavailableSince
+    ? matchUnavailableReason(channel.unavailableReason ?? "") ??
+      "Telegram не отдаёт этот чат."
+    : null;
+  const syncErrorRaw = syncMut.error ? errorMessage(syncMut.error) : null;
+  const syncErrorReason = syncErrorRaw
+    ? matchUnavailableReason(syncErrorRaw)
+    : null;
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-white">
-      {syncMut.error && (
+      {persistedReason && (
+        <UnavailableStatus
+          reason={persistedReason}
+          since={channel.unavailableSince}
+          lastCheckAt={channel.unavailableLastCheckAt}
+          username={channel.username}
+          onCheckNow={() => syncMut.mutate({ force: true })}
+          checking={syncMut.isPending}
+          checkError={syncMut.error}
+          onSaveUsername={(u) => patchMut.mutate({ username: u })}
+          savingUsername={patchMut.isPending}
+        />
+      )}
+      {!persistedReason && syncErrorRaw && (
         <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">
-          Не удалось обновить: {errorMessage(syncMut.error)}
+          {syncErrorReason ?? `Не удалось обновить: ${syncErrorRaw}`}
         </div>
       )}
       <ChannelHero channel={channel} syncing={syncMut.isPending} />
@@ -90,7 +165,75 @@ export function ChannelCard(props: { wsId: string; channel: Channel }) {
         channelExternalId={channel.externalId}
         syncing={syncMut.isPending}
         syncFailed={syncFailed}
+        unavailable={inUnavailableCooldown}
       />
+    </div>
+  );
+}
+
+function UnavailableStatus(props: {
+  reason: string;
+  since: string | null;
+  lastCheckAt: string | null;
+  username: string | null;
+  onCheckNow: () => void;
+  checking: boolean;
+  checkError: unknown;
+  onSaveUsername: (next: string | null) => void;
+  savingUsername: boolean;
+}) {
+  const [draft, setDraft] = useState(props.username ?? "");
+  const trimmed = draft.replace(/^@/, "").trim();
+  const dirty = trimmed !== (props.username ?? "");
+  return (
+    <div className="border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+      <div className="font-medium">{props.reason}</div>
+      <div className="mt-1 text-xs text-red-700">
+        {props.since && <>Недоступен {formatRelative(props.since)}</>}
+        {props.since && props.lastCheckAt && " · "}
+        {props.lastCheckAt && (
+          <>последняя проверка {formatRelative(props.lastCheckAt)}</>
+        )}
+      </div>
+      {props.checkError != null && (
+        <div className="mt-1 text-xs text-red-700">
+          {errorMessage(props.checkError)}
+        </div>
+      )}
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={props.onCheckNow}
+          disabled={props.checking}
+          className="rounded-md border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+        >
+          {props.checking ? "Проверяем…" : "Проверить сейчас"}
+        </button>
+        <span className="text-xs text-red-700">@</span>
+        <input
+          type="text"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && dirty) {
+              props.onSaveUsername(trimmed || null);
+            }
+          }}
+          disabled={props.savingUsername}
+          className="w-40 rounded-md border border-red-300 bg-white px-2 py-1 text-xs focus:border-red-500 focus:outline-none disabled:opacity-50"
+          placeholder="username"
+        />
+        {dirty && (
+          <button
+            type="button"
+            onClick={() => props.onSaveUsername(trimmed || null)}
+            disabled={props.savingUsername}
+            className="rounded-md bg-red-600 px-2 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
+          >
+            {props.savingUsername ? "…" : "Сохранить"}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -394,10 +537,49 @@ function AdminsSection(props: { wsId: string; channel: Channel }) {
   );
 }
 
+// Маппим raw TDLib/MTProto-коды в человеческую русскую фразу. Подстрока,
+// case-insensitive — бэк может возвращать как «Telegram lookup failed:
+// USERNAME_NOT_OCCUPIED», так и «channel unavailable: Chat not found».
+const UNAVAILABLE_REASONS: { pattern: RegExp; ru: string }[] = [
+  {
+    pattern: /chat not found/i,
+    ru: "Telegram не отдаёт этот чат — приватный, удалён или нет доступа.",
+  },
+  {
+    pattern: /username_not_occupied/i,
+    ru: "Такого @username нет в Telegram (возможно, канал переименован).",
+  },
+  {
+    pattern: /username_invalid/i,
+    ru: "@username канала записан с ошибкой.",
+  },
+  {
+    pattern: /channel_private/i,
+    ru: "Приватный канал — у привязанного аккаунта нет доступа.",
+  },
+  {
+    pattern: /channel_invalid/i,
+    ru: "Неверный идентификатор канала.",
+  },
+  {
+    pattern: /peer_id_invalid/i,
+    ru: "Канал не распознан Telegram'ом.",
+  },
+];
+
+function matchUnavailableReason(raw: string): string | null {
+  for (const r of UNAVAILABLE_REASONS) {
+    if (r.pattern.test(raw)) return r.ru;
+  }
+  return null;
+}
+
 type ChannelMessage = {
   id: string;
   date: string;
   text: string;
+  entities: MessageEntity[];
+  mediaThumb: MessageThumb | null;
   views: number | null;
   forwards: number | null;
   replies: number | null;
@@ -411,10 +593,16 @@ function PostsFeed(props: {
   channelExternalId: string | null;
   syncing: boolean;
   syncFailed: boolean;
+  // Канал помечен недоступным и кулдаун ещё не истёк. /history всё равно
+  // вернёт 410, поэтому не дёргаем — UI поверх показывает persistedReason.
+  unavailable: boolean;
 }) {
   const PAGE_LIMIT = 50;
   const enabled =
-    !!props.channelExternalId && !props.syncing && !props.syncFailed;
+    !!props.channelExternalId &&
+    !props.syncing &&
+    !props.syncFailed &&
+    !props.unavailable;
 
   // Initial page (newest 50). Стабильный queryKey без before — повторное
   // открытие drawer'а идёт из кэша, не дёргает TDLib (см. staleTime).
@@ -517,6 +705,11 @@ function PostsFeed(props: {
       });
   };
 
+  if (props.unavailable) {
+    // Плашка с причиной уже отрисована поверх sidebar'а — здесь поле постов
+    // оставляем пустым, без второго объяснения.
+    return <div className="min-h-0 flex-1" />;
+  }
   if (props.syncFailed) {
     return (
       <div className="min-h-0 flex-1 px-6 py-4 text-sm text-zinc-400">
@@ -540,18 +733,12 @@ function PostsFeed(props: {
   }
   if (initialQ.error) {
     const msg = errorMessage(initialQ.error);
-    // 404 «Chat not found» — типичный кейс приватного канала, к которому
-    // привязанный аккаунт не имеет доступа. Бэк уже пометил канал
-    // unavailableSince — на следующем заходе на /channels строка получит
-    // бейдж «Недоступен». Здесь показываем понятную плашку, а не сырое
-    // сообщение бэка.
-    const isUnavailable = /chat not found/i.test(msg);
+    const reason = matchUnavailableReason(msg);
     return (
       <div className="min-h-0 flex-1 px-6 py-4">
-        {isUnavailable ? (
+        {reason ? (
           <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-600">
-            Telegram не отдаёт этот чат: канал приватный, удалён или
-            привязанный аккаунт потерял доступ.
+            {reason}
           </div>
         ) : (
           <div className="text-sm text-red-600">{msg}</div>
@@ -604,45 +791,55 @@ function Post({ m }: { m: ChannelMessage }) {
     m.replies !== null ||
     m.reactions.length > 0;
   return (
-    <article className="rounded-2xl bg-white px-4 py-3 ring-1 ring-zinc-200">
-      {m.isForwarded && (
-        <div className="mb-1 inline-flex items-center gap-1 text-[10px] uppercase tracking-wider text-zinc-400">
-          <Forward size={10} />
-          Репост
-        </div>
-      )}
-      <div className="whitespace-pre-wrap break-words text-[13.5px] leading-relaxed text-zinc-900">
-        {m.text}
-      </div>
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500">
-        <time
-          dateTime={m.date}
-          title={new Date(m.date).toLocaleString("ru-RU")}
-          className="tabular-nums"
+    <article className="overflow-hidden rounded-2xl bg-white ring-1 ring-zinc-200">
+      {m.mediaThumb && <MessageMediaThumb thumb={m.mediaThumb} />}
+      <div className="px-4 py-3">
+        {m.isForwarded && (
+          <div className="mb-1 inline-flex items-center gap-1 text-[10px] uppercase tracking-wider text-zinc-400">
+            <Forward size={10} />
+            Репост
+          </div>
+        )}
+        {m.text && (
+          <div className="whitespace-pre-wrap break-words text-[13.5px] leading-relaxed text-zinc-900">
+            {renderMessageEntities(m.text, m.entities)}
+          </div>
+        )}
+        <div
+          className={
+            (m.text ? "mt-2 " : "") +
+            "flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500"
+          }
         >
-          {formatRelative(m.date)}
-        </time>
-        {hasInteractions && <span className="text-zinc-300">·</span>}
-        {m.views !== null && (
-          <Metric icon={Eye}>{formatCompact(m.views)}</Metric>
-        )}
-        {m.forwards !== null && m.forwards > 0 && (
-          <Metric icon={Forward}>{formatCompact(m.forwards)}</Metric>
-        )}
-        {m.replies !== null && m.replies > 0 && (
-          <Metric icon={MessageSquare}>{formatCompact(m.replies)}</Metric>
-        )}
-        {m.reactions.map((r) => (
-          <span
-            key={r.emoji}
-            className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px]"
+          <time
+            dateTime={m.date}
+            title={new Date(m.date).toLocaleString("ru-RU")}
+            className="tabular-nums"
           >
-            <span>{r.emoji}</span>
-            <span className="tabular-nums text-zinc-600">
-              {formatCompact(r.count)}
+            {formatRelative(m.date)}
+          </time>
+          {hasInteractions && <span className="text-zinc-300">·</span>}
+          {m.views !== null && (
+            <Metric icon={Eye}>{formatCompact(m.views)}</Metric>
+          )}
+          {m.forwards !== null && m.forwards > 0 && (
+            <Metric icon={Forward}>{formatCompact(m.forwards)}</Metric>
+          )}
+          {m.replies !== null && m.replies > 0 && (
+            <Metric icon={MessageSquare}>{formatCompact(m.replies)}</Metric>
+          )}
+          {m.reactions.map((r) => (
+            <span
+              key={r.emoji}
+              className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px]"
+            >
+              <span>{r.emoji}</span>
+              <span className="tabular-nums text-zinc-600">
+                {formatCompact(r.count)}
+              </span>
             </span>
-          </span>
-        ))}
+          ))}
+        </div>
       </div>
     </article>
   );

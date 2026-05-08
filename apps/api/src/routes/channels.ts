@@ -9,6 +9,14 @@ import {
   ImportChannelsResultSchema as BaseImportResult,
 } from "@repo/core";
 import { db, sql as sqlClient } from "../db/client.ts";
+import { errMsg } from "../lib/errors.ts";
+import {
+  type TdContent,
+  TdMediaThumbSchema,
+  TdMessageEntitySchema,
+  extractFormattedText,
+  extractMediaThumb,
+} from "../lib/td-message.ts";
 import {
   channelAdmins,
   channelThumbnails,
@@ -38,20 +46,64 @@ import type { TdClient } from "../lib/tdlib/client.ts";
 // Round-robin / sticky канал→аккаунт не вводим: один аккаунт прочитает
 // любой канал, thumbnail/member_count кешируется 24h. Если упрёмся в
 // flood-лимиты — добавим выбор по нагрузке.
-// TDLib возвращает ошибку с message='Chat not found' (code 400) когда чата
-// нет в текущем state'е: приватный канал без подписки, удалён, потеряли доступ.
-// Это терминальная ситуация для resolve'а — отличаем от network/flood-wait,
-// чтобы поставить unavailable-флаг и не ретраить.
-function isChatNotFound(e: unknown): boolean {
-  const msg = e instanceof Error ? e.message : String(e);
-  return msg.toLowerCase().includes("chat not found");
+// Классификация TDLib/MTProto-ошибок resolve'а канала. Permanent = «канала
+// действительно нет с точки зрения TG» — пишем в unavailable_*, перестаём
+// дёргать TDLib (cooldown-gate ниже). Transient (FLOOD_WAIT, network, 5xx)
+// просто throw — не помечаем, пусть юзер ретраит.
+//
+// Список patterns пополняется по факту: добавляем когда реально увидели в
+// проде. core.telegram.org/api/errors имеет ещё CHANNEL_PRIVATE,
+// USERNAME_INVALID, PEER_ID_INVALID — добавим если наткнёмся.
+const PERMANENT_RESOLVE_PATTERNS = ["chat not found", "username_not_occupied"];
+
+function classifyResolveError(
+  e: unknown,
+): { permanent: true; reason: string } | { permanent: false } {
+  const raw = errMsg(e);
+  const low = raw.toLowerCase();
+  for (const p of PERMANENT_RESOLVE_PATTERNS) {
+    if (low.includes(p)) return { permanent: true, reason: raw };
+  }
+  return { permanent: false };
 }
 
-async function markChannelUnavailable(id: string): Promise<void> {
+async function markChannelUnavailable(
+  id: string,
+  reason: string,
+): Promise<void> {
   await db
     .update(channels)
     .set({
       unavailableSince: sql`coalesce(${channels.unavailableSince}, now())`,
+      unavailableLastCheckAt: new Date(),
+      unavailableReason: reason,
+    })
+    .where(eq(channels.id, id));
+}
+
+// Cooldown между retry-ями TDLib для unavailable-каналов. После провала ждём
+// час — потом один шанс. «Нормальные клиенты не долбят туда где не
+// существует». Юзер может бэк-флагом ?force=true сбить cooldown, если
+// нужна immediate-проверка (кнопка «проверить сейчас» в UI).
+const UNAVAILABLE_COOLDOWN_MS = 60 * 60 * 1000;
+
+function isInUnavailableCooldown(
+  channel: typeof channels.$inferSelect,
+): boolean {
+  if (!channel.unavailableLastCheckAt) return false;
+  return (
+    Date.now() - channel.unavailableLastCheckAt.getTime() <
+    UNAVAILABLE_COOLDOWN_MS
+  );
+}
+
+async function clearChannelUnavailable(id: string): Promise<void> {
+  await db
+    .update(channels)
+    .set({
+      unavailableSince: null,
+      unavailableLastCheckAt: null,
+      unavailableReason: null,
     })
     .where(eq(channels.id, id));
 }
@@ -358,7 +410,12 @@ app.openapi(
     method: "post",
     path: "/v1/workspaces/{wsId}/channels/{id}/sync",
     tags: ["channels"],
-    request: { params: WsIdParam },
+    request: {
+      params: WsIdParam,
+      // ?force=true — кнопка «проверить сейчас» в UI: пропустить cooldown-gate
+      // и сходить в TDLib даже если канал помечен недоступным <1h назад.
+      query: z.object({ force: z.coerce.boolean().optional() }),
+    },
     responses: {
       200: {
         content: { "application/json": { schema: ChannelSchema } },
@@ -368,6 +425,7 @@ app.openapi(
   }),
   async (c) => {
     const { wsId, id } = c.req.valid("param");
+    const { force } = c.req.valid("query");
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
     const channel = await assertChannelAccess(id, wsId, userId, role);
@@ -380,6 +438,13 @@ app.openapi(
     if (!channel.externalId && !channel.username) {
       throw new HTTPException(400, {
         message: "channel has neither external_id nor username; nothing to look up",
+      });
+    }
+    // Cooldown-gate: канал помечен недоступным <1h назад → не идём в TDLib,
+    // если только не передали ?force=true (кнопка «проверить сейчас» в UI).
+    if (!force && isInUnavailableCooldown(channel)) {
+      throw new HTTPException(410, {
+        message: channel.unavailableReason ?? "channel unavailable",
       });
     }
 
@@ -426,9 +491,10 @@ app.openapi(
             chat_id: Number(channel.externalId),
           } as never)) as TdChat);
     } catch (e) {
-      if (isChatNotFound(e)) await markChannelUnavailable(id);
+      const cls = classifyResolveError(e);
+      if (cls.permanent) await markChannelUnavailable(id, cls.reason);
       throw new HTTPException(404, {
-        message: `Telegram lookup failed: ${e instanceof Error ? e.message : String(e)}`,
+        message: `Telegram lookup failed: ${errMsg(e)}`,
       });
     }
 
@@ -463,9 +529,10 @@ app.openapi(
         supergroup_id: supergroupId,
       } as never)) as TdSupergroupFullInfo;
     } catch (e) {
-      if (isChatNotFound(e)) await markChannelUnavailable(id);
+      const cls = classifyResolveError(e);
+      if (cls.permanent) await markChannelUnavailable(id, cls.reason);
       throw new HTTPException(404, {
-        message: `Telegram lookup failed: ${e instanceof Error ? e.message : String(e)}`,
+        message: `Telegram lookup failed: ${errMsg(e)}`,
       });
     }
 
@@ -498,6 +565,8 @@ app.openapi(
           syncedAt: new Date(),
           updatedAt: new Date(),
           unavailableSince: null,
+          unavailableLastCheckAt: null,
+          unavailableReason: null,
         })
         .where(eq(channels.id, id))
         .returning(),
@@ -511,6 +580,73 @@ app.openapi(
             })
         : Promise.resolve(),
     ]);
+    const [serialized] = await joinAdmins([updated!]);
+    return c.json(serialized!);
+  },
+);
+
+// PATCH /channels/{id} — редактирование «наших» полей. На MVP только
+// username: типичный кейс — админ переименовал канал, мы поправили @ и
+// заново резолвим. На смене username сбрасываем unavailable_*-флаги, чтобы
+// next sync не упёрся в cooldown (новый @ — это логически уже другой чат).
+const PatchChannelSchema = z.object({
+  username: z.string().min(1).max(64).nullable().optional(),
+});
+
+app.openapi(
+  createRoute({
+    method: "patch",
+    path: "/v1/workspaces/{wsId}/channels/{id}",
+    tags: ["channels"],
+    middleware: [assertRole("admin")] as const,
+    request: {
+      params: WsIdParam,
+      body: {
+        content: { "application/json": { schema: PatchChannelSchema } },
+      },
+    },
+    responses: {
+      200: {
+        content: { "application/json": { schema: ChannelSchema } },
+        description: "Channel updated",
+      },
+    },
+  }),
+  async (c) => {
+    const { wsId, id } = c.req.valid("param");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const channel = await assertChannelAccess(id, wsId, userId, role);
+    const body = c.req.valid("json");
+
+    // Юзер может ввести «@channelname» или «channelname» — нормализуем.
+    let nextUsername = channel.username;
+    if (body.username !== undefined) {
+      nextUsername = body.username
+        ? body.username.replace(/^@/, "").trim() || null
+        : null;
+    }
+    const usernameChanged = nextUsername !== channel.username;
+
+    const [updated] = await db
+      .update(channels)
+      .set({
+        username: nextUsername,
+        updatedAt: new Date(),
+        // Username сменился — сбрасываем флаг недоступности и forced
+        // повторный resolve. Делаем здесь, не в frontend, чтобы инвариант
+        // «новый @ = новый канал к проверке» не зависел от UI.
+        ...(usernameChanged
+          ? {
+              unavailableSince: null,
+              unavailableLastCheckAt: null,
+              unavailableReason: null,
+              syncedAt: null,
+            }
+          : {}),
+      })
+      .where(eq(channels.id, id))
+      .returning();
     const [serialized] = await joinAdmins([updated!]);
     return c.json(serialized!);
   },
@@ -534,6 +670,8 @@ const ChannelHistoryItem = z.object({
   id: z.string(),
   date: z.iso.datetime(),
   text: z.string(),
+  entities: z.array(TdMessageEntitySchema),
+  mediaThumb: TdMediaThumbSchema.nullable(),
   // messageInteractionInfo (td_api.tl:2730). У постов в каналах view_count
   // почти всегда есть; forward_count и replies — опционально (репост только
   // если кто-то форварднул, replies — только если у канала есть linked-чат).
@@ -582,6 +720,11 @@ app.openapi(
           "channel not synced yet — POST /sync first (resolves chat_id from username)",
       });
     }
+    if (isInUnavailableCooldown(channel)) {
+      throw new HTTPException(410, {
+        message: channel.unavailableReason ?? "channel unavailable",
+      });
+    }
 
     const picked = await pickOutreachClient(wsId, userId, role);
     if (!picked) {
@@ -599,13 +742,7 @@ app.openapi(
     type TdMessage = {
       id: number;
       date: number;
-      content: {
-        _: string;
-        text?: { text: string };
-        caption?: { text: string };
-      };
-      // td_api.tl §messageInteractionInfo, §messageForwardInfo. Оба
-      // опциональны — без репостов и реакций просто отсутствуют.
+      content: TdContent;
       interaction_info?: {
         view_count?: number;
         forward_count?: number;
@@ -630,9 +767,10 @@ app.openapi(
           username: channel.username,
         } as never);
       } catch (e) {
-        if (isChatNotFound(e)) await markChannelUnavailable(id);
+        const cls = classifyResolveError(e);
+        if (cls.permanent) await markChannelUnavailable(id, cls.reason);
         throw new HTTPException(404, {
-          message: `Telegram lookup failed: ${e instanceof Error ? e.message : String(e)}`,
+          message: `Telegram lookup failed: ${errMsg(e)}`,
         });
       }
     }
@@ -675,9 +813,10 @@ app.openapi(
         from = Number(r.messages[r.messages.length - 1]!.id);
       }
     } catch (e) {
-      if (isChatNotFound(e)) await markChannelUnavailable(id);
+      const cls = classifyResolveError(e);
+      if (cls.permanent) await markChannelUnavailable(id, cls.reason);
       throw new HTTPException(404, {
-        message: `history fetch failed: ${e instanceof Error ? e.message : String(e)}`,
+        message: `history fetch failed: ${errMsg(e)}`,
       });
     } finally {
       if (opened) {
@@ -694,32 +833,23 @@ app.openapi(
     // unavailable-флаг, если ранее был выставлен (например, прошлый sync
     // упал, юзер переподключил аккаунт, теперь чат резолвится).
     if (channel.unavailableSince) {
-      await db
-        .update(channels)
-        .set({ unavailableSince: null })
-        .where(eq(channels.id, id));
+      await clearChannelUnavailable(id);
     }
 
     const items = (result.messages ?? []).map((m) => {
-      let text: string;
-      if (m.content._ === "messageText") {
-        text = m.content.text?.text ?? "";
-      } else if (m.content.caption?.text) {
-        // messagePhoto/messageVideo с подписью — берём подпись + бейдж медиа.
-        text = `[медиа] ${m.content.caption.text}`;
-      } else {
-        text = "[медиа]";
-      }
+      const { text, entities } = extractFormattedText(m.content);
+      const mediaThumb = extractMediaThumb(m.content);
       const ii = m.interaction_info;
-      // Только реакции на стандартные emoji — кастомные премиум-стикеры
-      // и paid-reactions (звёзды) пропускаем (отрендерить нечем).
       const reactions = (ii?.reactions?.reactions ?? [])
         .filter((r) => r.type._ === "reactionTypeEmoji" && r.type.emoji)
         .map((r) => ({ emoji: r.type.emoji!, count: r.total_count }));
       return {
         id: String(m.id),
         date: new Date(m.date * 1000).toISOString(),
-        text,
+        // Без текста и без thumb (стикер/voice/etc) — короткий type-label.
+        text: text || (mediaThumb ? "" : "[медиа]"),
+        entities,
+        mediaThumb,
         views: ii?.view_count ?? null,
         forwards: ii?.forward_count ?? null,
         replies: ii?.reply_info?.reply_count ?? null,
@@ -1240,6 +1370,8 @@ async function joinAdmins(
     syncedAt: r.syncedAt?.toISOString() ?? null,
     lastMessageAt: r.lastMessageAt?.toISOString() ?? null,
     unavailableSince: r.unavailableSince?.toISOString() ?? null,
+    unavailableLastCheckAt: r.unavailableLastCheckAt?.toISOString() ?? null,
+    unavailableReason: r.unavailableReason ?? null,
     thumbnailB64: thumbByChannel.get(r.id) ?? null,
     admins: byChannel.get(r.id) ?? [],
     createdBy: r.createdBy,

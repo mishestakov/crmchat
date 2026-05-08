@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
@@ -77,7 +77,14 @@ type ColMapping =
   | { slot: Exclude<Slot, "property"> }
   | { slot: "property"; propertyKey: string };
 
+// Поиск-state в URL (?q=…) — единообразие с /contacts. Юзер открывает
+// канал по ссылке и сразу видит свой фильтр; reload не сбрасывает поиск.
+type ChannelsSearch = { q?: string };
+
 export const Route = createFileRoute("/_authenticated/w/$wsId/channels")({
+  validateSearch: (s: Record<string, unknown>): ChannelsSearch => ({
+    q: typeof s.q === "string" && s.q !== "" ? s.q : undefined,
+  }),
   component: ChannelsPage,
 });
 
@@ -87,9 +94,19 @@ const PAGE_LIMIT = 1000;
 
 function ChannelsPage() {
   const { wsId } = Route.useParams();
+  const urlSearch = Route.useSearch();
+  const navigate = useNavigate();
   const qc = useQueryClient();
 
-  const [search, setSearch] = useState("");
+  const search = urlSearch.q ?? "";
+  const setSearch = (q: string) => {
+    navigate({
+      to: "/w/$wsId/channels",
+      params: { wsId },
+      search: () => ({ q: q || undefined }),
+      replace: true,
+    });
+  };
 
   const channelsQ = useQuery({
     queryKey: ["channels", wsId, search] as const,
@@ -255,7 +272,7 @@ function ChannelsPage() {
                         </span>
                         {c.unavailableSince && (
                           <span
-                            title={`Telegram не отдал чат с ${formatRelative(c.unavailableSince)}`}
+                            title={`${c.unavailableReason ?? "недоступен"} · последняя попытка ${formatRelative(c.unavailableSince)}`}
                             className="inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-zinc-500 ring-1 ring-zinc-200"
                           >
                             Недоступен

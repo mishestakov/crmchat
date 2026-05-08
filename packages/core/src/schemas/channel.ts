@@ -26,9 +26,9 @@ export const ChannelSchema = z.object({
   properties: z.record(z.string(), z.unknown()),
   syncedAt: z.iso.datetime().nullable(),
   lastMessageAt: z.iso.datetime().nullable(),
-  // Когда TDLib последний раз ответил «Chat not found» при sync/history.
-  // null = канал доступен. UI красит карточку и показывает бейдж.
   unavailableSince: z.iso.datetime().nullable(),
+  unavailableLastCheckAt: z.iso.datetime().nullable(),
+  unavailableReason: z.string().nullable(),
   // Минитамбнейл из соцсети (base64 jpeg). Тянется LEFT JOIN'ом из
   // channel_thumbnails — если ещё не было соц-pull'а или картинки нет.
   thumbnailB64: z.string().nullable(),
