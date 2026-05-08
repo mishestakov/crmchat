@@ -44,7 +44,11 @@ export function ChannelCard(props: { wsId: string; channel: Channel }) {
       return data;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["channels", wsId] });
+      // Список каналов НЕ инвалидируем намеренно: sync обновляет member_count,
+      // и инвалидация перетряхивала бы порядок (memberCount DESC NULLS LAST)
+      // прямо под рукой юзера, унося строку из-под клика. Свежий список
+      // подъедет при следующем заходе на /channels. Карточка-открытая и
+      // история — обновляем точечно.
       qc.invalidateQueries({ queryKey: ["channel", wsId, channel.id] });
       qc.invalidateQueries({
         queryKey: ["channel-history", wsId, channel.id],
@@ -535,9 +539,23 @@ function PostsFeed(props: {
     );
   }
   if (initialQ.error) {
+    const msg = errorMessage(initialQ.error);
+    // 404 «Chat not found» — типичный кейс приватного канала, к которому
+    // привязанный аккаунт не имеет доступа. Бэк уже пометил канал
+    // unavailableSince — на следующем заходе на /channels строка получит
+    // бейдж «Недоступен». Здесь показываем понятную плашку, а не сырое
+    // сообщение бэка.
+    const isUnavailable = /chat not found/i.test(msg);
     return (
-      <div className="min-h-0 flex-1 px-6 py-4 text-sm text-red-600">
-        {errorMessage(initialQ.error)}
+      <div className="min-h-0 flex-1 px-6 py-4">
+        {isUnavailable ? (
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-600">
+            Telegram не отдаёт этот чат: канал приватный, удалён или
+            привязанный аккаунт потерял доступ.
+          </div>
+        ) : (
+          <div className="text-sm text-red-600">{msg}</div>
+        )}
       </div>
     );
   }

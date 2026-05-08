@@ -249,7 +249,19 @@ function ChannelsPage() {
                     className="cursor-pointer border-t border-zinc-100 hover:bg-zinc-50"
                   >
                     <td className="px-3 py-2">
-                      <div className="font-medium text-zinc-900">{c.title}</div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-zinc-900">
+                          {c.title}
+                        </span>
+                        {c.unavailableSince && (
+                          <span
+                            title={`Telegram не отдал чат с ${formatRelative(c.unavailableSince)}`}
+                            className="inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-zinc-500 ring-1 ring-zinc-200"
+                          >
+                            Недоступен
+                          </span>
+                        )}
+                      </div>
                       {c.username && (
                         <a
                           href={`https://t.me/${c.username}`}

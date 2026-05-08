@@ -38,6 +38,24 @@ import type { TdClient } from "../lib/tdlib/client.ts";
 // Round-robin / sticky канал→аккаунт не вводим: один аккаунт прочитает
 // любой канал, thumbnail/member_count кешируется 24h. Если упрёмся в
 // flood-лимиты — добавим выбор по нагрузке.
+// TDLib возвращает ошибку с message='Chat not found' (code 400) когда чата
+// нет в текущем state'е: приватный канал без подписки, удалён, потеряли доступ.
+// Это терминальная ситуация для resolve'а — отличаем от network/flood-wait,
+// чтобы поставить unavailable-флаг и не ретраить.
+function isChatNotFound(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return msg.toLowerCase().includes("chat not found");
+}
+
+async function markChannelUnavailable(id: string): Promise<void> {
+  await db
+    .update(channels)
+    .set({
+      unavailableSince: sql`coalesce(${channels.unavailableSince}, now())`,
+    })
+    .where(eq(channels.id, id));
+}
+
 async function pickOutreachClient(
   wsId: string,
   userId: string,
@@ -408,6 +426,7 @@ app.openapi(
             chat_id: Number(channel.externalId),
           } as never)) as TdChat);
     } catch (e) {
+      if (isChatNotFound(e)) await markChannelUnavailable(id);
       throw new HTTPException(404, {
         message: `Telegram lookup failed: ${e instanceof Error ? e.message : String(e)}`,
       });
@@ -444,6 +463,7 @@ app.openapi(
         supergroup_id: supergroupId,
       } as never)) as TdSupergroupFullInfo;
     } catch (e) {
+      if (isChatNotFound(e)) await markChannelUnavailable(id);
       throw new HTTPException(404, {
         message: `Telegram lookup failed: ${e instanceof Error ? e.message : String(e)}`,
       });
@@ -477,6 +497,7 @@ app.openapi(
           meta: sql`${channels.meta} || ${JSON.stringify(metaPatch)}::jsonb`,
           syncedAt: new Date(),
           updatedAt: new Date(),
+          unavailableSince: null,
         })
         .where(eq(channels.id, id))
         .returning(),
@@ -609,6 +630,7 @@ app.openapi(
           username: channel.username,
         } as never);
       } catch (e) {
+        if (isChatNotFound(e)) await markChannelUnavailable(id);
         throw new HTTPException(404, {
           message: `Telegram lookup failed: ${e instanceof Error ? e.message : String(e)}`,
         });
@@ -619,7 +641,8 @@ app.openapi(
     // TDLib не считает чат активным; в supergroup'ах/каналах «all updates
     // are received only for opened chats» (td_api.tl §openChat) и
     // сервер-fetch менее агрессивный. closeChat — best-effort в finally,
-    // чтобы счётчик opened-chats не рос.
+    // только если openChat успел: иначе TDLib ответит «Chat not found» и
+    // спамит лог (счётчик opened-chats и так не рос).
     //
     // Каналы холодные (юзер не подписан → RAM-кэш TDLib пустой), и первый
     // getChatHistory часто возвращает 1-2 сообщения — TDLib инициирует
@@ -640,8 +663,10 @@ app.openapi(
     const MAX_ATTEMPTS = 5;
     let aggregated: TdMessage[] = [];
     let from = fromMessageId ?? 0;
+    let opened = false;
     try {
       await tdClient.invoke({ _: "openChat", chat_id: chatId } as never);
+      opened = true;
       for (let i = 0; i < MAX_ATTEMPTS; i++) {
         const r = await fetchHistory(from, limit - aggregated.length);
         if (r.messages.length === 0) break;
@@ -650,17 +675,30 @@ app.openapi(
         from = Number(r.messages[r.messages.length - 1]!.id);
       }
     } catch (e) {
+      if (isChatNotFound(e)) await markChannelUnavailable(id);
       throw new HTTPException(404, {
         message: `history fetch failed: ${e instanceof Error ? e.message : String(e)}`,
       });
     } finally {
-      await tdClient
-        .invoke({ _: "closeChat", chat_id: chatId } as never)
-        .catch((e: unknown) =>
-          console.error(`[channels/history] closeChat ${chatId} failed:`, e),
-        );
+      if (opened) {
+        await tdClient
+          .invoke({ _: "closeChat", chat_id: chatId } as never)
+          .catch((e: unknown) =>
+            console.error(`[channels/history] closeChat ${chatId} failed:`, e),
+          );
+      }
     }
     const result: TdMessages = { messages: aggregated };
+
+    // Дошли сюда — TDLib отдал историю, канал точно доступен. Сбрасываем
+    // unavailable-флаг, если ранее был выставлен (например, прошлый sync
+    // упал, юзер переподключил аккаунт, теперь чат резолвится).
+    if (channel.unavailableSince) {
+      await db
+        .update(channels)
+        .set({ unavailableSince: null })
+        .where(eq(channels.id, id));
+    }
 
     const items = (result.messages ?? []).map((m) => {
       let text: string;
@@ -1201,6 +1239,7 @@ async function joinAdmins(
     properties: r.properties,
     syncedAt: r.syncedAt?.toISOString() ?? null,
     lastMessageAt: r.lastMessageAt?.toISOString() ?? null,
+    unavailableSince: r.unavailableSince?.toISOString() ?? null,
     thumbnailB64: thumbByChannel.get(r.id) ?? null,
     admins: byChannel.get(r.id) ?? [],
     createdBy: r.createdBy,
