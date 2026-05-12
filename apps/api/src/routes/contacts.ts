@@ -37,6 +37,7 @@ import {
   loadPropertyDefs,
   validateContactProperties,
 } from "../lib/contact-properties.ts";
+import { ensureContactTgUserId } from "../lib/ensure-tg-user-id.ts";
 import { errMsg } from "../lib/errors.ts";
 import { getOutreachWorkerClient } from "../lib/outreach-account-client.ts";
 import { resolveStickyByPeerIds } from "../lib/sticky.ts";
@@ -621,10 +622,7 @@ app.openapi(
     // accountId намеренно НЕ валидируется по доступу (см.
     // specs/permissions.md §3 «Намеренные исключения»).
     const contact = await assertContactAccess(id, wsId, userId, role);
-    const tgUserId = (contact.properties as Record<string, unknown>).tg_user_id;
-    if (typeof tgUserId !== "string") {
-      throw new HTTPException(400, { message: "contact has no telegram id" });
-    }
+    const props = contact.properties as Record<string, unknown>;
 
     const [acc] = await db
       .select({ id: outreachAccounts.id })
@@ -637,6 +635,28 @@ app.openapi(
       )
       .limit(1);
     if (!acc) throw new HTTPException(404, { message: "account not found" });
+
+    const client = await getOutreachWorkerClient({ id: acc.id, workspaceId: wsId });
+    if (!client) {
+      throw new HTTPException(503, { message: "tg client unavailable" });
+    }
+
+    // Lazy-резолв tg_user_id для контактов, импортированных по @ без
+    // последующих отправок — один раз через searchPublicChat, сохраняем в
+    // properties. Без id ни tg_chats, ни history открыть не можем.
+    const tgUserId = await ensureContactTgUserId({
+      workspaceId: wsId,
+      contactId: id,
+      properties: props,
+      client,
+    });
+    if (!tgUserId) {
+      throw new HTTPException(400, {
+        message: typeof props.telegram_username === "string"
+          ? "@username не найден в Telegram"
+          : "У контакта нет ни TG ID, ни @username — нечем найти в Telegram",
+      });
+    }
 
     const [[chatRow], [peerStatusRow]] = await Promise.all([
       db
@@ -663,11 +683,6 @@ app.openapi(
       : null;
     if (!chatRow) {
       return c.json({ messages: [], lastReadOutboxId: null, peerStatus });
-    }
-
-    const client = await getOutreachWorkerClient({ id: acc.id, workspaceId: wsId });
-    if (!client) {
-      throw new HTTPException(503, { message: "tg client unavailable" });
     }
 
     const fromMessageId = before ? Number(before) : 0;

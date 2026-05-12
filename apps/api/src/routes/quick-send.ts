@@ -77,12 +77,14 @@ const SendResponse = z
 
 const app = new OpenAPIHono<{ Variables: WorkspaceVars }>();
 
-// Helper: resolve target tg_user_id из contactId | tgUserId.
-// Возвращает tg_user_id (string), либо HTTPException.
+// Resolve tg_user_id для peer'а. Возвращает null если у контакта только
+// @username без id — caller сам решает что делать. Lazy-резолва тут нет:
+// chat-history endpoint всё равно дёрнет ensureContactTgUserId на открытии
+// drawer'а и сохранит id в properties, после чего send уже найдёт его.
 async function resolveTargetTgUserId(
   wsId: string,
   body: { contactId?: string; tgUserId?: string },
-): Promise<string> {
+): Promise<string | null> {
   if (body.tgUserId) return body.tgUserId;
   const [row] = await db
     .select({ tgUserId: contactTgUserIdSql })
@@ -90,11 +92,6 @@ async function resolveTargetTgUserId(
     .where(and(eq(contacts.id, body.contactId!), eq(contacts.workspaceId, wsId)))
     .limit(1);
   if (!row) throw new HTTPException(404, { message: "contact not found" });
-  if (!row.tgUserId) {
-    throw new HTTPException(400, {
-      message: "Contact has no Telegram id — нельзя отправить, пока не было ни одного сообщения",
-    });
-  }
   return row.tgUserId;
 }
 
@@ -143,7 +140,11 @@ app.openapi(
   async (c) => {
     const wsId = c.get("workspaceId");
     const body = c.req.valid("json");
+    // Без lazyClient: если у peer'а нет id — pending'ов и так нет (они на
+    // tg_user_id ссылаются), возвращаем пустой список. Лезть в TG за id
+    // на каждое открытие drawer'а не хотим — это сделает send-ветка.
     const tgUserId = await resolveTargetTgUserId(wsId, body);
+    if (!tgUserId) return c.json({ activeProjects: [] });
     const activeProjects = await getActiveProjectsForPeer(wsId, tgUserId);
     return c.json({ activeProjects });
   },
@@ -199,6 +200,12 @@ app.openapi(
     }
 
     const tgUserId = await resolveTargetTgUserId(wsId, body);
+    if (!tgUserId) {
+      throw new HTTPException(400, {
+        message:
+          "У контакта ещё нет TG ID — откройте чат в drawer'е, чтобы резолвить @username",
+      });
+    }
 
     // Отменяем pending'и для этого peer'а во всех проектах. Под капотом
     // worker увидит status='cancelled' и больше их не возьмёт. Если
@@ -237,8 +244,6 @@ app.openapi(
         : [];
     for (const id of cancelledProjectIds) emitProjectChanged(id);
 
-    // Отправка через TDLib. Используем тот же worker-client, что и
-    // outreach-worker (он держит persistent TDLib и push-update'ы).
     const client = await getOutreachWorkerClient({
       id: acc.id,
       workspaceId: wsId,
