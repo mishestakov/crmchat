@@ -10,9 +10,10 @@ import {
 } from "../db/schema.ts";
 import { errMsg } from "./errors.ts";
 import {
-  accountCooldownUntil,
+  clearAccountCooldown,
   evictWorkerClient,
   getOutreachWorkerClient,
+  setAccountCooldown,
 } from "./outreach-account-client.ts";
 import { emitProjectChanged } from "./outreach-events.ts";
 import { convertLeadToContact, rememberPendingSend } from "./outreach-listener.ts";
@@ -171,10 +172,6 @@ type DueItem = {
 const NEW_LEAD_MIN_INTERVAL_MS = 60_000;
 
 async function processAccount(accountId: string, items: DueItem[]) {
-  const cooldown = accountCooldownUntil.get(accountId);
-  if (cooldown && cooldown > Date.now()) return;
-  if (cooldown && cooldown <= Date.now()) accountCooldownUntil.delete(accountId);
-
   // Один JOIN-SELECT вместо двух round-trip'ов: account + outreachSchedule
   // — обе таблицы маленькие, индексы по PK.
   const [row] = await db
@@ -188,6 +185,13 @@ async function processAccount(accountId: string, items: DueItem[]) {
     .limit(1);
   if (!row || row.account.status !== "active") return;
   const { account, outreachSchedule } = row;
+
+  // FloodWait cooldown в БД. Если время не вышло — пропускаем тик. Если
+  // вышло — чистим (одной операцией снимаем плашку из UI).
+  if (account.cooldownUntil) {
+    if (account.cooldownUntil.getTime() > Date.now()) return;
+    await clearAccountCooldown(accountId);
+  }
 
   if (!isNowInWindow(outreachSchedule, new Date())) return;
 
@@ -311,7 +315,11 @@ async function processAccount(accountId: string, items: DueItem[]) {
       const flood = parseFloodWaitSeconds(msg);
       if (flood !== null) {
         const waitMs = (flood + 5) * 1000;
-        accountCooldownUntil.set(accountId, Date.now() + waitMs);
+        await setAccountCooldown(
+          accountId,
+          Date.now() + waitMs,
+          `FloodWait ${flood}s`,
+        );
         await db
           .update(scheduledMessages)
           .set({ sendAt: new Date(Date.now() + waitMs) })

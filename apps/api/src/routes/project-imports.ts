@@ -6,7 +6,7 @@ import {
   contacts,
   projectImports,
   projectItems,
-  projects,
+  scheduledMessages,
   type ProjectStage,
 } from "../db/schema.ts";
 import {
@@ -15,6 +15,13 @@ import {
   contactUsernameLowerSql,
 } from "../lib/contact-sql.ts";
 import { assertProjectAccess } from "../lib/projects-access.ts";
+import {
+  buildScheduledRows,
+  fillStickyFromScheduledMessages,
+  resolveProjectAccountIds,
+  resolveStickyByTgUserIds,
+  resolveWarmTgUserIds,
+} from "../lib/project-scheduling.ts";
 import { assertRole, type WorkspaceVars } from "../middleware/assert-member.ts";
 
 // CSV-импорт лидов в существующий проект. Заменяет старый
@@ -126,7 +133,14 @@ app.openapi(
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
     const { projectId } = c.req.valid("param");
-    await assertProjectAccess(projectId, wsId, userId, role);
+    const project = await assertProjectAccess(projectId, wsId, userId, role);
+
+    // A2: в done-проект лить нельзя — цепочка уже отыграна.
+    if (project.status === "done") {
+      throw new HTTPException(400, {
+        message: "Cannot import into completed project",
+      });
+    }
 
     const body = c.req.valid("json");
     const { usernameColumn, phoneColumn, propertyMappings = {} } = body.sourceMeta;
@@ -258,18 +272,33 @@ app.openapi(
     // канбана проекта (по order). Если у проекта нет stages (теоретически
     // возможно если кто-то их все удалил) — лиды создаются с null
     // stage_id и UI покажет их в колонке «Без стадии».
-    const [proj] = await db
-      .select({ stages: projects.stages })
-      .from(projects)
-      .where(eq(projects.id, projectId))
-      .limit(1);
-    const projectStages = (proj?.stages ?? []) as ProjectStage[];
+    const projectStages = project.stages as ProjectStage[];
     const initialStageId =
       projectStages.length > 0
         ? [...projectStages].sort((a, b) => a.order - b.order)[0]!.id
         : null;
 
-    let actuallyInserted = 0;
+    // A1: для active/paused — сразу планируем scheduled_messages с offsets
+    // от now(). В paused worker не отправит (фильтрует по project.status),
+    // но row'ы лежат как pending → resume их подтянет. Для draft — ничего,
+    // /activate подхватит все накопленные лиды единым проходом.
+    const willSchedule =
+      project.status === "active" || project.status === "paused";
+    let accountIds: string[] = [];
+    if (willSchedule) {
+      accountIds = await resolveProjectAccountIds(wsId, project);
+      if (accountIds.length === 0) {
+        throw new HTTPException(400, {
+          message: "No active outreach accounts available",
+        });
+      }
+      if (project.messages.length === 0) {
+        throw new HTTPException(400, {
+          message: "Project has no messages",
+        });
+      }
+    }
+
     const importRow = await db.transaction(async (tx) => {
       const [imp] = await tx
         .insert(projectImports)
@@ -284,6 +313,7 @@ app.openapi(
         .returning();
       if (!imp) throw new HTTPException(500, { message: "import insert failed" });
 
+      const insertedLeads: (typeof projectItems.$inferSelect)[] = [];
       if (resolved.length > 0) {
         // Chunked insert: postgres-js биндит каждое значение как отдельный $N
         // (лимит ~65k параметров на query). 1000 строк × ~10 cols = 10k params.
@@ -304,8 +334,43 @@ app.openapi(
             .insert(projectItems)
             .values(rows.slice(i, i + CHUNK))
             .onConflictDoNothing()
-            .returning({ id: projectItems.id });
-          actuallyInserted += inserted.length;
+            .returning();
+          insertedLeads.push(...inserted);
+        }
+      }
+      const actuallyInserted = insertedLeads.length;
+
+      // Планируем отправки для новых лидов. Sticky/warm считаются на этом
+      // же tg_user_id наборе. offsets — от момента доливки.
+      if (willSchedule && insertedLeads.length > 0) {
+        const tgUserIds = insertedLeads
+          .map((l) => l.tgUserId)
+          .filter((x): x is string => x !== null);
+        const priorByTgUserId = await resolveStickyByTgUserIds(wsId, tgUserIds);
+        const remaining = tgUserIds.filter((id) => !priorByTgUserId.has(id));
+        await fillStickyFromScheduledMessages(wsId, remaining, priorByTgUserId);
+        const warmTgUserIds = await resolveWarmTgUserIds(wsId, tgUserIds);
+
+        const scheduledRows = buildScheduledRows({
+          wsId,
+          project,
+          accountIds,
+          leads: insertedLeads.map((l) => ({
+            id: l.id,
+            username: l.username,
+            phone: l.phone,
+            tgUserId: l.tgUserId,
+            properties: (l.properties ?? {}) as Record<string, unknown>,
+          })),
+          baseTime: new Date(),
+          priorByTgUserId,
+          warmTgUserIds,
+        });
+        const CHUNK = 1000;
+        for (let i = 0; i < scheduledRows.length; i += CHUNK) {
+          await tx
+            .insert(scheduledMessages)
+            .values(scheduledRows.slice(i, i + CHUNK));
         }
       }
 

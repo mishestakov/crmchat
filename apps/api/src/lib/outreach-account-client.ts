@@ -42,9 +42,32 @@ const workerClients = new Map<string, WorkerEntry>();
 // получим два TdClient на один binlog и фатальный file-lock.
 const workerInflight = new Map<string, Promise<TdClient | null>>();
 const pendingStores = new Map<string, PendingStore>();
-// Per-account FloodWait cooldown. Заполняется в worker'е при FloodWaitError,
-// читается тем же worker'ом, чистится при evict (чтобы не пережить аккаунт).
-export const accountCooldownUntil = new Map<string, number>();
+
+// FloodWait cooldown живёт в outreach_accounts.cooldown_until/_reason —
+// чтобы переживать рестарт API и показываться менеджеру в UI. Helper'ы
+// ниже инкапсулируют UPDATE'ы. Чтение — в местах где аккаунт грузится
+// SELECT'ом (worker.processAccount, quick-send preview).
+export async function setAccountCooldown(
+  accountId: string,
+  untilMs: number,
+  reason: string,
+): Promise<void> {
+  await db
+    .update(outreachAccounts)
+    .set({
+      cooldownUntil: new Date(untilMs),
+      cooldownReason: reason,
+      updatedAt: new Date(),
+    })
+    .where(eq(outreachAccounts.id, accountId));
+}
+
+export async function clearAccountCooldown(accountId: string): Promise<void> {
+  await db
+    .update(outreachAccounts)
+    .set({ cooldownUntil: null, cooldownReason: null, updatedAt: new Date() })
+    .where(eq(outreachAccounts.id, accountId));
+}
 
 function pendingStoreFor(workspaceId: string): PendingStore {
   let s = pendingStores.get(workspaceId);
@@ -403,7 +426,10 @@ export async function evictWorkerClient(accountId: string): Promise<void> {
   const entry = workerClients.get(accountId);
   if (!entry) return;
   workerClients.delete(accountId);
-  accountCooldownUntil.delete(accountId);
+  // Cooldown в БД чистим best-effort: если выгоняем из-за banned/frozen, юзеру
+  // потом надо будет re-auth — там точно не должно быть унаследованного
+  // cooldown'а.
+  await clearAccountCooldown(accountId).catch(() => {});
   detachListener(accountId, entry.client);
   entry.replicator.detach();
   entry.authBus.detach();

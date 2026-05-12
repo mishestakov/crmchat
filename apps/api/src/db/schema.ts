@@ -346,6 +346,12 @@ export const outreachAccounts = pgTable(
     // считает sent-за-сегодня и пропускает аккаунт когда упёрлись. Дефолт 30 —
     // безопасно для не-Premium аккаунта без warmup. Юзер может крутить.
     newLeadsDailyLimit: integer("new_leads_daily_limit").notNull().default(30),
+    // FloodWait cooldown — аккаунт молчит до этой даты. Заполняется worker'ом
+    // и quick-send'ом при FloodWaitError. Сохраняется в БД (а не in-memory),
+    // чтобы переживало рестарт API и показывалось менеджеру в UI («аккаунт
+    // молчит до 14:23»). Очищается на следующей успешной отправке.
+    cooldownUntil: timestamp("cooldown_until", { withTimezone: true }),
+    cooldownReason: text("cooldown_reason"),
     // Текущий владелец аккаунта (менеджер). Меняется через transfer
     // (увольнение/перепередача). Member видит аккаунт если owner_user_id=self
     // или есть активная делегация (см. outreach_account_delegations).

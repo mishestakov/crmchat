@@ -57,6 +57,10 @@ const AccountSchema = z
     firstName: z.string().nullable(),
     hasPremium: z.boolean(),
     newLeadsDailyLimit: z.number().int(),
+    // FloodWait cooldown — если set, аккаунт молчит до этой даты. Worker и
+    // quick-send пропускают/блокируют отправку, UI рисует countdown.
+    cooldownUntil: z.iso.datetime().nullable(),
+    cooldownReason: z.string().nullable(),
     ownerUserId: z.string(),
     createdAt: z.iso.datetime(),
   })
@@ -107,6 +111,8 @@ function serializeAccount(r: typeof outreachAccounts.$inferSelect) {
     firstName: r.firstName,
     hasPremium: r.hasPremium,
     newLeadsDailyLimit: r.newLeadsDailyLimit,
+    cooldownUntil: r.cooldownUntil?.toISOString() ?? null,
+    cooldownReason: r.cooldownReason,
     ownerUserId: r.ownerUserId,
     createdAt: r.createdAt.toISOString(),
   };

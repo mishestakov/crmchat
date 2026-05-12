@@ -121,6 +121,9 @@ function AccountDetailPage() {
   const acc = account.data;
   const isUnauthorized = acc.status === "unauthorized";
   const dirty = dailyLimit !== acc.newLeadsDailyLimit;
+  const cooldownMs = acc.cooldownUntil
+    ? new Date(acc.cooldownUntil).getTime()
+    : null;
 
   return (
     <div className="space-y-3 p-6">
@@ -154,6 +157,17 @@ function AccountDetailPage() {
               Подключите заново через «Добавить» в списке аккаунтов
               (если зайдёте под тем же TG-юзером — запись обновится).
             </div>
+          )}
+          {cooldownMs !== null && cooldownMs > Date.now() && (
+            <CooldownBanner
+              untilMs={cooldownMs}
+              reason={acc.cooldownReason}
+              onExpire={() =>
+                qc.invalidateQueries({
+                  queryKey: ["outreach-account", wsId, accountId],
+                })
+              }
+            />
           )}
         </div>
 
@@ -264,6 +278,47 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
     <div className="flex items-center justify-between px-5 py-3 text-sm">
       <span className="text-zinc-500">{label}</span>
       <span className="font-medium">{children}</span>
+    </div>
+  );
+}
+
+// Плашка «аккаунт молчит до HH:MM:SS» с тикающим countdown'ом. Когда
+// время вышло — инвалидирует query, бэк за тик worker'а уже почистит
+// cooldown поля, при следующем рендере плашка исчезнет.
+function CooldownBanner(props: {
+  untilMs: number;
+  reason: string | null;
+  onExpire: () => void;
+}) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const remaining = Math.max(0, props.untilMs - now);
+  useEffect(() => {
+    if (remaining === 0) props.onExpire();
+  }, [remaining, props]);
+  if (remaining === 0) return null;
+  const sec = Math.ceil(remaining / 1000);
+  const mm = Math.floor(sec / 60);
+  const ss = sec % 60;
+  const until = new Date(props.untilMs).toLocaleTimeString("ru-RU", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return (
+    <div className="border-t border-zinc-100 bg-amber-50 px-5 py-3 text-xs text-amber-800">
+      <div className="font-medium">
+        Аккаунт молчит до {until} (ещё{" "}
+        {mm > 0 ? `${mm} мин ` : ""}
+        {ss} сек)
+      </div>
+      <div className="mt-0.5 text-amber-700">
+        Причина: {props.reason ?? "Telegram FloodWait"}. Авто-цепочки
+        приостановлены; ручной quick send тоже будет отклонён до окончания
+        cooldown'а.
+      </div>
     </div>
   );
 }

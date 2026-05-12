@@ -172,6 +172,9 @@ const LeadProgressSchema = z
     // Текущая стадия канбана (id из project.stages[*].id). null = «без
     // стадии» — карточка не на канбане.
     stageId: z.string().nullable(),
+    // CSV-batch, в котором лид появился в проекте. Для фильтра таблицы
+    // лидов «Импорт: ▾» — посмотреть только что подлили.
+    importId: z.string().nullable(),
   })
   .openapi("OutreachLeadProgress");
 
@@ -728,6 +731,7 @@ app.openapi(
           repliedAt: projectItems.repliedAt,
           contactId: projectItems.contactId,
           stageId: projectItems.stageId,
+          importId: projectItems.importId,
           total: sql<number>`count(*) OVER ()::int`,
         })
         .from(projectItems)
@@ -845,6 +849,7 @@ app.openapi(
           repliedAt: l.repliedAt?.toISOString() ?? null,
           contactId: l.contactId,
           stageId: l.stageId,
+          importId: l.importId,
         };
       }),
     });

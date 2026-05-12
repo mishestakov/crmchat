@@ -46,6 +46,7 @@ function LeadsPage() {
   const { wsId, projectId } = Route.useParams();
   const [showCsv, setShowCsv] = useState(false);
   const [onlyUnreplied, setOnlyUnreplied] = useState(false);
+  const [importFilter, setImportFilter] = useState<string>("all");
   const [drawerLeadId, setDrawerLeadId] = useState<string | null>(null);
 
   const seq = useProject(wsId, projectId);
@@ -63,6 +64,18 @@ function LeadsPage() {
             query: { limit: LEADS_PAGE_LIMIT, offset: 0 },
           },
         },
+      );
+      if (error) throw error;
+      return data;
+    },
+  });
+
+  const importsQ = useQuery({
+    queryKey: ["project-imports", wsId, projectId] as const,
+    queryFn: async () => {
+      const { data, error } = await api.GET(
+        "/v1/workspaces/{wsId}/projects/{projectId}/imports",
+        { params: { path: { wsId, projectId } } },
       );
       if (error) throw error;
       return data;
@@ -91,10 +104,28 @@ function LeadsPage() {
   const replied = leadsQ.data?.repliedCount ?? 0;
   const visibleLeads = useMemo(() => {
     if (!leadsQ.data) return [];
-    return onlyUnreplied
-      ? leadsQ.data.leads.filter((l) => !l.repliedAt)
-      : leadsQ.data.leads;
-  }, [leadsQ.data, onlyUnreplied]);
+    let out = leadsQ.data.leads;
+    if (importFilter !== "all") {
+      out = out.filter((l) => l.importId === importFilter);
+    }
+    if (onlyUnreplied) {
+      out = out.filter((l) => !l.repliedAt);
+    }
+    return out;
+  }, [leadsQ.data, onlyUnreplied, importFilter]);
+
+  // Per-import счётчики для опций селекта — «N в работе» = всего лидов
+  // импорта на этой странице (server-side total приходит в importStats,
+  // но фильтр клиентский, так что считаем по leadsQ.data).
+  const importCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    if (!leadsQ.data) return m;
+    for (const l of leadsQ.data.leads) {
+      if (!l.importId) continue;
+      m.set(l.importId, (m.get(l.importId) ?? 0) + 1);
+    }
+    return m;
+  }, [leadsQ.data]);
   // Сводка по выбранной странице (200 лидов); при больших задачах нужен
   // агрегат с бэка.
   const stickyCount =
@@ -112,6 +143,26 @@ function LeadsPage() {
         <div className="flex items-center justify-between gap-3">
           <h1 className="text-2xl font-semibold">Контакты</h1>
           <div className="flex items-center gap-3">
+            {importsQ.data && importsQ.data.length > 1 && (
+              <label className="inline-flex items-center gap-2 text-sm text-zinc-600">
+                Импорт:
+                <select
+                  value={importFilter}
+                  onChange={(e) => setImportFilter(e.target.value)}
+                  className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm"
+                >
+                  <option value="all">Все ({leadsQ.data?.total ?? 0})</option>
+                  {importsQ.data.map((imp) => (
+                    <option key={imp.id} value={imp.id}>
+                      {imp.name} · {formatRelative(imp.createdAt)}
+                      {importCounts.get(imp.id)
+                        ? ` · ${importCounts.get(imp.id)}`
+                        : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label className="inline-flex items-center gap-2 text-sm text-zinc-600">
               <input
                 type="checkbox"
@@ -137,13 +188,15 @@ function LeadsPage() {
             >
               Канбан →
             </Link>
-            <Link
-              to="/w/$wsId/projects/$projectId/import"
-              params={{ wsId, projectId }}
-              className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
-            >
-              + Подлить CSV
-            </Link>
+            {seq.data?.status !== "done" && (
+              <Link
+                to="/w/$wsId/projects/$projectId/import"
+                params={{ wsId, projectId }}
+                className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
+              >
+                + Подлить CSV
+              </Link>
+            )}
           </div>
         </div>
 
@@ -194,7 +247,11 @@ function LeadsPage() {
           leadsQ.data.leads.length > 0 &&
           visibleLeads.length === 0 && (
             <div className="rounded-2xl bg-white p-6 text-sm text-zinc-500 shadow-sm">
-              Все ответили — фильтр пуст.
+              {importFilter !== "all" && onlyUnreplied
+                ? "В этом импорте все ответили."
+                : importFilter !== "all"
+                  ? "В этом импорте лидов нет на текущей странице."
+                  : "Все ответили — фильтр пуст."}
             </div>
           )}
         {leadsQ.data && leadsQ.data.leads.length === LEADS_PAGE_LIMIT && (

@@ -12,8 +12,8 @@ import {
 import { contactTgUserIdSql } from "../lib/contact-sql.ts";
 import { errMsg } from "../lib/errors.ts";
 import {
-  accountCooldownUntil,
   getOutreachWorkerClient,
+  setAccountCooldown,
 } from "../lib/outreach-account-client.ts";
 import { emitProjectChanged } from "../lib/outreach-events.ts";
 import type { WorkspaceVars } from "../middleware/assert-member.ts";
@@ -98,8 +98,9 @@ async function resolveTargetTgUserId(
   return row.tgUserId;
 }
 
-// Helper: список активных проектов где у peer'а есть pending scheduled.
-// Возвращает уникальные {id, name} в порядке имени.
+// Helper: список проектов где у peer'а есть pending scheduled (для warning'а
+// в drawer'е). Active + paused — в paused worker не отправит сейчас, но на
+// resume цепочка возобновится, юзер должен видеть что она там есть.
 async function getActiveProjectsForPeer(
   wsId: string,
   tgUserId: string,
@@ -114,6 +115,7 @@ async function getActiveProjectsForPeer(
         eq(scheduledMessages.workspaceId, wsId),
         eq(scheduledMessages.status, "pending"),
         eq(projectItems.tgUserId, tgUserId),
+        inArray(projects.status, ["active", "paused"]),
       ),
     );
   return rows.sort((a, b) => a.name.localeCompare(b.name));
@@ -187,13 +189,12 @@ app.openapi(
       });
     }
 
-    // Cooldown — пока in-memory (мигрируем в БД в D1). На рестарт API
-    // обнулится — известный gap.
-    const cooldown = accountCooldownUntil.get(acc.id);
-    if (cooldown && cooldown > Date.now()) {
-      const wait = Math.ceil((cooldown - Date.now()) / 1000);
+    if (acc.cooldownUntil && acc.cooldownUntil.getTime() > Date.now()) {
+      const wait = Math.ceil(
+        (acc.cooldownUntil.getTime() - Date.now()) / 1000,
+      );
       throw new HTTPException(429, {
-        message: `Аккаунт в cooldown (FloodWait) ещё ${wait} сек`,
+        message: `Аккаунт в cooldown (${acc.cooldownReason ?? "FloodWait"}) ещё ${wait} сек`,
       });
     }
 
@@ -265,7 +266,11 @@ app.openapi(
       const flood = parseFloodWaitSeconds(msg);
       if (flood !== null) {
         const waitMs = (flood + 5) * 1000;
-        accountCooldownUntil.set(acc.id, Date.now() + waitMs);
+        await setAccountCooldown(
+          acc.id,
+          Date.now() + waitMs,
+          `FloodWait ${flood}s`,
+        );
         throw new HTTPException(429, {
           message: `Telegram FloodWait — аккаунт замолчал на ${flood} сек`,
         });

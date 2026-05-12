@@ -107,6 +107,15 @@ function OutreachAccountsList() {
                         className="shrink-0 fill-amber-400 text-amber-400"
                       />
                     )}
+                    {acc.cooldownUntil &&
+                      new Date(acc.cooldownUntil).getTime() > Date.now() && (
+                        <span
+                          className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-800"
+                          title={acc.cooldownReason ?? "Telegram FloodWait"}
+                        >
+                          cooldown
+                        </span>
+                      )}
                   </div>
                   <div className="truncate text-xs text-zinc-500">
                     {acc.phoneNumber ?? null}
