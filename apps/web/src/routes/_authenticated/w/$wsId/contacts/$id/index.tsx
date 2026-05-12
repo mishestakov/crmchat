@@ -750,43 +750,53 @@ function ChannelsSection(props: { wsId: string; contact: Contact }) {
 
       {contact.channels.length > 0 && (
         <>
-          {/* Табы. Когда канал один — таб не рисуем, просто карточка ниже. */}
+          {/* Табы. Когда канал один — таб не рисуем, просто карточка ниже.
+              Активный таб подчёркнут (без bg-chip-вида, чтобы не выглядел как
+              удаляемый тег). Крестик отвязки виден только на hover у
+              неактивных — у активного отвязывается через шапку ChannelCard
+              ниже (там есть кнопка управления). */}
           {contact.channels.length > 1 && (
-            <div className="flex flex-wrap gap-1 border-b border-zinc-100 px-5 py-2">
+            <div className="flex flex-wrap gap-3 border-b border-zinc-100 px-5">
               {contact.channels.map((ch) => {
                 const active = ch.id === selectedId;
                 return (
                   <span
                     key={ch.id}
-                    className={
-                      "group inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs " +
-                      (active
-                        ? "bg-zinc-900 text-white"
-                        : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200")
-                    }
+                    className="group relative inline-flex items-center py-2 text-xs"
                   >
                     <button
                       type="button"
                       onClick={() => setSelectedId(ch.id)}
-                      className="max-w-[200px] truncate"
                       title={ch.title}
+                      className={
+                        "max-w-[200px] truncate border-b-2 pb-1 " +
+                        (active
+                          ? "border-emerald-600 font-medium text-zinc-900"
+                          : "border-transparent text-zinc-500 hover:text-zinc-900")
+                      }
                     >
                       {ch.title}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => removeMut.mutate(ch.id)}
-                      disabled={removeMut.isPending}
-                      aria-label="Отвязать"
-                      className={
-                        "rounded p-0.5 disabled:opacity-50 " +
-                        (active
-                          ? "text-zinc-300 hover:bg-zinc-700 hover:text-white"
-                          : "text-zinc-400 hover:bg-red-100 hover:text-red-600")
-                      }
-                    >
-                      <X size={11} />
-                    </button>
+                    {!active && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (
+                            confirm(
+                              `Отвязать канал «${ch.title}» от контакта?`,
+                            )
+                          ) {
+                            removeMut.mutate(ch.id);
+                          }
+                        }}
+                        disabled={removeMut.isPending}
+                        aria-label="Отвязать канал"
+                        title="Отвязать канал от контакта"
+                        className="ml-1 rounded p-0.5 text-zinc-400 opacity-0 transition-opacity hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 disabled:opacity-50"
+                      >
+                        <X size={11} />
+                      </button>
+                    )}
                   </span>
                 );
               })}

@@ -3,8 +3,9 @@ import {
   redirect,
   useNavigate,
 } from "@tanstack/react-router";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "@tanstack/react-form";
+import { ArrowLeft } from "lucide-react";
 import { CreateWorkspaceSchema } from "@repo/core";
 import { api } from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
@@ -41,6 +42,19 @@ function CreateWorkspacePage() {
   const qc = useQueryClient();
   const navigate = useNavigate();
 
+  // Если у юзера уже есть воркспейсы — показываем «← Назад» на первый.
+  // Если 0 (первый вход после регистрации) — кнопки нет, это обязательный
+  // шаг онбординга. Данные уже в кеше от beforeLoad'а.
+  const wsListQ = useQuery({
+    queryKey: ["workspaces"] as const,
+    queryFn: async () => {
+      const { data, error } = await api.GET("/v1/workspaces");
+      if (error) throw error;
+      return data;
+    },
+  });
+  const existingWs = wsListQ.data?.[0];
+
   const create = useMutation({
     mutationFn: async (name: string) => {
       const { data, error } = await api.POST("/v1/workspaces", {
@@ -65,6 +79,21 @@ function CreateWorkspacePage() {
 
   return (
     <div className="mx-auto max-w-md p-8 space-y-6">
+      {existingWs && (
+        <button
+          type="button"
+          onClick={() =>
+            navigate({
+              to: "/w/$wsId/contacts",
+              params: { wsId: existingWs.id },
+            })
+          }
+          className="inline-flex items-center gap-1 text-sm text-zinc-500 hover:text-zinc-900"
+        >
+          <ArrowLeft size={14} />
+          Назад
+        </button>
+      )}
       <h1 className="text-2xl font-semibold">Создать workspace</h1>
       <form
         className="space-y-3"

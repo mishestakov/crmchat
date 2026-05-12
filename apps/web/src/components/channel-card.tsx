@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -502,20 +503,29 @@ function AdminsSection(props: { wsId: string; channel: Channel }) {
             return (
               <li
                 key={a.contactId}
-                className="group inline-flex items-center gap-1.5 rounded-full bg-zinc-100 py-1 pl-3 pr-1 text-xs"
+                className="group inline-flex items-center gap-1.5 rounded-full bg-zinc-100 py-1 pl-3 pr-1 text-xs hover:bg-zinc-200"
               >
-                <span className="truncate text-zinc-800">{label}</span>
-                {a.telegramUsername && a.fullName && (
-                  <span className="text-zinc-400">
-                    @{a.telegramUsername}
-                  </span>
-                )}
+                <Link
+                  to="/w/$wsId/contacts/$id"
+                  params={{ wsId: props.wsId, id: a.contactId }}
+                  className="flex items-center gap-1.5 truncate text-zinc-800 hover:text-emerald-700"
+                >
+                  <span>{label}</span>
+                  {a.telegramUsername && a.fullName && (
+                    <span className="text-zinc-400">@{a.telegramUsername}</span>
+                  )}
+                </Link>
                 <button
                   type="button"
-                  onClick={() => removeMut.mutate(a.contactId)}
+                  onClick={() => {
+                    if (confirm(`Отвязать «${label}» от канала?`)) {
+                      removeMut.mutate(a.contactId);
+                    }
+                  }}
                   disabled={removeMut.isPending}
-                  className="rounded-full p-0.5 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
-                  aria-label="Убрать"
+                  className="rounded-full p-0.5 text-zinc-400 opacity-0 transition-opacity hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 disabled:opacity-50"
+                  aria-label="Отвязать"
+                  title="Отвязать админа от канала"
                 >
                   <X size={11} />
                 </button>

@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
@@ -78,13 +78,36 @@ type ColMapping =
   | { slot: Exclude<Slot, "property"> }
   | { slot: "property"; propertyKey: string };
 
-// Поиск-state в URL (?q=…) — единообразие с /contacts. Юзер открывает
-// канал по ссылке и сразу видит свой фильтр; reload не сбрасывает поиск.
-type ChannelsSearch = { q?: string };
+// Поиск + фильтры в URL — единообразие с /contacts. Юзер открывает по
+// ссылке и сразу видит свой фильтр; reload не сбрасывает.
+//   q — фуллтекст по title/@username (бэк делает ILIKE).
+//   minMembers/maxMembers — клиент-side фильтр по memberCount.
+//   available — клиент-side: unavailableSince IS NULL.
+//   hasDm — клиент-side: meta.has_dm === true.
+type ChannelsSearch = {
+  q?: string;
+  minMembers?: number;
+  maxMembers?: number;
+  available?: boolean;
+  hasDm?: boolean;
+};
+
+const parsePositiveInt = (v: unknown): number | undefined => {
+  if (typeof v === "number" && Number.isFinite(v) && v >= 0) return v;
+  if (typeof v === "string" && v.trim()) {
+    const n = Number(v);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return undefined;
+};
 
 export const Route = createFileRoute("/_authenticated/w/$wsId/channels")({
   validateSearch: (s: Record<string, unknown>): ChannelsSearch => ({
     q: typeof s.q === "string" && s.q !== "" ? s.q : undefined,
+    minMembers: parsePositiveInt(s.minMembers),
+    maxMembers: parsePositiveInt(s.maxMembers),
+    available: s.available === true || s.available === "1" ? true : undefined,
+    hasDm: s.hasDm === true || s.hasDm === "1" ? true : undefined,
   }),
   component: ChannelsPage,
 });
@@ -104,10 +127,31 @@ function ChannelsPage() {
     navigate({
       to: "/w/$wsId/channels",
       params: { wsId },
-      search: () => ({ q: q || undefined }),
+      search: (prev) => ({ ...prev, q: q || undefined }),
       replace: true,
     });
   };
+  const setFilter = (patch: Partial<ChannelsSearch>) => {
+    navigate({
+      to: "/w/$wsId/channels",
+      params: { wsId },
+      search: (prev) => ({ ...prev, ...patch }),
+      replace: true,
+    });
+  };
+  const resetFilters = () => {
+    navigate({
+      to: "/w/$wsId/channels",
+      params: { wsId },
+      search: () => ({ q: search || undefined }),
+      replace: true,
+    });
+  };
+  const activeFilterCount =
+    (urlSearch.minMembers !== undefined ? 1 : 0) +
+    (urlSearch.maxMembers !== undefined ? 1 : 0) +
+    (urlSearch.available ? 1 : 0) +
+    (urlSearch.hasDm ? 1 : 0);
 
   const channelsQ = useQuery({
     queryKey: ["channels", wsId, search] as const,
@@ -140,7 +184,28 @@ function ChannelsPage() {
     (accountsQ.data ?? []).map((a) => [a.id, a]),
   );
 
-  const rows = channelsQ.data ?? [];
+  const allRows = channelsQ.data ?? [];
+  const rows = useMemo(() => {
+    return allRows.filter((c) => {
+      if (urlSearch.available && c.unavailableSince) return false;
+      if (urlSearch.hasDm && c.meta?.has_dm !== true) return false;
+      if (urlSearch.minMembers !== undefined) {
+        if (c.memberCount === null || c.memberCount === undefined) return false;
+        if (c.memberCount < urlSearch.minMembers) return false;
+      }
+      if (urlSearch.maxMembers !== undefined) {
+        if (c.memberCount === null || c.memberCount === undefined) return false;
+        if (c.memberCount > urlSearch.maxMembers) return false;
+      }
+      return true;
+    });
+  }, [
+    allRows,
+    urlSearch.minMembers,
+    urlSearch.maxMembers,
+    urlSearch.available,
+    urlSearch.hasDm,
+  ]);
 
   // CSV-импорт: парсим локально → открываем wizard. Wizard сам делает POST.
   const fileRef = useRef<HTMLInputElement>(null);
@@ -218,12 +283,77 @@ function ChannelsPage() {
         placeholder="Поиск по названию или @username…"
       />
 
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="text-zinc-500">Подписчики:</span>
+        <input
+          type="number"
+          min={0}
+          placeholder="от"
+          value={urlSearch.minMembers ?? ""}
+          onChange={(e) =>
+            setFilter({
+              minMembers:
+                e.target.value === "" ? undefined : Number(e.target.value),
+            })
+          }
+          className="w-20 rounded-md border border-zinc-300 px-2 py-1 focus:border-emerald-500 focus:outline-none"
+        />
+        <span className="text-zinc-400">—</span>
+        <input
+          type="number"
+          min={0}
+          placeholder="до"
+          value={urlSearch.maxMembers ?? ""}
+          onChange={(e) =>
+            setFilter({
+              maxMembers:
+                e.target.value === "" ? undefined : Number(e.target.value),
+            })
+          }
+          className="w-20 rounded-md border border-zinc-300 px-2 py-1 focus:border-emerald-500 focus:outline-none"
+        />
+        <label className="ml-2 inline-flex cursor-pointer items-center gap-1 text-zinc-600">
+          <input
+            type="checkbox"
+            checked={!!urlSearch.available}
+            onChange={(e) =>
+              setFilter({ available: e.target.checked || undefined })
+            }
+            className="rounded border-zinc-300"
+          />
+          Только доступные
+        </label>
+        <label className="inline-flex cursor-pointer items-center gap-1 text-zinc-600">
+          <input
+            type="checkbox"
+            checked={!!urlSearch.hasDm}
+            onChange={(e) =>
+              setFilter({ hasDm: e.target.checked || undefined })
+            }
+            className="rounded border-zinc-300"
+          />
+          Только с DM
+        </label>
+        {activeFilterCount > 0 && (
+          <button
+            type="button"
+            onClick={resetFilters}
+            className="text-zinc-500 hover:text-emerald-700"
+          >
+            сбросить
+          </button>
+        )}
+        <span className="ml-auto text-zinc-400">
+          {rows.length} из {allRows.length}
+        </span>
+      </div>
+
       {channelsQ.isLoading && <p>Загрузка…</p>}
       {channelsQ.error && (
         <p className="text-red-600">{errorMessage(channelsQ.error)}</p>
       )}
 
-      {channelsQ.data && rows.length === PAGE_LIMIT && (
+      {channelsQ.data && allRows.length === PAGE_LIMIT && (
         <TruncationBanner shown={PAGE_LIMIT} entity="каналов" />
       )}
 
@@ -268,6 +398,14 @@ function ChannelsPage() {
                         <span className="font-medium text-zinc-900">
                           {c.title}
                         </span>
+                        {c.meta?.has_dm === true && (
+                          <span
+                            title="Канал принимает прямые сообщения в личку"
+                            className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-700 ring-1 ring-emerald-200"
+                          >
+                            DM
+                          </span>
+                        )}
                         {c.unavailableSince && (
                           <span
                             title={`${c.unavailableReason ?? "недоступен"} · последняя попытка ${formatRelative(c.unavailableSince)}`}
@@ -293,7 +431,7 @@ function ChannelsPage() {
                       {formatMembers(c.memberCount)}
                     </td>
                     <td className="px-3 py-2 text-zinc-600">
-                      <AdminCell admins={c.admins} />
+                      <AdminCell wsId={wsId} admins={c.admins} />
                     </td>
                     <td className="px-3 py-2 text-zinc-600">
                       {acc ? formatAccount(acc) : "—"}
@@ -358,16 +496,37 @@ function ChannelDrawer(props: {
   );
 }
 
-function AdminCell({ admins }: { admins: Channel["admins"] }) {
+function AdminCell({
+  wsId,
+  admins,
+}: {
+  wsId: string;
+  admins: Channel["admins"];
+}) {
   if (admins.length === 0) return <>—</>;
   const first = admins[0]!;
   const label =
     first.fullName ||
     (first.telegramUsername ? `@${first.telegramUsername}` : first.contactId);
-  if (admins.length === 1) return <>{label}</>;
   return (
-    <span title={admins.map((a) => a.fullName ?? a.telegramUsername).join(", ")}>
-      {label} <span className="text-zinc-400">+{admins.length - 1}</span>
+    <span
+      title={
+        admins.length > 1
+          ? admins.map((a) => a.fullName ?? a.telegramUsername).join(", ")
+          : undefined
+      }
+    >
+      <Link
+        to="/w/$wsId/contacts/$id"
+        params={{ wsId, id: first.contactId }}
+        onClick={(e) => e.stopPropagation()}
+        className="text-zinc-700 hover:text-emerald-700 hover:underline"
+      >
+        {label}
+      </Link>
+      {admins.length > 1 && (
+        <span className="text-zinc-400"> +{admins.length - 1}</span>
+      )}
     </span>
   );
 }
