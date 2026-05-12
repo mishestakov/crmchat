@@ -12,15 +12,19 @@ import { assertRole, type WorkspaceVars } from "../middleware/assert-member.ts";
 // project.messages. Создаётся также из проекта по кнопке «Сохранить как
 // шаблон». Видны всем member'ам (для селекта), редактируют только admin'ы.
 
+// Схема согласована с MessageSchema в routes/projects.ts: шаблон валиден
+// тогда и только тогда, когда его содержимое можно применить к проекту.
+// Иначе можно было бы положить шаблон с пустым text или warmText без max
+// и получить «применимый, но не сохраняемый» проект.
 const DelaySchema = z.object({
   period: z.enum(["minutes", "hours", "days"]),
-  value: z.number().int().min(0),
+  value: z.number().int().min(0).max(365),
 });
 
 const MessageSchema = z.object({
   id: z.string().min(1).max(64),
-  text: z.string(),
-  warmText: z.string().nullable().optional(),
+  text: z.string().min(1).max(4000),
+  warmText: z.string().max(4000).nullable().optional(),
   delay: DelaySchema,
 });
 
