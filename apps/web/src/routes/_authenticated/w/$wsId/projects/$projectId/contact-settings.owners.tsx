@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
 import { BackButton } from "../../../../../../components/back-button";
@@ -10,7 +10,7 @@ import {
   SectionItemTitle,
 } from "../../../../../../components/section";
 import { useProject } from "../../../../../../lib/outreach-queries";
-import { OUTREACH_QK } from "../../../../../../lib/query-keys";
+import { OUTREACH_QK, WS_QK } from "../../../../../../lib/query-keys";
 
 export const Route = createFileRoute(
   "/_authenticated/w/$wsId/projects/$projectId/contact-settings/owners",
@@ -26,7 +26,7 @@ function OwnersPage() {
   const seq = useProject(wsId, projectId);
 
   const members = useQuery({
-    queryKey: ["workspace-members", wsId],
+    queryKey: WS_QK.members(wsId),
     queryFn: async () => {
       const { data, error } = await api.GET("/v1/workspaces/{id}/members", {
         params: { path: { id: wsId } },
@@ -40,6 +40,13 @@ function OwnersPage() {
   useEffect(() => {
     if (seq.data) setSelected(seq.data.contactDefaultOwnerIds);
   }, [seq.data]);
+
+  const isDirty = useMemo(() => {
+    if (!seq.data) return false;
+    const a = [...selected].sort();
+    const b = [...seq.data.contactDefaultOwnerIds].sort();
+    return JSON.stringify(a) !== JSON.stringify(b);
+  }, [seq.data, selected]);
 
   const save = useMutation({
     mutationFn: async () => {
@@ -113,14 +120,16 @@ function OwnersPage() {
           <p className="text-sm text-red-600">{errorMessage(save.error)}</p>
         )}
 
-        <button
-          type="button"
-          onClick={() => save.mutate()}
-          disabled={save.isPending}
-          className="w-full rounded-xl bg-emerald-600 py-3 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-        >
-          {save.isPending ? "Сохраняем…" : "Сохранить"}
-        </button>
+        {isDirty && (
+          <button
+            type="button"
+            onClick={() => save.mutate()}
+            disabled={save.isPending}
+            className="w-full rounded-xl bg-emerald-600 py-3 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+          >
+            {save.isPending ? "Сохраняем…" : "Сохранить"}
+          </button>
+        )}
       </div>
     </div>
   );

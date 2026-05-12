@@ -12,11 +12,7 @@ import {
   SectionItemValue,
 } from "../../../../../../components/section";
 import { useProject } from "../../../../../../lib/outreach-queries";
-import { OUTREACH_QK } from "../../../../../../lib/query-keys";
-
-// CRM-автоматизации: когда лид становится контактом, кому назначается
-// (default owners — round-robin) и с какими предзаполненными свойствами.
-// Owners живут в sub-page `/owners`, defaults — в простой форме здесь.
+import { OUTREACH_QK, WS_QK } from "../../../../../../lib/query-keys";
 
 export const Route = createFileRoute(
   "/_authenticated/w/$wsId/projects/$projectId/contact-settings",
@@ -46,7 +42,7 @@ function ContactSettingsPage() {
   });
 
   const members = useQuery({
-    queryKey: ["workspace-members", wsId],
+    queryKey: WS_QK.members(wsId),
     queryFn: async () => {
       const { data, error } = await api.GET("/v1/workspaces/{id}/members", {
         params: { path: { id: wsId } },
@@ -104,6 +100,17 @@ function ContactSettingsPage() {
       });
     },
   });
+
+  const isDirty = useMemo(() => {
+    if (!seq.data) return false;
+    if (trigger !== seq.data.contactCreationTrigger) return true;
+    if (JSON.stringify(defaults) !== JSON.stringify(seq.data.contactDefaults)) {
+      return true;
+    }
+    const a = [...ownerIds].sort();
+    const b = [...seq.data.contactDefaultOwnerIds].sort();
+    return JSON.stringify(a) !== JSON.stringify(b);
+  }, [seq.data, trigger, defaults, ownerIds]);
 
   if (seq.isLoading || properties.isLoading) {
     return (
@@ -228,14 +235,16 @@ function ContactSettingsPage() {
           <p className="text-sm text-red-600">{errorMessage(save.error)}</p>
         )}
 
-        <button
-          type="button"
-          onClick={() => save.mutate()}
-          disabled={save.isPending}
-          className="w-full rounded-xl bg-emerald-600 py-3 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-        >
-          {save.isPending ? "Сохраняем…" : "Сохранить"}
-        </button>
+        {isDirty && (
+          <button
+            type="button"
+            onClick={() => save.mutate()}
+            disabled={save.isPending}
+            className="w-full rounded-xl bg-emerald-600 py-3 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+          >
+            {save.isPending ? "Сохраняем…" : "Сохранить"}
+          </button>
+        )}
       </div>
     </div>
   );

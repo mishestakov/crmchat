@@ -8,10 +8,6 @@ import { useMyRole } from "../../../../lib/hooks";
 import { BackButton } from "../../../../components/back-button";
 import { StagesEditor, type Stage } from "../../../../components/stages-editor";
 
-// Страница управления шаблонами стадий канбана (12.2). admin создаёт/
-// правит/удаляет, member видит только список (но кнопки редакта
-// disabled). Применение шаблона — на форме создания проекта.
-
 export const Route = createFileRoute(
   "/_authenticated/w/$wsId/stage-templates",
 )({
@@ -43,14 +39,7 @@ function StageTemplatesPage() {
         "/v1/workspaces/{wsId}/stage-templates",
         {
           params: { path: { wsId } },
-          body: {
-            name,
-            stages: [
-              { id: "new", name: "Новый", order: 0 },
-              { id: "in_progress", name: "В работе", order: 1 },
-              { id: "done", name: "Закрыт", order: 2 },
-            ],
-          },
+          body: { name },
         },
       );
       if (error) throw error;

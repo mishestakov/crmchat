@@ -8,11 +8,6 @@ import { parseCsv, type ParsedCsv } from "../../../../../../lib/csv";
 import { BackButton } from "../../../../../../components/back-button";
 import { OUTREACH_QK } from "../../../../../../lib/query-keys";
 
-// 12.5 «Доливка лидов»: страница импорта CSV в существующий проект.
-// Логика парсинга/маппинга колонок та же что была в старом
-// /outreach/sequences/new, но создаёт project_imports + project_items
-// в уже существующем проекте (а не отдельный list+sequence одной пачкой).
-
 export const Route = createFileRoute(
   "/_authenticated/w/$wsId/projects/$projectId/import",
 )({

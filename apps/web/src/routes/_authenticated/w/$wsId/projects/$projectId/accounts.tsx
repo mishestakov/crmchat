@@ -47,6 +47,14 @@ function AccountsPage() {
 
   const isDraft = seq.data?.status === "draft";
 
+  const isDirty = useMemo(() => {
+    if (!seq.data) return false;
+    if (mode !== seq.data.accountsMode) return true;
+    const a = [...selected].sort();
+    const b = [...seq.data.accountsSelected].sort();
+    return JSON.stringify(a) !== JSON.stringify(b);
+  }, [seq.data, mode, selected]);
+
   const save = useMutation({
     mutationFn: async () => {
       const { error } = await api.PATCH(
@@ -218,7 +226,7 @@ function AccountsPage() {
           <p className="text-sm text-red-600">{errorMessage(save.error)}</p>
         )}
 
-        {isDraft && (
+        {isDraft && isDirty && (
           <button
             type="button"
             onClick={() => save.mutate()}

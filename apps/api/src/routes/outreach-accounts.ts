@@ -11,6 +11,7 @@ import {
   tgUsers,
   workspaceMembers,
 } from "../db/schema.ts";
+import { contactTgUserIdSql } from "../lib/contact-sql.ts";
 import { errMsg } from "../lib/errors.ts";
 import { resolveStickyByPeerIds } from "../lib/sticky.ts";
 import {
@@ -571,7 +572,7 @@ app.openapi(
           and(
             eq(contacts.workspaceId, wsId),
             isNull(contacts.primaryAccountId),
-            inArray(sql`${contacts.properties}->>'tg_user_id'`, peers),
+            inArray(contactTgUserIdSql, peers),
           ),
         );
     }

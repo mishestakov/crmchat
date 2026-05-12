@@ -21,10 +21,6 @@ import {
 import { useProject } from "../../../../../../lib/outreach-queries";
 import { OUTREACH_QK } from "../../../../../../lib/query-keys";
 
-// Лиды + per-message статусы. По донор-стилю — по колонке на каждое сообщение
-// sequence, в каждой ячейке иконка ✓ / ✓✓ / 💬 / ✗ + дата. Toggle «Показать
-// CSV-данные» раскрывает дополнительные колонки из CSV-properties.
-
 export const Route = createFileRoute(
   "/_authenticated/w/$wsId/projects/$projectId/leads",
 )({

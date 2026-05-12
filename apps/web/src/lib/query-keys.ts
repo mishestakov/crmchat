@@ -37,3 +37,24 @@ export const OUTREACH_QK = {
     ["project-sample-lead", wsId, projectId, seed] as const,
   schedule: (wsId: string) => ["outreach-schedule", wsId] as const,
 };
+
+export const WS_QK = {
+  members: (wsId: string) => ["workspaces", wsId, "members"] as const,
+};
+
+// Стандартный invalidate после mutation на проекте. detail+list — почти
+// всегда оба нужны (статус мог поменяться, list рендерит карточки).
+// leads — опционально (activate/import — да; pause/resume — нет).
+type Qc = { invalidateQueries: (opts: { queryKey: readonly unknown[] }) => unknown };
+export function invalidateProject(
+  qc: Qc,
+  wsId: string,
+  projectId: string,
+  opts: { leads?: boolean } = {},
+): void {
+  qc.invalidateQueries({ queryKey: OUTREACH_QK.project(wsId, projectId) });
+  qc.invalidateQueries({ queryKey: OUTREACH_QK.projects(wsId) });
+  if (opts.leads) {
+    qc.invalidateQueries({ queryKey: OUTREACH_QK.projectLeads(wsId, projectId) });
+  }
+}

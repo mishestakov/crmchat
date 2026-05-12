@@ -411,9 +411,7 @@ export const outreachAccountDelegations = pgTable(
   ],
 );
 
-// outreachAccountsMode и contactCreationTrigger — enum'ы для project'а
-// (kind='outreach'). Раньше использовались на outreach_sequences, теперь
-// на projects.
+// Outreach-специфичные enum'ы для project (kind='outreach').
 export const outreachAccountsMode = pgEnum("outreach_accounts_mode", [
   "all",
   "selected",
@@ -423,22 +421,12 @@ export const contactCreationTrigger = pgEnum("contact_creation_trigger", [
   "on-first-message-sent",
 ]);
 
-// === Этап 12: универсальная иерархия Track → Project → Item ===========
-//
-// Track (папка/группа задач) — Project (задача/проект с канбаном) —
-// Item (карточка на канбане). Структура общая для двух юз-кейсов:
-// (1) BD-команда продакта: Track=программа («Привлечение/Удержание/Отток»),
-//     Project=инстанс программы за период, Item=лид-в-задаче.
-// (2) Рекламное агентство: Track=клиент (Coca-Cola), Project=кампания
-//     (Q4 Holiday), Item=размещение (channel × project × date).
-//
-// `kind` discriminator на каждом уровне определяет UI-лейблы и какие
-// табы/поля видны. На этапе 12.0 поддерживаются program/client/generic
-// (Track), outreach/agency/generic (Project), lead/placement (Item);
-// agency- и placement-специфичные расширения добавятся в 12.6+.
-//
-// Старые `outreach_sequences` / `outreach_lists` / `outreach_leads`
-// удаляются в 12.2 после переезда кода на новые таблицы.
+// Иерархия Track → Project → Item. Общая для двух юз-кейсов:
+// (1) BD-команда: Track=программа («Привлечение/Удержание/Отток»),
+//     Project=инстанс программы за период, Item=лид.
+// (2) Агентство: Track=клиент (Coca-Cola), Project=кампания (Q4 Holiday),
+//     Item=размещение (channel × project × date).
+// `kind` discriminator определяет UI-лейблы и какие табы/поля видны.
 
 export const trackKind = pgEnum("track_kind", [
   "program",
@@ -489,15 +477,10 @@ export const tracks = pgTable(
   (t) => [index("tracks_workspace_id_idx").on(t.workspaceId)],
 );
 
-// Stage template — переиспользуемый шаблон стадий канбана на воркспейс
-// (12.2). Юзер заводит «Привлечение» / «Размещение в TG» / «Удержание»,
-// при создании проекта выбирает шаблон, и project.stages копируется из
-// template.stages. Шаблон → проект — однонаправленное копирование, без
-// последующей синхронизации (правка шаблона не трогает существующие
-// проекты, только новые).
-//
-// Видимость: workspace-wide, все member'ы видят все шаблоны. CRUD —
-// только admin.
+// Stage template — переиспользуемый шаблон стадий канбана на воркспейс.
+// При создании проекта стадии копируются из template.stages; правка
+// шаблона существующие проекты не трогает (однонаправленное копирование).
+// Видимость: все member'ы; CRUD — admin.
 export const stageTemplates = pgTable(
   "stage_templates",
   {
@@ -529,10 +512,9 @@ export type ProjectMessage = {
   delay: ProjectMessageDelay;
 };
 
-// Стадия канбана проекта (12.1). У каждого проекта свой набор stages —
-// JSON-массив на projects.stages, без отдельной таблицы. lead/placement-item
-// движется по этим стадиям через project_items.stage_id (text — id из
-// json'а, без FK).
+// Стадия канбана проекта. У каждого проекта свой набор stages — JSON-массив
+// на projects.stages, без отдельной таблицы. project_items.stage_id (text)
+// ссылается на id из json'а без FK; удаление стадии «сиротит» карточки.
 export type ProjectStage = {
   id: string;
   name: string;
@@ -571,12 +553,8 @@ export const projects = pgTable(
       .$type<Record<string, unknown>>()
       .notNull()
       .default({}),
-    // Стадии канбана этого проекта (12.1). Default-набор для outreach
-    // см. DEFAULT_OUTREACH_STAGES. Юзер свободно правит — ID стадий
-    // ссылочны из project_items.stage_id (без FK), удаление стадии не
-    // каскадит — карточки в удалённой стадии «сиротеют» (UI должен
-    // показать их в специальной колонке «Без стадии» либо принудительно
-    // переместить).
+    // Стадии канбана проекта. Default — DEFAULT_OUTREACH_STAGES. Удаление
+    // стадии не каскадит — карточки «сиротеют» (UI рисует «Без стадии»).
     stages: jsonb("stages")
       .$type<ProjectStage[]>()
       .notNull()
@@ -622,9 +600,8 @@ export const projects = pgTable(
   ],
 );
 
-// Project import — история CSV-импортов в проект (для 12.5 «доливка лидов»
-// важно знать какие батчи приходили и когда). Заменяет `outreach_lists` —
-// теперь не отдельная сущность, а лог импортов проекта.
+// Project import — лог CSV-импортов в проект. Нужен, чтобы видеть какие
+// батчи приходили и когда (для «доливки лидов»).
 export type ProjectImportSourceMeta = {
   fileName?: string;
   usernameColumn?: string;
@@ -670,7 +647,7 @@ export const projectImports = pgTable(
 );
 
 // Project item — карточка на канбане проекта. Lead (контакт-в-задаче) или
-// placement (channel-в-проекте, добавится в 12.6).
+// placement (channel-в-проекте).
 export const projectItems = pgTable(
   "project_items",
   {
@@ -682,7 +659,7 @@ export const projectItems = pgTable(
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
     // FK на batch CSV-импорта, из которого пришёл item. NULL — item создан
-    // вручную или 12.5 доливкой без batch-меток. ON DELETE SET NULL: запись
+    // вручную или доливкой без batch-меток. ON DELETE SET NULL: запись
     // импорта могут удалить, item остаётся.
     importId: text("import_id").references(() => projectImports.id, {
       onDelete: "set null",
@@ -720,8 +697,7 @@ export const projectItems = pgTable(
       t.tgUserId,
     ),
     // Identity-уникальность лидов в одном проекте: username (если есть)
-    // ИЛИ phone — каждый сам по себе уникальный TG-идентификатор. Defaul
-    // dedup при доливке (12.5) использует те же ключи.
+    // ИЛИ phone — каждый сам по себе уникальный TG-идентификатор.
     uniqueIndex("project_items_project_username_unique")
       .on(t.projectId, sql`lower(${t.username})`)
       .where(sql`${t.username} IS NOT NULL AND ${t.kind} = 'lead'`),

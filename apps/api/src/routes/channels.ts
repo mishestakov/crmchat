@@ -9,6 +9,7 @@ import {
   ImportChannelsResultSchema as BaseImportResult,
 } from "@repo/core";
 import { db, sql as sqlClient } from "../db/client.ts";
+import { contactUsernameLowerSql } from "../lib/contact-sql.ts";
 import { errMsg } from "../lib/errors.ts";
 import {
   type TdContent,
@@ -1099,14 +1100,14 @@ app.openapi(
       const existingContacts = await db
         .select({
           id: contacts.id,
-          username: sql<string>`lower(${contacts.properties}->>'telegram_username')`,
+          username: contactUsernameLowerSql,
         })
         .from(contacts)
         .where(
           and(
             eq(contacts.workspaceId, wsId),
             inArray(
-              sql`lower(${contacts.properties}->>'telegram_username')`,
+              contactUsernameLowerSql,
               usernames,
             ),
           ),
@@ -1147,7 +1148,7 @@ app.openapi(
             .onConflictDoNothing()
             .returning({
               id: contacts.id,
-              username: sql<string>`lower(${contacts.properties}->>'telegram_username')`,
+              username: contactUsernameLowerSql,
             });
           for (const ins of inserted) {
             if (ins.username) usernameToContactId.set(ins.username, ins.id);
@@ -1160,14 +1161,14 @@ app.openapi(
           const reread = await db
             .select({
               id: contacts.id,
-              username: sql<string>`lower(${contacts.properties}->>'telegram_username')`,
+              username: contactUsernameLowerSql,
             })
             .from(contacts)
             .where(
               and(
                 eq(contacts.workspaceId, wsId),
                 inArray(
-                  sql`lower(${contacts.properties}->>'telegram_username')`,
+                  contactUsernameLowerSql,
                   stillMissing,
                 ),
               ),

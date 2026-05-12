@@ -28,6 +28,10 @@ import {
 } from "../lib/contacts-access.ts";
 import { emitContactChanged, subscribeContacts } from "../lib/contact-events.ts";
 import {
+  contactTgUserIdSql,
+  contactUsernameSql,
+} from "../lib/contact-sql.ts";
+import {
   enforceRequiredProperties,
   loadPropertyDefs,
   validateContactProperties,
@@ -258,11 +262,11 @@ app.openapi(
     }
     const conds: SQL[] = [];
     if (tgUserId) {
-      conds.push(sql`${contacts.properties}->>'tg_user_id' = ${tgUserId}`);
+      conds.push(sql`${contactTgUserIdSql} = ${tgUserId}`);
     }
     if (username) {
       const u = username.replace(/^@/, "");
-      conds.push(sql`${contacts.properties}->>'telegram_username' = ${u}`);
+      conds.push(sql`${contactUsernameSql} = ${u}`);
     }
     // nextStep здесь не нужен — sidebar чата рендерит компактную карточку
     // без активити. Не тащим correlated subquery.
@@ -731,7 +735,7 @@ async function backfillInboundOutbound(
       and(
         eq(contacts.workspaceId, wsId),
         isNull(contacts.primaryAccountId),
-        sql`${contacts.properties}->>'tg_user_id' = ${peerUserId}`,
+        sql`${contactTgUserIdSql} = ${peerUserId}`,
       ),
     );
 }

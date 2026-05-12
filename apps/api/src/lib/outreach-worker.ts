@@ -112,7 +112,7 @@ async function runTick() {
   const due = await db
     .select({
       id: scheduledMessages.id,
-      sequenceId: scheduledMessages.projectId,
+      projectId: scheduledMessages.projectId,
       leadId: scheduledMessages.itemId,
       accountId: scheduledMessages.accountId,
       messageIdx: scheduledMessages.messageIdx,
@@ -154,13 +154,13 @@ async function runTick() {
     ),
   );
 
-  const sequenceIds = [...new Set(due.map((r) => r.sequenceId))];
-  await Promise.all(sequenceIds.map((id) => maybeCompleteSequence(id)));
+  const projectIds = [...new Set(due.map((r) => r.projectId))];
+  await Promise.all(projectIds.map((id) => maybeCompleteProject(id)));
 }
 
 type DueItem = {
   id: string;
-  sequenceId: string;
+  projectId: string;
   leadId: string;
   accountId: string;
   messageIdx: number;
@@ -243,7 +243,7 @@ async function processAccount(accountId: string, items: DueItem[]) {
         .update(scheduledMessages)
         .set({ status: "cancelled", error: "lead deleted" })
         .where(eq(scheduledMessages.id, item.id));
-      emitProjectChanged(item.sequenceId);
+      emitProjectChanged(item.projectId);
       continue;
     }
 
@@ -257,9 +257,9 @@ async function processAccount(accountId: string, items: DueItem[]) {
             eq(scheduledMessages.status, "pending"),
           ),
         )
-        .returning({ sequenceId: scheduledMessages.projectId });
-      for (const seqId of new Set(cancelled.map((r) => r.sequenceId))) {
-        emitProjectChanged(seqId);
+        .returning({ projectId: scheduledMessages.projectId });
+      for (const projectId of new Set(cancelled.map((r) => r.projectId))) {
+        emitProjectChanged(projectId);
       }
       continue;
     }
@@ -291,13 +291,13 @@ async function processAccount(accountId: string, items: DueItem[]) {
           .set({ tgUserId })
           .where(eq(projectItems.id, lead.id));
       }
-      emitProjectChanged(item.sequenceId);
+      emitProjectChanged(item.projectId);
       if (item.messageIdx === 0) {
         newLeadsRemaining--;
         lastNewLeadInTick = now.getTime();
 
         void maybeCreateContactOnFirstSent(
-          item.sequenceId,
+          item.projectId,
           item.leadId,
         ).catch((e) =>
           console.error(
@@ -316,7 +316,7 @@ async function processAccount(accountId: string, items: DueItem[]) {
           .update(scheduledMessages)
           .set({ sendAt: new Date(Date.now() + waitMs) })
           .where(eq(scheduledMessages.id, item.id));
-        emitProjectChanged(item.sequenceId);
+        emitProjectChanged(item.projectId);
         console.warn(
           `[outreach-worker] FloodWait on account ${accountId}: ${flood}s`,
         );
@@ -336,7 +336,7 @@ async function processAccount(accountId: string, items: DueItem[]) {
           .update(scheduledMessages)
           .set({ status: "failed", error: msg })
           .where(eq(scheduledMessages.id, item.id));
-        emitProjectChanged(item.sequenceId);
+        emitProjectChanged(item.projectId);
       }
     }
 
@@ -487,17 +487,22 @@ async function getNewLeadsStatsToday(
 }
 
 async function maybeCreateContactOnFirstSent(
-  sequenceId: string,
+  projectId: string,
   leadId: string,
 ): Promise<void> {
-  const [seq] = await db
+  const [project] = await db
     .select({
       contactCreationTrigger: projects.contactCreationTrigger,
     })
     .from(projects)
-    .where(eq(projects.id, sequenceId))
+    .where(eq(projects.id, projectId))
     .limit(1);
-  if (!seq || seq.contactCreationTrigger !== "on-first-message-sent") return;
+  if (
+    !project ||
+    project.contactCreationTrigger !== "on-first-message-sent"
+  ) {
+    return;
+  }
   const [lead] = await db
     .select()
     .from(projectItems)
@@ -506,10 +511,10 @@ async function maybeCreateContactOnFirstSent(
   if (!lead) return;
   // Sticky НЕ передаём: это исходящее без ответа, по правилу v2 sticky
   // отдаётся только на входящие (когда контакт реально нам отвечал).
-  await convertLeadToContact(lead, sequenceId);
+  await convertLeadToContact(lead, projectId);
 }
 
-async function maybeCompleteSequence(seqId: string) {
+async function maybeCompleteProject(projectId: string) {
   // Один UPDATE с NOT EXISTS вместо SELECT-then-UPDATE — экономит round-trip
   // и закрывает race с конкурентным INSERT'ом scheduled_messages.
   const now = new Date();
@@ -518,11 +523,11 @@ async function maybeCompleteSequence(seqId: string) {
     .set({ status: "done", completedAt: now, updatedAt: now })
     .where(
       and(
-        eq(projects.id, seqId),
+        eq(projects.id, projectId),
         eq(projects.status, "active"),
         sql`NOT EXISTS (
           SELECT 1 FROM ${scheduledMessages}
-          WHERE ${scheduledMessages.projectId} = ${seqId}
+          WHERE ${scheduledMessages.projectId} = ${projectId}
             AND ${scheduledMessages.status} = 'pending'
         )`,
       ),

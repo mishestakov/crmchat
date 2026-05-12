@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
 import { BackButton } from "../../../../../../components/back-button";
+import { WS_QK } from "../../../../../../lib/query-keys";
 
 export const Route = createFileRoute("/_authenticated/w/$wsId/settings/workspace/")({
   component: WorkspaceSettings,
@@ -41,7 +42,7 @@ function WorkspaceSettings() {
   });
 
   const members = useQuery({
-    queryKey: ["workspaces", wsId, "members"],
+    queryKey: WS_QK.members(wsId),
     queryFn: async () => {
       const { data, error } = await api.GET("/v1/workspaces/{id}/members", {
         params: { path: { id: wsId } },
@@ -163,7 +164,7 @@ function TeamSection({
       if (error) throw error;
     },
     onSuccess: () =>
-      qc.invalidateQueries({ queryKey: ["workspaces", wsId, "members"] }),
+      qc.invalidateQueries({ queryKey: WS_QK.members(wsId) }),
   });
 
   const removeMember = useMutation({
@@ -185,7 +186,7 @@ function TeamSection({
         await qc.invalidateQueries({ queryKey: ["workspaces"] });
         navigate({ to: "/", search: { new: false } });
       } else {
-        qc.invalidateQueries({ queryKey: ["workspaces", wsId, "members"] });
+        qc.invalidateQueries({ queryKey: WS_QK.members(wsId) });
       }
     },
   });

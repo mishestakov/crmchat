@@ -11,13 +11,10 @@ import {
   type Stage,
 } from "../../../../../../components/stages-editor";
 import { TruncationBanner } from "../../../../../../components/truncation-banner";
-import { useEscapeKey, useMyRole } from "../../../../../../lib/hooks";
+import { useMyRole } from "../../../../../../lib/hooks";
+import { Modal } from "../../../../../../components/modal";
 import { useProject } from "../../../../../../lib/outreach-queries";
 import { OUTREACH_QK } from "../../../../../../lib/query-keys";
-
-// 12.1: Per-проект канбан. Колонки = project.stages, карточки = leads
-// сгруппированные по stageId. Drag-drop через native HTML5 (как было в
-// удалённом outreach/pipeline.tsx). PATCH /items/{id} меняет stageId.
 
 export const Route = createFileRoute(
   "/_authenticated/w/$wsId/projects/$projectId/kanban",
@@ -302,8 +299,6 @@ function StagesEditModal(props: {
   const qc = useQueryClient();
   const [stages, setStages] = useState<Stage[]>(initial);
 
-  useEscapeKey(onClose);
-
   const save = useMutation({
     mutationFn: async () => {
       const { error } = await api.PATCH(
@@ -329,14 +324,7 @@ function StagesEditModal(props: {
   const dirty = JSON.stringify(stages) !== JSON.stringify(initial);
 
   return (
-    <div
-      className="fixed inset-0 z-30 flex items-center justify-center bg-black/30 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="max-h-[80vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-5 shadow-lg"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Modal onClose={onClose} zIndex={30}>
         <div className="mb-3 flex items-center gap-3">
           <h2 className="text-lg font-semibold">Стадии канбана</h2>
           <button
@@ -374,8 +362,7 @@ function StagesEditModal(props: {
             </span>
           )}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 

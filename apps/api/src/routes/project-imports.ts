@@ -9,6 +9,11 @@ import {
   projects,
   type ProjectStage,
 } from "../db/schema.ts";
+import {
+  contactPhoneSql,
+  contactTgUserIdSql,
+  contactUsernameLowerSql,
+} from "../lib/contact-sql.ts";
 import { assertProjectAccess } from "../lib/projects-access.ts";
 import { assertRole, type WorkspaceVars } from "../middleware/assert-member.ts";
 
@@ -216,23 +221,16 @@ app.openapi(
     if (usernames.length > 0 || phones.length > 0) {
       const conds: SQL[] = [];
       if (usernames.length > 0) {
-        conds.push(
-          inArray(
-            sql`lower(${contacts.properties}->>'telegram_username')`,
-            usernames,
-          ),
-        );
+        conds.push(inArray(contactUsernameLowerSql, usernames));
       }
       if (phones.length > 0) {
-        conds.push(inArray(sql`${contacts.properties}->>'phone'`, phones));
+        conds.push(inArray(contactPhoneSql, phones));
       }
       const known = await db
         .select({
-          tgUserId: sql<string | null>`${contacts.properties}->>'tg_user_id'`,
-          username: sql<
-            string | null
-          >`lower(${contacts.properties}->>'telegram_username')`,
-          phone: sql<string | null>`${contacts.properties}->>'phone'`,
+          tgUserId: contactTgUserIdSql,
+          username: contactUsernameLowerSql,
+          phone: contactPhoneSql,
         })
         .from(contacts)
         .where(and(eq(contacts.workspaceId, wsId), or(...conds)));
@@ -287,24 +285,28 @@ app.openapi(
       if (!imp) throw new HTTPException(500, { message: "import insert failed" });
 
       if (resolved.length > 0) {
-        const inserted = await tx
-          .insert(projectItems)
-          .values(
-            resolved.map((c) => ({
-              workspaceId: wsId,
-              projectId,
-              importId: imp.id,
-              kind: "lead" as const,
-              stageId: initialStageId,
-              username: c.username,
-              phone: c.phone,
-              tgUserId: c.tgUserId,
-              properties: c.properties,
-            })),
-          )
-          .onConflictDoNothing()
-          .returning({ id: projectItems.id });
-        actuallyInserted = inserted.length;
+        // Chunked insert: postgres-js биндит каждое значение как отдельный $N
+        // (лимит ~65k параметров на query). 1000 строк × ~10 cols = 10k params.
+        const CHUNK = 1000;
+        const rows = resolved.map((c) => ({
+          workspaceId: wsId,
+          projectId,
+          importId: imp.id,
+          kind: "lead" as const,
+          stageId: initialStageId,
+          username: c.username,
+          phone: c.phone,
+          tgUserId: c.tgUserId,
+          properties: c.properties,
+        }));
+        for (let i = 0; i < rows.length; i += CHUNK) {
+          const inserted = await tx
+            .insert(projectItems)
+            .values(rows.slice(i, i + CHUNK))
+            .onConflictDoNothing()
+            .returning({ id: projectItems.id });
+          actuallyInserted += inserted.length;
+        }
       }
 
       const finalStats = {

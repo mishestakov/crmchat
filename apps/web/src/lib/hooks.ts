@@ -1,6 +1,7 @@
 import { useEffect, useRef, type RefObject } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "./api";
+import { WS_QK } from "./query-keys";
 
 // Закрытие модалки на ESC. handler пересохраняем в ref, чтобы effect не
 // перецеплялся при каждом ререндере вызывающего.
@@ -47,7 +48,7 @@ export function useMyRole(wsId: string): "admin" | "member" | undefined {
     },
   });
   const members = useQuery({
-    queryKey: ["workspaces", wsId, "members"],
+    queryKey: WS_QK.members(wsId),
     queryFn: async () => {
       const { data, error } = await api.GET("/v1/workspaces/{id}/members", {
         params: { path: { id: wsId } },

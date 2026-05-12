@@ -11,6 +11,10 @@ import {
   tgUsers,
 } from "../db/schema.ts";
 import {
+  contactTgUserIdSql,
+  contactUsernameSql,
+} from "./contact-sql.ts";
+import {
   loadPropertyDefs,
   validateContactProperties,
 } from "./contact-properties.ts";
@@ -206,20 +210,27 @@ async function onNewMessage(
             inArray(scheduledMessages.itemId, leadIds),
           ),
         )
-        .returning({ sequenceId: scheduledMessages.projectId });
-      for (const seqId of new Set(cancelled.map((r) => r.sequenceId))) {
-        emitProjectChanged(seqId);
+        .returning({ projectId: scheduledMessages.projectId });
+      for (const projectId of new Set(cancelled.map((r) => r.projectId))) {
+        emitProjectChanged(projectId);
       }
-      for (const lead of updated) {
-        try {
-          await convertLeadToContact(lead, undefined, accountId);
-        } catch (e) {
-          console.error(
-            `[outreach-listener] convert lead ${lead.id}:`,
-            errMsg(e),
-          );
-        }
-      }
+      // Когда несколько лидов ответили одним батчем (групповая рассылка),
+      // загружаем propsTable один раз и переиспользуем в каждом convert.
+      const propsDefs = await db
+        .select()
+        .from(propsTable)
+        .where(eq(propsTable.workspaceId, workspaceId));
+      await Promise.all(
+        updated.map((lead) =>
+          convertLeadToContact(lead, undefined, accountId, propsDefs).catch(
+            (e) =>
+              console.error(
+                `[outreach-listener] convert lead ${lead.id}:`,
+                errMsg(e),
+              ),
+          ),
+        ),
+      );
     }
 
     // unread_count поверх contacts держит onReadInbox: TG на каждое incoming
@@ -238,7 +249,7 @@ async function onNewMessage(
       .where(
         and(
           eq(contacts.workspaceId, workspaceId),
-          sql`${contacts.properties}->>'tg_user_id' = ${senderIdStr}`,
+          sql`${contactTgUserIdSql} = ${senderIdStr}`,
         ),
       )
       .returning({
@@ -267,8 +278,8 @@ async function onNewMessage(
           .where(
             and(
               eq(contacts.workspaceId, workspaceId),
-              sql`${contacts.properties}->>'telegram_username' = ${username}`,
-              sql`${contacts.properties}->>'tg_user_id' IS NULL`,
+              sql`${contactUsernameSql} = ${username}`,
+              sql`${contactTgUserIdSql} IS NULL`,
             ),
           )
           .returning({
@@ -330,7 +341,7 @@ async function onReadInbox(
       .where(
         and(
           eq(contacts.workspaceId, workspaceId),
-          sql`${contacts.properties}->>'tg_user_id' = ${tgUserIdStr}`,
+          sql`${contactTgUserIdSql} = ${tgUserIdStr}`,
           sql`${contacts.unreadCount} <> ${unreadCount}`,
         ),
       )
@@ -366,8 +377,8 @@ async function onSendFailed(
       .update(scheduledMessages)
       .set({ status: "failed", error: errText, sentAt: null })
       .where(eq(scheduledMessages.id, id))
-      .returning({ sequenceId: scheduledMessages.projectId });
-    if (rows[0]) emitProjectChanged(rows[0].sequenceId);
+      .returning({ projectId: scheduledMessages.projectId });
+    if (rows[0]) emitProjectChanged(rows[0].projectId);
   } catch (e) {
     console.error("[outreach-listener] onSendFailed:", errMsg(e));
   }
@@ -400,9 +411,9 @@ async function onReadOutbox(workspaceId: string, chatId: number): Promise<void> 
           ),
         ),
       )
-      .returning({ sequenceId: scheduledMessages.projectId });
-    for (const seqId of new Set(updated.map((r) => r.sequenceId))) {
-      emitProjectChanged(seqId);
+      .returning({ projectId: scheduledMessages.projectId });
+    for (const projectId of new Set(updated.map((r) => r.projectId))) {
+      emitProjectChanged(projectId);
     }
   } catch (e) {
     console.error("[outreach-listener] onReadOutbox:", errMsg(e));
@@ -421,6 +432,7 @@ export async function convertLeadToContact(
   lead: typeof projectItems.$inferSelect,
   projectId?: string,
   accountId?: string,
+  cachedPropsDefs?: (typeof propsTable.$inferSelect)[],
 ) {
   if (!lead.tgUserId) return;
 
@@ -447,10 +459,12 @@ export async function convertLeadToContact(
         .from(projects)
         .where(eq(projects.id, lookupProjectId))
         .limit(1),
-      db
-        .select()
-        .from(propsTable)
-        .where(eq(propsTable.workspaceId, lead.workspaceId)),
+      cachedPropsDefs
+        ? Promise.resolve(cachedPropsDefs)
+        : db
+            .select()
+            .from(propsTable)
+            .where(eq(propsTable.workspaceId, lead.workspaceId)),
     ]);
     const projectRow = seqRows[0];
     if (!projectRow) return; // race с DELETE project — пропускаем тихо
@@ -562,7 +576,7 @@ async function findContactByTgUserId(
     .where(
       and(
         eq(contacts.workspaceId, workspaceId),
-        sql`${contacts.properties}->>'tg_user_id' = ${tgUserId}`,
+        sql`${contactTgUserIdSql} = ${tgUserId}`,
       ),
     )
     .limit(1);

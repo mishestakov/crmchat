@@ -19,6 +19,8 @@ import {
   type ProjectMessage,
   type ProjectStage,
 } from "../db/schema.ts";
+import { contactTgUserIdSql } from "../lib/contact-sql.ts";
+import { pickDefined } from "../lib/pick-defined.ts";
 import { subscribeProject } from "../lib/outreach-events.ts";
 import {
   assertProjectAccess,
@@ -149,7 +151,7 @@ const LeadProgressSchema = z
     // через contacts.primary_account_id, sequence ещё в draft и round-robin
     // этот лид не зацепит; null — лид незнаком, на активации уйдёт в RR.
     accountSource: z.enum(["scheduled", "sticky"]).nullable(),
-    // Прогресс по каждому сообщению sequence. Длина массива = seq.messages.length.
+    // Прогресс по каждому сообщению цепочки. Длина = project.messages.length.
     messages: z.array(LeadMessageProgressSchema),
     repliedAt: z.iso.datetime().nullable(),
     contactId: z.string().nullable(),
@@ -317,29 +319,21 @@ app.openapi(
       });
     }
 
+    // stages можно править в любом статусе — это атрибут канбана,
+    // не уходит в snapshot scheduled_messages. Остальные ограничены above.
     const [row] = await db
       .update(projects)
       .set({
-        ...(body.name !== undefined && { name: body.name }),
-        // stages можно править в любом статусе — это атрибут канбана
-        // не уходит в snapshot scheduled_messages.
-        ...(body.stages !== undefined && { stages: body.stages }),
-        ...(body.accountsMode !== undefined && {
-          accountsMode: body.accountsMode,
-        }),
-        ...(body.accountsSelected !== undefined && {
-          accountsSelected: body.accountsSelected,
-        }),
-        ...(body.messages !== undefined && { messages: body.messages }),
-        ...(body.contactCreationTrigger !== undefined && {
-          contactCreationTrigger: body.contactCreationTrigger,
-        }),
-        ...(body.contactDefaultOwnerIds !== undefined && {
-          contactDefaultOwnerIds: body.contactDefaultOwnerIds,
-        }),
-        ...(body.contactDefaults !== undefined && {
-          contactDefaults: body.contactDefaults,
-        }),
+        ...pickDefined(body, [
+          "name",
+          "stages",
+          "accountsMode",
+          "accountsSelected",
+          "messages",
+          "contactCreationTrigger",
+          "contactDefaultOwnerIds",
+          "contactDefaults",
+        ]),
         updatedAt: new Date(),
       })
       .where(eq(projects.id, projectId))
@@ -395,13 +389,13 @@ app.openapi(
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
     const { projectId } = c.req.valid("param");
-    const seq = await assertProjectAccess(projectId, wsId, userId, role);
-    if (seq.status !== "draft") {
+    const project = await assertProjectAccess(projectId, wsId, userId, role);
+    if (project.status !== "draft") {
       throw new HTTPException(400, {
         message: "Only draft projects can be activated",
       });
     }
-    if (seq.messages.length === 0) {
+    if (project.messages.length === 0) {
       throw new HTTPException(400, { message: "Add at least one message" });
     }
 
@@ -418,11 +412,11 @@ app.openapi(
         ),
       );
     const accountIds =
-      seq.accountsMode === "all"
+      project.accountsMode === "all"
         ? accountRows.map((a) => a.id)
         : accountRows
             .map((a) => a.id)
-            .filter((id) => seq.accountsSelected.includes(id));
+            .filter((id) => project.accountsSelected.includes(id));
     if (accountIds.length === 0) {
       throw new HTTPException(400, {
         message: "No active outreach accounts available",
@@ -432,7 +426,7 @@ app.openapi(
     const allLeads = await db
       .select()
       .from(projectItems)
-      .where(eq(projectItems.projectId, seq.id))
+      .where(eq(projectItems.projectId, project.id))
       .orderBy(asc(projectItems.createdAt));
     if (allLeads.length === 0) {
       throw new HTTPException(400, { message: "List has no leads" });
@@ -454,7 +448,7 @@ app.openapi(
     const activatedAt = new Date();
     // Для каждого message i: cumulativeOffsetMs = сумма delays[0..i] в ms.
     // delay у первого сообщения (idx=0) — это пауза от момента активации.
-    const offsetsMs = cumulativeOffsetsMs(seq.messages);
+    const offsetsMs = cumulativeOffsetsMs(project.messages);
 
     // Sticky lead → account: «с каким аккаунтом блогер общался, с тем и
     // продолжает». Round-robin — только для новых лидов без истории.
@@ -473,11 +467,12 @@ app.openapi(
 
     const remaining = tgUserIds.filter((id) => !priorByTgUserId.has(id));
     if (remaining.length > 0) {
+      // DISTINCT ON (tg_user_id) ORDER BY tg_user_id, sentAt DESC — отдаёт
+      // последний sent для каждого tg-юзера одним проходом, без JS first-wins.
       const priors = await db
-        .select({
+        .selectDistinctOn([projectItems.tgUserId], {
           tgUserId: projectItems.tgUserId,
           accountId: scheduledMessages.accountId,
-          sentAt: scheduledMessages.sentAt,
         })
         .from(scheduledMessages)
         .innerJoin(
@@ -491,12 +486,9 @@ app.openapi(
             inArray(projectItems.tgUserId, remaining),
           ),
         )
-        .orderBy(desc(scheduledMessages.sentAt));
+        .orderBy(projectItems.tgUserId, desc(scheduledMessages.sentAt));
       for (const p of priors) {
-        if (!p.tgUserId) continue;
-        if (!priorByTgUserId.has(p.tgUserId)) {
-          priorByTgUserId.set(p.tgUserId, p.accountId);
-        }
+        if (p.tgUserId) priorByTgUserId.set(p.tgUserId, p.accountId);
       }
     }
 
@@ -507,9 +499,9 @@ app.openapi(
         : undefined;
       const accountId = prior ?? accountIds[rrIdx % accountIds.length]!;
       if (!prior) rrIdx++;
-      return seq.messages.map((msg, msgIdx) => ({
+      return project.messages.map((msg, msgIdx) => ({
         workspaceId: wsId,
-        projectId: seq.id,
+        projectId: project.id,
         itemId: lead.id,
         accountId,
         messageIdx: msgIdx,
@@ -523,9 +515,12 @@ app.openapi(
     });
 
     await db.transaction(async (tx) => {
-      // Bulk insert; insert.values() с тысячами строк — один query с большим
-      // VALUES tuple, postgres-js справляется до десятков-сотен тысяч.
-      await tx.insert(scheduledMessages).values(rows);
+      // postgres-js биндит каждое значение как отдельный $N; лимит ~65k
+      // параметров на query. Чанкуем по 1000 строк (× ~10 cols = 10k params).
+      const CHUNK = 1000;
+      for (let i = 0; i < rows.length; i += CHUNK) {
+        await tx.insert(scheduledMessages).values(rows.slice(i, i + CHUNK));
+      }
       await tx
         .update(projects)
         .set({
@@ -533,7 +528,7 @@ app.openapi(
           activatedAt,
           updatedAt: new Date(),
         })
-        .where(eq(projects.id, seq.id));
+        .where(eq(projects.id, project.id));
     });
 
     const refreshed = await assertProjectAccess(projectId, wsId, userId, role);
@@ -560,8 +555,8 @@ app.openapi(
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
     const { projectId } = c.req.valid("param");
-    const seq = await assertProjectAccess(projectId, wsId, userId, role);
-    if (seq.status !== "active") {
+    const project = await assertProjectAccess(projectId, wsId, userId, role);
+    if (project.status !== "active") {
       throw new HTTPException(400, {
         message: "Only active projects can be paused",
       });
@@ -572,7 +567,7 @@ app.openapi(
     await db
       .update(projects)
       .set({ status: "paused", updatedAt: new Date() })
-      .where(eq(projects.id, seq.id));
+      .where(eq(projects.id, project.id));
     const refreshed = await assertProjectAccess(projectId, wsId, userId, role);
     return c.json(serializeProject(refreshed));
   },
@@ -597,8 +592,8 @@ app.openapi(
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
     const { projectId } = c.req.valid("param");
-    const seq = await assertProjectAccess(projectId, wsId, userId, role);
-    if (seq.status !== "paused") {
+    const project = await assertProjectAccess(projectId, wsId, userId, role);
+    if (project.status !== "paused") {
       throw new HTTPException(400, {
         message: "Only paused projects can be resumed",
       });
@@ -606,7 +601,7 @@ app.openapi(
     await db
       .update(projects)
       .set({ status: "active", updatedAt: new Date() })
-      .where(eq(projects.id, seq.id));
+      .where(eq(projects.id, project.id));
     const refreshed = await assertProjectAccess(projectId, wsId, userId, role);
     return c.json(serializeProject(refreshed));
   },
@@ -646,8 +641,8 @@ app.openapi(
     const role = c.get("workspaceRole");
     const { projectId } = c.req.valid("param");
     const { limit, offset } = c.req.valid("query");
-    const seq = await assertProjectAccess(projectId, wsId, userId, role);
-    const totalCount = seq.messages.length;
+    const project = await assertProjectAccess(projectId, wsId, userId, role);
+    const totalCount = project.messages.length;
 
     // repliedAgg + leadRows независимы — параллелим. repliedCount по всему
     // списку (не пагинированному) для шапки «N ответили из M».
@@ -655,7 +650,7 @@ app.openapi(
       db.$count(
         projectItems,
         and(
-          eq(projectItems.projectId, seq.id),
+          eq(projectItems.projectId, project.id),
           isNotNull(projectItems.repliedAt),
         ),
       ),
@@ -672,7 +667,7 @@ app.openapi(
           total: sql<number>`count(*) OVER ()::int`,
         })
         .from(projectItems)
-        .where(eq(projectItems.projectId, seq.id))
+        .where(eq(projectItems.projectId, project.id))
         .orderBy(asc(projectItems.createdAt))
         .limit(limit)
         .offset(offset),
@@ -907,58 +902,10 @@ app.openapi(
     // и date_trunc($2) разными expression'ами → 42803.
     const gKw = sql.raw(`'${grouping}'`);
 
-    // Параллельно: проверяем доступ к проекту через projectAccessClause +
-    // считаем total-агрегаты по scheduled_messages.
-    const [seqRows, aggRows] = await Promise.all([
-      db
-        .select({ id: projects.id })
-        .from(projects)
-        .where(
-          and(
-            eq(projects.id, projectId),
-            projectAccessClause(wsId, userId, role),
-          ),
-        )
-        .limit(1),
-      db
-        .select({
-          sent: sql<number>`count(*) FILTER (WHERE ${scheduledMessages.status} = 'sent')::int`,
-          read: sql<number>`count(*) FILTER (WHERE ${scheduledMessages.readAt} IS NOT NULL)::int`,
-        })
-        .from(scheduledMessages)
-        .where(eq(scheduledMessages.projectId, projectId)),
-    ]);
-    const seq = seqRows[0];
-    if (!seq) throw new HTTPException(404, { message: "project not found" });
-    const agg = aggRows[0];
-
-    const [leadsAgg] = await db
-      .select({
-        total: sql<number>`count(*)::int`,
-        replied: sql<number>`count(*) FILTER (WHERE ${projectItems.repliedAt} IS NOT NULL)::int`,
-      })
-      .from(projectItems)
-      .where(eq(projectItems.projectId, seq.id));
-
     const since = new Date(Date.now() - period * 86_400_000);
 
     // sent buckets — всегда по sentAt.
     const sentTrunc = sql`date_trunc(${gKw}, ${scheduledMessages.sentAt})`;
-    const sentRows = await db
-      .select({
-        bucket: sql<Date>`${sentTrunc}`,
-        sent: sql<number>`count(*)::int`,
-      })
-      .from(scheduledMessages)
-      .where(
-        and(
-          eq(scheduledMessages.projectId, projectId),
-          eq(scheduledMessages.status, "sent"),
-          gte(scheduledMessages.sentAt, since),
-        ),
-      )
-      .groupBy(sentTrunc);
-
     // read/replied buckets — выбор по viewMode:
     //   eventDate → группируем по readAt / repliedAt
     //   sendDate  → группируем по sentAt самого исходящего
@@ -966,30 +913,13 @@ app.openapi(
       viewMode === "sendDate"
         ? sql`date_trunc(${gKw}, ${scheduledMessages.sentAt})`
         : sql`date_trunc(${gKw}, ${scheduledMessages.readAt})`;
-    const readRows = await db
-      .select({
-        bucket: sql<Date>`${readTrunc}`,
-        read: sql<number>`count(*)::int`,
-      })
-      .from(scheduledMessages)
-      .where(
-        and(
-          eq(scheduledMessages.projectId, projectId),
-          isNotNull(scheduledMessages.readAt),
-          gte(
-            viewMode === "sendDate"
-              ? scheduledMessages.sentAt
-              : scheduledMessages.readAt,
-            since,
-          ),
-        ),
-      )
-      .groupBy(readTrunc);
 
-    // replied: на стороне leads.repliedAt. В sendDate-режиме отнесём к дню
-    // первого sentAt лида (упрощение MVP — точнее было бы "последний sentAt
-    // до repliedAt").
-    let repliedRows: { bucket: Date; replied: number }[];
+    // Все 6 запросов независимы — поднимаем параллельно. Access-check + total
+    // агрегаты + per-bucket series.
+    //
+    // replied bucket: в sendDate-режиме относим к дню первого sentAt лида
+    // (упрощение MVP — точнее было бы "последний sentAt до repliedAt").
+    let repliedQuery: Promise<{ bucket: Date; replied: number }[]>;
     if (viewMode === "sendDate") {
       const sub = db
         .select({
@@ -1014,7 +944,7 @@ app.openapi(
         .groupBy(scheduledMessages.itemId)
         .as("sub");
       const subTrunc = sql`date_trunc(${gKw}, sub.first_sent_at)`;
-      repliedRows = await db
+      repliedQuery = db
         .select({
           bucket: sql<Date>`${subTrunc}`,
           replied: sql<number>`count(*)::int`,
@@ -1023,7 +953,7 @@ app.openapi(
         .groupBy(subTrunc);
     } else {
       const repTrunc = sql`date_trunc(${gKw}, ${projectItems.repliedAt})`;
-      repliedRows = await db
+      repliedQuery = db
         .select({
           bucket: sql<Date>`${repTrunc}`,
           replied: sql<number>`count(*)::int`,
@@ -1031,13 +961,80 @@ app.openapi(
         .from(projectItems)
         .where(
           and(
-            eq(projectItems.projectId, seq.id),
+            eq(projectItems.projectId, projectId),
             isNotNull(projectItems.repliedAt),
             gte(projectItems.repliedAt, since),
           ),
         )
         .groupBy(repTrunc);
     }
+
+    const [accessRows, aggRows, leadsAggRows, sentRows, readRows, repliedRows] =
+      await Promise.all([
+        db
+          .select({ id: projects.id })
+          .from(projects)
+          .where(
+            and(
+              eq(projects.id, projectId),
+              projectAccessClause(wsId, userId, role),
+            ),
+          )
+          .limit(1),
+        db
+          .select({
+            sent: sql<number>`count(*) FILTER (WHERE ${scheduledMessages.status} = 'sent')::int`,
+            read: sql<number>`count(*) FILTER (WHERE ${scheduledMessages.readAt} IS NOT NULL)::int`,
+          })
+          .from(scheduledMessages)
+          .where(eq(scheduledMessages.projectId, projectId)),
+        db
+          .select({
+            total: sql<number>`count(*)::int`,
+            replied: sql<number>`count(*) FILTER (WHERE ${projectItems.repliedAt} IS NOT NULL)::int`,
+          })
+          .from(projectItems)
+          .where(eq(projectItems.projectId, projectId)),
+        db
+          .select({
+            bucket: sql<Date>`${sentTrunc}`,
+            sent: sql<number>`count(*)::int`,
+          })
+          .from(scheduledMessages)
+          .where(
+            and(
+              eq(scheduledMessages.projectId, projectId),
+              eq(scheduledMessages.status, "sent"),
+              gte(scheduledMessages.sentAt, since),
+            ),
+          )
+          .groupBy(sentTrunc),
+        db
+          .select({
+            bucket: sql<Date>`${readTrunc}`,
+            read: sql<number>`count(*)::int`,
+          })
+          .from(scheduledMessages)
+          .where(
+            and(
+              eq(scheduledMessages.projectId, projectId),
+              isNotNull(scheduledMessages.readAt),
+              gte(
+                viewMode === "sendDate"
+                  ? scheduledMessages.sentAt
+                  : scheduledMessages.readAt,
+                since,
+              ),
+            ),
+          )
+          .groupBy(readTrunc),
+        repliedQuery,
+      ]);
+    if (!accessRows[0]) {
+      throw new HTTPException(404, { message: "project not found" });
+    }
+    const agg = aggRows[0];
+    const leadsAgg = leadsAggRows[0];
 
     // Bucket-ключ — UTC ISO-date "YYYY-MM-DD" (date_trunc возвращает Date в UTC).
     const bucketKey = (d: Date | string): string => {
@@ -1168,7 +1165,15 @@ app.openapi(
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
     const { projectId } = c.req.valid("param");
-    const seq = await assertProjectAccess(projectId, wsId, userId, role);
+    const project = await assertProjectAccess(projectId, wsId, userId, role);
+    // count + OFFSET вместо ORDER BY random() — Postgres делает full sort
+    // на каждый клик «Другой лид»; на больших проектах это заметно.
+    const [cntRow] = await db
+      .select({ cnt: sql<number>`count(*)::int` })
+      .from(projectItems)
+      .where(eq(projectItems.projectId, project.id));
+    const cnt = cntRow?.cnt ?? 0;
+    if (cnt === 0) return c.json(null);
     const [row] = await db
       .select({
         id: projectItems.id,
@@ -1177,9 +1182,9 @@ app.openapi(
         properties: projectItems.properties,
       })
       .from(projectItems)
-      .where(eq(projectItems.projectId, seq.id))
-      .orderBy(sql`random()`)
-      .limit(1);
+      .where(eq(projectItems.projectId, project.id))
+      .limit(1)
+      .offset(Math.floor(Math.random() * cnt));
     if (!row) return c.json(null);
     return c.json({
       id: row.id,
@@ -1202,7 +1207,7 @@ async function resolveStickyByTgUserIds(
   if (tgUserIds.length === 0) return map;
   const rows = await db
     .select({
-      tgUserId: sql<string>`${contacts.properties}->>'tg_user_id'`,
+      tgUserId: contactTgUserIdSql,
       accountId: contacts.primaryAccountId,
     })
     .from(contacts)
@@ -1210,7 +1215,7 @@ async function resolveStickyByTgUserIds(
       and(
         eq(contacts.workspaceId, wsId),
         isNotNull(contacts.primaryAccountId),
-        inArray(sql`${contacts.properties}->>'tg_user_id'`, tgUserIds),
+        inArray(contactTgUserIdSql, tgUserIds),
       ),
     );
   for (const r of rows) {

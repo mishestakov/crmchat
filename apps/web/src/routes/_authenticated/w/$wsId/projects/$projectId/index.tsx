@@ -1,6 +1,6 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -19,6 +19,7 @@ import type { paths } from "@repo/api-client";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
 import { BackButton } from "../../../../../../components/back-button";
+import { Modal } from "../../../../../../components/modal";
 import {
   Section,
   SectionItem,
@@ -26,17 +27,10 @@ import {
   SectionItemValue,
 } from "../../../../../../components/section";
 import { pluralize } from "../../../../../../lib/date-utils";
-import { useEscapeKey, useEventSourceEvent, useMyRole } from "../../../../../../lib/hooks";
+import { useEventSourceEvent, useMyRole } from "../../../../../../lib/hooks";
 import { useProject } from "../../../../../../lib/outreach-queries";
-import { OUTREACH_QK } from "../../../../../../lib/query-keys";
+import { OUTREACH_QK, invalidateProject } from "../../../../../../lib/query-keys";
 import { substituteVariables } from "../../../../../../lib/substitute-variables";
-
-// Sequence detail — главный экран. Структура донора:
-//   Section "детали": Название (inline edit) → Статус (с кнопкой Pause/Play
-//     справа) → Аккаунты (Link → ./accounts) → Лиды (Link → ./leads)
-//   Section "статистика": клик по карточкам открывает Dialog с фильтрами
-//   Section "кампания": Timeline сообщений (clic = inline editor)
-//   Внизу: Удалить рассылку (через подтверждение).
 
 export const Route = createFileRoute(
   "/_authenticated/w/$wsId/projects/$projectId/",
@@ -101,6 +95,7 @@ function SequenceDetailPage() {
 
   const analyticsQ = useQuery({
     queryKey: OUTREACH_QK.projectAnalytics(wsId, projectId, 30),
+    enabled: !!seq.data && seq.data.status !== "draft",
     queryFn: async () => {
       const { data, error } = await api.GET(
         "/v1/workspaces/{wsId}/projects/{projectId}/analytics",
@@ -112,20 +107,34 @@ function SequenceDetailPage() {
   });
 
   // SSE-канал апдейтов sequence — invalidate всех зависимых query.
+  // Debounce: worker может эмитить «changed» серией (несколько лидов
+  // ответили подряд), не перетряхиваем кэш каждые 50ms.
   const seqStatus = seq.data?.status;
   const needsLiveUpdates = seqStatus === "active" || seqStatus === "paused";
+  const invalidateTimerRef = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (invalidateTimerRef.current !== null) {
+      window.clearTimeout(invalidateTimerRef.current);
+    }
+  }, []);
   useEventSourceEvent(
     needsLiveUpdates
       ? `/v1/workspaces/${wsId}/projects/${projectId}/stream`
       : null,
     "changed",
     () => {
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.projectLeads(wsId, projectId) });
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.project(wsId, projectId) });
-      qc.invalidateQueries({
-        // partial-key match — accordion'и в dialog'е используют разные period/grouping/viewMode
-        queryKey: ["project-analytics", wsId, projectId],
-      });
+      if (invalidateTimerRef.current !== null) {
+        window.clearTimeout(invalidateTimerRef.current);
+      }
+      invalidateTimerRef.current = window.setTimeout(() => {
+        qc.invalidateQueries({ queryKey: OUTREACH_QK.projectLeads(wsId, projectId) });
+        qc.invalidateQueries({ queryKey: OUTREACH_QK.project(wsId, projectId) });
+        qc.invalidateQueries({
+          // partial-key match — accordion'и в dialog'е используют разные period/grouping/viewMode
+          queryKey: ["project-analytics", wsId, projectId],
+        });
+        invalidateTimerRef.current = null;
+      }, 500);
     },
   );
 
@@ -163,10 +172,7 @@ function SequenceDetailPage() {
       if (error) throw error;
       return data!;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.project(wsId, projectId) });
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.projects(wsId) });
-    },
+    onSuccess: () => invalidateProject(qc, wsId, projectId),
   });
 
   const activate = useMutation({
@@ -179,11 +185,7 @@ function SequenceDetailPage() {
       if (error) throw error;
       return data!;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.project(wsId, projectId) });
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.projects(wsId) });
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.projectLeads(wsId, projectId) });
-    },
+    onSuccess: () => invalidateProject(qc, wsId, projectId, { leads: true }),
   });
 
   const pause = useMutation({
@@ -194,10 +196,7 @@ function SequenceDetailPage() {
       );
       if (error) throw error;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.project(wsId, projectId) });
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.projects(wsId) });
-    },
+    onSuccess: () => invalidateProject(qc, wsId, projectId),
   });
 
   const resume = useMutation({
@@ -208,10 +207,7 @@ function SequenceDetailPage() {
       );
       if (error) throw error;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.project(wsId, projectId) });
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.projects(wsId) });
-    },
+    onSuccess: () => invalidateProject(qc, wsId, projectId),
   });
 
   const remove = useMutation({
@@ -762,8 +758,6 @@ function PreviewDialog(props: {
     placeholderData: (prev) => prev,
   });
 
-  useEscapeKey(props.onClose);
-
   const lead = sampleQ.data;
   const rendered = lead
     ? substituteVariables(message.text, {
@@ -774,14 +768,7 @@ function PreviewDialog(props: {
     : null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
-      <button
-        type="button"
-        aria-label="Закрыть"
-        onClick={props.onClose}
-        className="absolute inset-0 cursor-default bg-zinc-900/30"
-      />
-      <div className="relative w-full max-w-md rounded-t-2xl bg-white p-5 shadow-xl sm:rounded-2xl">
+    <Modal onClose={props.onClose} variant="sheet">
         <div className="mb-3 flex items-center justify-between">
           <div className="text-base font-semibold">Превью сообщения</div>
           <button
@@ -857,8 +844,7 @@ function PreviewDialog(props: {
             </div>
           </>
         )}
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -902,17 +888,8 @@ function AnalyticsDialog(props: {
     placeholderData: (prev) => prev,
   });
 
-  useEscapeKey(props.onClose);
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <button
-        type="button"
-        aria-label="Закрыть"
-        onClick={props.onClose}
-        className="absolute inset-0 cursor-default bg-zinc-900/30"
-      />
-      <div className="relative w-full max-w-2xl rounded-2xl bg-white p-5 shadow-xl">
+    <Modal onClose={props.onClose} size="lg">
         <div className="mb-4 flex items-center justify-between">
           <div className="text-base font-semibold">Аналитика</div>
           <button
@@ -960,8 +937,7 @@ function AnalyticsDialog(props: {
         </div>
 
         {dataQ.data && <SeriesChart series={dataQ.data.series} />}
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -1060,14 +1036,7 @@ function DeleteConfirm(props: {
   isPending: boolean;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
-      <button
-        type="button"
-        aria-label="Отмена"
-        onClick={props.onCancel}
-        className="absolute inset-0 cursor-default bg-zinc-900/30"
-      />
-      <div className="relative w-full max-w-md rounded-t-2xl bg-white p-5 shadow-xl sm:rounded-2xl">
+    <Modal onClose={props.onCancel} variant="sheet">
         <div className="flex items-start gap-3">
           <AlertTriangle className="mt-0.5 shrink-0 text-red-600" size={20} />
           <div className="space-y-1">
@@ -1098,7 +1067,6 @@ function DeleteConfirm(props: {
             {props.isPending ? "Удаляем…" : "Удалить рассылку"}
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

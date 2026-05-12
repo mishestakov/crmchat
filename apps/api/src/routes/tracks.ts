@@ -3,6 +3,7 @@ import { HTTPException } from "hono/http-exception";
 import { and, asc, eq } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import { trackKind, tracks } from "../db/schema.ts";
+import { pickDefined } from "../lib/pick-defined.ts";
 import { assertRole, type WorkspaceVars } from "../middleware/assert-member.ts";
 
 // Track — папка проектов в workspace. Для BD-команды (kind='program'):

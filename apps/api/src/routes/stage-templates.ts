@@ -2,7 +2,8 @@ import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { and, asc, eq } from "drizzle-orm";
 import { db } from "../db/client.ts";
-import { stageTemplates } from "../db/schema.ts";
+import { DEFAULT_OUTREACH_STAGES, stageTemplates } from "../db/schema.ts";
+import { pickDefined } from "../lib/pick-defined.ts";
 import { assertRole, type WorkspaceVars } from "../middleware/assert-member.ts";
 
 // Stage templates — workspace-wide library шаблонов стадий канбана
@@ -29,7 +30,7 @@ const TemplateSchema = z
 const CreateTemplateBody = z
   .object({
     name: z.string().min(1).max(200),
-    stages: z.array(StageSchema).default([]),
+    stages: z.array(StageSchema).optional(),
   })
   .openapi("CreateStageTemplate");
 
@@ -101,7 +102,7 @@ app.openapi(
       .values({
         workspaceId: wsId,
         name: body.name,
-        stages: body.stages,
+        stages: body.stages ?? DEFAULT_OUTREACH_STAGES,
         createdBy: userId,
       })
       .returning();
@@ -136,8 +137,7 @@ app.openapi(
     const [row] = await db
       .update(stageTemplates)
       .set({
-        ...(body.name !== undefined && { name: body.name }),
-        ...(body.stages !== undefined && { stages: body.stages }),
+        ...pickDefined(body, ["name", "stages"]),
         updatedAt: new Date(),
       })
       .where(
