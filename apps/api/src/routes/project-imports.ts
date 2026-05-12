@@ -153,7 +153,7 @@ app.openapi(
       skippedDuplicate: 0,
     };
     const candidates: {
-      username: string | null;
+      username: string;
       phone: string | null;
       properties: Record<string, string>;
     }[] = [];
@@ -182,15 +182,18 @@ app.openapi(
         }
       }
 
-      if (!username && !phone) {
+      // Phone-only лиды бесполезны для outreach: без @ мы не можем ни найти
+      // их через searchPublicChat, ни открыть deep-link в TG-клиенте. Поэтому
+      // импортируем только строки с валидным @username. Phone остаётся
+      // опциональным полем для матчинга с contacts.
+      if (!username) {
         stats.skippedMissingIdentifier++;
         continue;
       }
 
-      // Identity-приоритет: username важнее phone (он TG-уникальный). При
-      // его наличии phone не идёт в dedup-key, иначе один и тот же блогер с
-      // разными форматами phone-колонки получит N item'ов и N сообщений.
-      const dedupKey = username ? `u:${username}` : `p:${phone}`;
+      // Dedup по username (case-insensitive). Один и тот же @ в разных
+      // регистрах — одна строка.
+      const dedupKey = `u:${username}`;
       if (seen.has(dedupKey)) {
         stats.skippedDuplicate++;
         continue;

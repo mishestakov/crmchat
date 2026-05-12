@@ -9,8 +9,6 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { api } from "../lib/api";
-import { ChatProvider } from "../lib/chat-store";
-import { TgChatHost } from "../components/tg-chat-host";
 
 const meQueryOptions = {
   queryKey: ["me"] as const,
@@ -35,7 +33,6 @@ function AuthLayout() {
   const wsId = params.wsId;
 
   return (
-    <ChatProvider>
     <div className="flex h-screen bg-zinc-100">
       <aside className="flex w-60 shrink-0 flex-col border-r border-zinc-200 bg-white">
         <WorkspaceSwitcher currentWsId={wsId} />
@@ -77,9 +74,7 @@ function AuthLayout() {
       <main className="min-w-0 flex-1 overflow-y-auto">
         <Outlet />
       </main>
-      <TgChatHost />
     </div>
-    </ChatProvider>
   );
 }
 

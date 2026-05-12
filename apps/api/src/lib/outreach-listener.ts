@@ -8,6 +8,7 @@ import {
   projects,
   properties as propsTable,
   scheduledMessages,
+  tgChats,
   tgUsers,
 } from "../db/schema.ts";
 import {
@@ -95,8 +96,29 @@ export function attachListener(
           return;
         }
         case "updateChatReadOutbox": {
-          const x = update as { chat_id: number };
-          void onReadOutbox(workspaceId, x.chat_id);
+          const x = update as {
+            chat_id: number;
+            last_read_outbox_message_id: number | string;
+          };
+          void onReadOutbox(
+            accountId,
+            workspaceId,
+            x.chat_id,
+            String(x.last_read_outbox_message_id),
+          );
+          return;
+        }
+        case "updateDeleteMessages": {
+          // is_permanent=true — peer/мы реально удалили; false (или
+          // from_cache=true) — внутренние очистки TDLib, не показатель
+          // действий пользователя. Дёргаем invalidate только на реальные.
+          const x = update as {
+            chat_id: number;
+            is_permanent: boolean;
+            from_cache?: boolean;
+          };
+          if (!x.is_permanent || x.from_cache) return;
+          void emitChatChangedForContact(workspaceId, x.chat_id);
           return;
         }
         case "updateMessageSendSucceeded": {
@@ -384,11 +406,68 @@ async function onSendFailed(
   }
 }
 
-async function onReadOutbox(workspaceId: string, chatId: number): Promise<void> {
+// Шлёт contact event для контакта по tg_user_id (=chat_id в private DM).
+// Используется когда нет своего payload'а с unreadCount/lastMessageAt — фронт
+// в drawer'е инвалидирует chat-history и подтягивает свежее. Тихо
+// no-op если contact'а в CRM нет.
+async function emitChatChangedForContact(
+  workspaceId: string,
+  chatId: number,
+): Promise<void> {
+  if (chatId <= 0) return;
+  const tgUserIdStr = String(chatId);
+  try {
+    const [contactRow] = await db
+      .select({
+        id: contacts.id,
+        unreadCount: contacts.unreadCount,
+        lastMessageAt: contacts.lastMessageAt,
+      })
+      .from(contacts)
+      .where(
+        and(
+          eq(contacts.workspaceId, workspaceId),
+          sql`${contactTgUserIdSql} = ${tgUserIdStr}`,
+        ),
+      )
+      .limit(1);
+    if (!contactRow) return;
+    emitContactChanged(workspaceId, {
+      contactId: contactRow.id,
+      unreadCount: contactRow.unreadCount,
+      lastMessageAt: contactRow.lastMessageAt?.toISOString() ?? null,
+    });
+  } catch (e) {
+    console.error("[outreach-listener] emitChatChangedForContact:", errMsg(e));
+  }
+}
+
+async function onReadOutbox(
+  accountId: string,
+  workspaceId: string,
+  chatId: number,
+  lastReadOutboxId: string,
+): Promise<void> {
   if (chatId <= 0) return;
   const tgUserIdStr = String(chatId);
   const now = new Date();
   try {
+    // Синхронный UPDATE tg_chats — replicator пишет тот же patch'ем, но
+    // буферизованно (FLUSH_MS=500). Без этого emit ниже улетит раньше
+    // записи и SELECT в chat-history endpoint вернёт старое значение.
+    await db
+      .update(tgChats)
+      .set({
+        lastReadOutboxId: sql`greatest(${tgChats.lastReadOutboxId}::bigint, ${lastReadOutboxId}::bigint)::text`,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(tgChats.accountId, accountId),
+          eq(tgChats.chatId, String(chatId)),
+        ),
+      );
+
     const updated = await db
       .update(scheduledMessages)
       .set({ readAt: now })
@@ -415,6 +494,9 @@ async function onReadOutbox(workspaceId: string, chatId: number): Promise<void> 
     for (const projectId of new Set(updated.map((r) => r.projectId))) {
       emitProjectChanged(projectId);
     }
+    // Без contact event drawer не узнает что peer прочитал —
+    // updateChatReadOutbox сам по себе не меняет lastMessageAt/unreadCount.
+    await emitChatChangedForContact(workspaceId, chatId);
   } catch (e) {
     console.error("[outreach-listener] onReadOutbox:", errMsg(e));
   }

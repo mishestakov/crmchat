@@ -25,17 +25,11 @@ import {
   NoteModal,
   ReminderModal,
 } from "../-activities-section";
-import { useOpenChat } from "../../../../../../components/tg-chat-host";
-import { TgChatIframe } from "../../../../../../components/tg-chat-iframe";
-import type { ChatPeer } from "../../../../../../lib/chat-store";
+import { ChatDrawer } from "../../../../../../components/chat-drawer";
+import { useOutreachAccounts } from "../../../../../../lib/outreach-queries";
 import { ChannelCard } from "../../../../../../components/channel-card";
 
-type Search = { chat?: boolean };
-
 export const Route = createFileRoute("/_authenticated/w/$wsId/contacts/$id/")({
-  validateSearch: (s: Record<string, unknown>): Search => ({
-    chat: s.chat === true || s.chat === "true" ? true : undefined,
-  }),
   component: ContactDetail,
 });
 
@@ -54,16 +48,8 @@ const IDENTITY_KEYS = new Set([
 function ContactDetail() {
   const { wsId, id } = Route.useParams();
   const navigate = useNavigate();
-  const search = Route.useSearch();
-  const isChatOpen = search.chat ?? false;
-  const setChatOpen = (next: boolean) => {
-    void navigate({
-      to: "/w/$wsId/contacts/$id",
-      params: { wsId, id },
-      search: { chat: next ? true : undefined },
-      replace: true,
-    });
-  };
+  // accountId выбранный для drawer'а; null = drawer закрыт.
+  const [drawerAccountId, setDrawerAccountId] = useState<string | null>(null);
   const qc = useQueryClient();
 
   const properties = useQuery({
@@ -105,27 +91,20 @@ function ContactDetail() {
   });
 
   const [adding, setAdding] = useState<"note" | "reminder" | null>(null);
-  const chat = useOpenChat(wsId);
+  const accountsQ = useOutreachAccounts(wsId);
+  const accounts = accountsQ.data ?? [];
 
-  const peer = useMemo<ChatPeer | null>(() => {
-    const v = (contact.data?.properties ?? {}) as Record<string, unknown>;
-    const username = stringValue(v.telegram_username);
-    if (username) {
-      return { type: "username", value: username.replace(/^@/, "") };
-    }
-    const tgUserId = stringValue(v.tg_user_id);
-    if (tgUserId) return { type: "id", value: tgUserId };
-    return null;
-  }, [contact.data]);
+  // Какой аккаунт ставится дефолтом при открытии drawer'а: sticky
+  // (primary_account_id) → первый из chatAccounts → первый active вообще.
+  const defaultDrawerAccountId = useMemo<string | null>(() => {
+    const c = contact.data;
+    if (!c) return null;
+    if (c.primaryAccountId) return c.primaryAccountId;
+    if (c.chatAccounts.length > 0) return c.chatAccounts[0]!.accountId;
+    return accounts.find((a) => a.status === "active")?.id ?? null;
+  }, [contact.data, accounts]);
 
-  const canOpenChat = !!chat.activeAccount && !!peer;
-
-  // Если чат открыт по URL, но нет аккаунта/peer — авто-снимаем флаг, чтобы
-  // не висеть в split-режиме без iframe'а (например, удалили username у контакта).
-  useEffect(() => {
-    if (isChatOpen && !canOpenChat) setChatOpen(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isChatOpen, canOpenChat]);
+  const canOpenChat = !!defaultDrawerAccountId;
 
   // Mark-read: дёргаем messages.ReadHistory через активный outreach-аккаунт.
   // Бэк не обновляет БД сам — TG сервер разошлёт UpdateReadHistoryInbox на
@@ -158,13 +137,12 @@ function ContactDetail() {
   });
 
   const unread = contact.data?.unreadCount ?? 0;
-  const activeAccountId = chat.activeAccount?.id;
   useEffect(() => {
-    if (isChatOpen && unread > 0 && activeAccountId) {
-      markRead.mutate(activeAccountId);
+    if (drawerAccountId && unread > 0) {
+      markRead.mutate(drawerAccountId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isChatOpen, unread, id, activeAccountId]);
+  }, [drawerAccountId, unread, id]);
 
   // Inline-сохранение одного property из view (Сумма / Стадия / custom). PATCH с
   // { properties: { key: value } } → бэк merge'ит поверх существующего. Пустое
@@ -212,68 +190,41 @@ function ContactDetail() {
   return (
     <div className="space-y-3 p-6">
       <BackButton />
-      <div
-        className={
-          isChatOpen
-            ? "mx-auto flex max-w-6xl flex-col gap-4 md:flex-row md:items-start"
-            : "mx-auto max-w-xl space-y-3"
-        }
-      >
-        <div
-          className={
-            isChatOpen
-              ? "hidden w-full shrink-0 space-y-3 md:block md:max-w-md"
-              : "space-y-3"
+      <div className="mx-auto max-w-xl space-y-3">
+        <ContactView
+          contact={contact.data}
+          properties={props_}
+          onEdit={() =>
+            navigate({
+              to: "/w/$wsId/contacts/$id/edit",
+              params: { wsId, id },
+            })
           }
-        >
-          <ContactView
-            contact={contact.data}
-            properties={props_}
-            isChatOpen={isChatOpen}
-            onEdit={() =>
-              navigate({
-                to: "/w/$wsId/contacts/$id/edit",
-                params: { wsId, id },
-              })
-            }
-            onDelete={() => {
-              if (confirm("Удалить контакт?")) remove.mutate();
-            }}
-            onPatch={(key, value) => patchProperty.mutate({ key, value })}
-            onAddNote={() => setAdding("note")}
-            onAddReminder={() => setAdding("reminder")}
-            onToggleChat={() => setChatOpen(!isChatOpen)}
-            canOpenChat={canOpenChat}
-          />
+          onDelete={() => {
+            if (confirm("Удалить контакт?")) remove.mutate();
+          }}
+          onPatch={(key, value) => patchProperty.mutate({ key, value })}
+          onAddNote={() => setAdding("note")}
+          onAddReminder={() => setAdding("reminder")}
+          onOpenChat={() => setDrawerAccountId(defaultDrawerAccountId)}
+          canOpenChat={canOpenChat}
+        />
 
-          <ChannelsSection wsId={wsId} contact={contact.data} />
+        <ChannelsSection wsId={wsId} contact={contact.data} />
 
-          <ActivitiesList wsId={wsId} contactId={id} />
-        </div>
-
-        {isChatOpen && chat.activeAccount && peer && (
-          <div className="sticky top-3 flex h-[calc(100vh-7rem)] w-full flex-col md:flex-1">
-            <div className="mb-2 flex items-center justify-between md:hidden">
-              <span className="text-sm font-medium">Telegram-чат</span>
-              <button
-                type="button"
-                onClick={() => setChatOpen(false)}
-                className="text-zinc-400 hover:text-zinc-700"
-                aria-label="Закрыть чат"
-              >
-                <X size={18} />
-              </button>
-            </div>
-            <div className="flex-1 overflow-hidden rounded-2xl bg-white shadow-sm">
-              <TgChatIframe
-                wsId={wsId}
-                accountId={chat.activeAccount.id}
-                peer={peer}
-              />
-            </div>
-          </div>
-        )}
+        <ActivitiesList wsId={wsId} contactId={id} />
       </div>
+
+      {drawerAccountId && contact.data && (
+        <ChatDrawer
+          wsId={wsId}
+          target={{ kind: "contact", contact: contact.data }}
+          accountId={drawerAccountId}
+          accounts={accounts}
+          onSelectAccount={setDrawerAccountId}
+          onClose={() => setDrawerAccountId(null)}
+        />
+      )}
 
       {adding === "note" && (
         <NoteModal
@@ -296,16 +247,15 @@ function ContactDetail() {
 function ContactView(props: {
   contact: Contact;
   properties: Property[];
-  isChatOpen: boolean;
   onEdit: () => void;
   onDelete: () => void;
   onPatch: (key: string, value: unknown) => void;
   onAddNote: () => void;
   onAddReminder: () => void;
-  onToggleChat: () => void;
+  onOpenChat: () => void;
   canOpenChat: boolean;
 }) {
-  const { contact, properties, isChatOpen } = props;
+  const { contact, properties } = props;
   const values = contact.properties as Record<string, unknown>;
   const fullName = stringValue(values.full_name);
   const description = stringValue(values.description);
@@ -366,12 +316,12 @@ function ContactView(props: {
         />
         <ActionButton
           icon={<MessageCircle size={20} />}
-          label={isChatOpen ? "Закрыть чат" : "Открыть чат"}
+          label="Открыть чат"
           disabled={
             !props.canOpenChat
             || (!values.telegram_username && !values.tg_user_id)
           }
-          onClick={props.onToggleChat}
+          onClick={props.onOpenChat}
         />
       </div>
     </>

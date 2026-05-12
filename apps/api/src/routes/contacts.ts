@@ -21,6 +21,7 @@ import {
   outreachAccounts,
   properties as propsTable,
   tgChats,
+  tgUsers,
 } from "../db/schema.ts";
 import {
   assertContactAccess,
@@ -575,6 +576,11 @@ const ChatMessageSchema = z.object({
   mediaThumb: TdMediaThumbSchema.nullable(),
 });
 
+const PeerStatusSchema = z.object({
+  isOnline: z.boolean(),
+  lastSeenAt: z.iso.datetime().nullable(),
+});
+
 app.openapi(
   createRoute({
     method: "get",
@@ -594,7 +600,11 @@ app.openapi(
       200: {
         content: {
           "application/json": {
-            schema: z.object({ messages: z.array(ChatMessageSchema) }),
+            schema: z.object({
+              messages: z.array(ChatMessageSchema),
+              lastReadOutboxId: z.string().nullable(),
+              peerStatus: PeerStatusSchema.nullable(),
+            }),
           },
         },
         description: "Last N messages, newest first",
@@ -628,13 +638,31 @@ app.openapi(
       .limit(1);
     if (!acc) throw new HTTPException(404, { message: "account not found" });
 
-    const [chatRow] = await db
-      .select({ chatId: tgChats.chatId })
-      .from(tgChats)
-      .where(and(eq(tgChats.accountId, acc.id), eq(tgChats.peerUserId, tgUserId)))
-      .limit(1);
+    const [[chatRow], [peerStatusRow]] = await Promise.all([
+      db
+        .select({
+          chatId: tgChats.chatId,
+          lastReadOutboxId: tgChats.lastReadOutboxId,
+        })
+        .from(tgChats)
+        .where(
+          and(eq(tgChats.accountId, acc.id), eq(tgChats.peerUserId, tgUserId)),
+        )
+        .limit(1),
+      db
+        .select({ isOnline: tgUsers.isOnline, lastSeenAt: tgUsers.lastSeenAt })
+        .from(tgUsers)
+        .where(eq(tgUsers.userId, tgUserId))
+        .limit(1),
+    ]);
+    const peerStatus = peerStatusRow
+      ? {
+          isOnline: peerStatusRow.isOnline,
+          lastSeenAt: peerStatusRow.lastSeenAt?.toISOString() ?? null,
+        }
+      : null;
     if (!chatRow) {
-      return c.json({ messages: [] });
+      return c.json({ messages: [], lastReadOutboxId: null, peerStatus });
     }
 
     const client = await getOutreachWorkerClient({ id: acc.id, workspaceId: wsId });
@@ -655,6 +683,22 @@ app.openapi(
 
     const cacheKey = historyKey(acc.id, chatRow.chatId);
     const onlyLocal = historyFetched.has(cacheKey);
+
+    // openChat: TG-сервер начинает push'ить апдейты (read-receipts, deletes,
+    // typing) по этому чату в реальном времени. Дёргаем один раз на cache
+    // miss — повторные вызовы для уже открытого чата идемпотентны, но это
+    // лишний RPC через worker.
+    if (!onlyLocal) {
+      client
+        .invoke({ _: "openChat", chat_id: Number(chatRow.chatId) } as never)
+        .catch((e: unknown) =>
+          console.error(
+            `[contacts/chat-history] openChat ${chatRow.chatId}:`,
+            errMsg(e),
+          ),
+        );
+    }
+
     let result = await fetchHistory(onlyLocal);
 
     // На первом open (cache miss) TDLib часто отдаёт мгновенно last_message
@@ -680,7 +724,72 @@ app.openapi(
       console.error("[contacts/chat-history] backfill failed:", errMsg(e)),
     );
 
-    return c.json({ messages: result.messages.map(mapMessage) });
+    return c.json({
+      messages: result.messages.map(mapMessage),
+      lastReadOutboxId: chatRow.lastReadOutboxId,
+      peerStatus,
+    });
+  },
+);
+
+// closeChat — обратный сигнал для openChat (см. chat-history endpoint).
+// Drawer на размонтировании / смене accountId дёргает этот endpoint, TDLib
+// останавливает realtime push'и по чату. Без явного close TDLib держит чат
+// «открытым» неопределённо долго, держа лишний background traffic.
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/contacts/{id}/chat/close",
+    tags: ["contacts"],
+    request: {
+      params: WsIdParam,
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({ accountId: z.string().min(1).max(64) }),
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: { "application/json": { schema: z.object({ ok: z.boolean() }) } },
+        description: "Closed",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const { id } = c.req.valid("param");
+    const { accountId } = c.req.valid("json");
+    const contact = await assertContactAccess(id, wsId, userId, role);
+    const tgUserId = (contact.properties as Record<string, unknown>).tg_user_id;
+    if (typeof tgUserId !== "string") return c.json({ ok: false });
+
+    const [chatRow] = await db
+      .select({ chatId: tgChats.chatId })
+      .from(tgChats)
+      .where(
+        and(eq(tgChats.accountId, accountId), eq(tgChats.peerUserId, tgUserId)),
+      )
+      .limit(1);
+    if (!chatRow) return c.json({ ok: false });
+
+    const client = await getOutreachWorkerClient({ id: accountId, workspaceId: wsId });
+    if (!client) return c.json({ ok: false });
+    historyFetched.delete(historyKey(accountId, chatRow.chatId));
+    client
+      .invoke({ _: "closeChat", chat_id: Number(chatRow.chatId) } as never)
+      .catch((e: unknown) =>
+        console.error(
+          `[contacts/chat/close] closeChat ${chatRow.chatId}:`,
+          errMsg(e),
+        ),
+      );
+    return c.json({ ok: true });
   },
 );
 

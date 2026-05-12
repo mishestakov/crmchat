@@ -13,9 +13,22 @@ import { useOutreachAccounts } from "../../../../../lib/outreach-queries";
 import { TgChatIframe } from "../../../../../components/tg-chat-iframe";
 
 export const Route = createFileRoute("/_authenticated/w/$wsId/outreach/chat")({
-  validateSearch: (s: Record<string, unknown>) => ({
-    accountId: typeof s.accountId === "string" ? s.accountId : undefined,
-  }),
+  validateSearch: (s: Record<string, unknown>) => {
+    // Optional ключи, чтобы reducer-вариант navigate({search: (prev) => ...})
+    // не требовал явного undefined для отсутствующих параметров.
+    // peerUserId — точный TG id; peerUsername — fallback для контактов,
+    // импортированных по @ без последующего fetch'а tg_user_id (например,
+    // CSV-импорт + ещё не было ни одной отправки).
+    const out: {
+      accountId?: string;
+      peerUserId?: string;
+      peerUsername?: string;
+    } = {};
+    if (typeof s.accountId === "string") out.accountId = s.accountId;
+    if (typeof s.peerUserId === "string") out.peerUserId = s.peerUserId;
+    if (typeof s.peerUsername === "string") out.peerUsername = s.peerUsername;
+    return out;
+  },
   component: ChatPage,
 });
 
@@ -71,7 +84,7 @@ function ChatPage() {
       navigate({
         to: "/w/$wsId/outreach/chat",
         params: { wsId },
-        search: { accountId: account.id },
+        search: (prev) => ({ ...prev, accountId: account.id }),
         replace: true,
       });
     }
@@ -128,10 +141,16 @@ function ChatPage() {
             accounts={accounts}
             selectedId={account.id}
             onChange={(id) =>
+              // Смена аккаунта обнуляет peer-параметры — у разных аккаунтов
+              // разные чаты, deep-link не переносится.
               navigate({
                 to: "/w/$wsId/outreach/chat",
                 params: { wsId },
-                search: { accountId: id },
+                search: {
+                  accountId: id,
+                  peerUserId: undefined,
+                  peerUsername: undefined,
+                },
                 replace: false,
               })
             }
@@ -142,7 +161,13 @@ function ChatPage() {
             key={account.id}
             wsId={wsId}
             accountId={account.id}
-            peer={null}
+            peer={
+              search.peerUserId
+                ? { type: "id", value: search.peerUserId }
+                : search.peerUsername
+                  ? { type: "username", value: search.peerUsername }
+                  : null
+            }
           />
         </div>
       </div>

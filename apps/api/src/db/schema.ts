@@ -973,6 +973,10 @@ export const tgChats = pgTable(
     // у кого-то has_inbound=true — выигрывает свежайший last_message_at среди них.
     hasInbound: boolean("has_inbound").notNull().default(false),
     unreadCount: integer("unread_count").notNull().default(0),
+    // ID последнего сообщения, которое peer у нас прочитал. Из chat payload
+    // (initial chat list) + updateChatReadOutbox. Drawer рендерит ✓/✓✓:
+    // если message.id <= lastReadOutboxId → peer прочитал (двойная галочка).
+    lastReadOutboxId: text("last_read_outbox_id"),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -1010,6 +1014,11 @@ export const tgUsers = pgTable(
     fullName: text("full_name"),
     phone: text("phone"),
     isDeleted: boolean("is_deleted").notNull().default(false),
+    // Presence: peer сейчас в сети (userStatusOnline) или был последний раз
+    // онлайн в lastSeenAt (userStatusOffline). recently/lastWeek/lastMonth
+    // мапим в isOnline=false + lastSeenAt=null — UI рисует «был недавно».
+    isOnline: boolean("is_online").notNull().default(false),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

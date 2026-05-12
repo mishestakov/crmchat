@@ -1,10 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Send, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  CheckCheck,
+  MessageCircle,
+  Send,
+  X,
+} from "lucide-react";
 import type { Contact } from "@repo/core";
 import { api } from "../lib/api";
-import { formatRelative } from "../lib/date-utils";
+import { formatDateTime, formatHHMM, formatRelative } from "../lib/date-utils";
 import { errorMessage } from "../lib/errors";
+import { useEventSourceEvent } from "../lib/hooks";
 import {
   type MessageEntity,
   MessageMediaThumb,
@@ -32,6 +41,11 @@ export function formatAccount(a: AccountRow): string {
   if (a.tgUsername) return `@${a.tgUsername}`;
   if (a.phoneNumber) return a.phoneNumber;
   return a.id;
+}
+
+function contactFullName(contact: Contact): string {
+  const v = contact.properties as Record<string, unknown>;
+  return typeof v.full_name === "string" ? v.full_name : "";
 }
 
 type ChatMessage = {
@@ -65,17 +79,30 @@ export function ChatDrawer(props: {
 
   const displayName =
     props.target.kind === "contact"
-      ? typeof (props.target.contact.properties as Record<string, unknown>)
-          .full_name === "string"
-        ? ((props.target.contact.properties as Record<string, unknown>)
-            .full_name as string) || "—"
-        : "—"
+      ? contactFullName(props.target.contact) || "—"
       : props.target.displayName;
 
   const peerKey =
     props.target.kind === "contact"
       ? props.target.contact.id
       : `lead:${props.target.tgUserId}`;
+
+  // Identifier для deep-link на /outreach/chat. Приоритет: tg_user_id (точно)
+  // → username (если CSV-импорт по @ и tg_user_id ещё не зафетчился). Без обоих
+  // кнопка «Открыть в чате» скрыта — открывать не по чему.
+  const peerLink = ((): { peerUserId: string } | { peerUsername: string } | null => {
+    if (props.target.kind === "contact") {
+      const v = props.target.contact.properties as Record<string, unknown>;
+      if (typeof v.tg_user_id === "string") {
+        return { peerUserId: v.tg_user_id };
+      }
+      if (typeof v.telegram_username === "string" && v.telegram_username) {
+        return { peerUsername: v.telegram_username.replace(/^@/, "") };
+      }
+      return null;
+    }
+    return { peerUserId: props.target.tgUserId };
+  })();
 
   // Preview активных проектов: и для contact, и для lead-no-contact — по
   // tgUserId под капотом. Бэк находит project_items.tg_user_id и считает
@@ -156,7 +183,15 @@ export function ChatDrawer(props: {
           ] as const)
         : (["chat-history-skip", props.wsId, peerKey] as const),
     queryFn: async () => {
-      if (props.target.kind !== "contact") return [] as ChatMessage[];
+      if (props.target.kind !== "contact")
+        return {
+          messages: [] as ChatMessage[],
+          lastReadOutboxId: null as string | null,
+          peerStatus: null as {
+            isOnline: boolean;
+            lastSeenAt: string | null;
+          } | null,
+        };
       const { data, error } = await api.GET(
         "/v1/workspaces/{wsId}/contacts/{id}/chat-history",
         {
@@ -167,11 +202,57 @@ export function ChatDrawer(props: {
         },
       );
       if (error) throw error;
-      return data!.messages;
+      return data!;
     },
     staleTime: 60_000,
     enabled: props.target.kind === "contact",
   });
+
+  // closeChat: TDLib держит чат «открытым» с момента первого fetch
+  // chat-history — без явного close там копятся background-push'и по
+  // неактуальным peer'ам. Cleanup срабатывает на закрытии drawer'а и на
+  // смене accountId; следующий openChat нового accountId произойдёт
+  // автоматически на refetch. Deps — стабильные string'и, иначе target-
+  // объект пересоздаётся на каждом render родителя и cleanup стреляет.
+  const targetContactId =
+    props.target.kind === "contact" ? props.target.contact.id : null;
+  useEffect(() => {
+    if (!targetContactId) return;
+    const wsId = props.wsId;
+    const accountId = props.accountId;
+    return () => {
+      void api
+        .POST("/v1/workspaces/{wsId}/contacts/{id}/chat/close", {
+          params: { path: { wsId, id: targetContactId } },
+          body: { accountId },
+        })
+        .catch((e: unknown) =>
+          console.error("[chat-drawer] closeChat:", e),
+        );
+    };
+  }, [props.wsId, props.accountId, targetContactId]);
+
+  // Перетягиваем chat-history на любое contact event (новое сообщение,
+  // read-receipt, удаление) — listener конвертит TDLib updates в SSE.
+  useEventSourceEvent<{ contactId: string }>(
+    `/v1/workspaces/${props.wsId}/contact-stream`,
+    "contact",
+    (ev) => {
+      if (
+        props.target.kind === "contact" &&
+        ev.contactId === props.target.contact.id
+      ) {
+        qc.invalidateQueries({
+          queryKey: [
+            "chat-history",
+            props.wsId,
+            props.target.contact.id,
+            props.accountId,
+          ],
+        });
+      }
+    },
+  );
 
   const [olderPages, setOlderPages] = useState<ChatMessage[]>([]);
   const [hasMore, setHasMore] = useState(true);
@@ -179,6 +260,9 @@ export function ChatDrawer(props: {
   const [loadingMore, setLoadingMore] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const didAutoScrollRef = useRef(false);
+  // Был ли юзер «у дна» в момент последнего scroll-event'а — для auto-scroll
+  // на новое входящее/исходящее сообщение из SSE.
+  const wasNearBottomRef = useRef(true);
 
   useEffect(() => {
     setOlderPages([]);
@@ -189,12 +273,14 @@ export function ChatDrawer(props: {
   }, [props.accountId]);
 
   useEffect(() => {
-    if (initialQ.data && initialQ.data.length === 0) setHasMore(false);
+    if (initialQ.data && initialQ.data.messages.length === 0) setHasMore(false);
   }, [initialQ.data]);
 
   const messages: ChatMessage[] = initialQ.data
-    ? [...olderPages, ...initialQ.data.toReversed()]
+    ? [...olderPages, ...initialQ.data.messages.toReversed()]
     : olderPages;
+  const lastReadOutboxId = initialQ.data?.lastReadOutboxId ?? null;
+  const peerStatus = initialQ.data?.peerStatus ?? null;
 
   useEffect(() => {
     if (!initialQ.isSuccess) return;
@@ -205,10 +291,26 @@ export function ChatDrawer(props: {
     didAutoScrollRef.current = true;
   }, [initialQ.isSuccess]);
 
+  // Auto-scroll к низу на новое сообщение, только если юзер уже у дна.
+  const newestId = initialQ.data?.messages[0]?.id ?? null;
+  useEffect(() => {
+    if (!didAutoScrollRef.current) return;
+    if (!wasNearBottomRef.current) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    requestAnimationFrame(() => {
+      if (scrollRef.current) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }
+    });
+  }, [newestId]);
+
   const onScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    wasNearBottomRef.current =
+      el.scrollHeight - el.scrollTop - el.clientHeight < 100;
     if (props.target.kind !== "contact") return;
     if (!initialQ.isSuccess || !hasMore || loadingMore) return;
-    const el = e.currentTarget;
     if (el.scrollTop > 50) return;
     const oldestId = messages[0]?.id;
     if (!oldestId) return;
@@ -261,15 +363,31 @@ export function ChatDrawer(props: {
         <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3">
           <div className="min-w-0">
             <div className="truncate font-medium">{displayName}</div>
-            <div className="text-xs text-zinc-500">История переписки</div>
+            <div className="text-xs text-zinc-500">
+              {formatPeerStatus(peerStatus) ?? "История переписки"}
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={props.onClose}
-            className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-          >
-            <X size={18} />
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {peerLink && (
+              <Link
+                to="/w/$wsId/outreach/chat"
+                params={{ wsId: props.wsId }}
+                search={{ accountId: props.accountId, ...peerLink }}
+                title="Открыть полноценный TG-чат (поддерживает медиа, файлы, реакции)"
+                className="inline-flex items-center gap-1 rounded-full bg-[#229ED9] px-3 py-1 text-xs font-medium text-white shadow-sm hover:bg-[#1B89BD]"
+              >
+                <MessageCircle size={14} />
+                Открыть в чате
+              </Link>
+            )}
+            <button
+              type="button"
+              onClick={props.onClose}
+              className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+            >
+              <X size={18} />
+            </button>
+          </div>
         </div>
         {chatAccounts.length > 1 && (
           <div className="flex gap-1 overflow-x-auto border-b border-zinc-200 px-3 py-2">
@@ -341,39 +459,50 @@ export function ChatDrawer(props: {
                       Это начало переписки
                     </p>
                   )}
-                  {messages.map((m) => (
-                    <div
-                      key={m.id}
-                      className={
-                        "max-w-[80%] overflow-hidden rounded-lg text-sm " +
-                        (m.isOutgoing
-                          ? "ml-auto bg-emerald-600 text-white"
-                          : "mr-auto bg-white text-zinc-900 ring-1 ring-zinc-200")
-                      }
-                    >
-                      {m.mediaThumb && (
-                        <MessageMediaThumb thumb={m.mediaThumb} />
-                      )}
-                      <div className="px-3 py-2">
-                        {m.text && (
-                          <div className="whitespace-pre-wrap break-words">
-                            {renderMessageEntities(m.text, m.entities)}
-                          </div>
+                  {messages.map((m) => {
+                    const readByPeer =
+                      m.isOutgoing && isIdAtMost(m.id, lastReadOutboxId);
+                    return (
+                      <div
+                        key={m.id}
+                        className={
+                          "max-w-[80%] overflow-hidden rounded-lg text-sm " +
+                          (m.isOutgoing
+                            ? "ml-auto bg-emerald-600 text-white"
+                            : "mr-auto bg-white text-zinc-900 ring-1 ring-zinc-200")
+                        }
+                      >
+                        {m.mediaThumb && (
+                          <MessageMediaThumb thumb={m.mediaThumb} />
                         )}
-                        <div
-                          className={
-                            (m.text ? "mt-1 " : "") +
-                            "text-[10px] " +
-                            (m.isOutgoing
-                              ? "text-emerald-100"
-                              : "text-zinc-400")
-                          }
-                        >
-                          {formatRelative(m.date)}
+                        <div className="px-3 py-2">
+                          {m.text && (
+                            <div className="whitespace-pre-wrap break-words">
+                              {renderMessageEntities(m.text, m.entities)}
+                            </div>
+                          )}
+                          <div
+                            className={
+                              (m.text ? "mt-1 " : "") +
+                              "flex items-center justify-end gap-0.5 text-[10px] " +
+                              (m.isOutgoing
+                                ? "text-emerald-100"
+                                : "text-zinc-400")
+                            }
+                            title={formatDateTime(m.date)}
+                          >
+                            <span>{formatHHMM(m.date)}</span>
+                            {m.isOutgoing &&
+                              (readByPeer ? (
+                                <CheckCheck size={12} />
+                              ) : (
+                                <Check size={12} />
+                              ))}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </>
@@ -428,7 +557,9 @@ function ComposeFooter(props: {
           placeholder={`Написать через ${props.accountLabel}…`}
           onChange={(e) => props.onTextChange(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && canSend) {
+            // Enter — отправка. Shift+Enter — перенос строки (нативный
+            // textarea-behavior, не перехватываем).
+            if (e.key === "Enter" && !e.shiftKey && canSend) {
               e.preventDefault();
               props.onSend();
             }
@@ -439,7 +570,7 @@ function ComposeFooter(props: {
           type="button"
           onClick={props.onSend}
           disabled={!canSend}
-          title="Отправить (Ctrl+Enter / ⌘+Enter)"
+          title="Отправить (Enter); перенос — Shift+Enter"
           className="inline-flex h-9 w-9 items-center justify-center rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40"
         >
           <Send size={16} />
@@ -450,4 +581,26 @@ function ComposeFooter(props: {
       )}
     </div>
   );
+}
+
+// Сравнение message.id <= lastReadOutboxId через BigInt — TG-message-id
+// 64-битные, Number теряет точность на ~2^53.
+function isIdAtMost(id: string, threshold: string | null): boolean {
+  if (!threshold) return false;
+  try {
+    return BigInt(id) <= BigInt(threshold);
+  } catch {
+    return false;
+  }
+}
+
+// lastSeenAt=null + isOnline=false означает userStatusRecently/LastWeek/
+// LastMonth — точную дату TDLib не даёт, показываем «был недавно».
+function formatPeerStatus(
+  status: { isOnline: boolean; lastSeenAt: string | null } | null,
+): string | null {
+  if (!status) return null;
+  if (status.isOnline) return "в сети";
+  if (!status.lastSeenAt) return "был недавно";
+  return `был ${formatRelative(status.lastSeenAt)}`;
 }

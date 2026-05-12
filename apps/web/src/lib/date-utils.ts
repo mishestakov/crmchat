@@ -32,6 +32,16 @@ export function formatDateTime(iso: string | Date): string {
   return dateTimeFormat.format(typeof iso === "string" ? new Date(iso) : iso);
 }
 
+const hhmmFormat = new Intl.DateTimeFormat("ru-RU", {
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+export function formatHHMM(iso: string | Date): string {
+  if (!iso) return "";
+  return hhmmFormat.format(typeof iso === "string" ? new Date(iso) : iso);
+}
+
 const relativeFormat = new Intl.RelativeTimeFormat("ru", { style: "short" });
 
 const RELATIVE_UNITS: { unit: Intl.RelativeTimeFormatUnit; sec: number }[] = [

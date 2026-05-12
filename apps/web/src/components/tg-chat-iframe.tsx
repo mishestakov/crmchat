@@ -3,12 +3,15 @@ import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { api } from "../lib/api";
 import { errorMessage } from "../lib/errors";
-import type { ChatPeer } from "../lib/chat-store";
 
 // URL TG-клиента: dev-сервер apps/tg-client живёт на :1234 (webpack-dev-server
 // дефолт). Для prod заменить через env при деплое.
 const TG_CLIENT_ORIGIN =
   import.meta.env.VITE_TG_CLIENT_ORIGIN ?? "http://localhost:1234";
+
+export type ChatPeer =
+  | { type: "username"; value: string }
+  | { type: "id"; value: string };
 
 type Props = {
   wsId: string;

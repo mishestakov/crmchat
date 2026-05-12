@@ -52,6 +52,7 @@ type ChatPayload = {
   last_message?: { id: number | string; date: number; is_outgoing: boolean };
   unread_count?: number;
   last_read_inbox_message_id?: number | string;
+  last_read_outbox_message_id?: number | string;
 };
 
 // TDLib user (td_api.tl:2175). usernames может отсутствовать (0-юзеров TG старой
@@ -63,7 +64,38 @@ type UserPayload = {
   phone_number: string;
   usernames?: { active_usernames: string[]; editable_username: string };
   type: { _: string };
+  // Presence на момент initial chat list / refresh. Дальше — через
+  // updateUserStatus. Empty значит «неизвестно», offline даёт was_online unix.
+  status?: { _: string; expires?: number; was_online?: number };
 };
+
+type UserStatus = { _: string; expires?: number; was_online?: number };
+
+// Mapping TDLib UserStatus → (isOnline, lastSeenAt). userStatusEmpty не пишем
+// (возвращаем null); recently/lastWeek/lastMonth → offline без точной даты.
+function mapUserStatus(status: UserStatus | undefined): {
+  isOnline: boolean;
+  lastSeenAt: Date | null;
+} | null {
+  if (!status) return null;
+  switch (status._) {
+    case "userStatusOnline":
+      return { isOnline: true, lastSeenAt: null };
+    case "userStatusOffline":
+      return {
+        isOnline: false,
+        lastSeenAt: status.was_online
+          ? new Date(status.was_online * 1000)
+          : null,
+      };
+    case "userStatusRecently":
+    case "userStatusLastWeek":
+    case "userStatusLastMonth":
+      return { isOnline: false, lastSeenAt: null };
+    default:
+      return null;
+  }
+}
 
 // TDLib supergroup (td_api.tl:2489). Только нужные нам поля.
 type SupergroupPayload = {
@@ -90,6 +122,13 @@ export function attachReplicator(
   const chatBuf = new Map<string, ChatRow>();
   const partialChat = new Map<string, Partial<ChatRow>>();
   const userBuf = new Map<string, UserRow>();
+  // Presence-апдейты приходят чаще full updateUser (peer переключается онлайн
+  // ↔ оффлайн без других изменений). Отдельный buf — flush через UPDATE без
+  // INSERT (если строки нет — no-op, full row придёт с updateUser).
+  const userStatusBuf = new Map<
+    string,
+    { isOnline: boolean; lastSeenAt: Date | null }
+  >();
   // Буфер meta-патчей по supergroup_id (string). На flush — серия UPDATE'ов
   // channels SET meta = meta || patch WHERE meta->>'supergroup_id' = sgId.
   // Если канала с таким sgId в БД нет (любой канал из подписок юзера) —
@@ -137,6 +176,10 @@ export function attachReplicator(
             // последнего сообщения, а «вообще когда-либо».
             hasInbound: sql`${tgChats.hasInbound} OR excluded.has_inbound`,
             unreadCount: sql`excluded.unread_count`,
+            // GREATEST: id сообщений монотонно растут, повторный
+            // updateNewChat не должен откатить уже накопленный
+            // updateChatReadOutbox.
+            lastReadOutboxId: sql`greatest(${tgChats.lastReadOutboxId}::bigint, excluded.last_read_outbox_id::bigint)::text`,
             updatedAt: sql`now()`,
           },
         });
@@ -154,6 +197,10 @@ export function attachReplicator(
             fullName: sql`excluded.full_name`,
             phone: sql`excluded.phone`,
             isDeleted: sql`excluded.is_deleted`,
+            isOnline: sql`excluded.is_online`,
+            // GREATEST — see flush() для userStatusBuf, не откатываем
+            // last_seen_at если новый payload без статуса.
+            lastSeenAt: sql`greatest(${tgUsers.lastSeenAt}, excluded.last_seen_at)`,
             updatedAt: sql`now()`,
           },
         });
@@ -173,6 +220,30 @@ export function attachReplicator(
             .where(
               and(eq(tgChats.accountId, accountId), eq(tgChats.chatId, chatId)),
             );
+        }
+      });
+    }
+    if (userStatusBuf.size > 0) {
+      const patches = [...userStatusBuf.entries()];
+      userStatusBuf.clear();
+      await db.transaction(async (tx) => {
+        const now = new Date();
+        for (const [userId, p] of patches) {
+          await tx
+            .update(tgUsers)
+            .set({
+              isOnline: p.isOnline,
+              // GREATEST через ISO-cast: not-null wins; если приходит null —
+              // не перетираем существующее значение (online → offline без
+              // was_online сохраняет старую дату как «последний раз видели»).
+              ...(p.lastSeenAt
+                ? {
+                    lastSeenAt: sql`greatest(${tgUsers.lastSeenAt}, ${p.lastSeenAt.toISOString()}::timestamptz)`,
+                  }
+                : {}),
+              updatedAt: now,
+            })
+            .where(eq(tgUsers.userId, userId));
         }
       });
     }
@@ -292,6 +363,34 @@ export function attachReplicator(
         mergeChatPartial(String(x.chat_id), { unreadCount: x.unread_count });
         break;
       }
+      case "updateChatReadOutbox": {
+        const x = u as unknown as {
+          chat_id: number | string;
+          last_read_outbox_message_id: number | string;
+        };
+        mergeChatPartial(String(x.chat_id), {
+          lastReadOutboxId: String(x.last_read_outbox_message_id),
+        });
+        break;
+      }
+      case "updateUserStatus": {
+        const x = u as unknown as { user_id: number | string; status: UserStatus };
+        const mapped = mapUserStatus(x.status);
+        if (!mapped) break;
+        // Dedup внутри текущего окна flush'а: peer может слать «online» N раз
+        // подряд (TG обновляет expires); пишем только если изменилось.
+        const userId = String(x.user_id);
+        const prev = userStatusBuf.get(userId);
+        if (
+          prev
+          && prev.isOnline === mapped.isOnline
+          && prev.lastSeenAt?.getTime() === mapped.lastSeenAt?.getTime()
+        ) {
+          break;
+        }
+        userStatusBuf.set(userId, mapped);
+        break;
+      }
       case "updateSupergroup": {
         const sg = (u as unknown as { supergroup: SupergroupPayload }).supergroup;
         const sgId = String(sg.id);
@@ -371,6 +470,7 @@ function mapChat(accountId: string, chat: ChatPayload): ChatRow | null {
     (lastAt && !isOut) ||
     hasReadInbox ||
     (chat.unread_count ?? 0) > 0;
+  const outboxRaw = chat.last_read_outbox_message_id;
   return {
     accountId,
     chatId: String(chat.id),
@@ -382,6 +482,12 @@ function mapChat(accountId: string, chat: ChatPayload): ChatRow | null {
     lastOutboundAt: lastAt && isOut ? lastAt : null,
     hasInbound: !!hasInbound,
     unreadCount: chat.unread_count ?? 0,
+    lastReadOutboxId:
+      outboxRaw !== undefined &&
+      outboxRaw !== null &&
+      String(outboxRaw) !== "0"
+        ? String(outboxRaw)
+        : null,
   };
 }
 
@@ -409,11 +515,15 @@ function mapUser(user: UserPayload): UserRow | null {
   const isDeleted =
     user.type._ === "userTypeDeleted" || user.type._ === "userTypeUnknown";
   if (!isDeleted && user.type._ !== "userTypeRegular") return null;
+  const status = mapUserStatus(user.status);
   return {
     userId: String(user.id),
     username: extractActiveUsername(user),
     fullName: extractFullName(user),
     phone: user.phone_number || null,
     isDeleted,
+    ...(status
+      ? { isOnline: status.isOnline, lastSeenAt: status.lastSeenAt }
+      : {}),
   };
 }
