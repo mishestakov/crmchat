@@ -508,12 +508,14 @@ function AdminsSection(props: { wsId: string; channel: Channel }) {
                 <Link
                   to="/w/$wsId/contacts/$id"
                   params={{ wsId: props.wsId, id: a.contactId }}
-                  className="flex items-center gap-1.5 truncate text-zinc-800 hover:text-emerald-700"
+                  className="truncate text-zinc-800 hover:text-emerald-700"
+                  title={
+                    a.telegramUsername && a.fullName
+                      ? `@${a.telegramUsername}`
+                      : undefined
+                  }
                 >
-                  <span>{label}</span>
-                  {a.telegramUsername && a.fullName && (
-                    <span className="text-zinc-400">@{a.telegramUsername}</span>
-                  )}
+                  {label}
                 </Link>
                 <button
                   type="button"
