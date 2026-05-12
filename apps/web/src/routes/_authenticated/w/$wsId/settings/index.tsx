@@ -53,6 +53,16 @@ function SettingsIndex() {
             <SectionItemValue>канбан проектов</SectionItemValue>
           </Link>
         </SectionItem>
+        <SectionItem withChevron>
+          <Link
+            to="/w/$wsId/message-templates"
+            params={{ wsId }}
+            className="flex flex-1 items-center"
+          >
+            <SectionItemTitle>Шаблоны цепочек сообщений</SectionItemTitle>
+            <SectionItemValue>цепочки рассылок</SectionItemValue>
+          </Link>
+        </SectionItem>
       </Section>
 
       <Section header="Расширения">

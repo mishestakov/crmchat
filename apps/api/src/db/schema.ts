@@ -499,6 +499,29 @@ export const stageTemplates = pgTable(
   (t) => [index("stage_templates_workspace_id_idx").on(t.workspaceId)],
 );
 
+// Message template — переиспользуемая цепочка сообщений на воркспейс.
+// При создании проекта или по кнопке «Сохранить как шаблон» юзер
+// складывает текущие project.messages в библиотеку; при создании следующего
+// проекта выбирает из селекта и messages копируются в новый проект.
+// Дальше шаблон и проект развязаны (правка одного не трогает другого).
+export const messageTemplates = pgTable(
+  "message_templates",
+  {
+    id: text("id").primaryKey().$defaultFn(shortId),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    messages: jsonb("messages").$type<ProjectMessage[]>().notNull().default([]),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("message_templates_workspace_id_idx").on(t.workspaceId)],
+);
+
 export type ProjectMessageDelay = {
   // 'minutes' нужен для тестов/демо; в проде разумно 'hours'/'days'.
   period: "minutes" | "hours" | "days";
@@ -507,6 +530,12 @@ export type ProjectMessageDelay = {
 export type ProjectMessage = {
   id: string;
   text: string;
+  // Альтернативный текст для «тёплых» лидов — тех, кто хотя бы раз отвечал
+  // на наш DM через любой аккаунт воркспейса (tg_chats.has_inbound=true).
+  // Сейчас редактируется только у первого шага (idx=0); валидация на это
+  // не накладывается, но активация применяет warmText только для idx=0.
+  // null/undefined/"" → tёплый получает основной text.
+  warmText?: string | null;
   // Задержка ОТНОСИТЕЛЬНО предыдущего сообщения этого же project'а для лида.
   // Для первого сообщения (idx=0) — относительно момента активации.
   delay: ProjectMessageDelay;

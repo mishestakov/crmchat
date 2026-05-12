@@ -21,6 +21,8 @@ export const Route = createFileRoute("/_authenticated/w/$wsId/projects/new")({
 
 const lastTemplateKey = (wsId: string, trackId: string) =>
   `crmchat:lastTemplate:${wsId}:${trackId}`;
+const lastMessageTemplateKey = (wsId: string, trackId: string) =>
+  `crmchat:lastMessageTemplate:${wsId}:${trackId}`;
 
 function NewProjectPage() {
   const { wsId } = Route.useParams();
@@ -52,12 +54,25 @@ function NewProjectPage() {
     },
   });
 
+  const messageTemplatesQ = useQuery({
+    queryKey: ["message-templates", wsId],
+    queryFn: async () => {
+      const { data, error } = await api.GET(
+        "/v1/workspaces/{wsId}/message-templates",
+        { params: { path: { wsId } } },
+      );
+      if (error) throw error;
+      return data;
+    },
+  });
+
   const [trackId, setTrackId] = useState<string>(presetTrackId ?? "");
   const [name, setName] = useState("");
   const [templateId, setTemplateId] = useState<string>("");
+  const [messageTemplateId, setMessageTemplateId] = useState<string>("");
 
-  // Когда выбрали папку — подставить последний использованный шаблон в
-  // этой папке (если он ещё существует в текущих templates).
+  // Когда выбрали папку — подставить последний использованный шаблон стадий
+  // и шаблон цепочки в этой папке (если они ещё существуют).
   useEffect(() => {
     if (!trackId) return;
     const last = localStorage.getItem(lastTemplateKey(wsId, trackId));
@@ -66,7 +81,13 @@ function NewProjectPage() {
     } else {
       setTemplateId("");
     }
-  }, [trackId, wsId, templatesQ.data]);
+    const lastMsg = localStorage.getItem(lastMessageTemplateKey(wsId, trackId));
+    if (lastMsg && messageTemplatesQ.data?.some((t) => t.id === lastMsg)) {
+      setMessageTemplateId(lastMsg);
+    } else {
+      setMessageTemplateId("");
+    }
+  }, [trackId, wsId, templatesQ.data, messageTemplatesQ.data]);
 
   const create = useMutation({
     mutationFn: async () => {
@@ -78,6 +99,7 @@ function NewProjectPage() {
             trackId,
             name: name.trim(),
             ...(templateId && { templateId }),
+            ...(messageTemplateId && { messageTemplateId }),
           },
         },
       );
@@ -85,10 +107,16 @@ function NewProjectPage() {
       return data!;
     },
     onSuccess: (project) => {
-      // Запоминаем выбор шаблона в localStorage — следующий проект в этой
-      // папке откроется с этим же дефолтом.
+      // Запоминаем выбор шаблонов в localStorage — следующий проект в этой
+      // папке откроется с этими же дефолтами.
       if (templateId) {
         localStorage.setItem(lastTemplateKey(wsId, trackId), templateId);
+      }
+      if (messageTemplateId) {
+        localStorage.setItem(
+          lastMessageTemplateKey(wsId, trackId),
+          messageTemplateId,
+        );
       }
       qc.invalidateQueries({ queryKey: OUTREACH_QK.projects(wsId) });
       navigate({
@@ -99,6 +127,9 @@ function NewProjectPage() {
   });
 
   const selectedTemplate = templatesQ.data?.find((t) => t.id === templateId);
+  const selectedMessageTemplate = messageTemplatesQ.data?.find(
+    (t) => t.id === messageTemplateId,
+  );
   const canSubmit =
     trackId.length > 0 && name.trim().length > 0 && !create.isPending;
 
@@ -169,6 +200,68 @@ function NewProjectPage() {
                     </span>
                   ))}
               </div>
+            </div>
+          )}
+
+          <label className="block">
+            <span className="mb-1 block text-sm text-zinc-600">
+              Шаблон цепочки сообщений
+            </span>
+            <select
+              value={messageTemplateId}
+              onChange={(e) => setMessageTemplateId(e.target.value)}
+              className="w-full rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+            >
+              <option value="">— пустая цепочка —</option>
+              {messageTemplatesQ.data?.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {selectedMessageTemplate && (
+            <div className="rounded-md bg-zinc-50 p-3 text-xs text-zinc-600 space-y-1.5">
+              <div className="font-medium text-zinc-700">
+                Цепочка ({selectedMessageTemplate.messages.length}{" "}
+                {selectedMessageTemplate.messages.length === 1
+                  ? "сообщение"
+                  : "сообщений"}
+                ):
+              </div>
+              {selectedMessageTemplate.messages.length === 0 && (
+                <p className="text-zinc-500">Шаблон пустой.</p>
+              )}
+              <ol className="space-y-1">
+                {selectedMessageTemplate.messages.map((m, idx) => (
+                  <li
+                    key={m.id}
+                    className="rounded border border-zinc-200 bg-white px-2 py-1"
+                  >
+                    <div className="text-[11px] text-zinc-500">
+                      {idx === 0
+                        ? "Первое"
+                        : `Шаг ${idx + 1} — через ${m.delay.value} ${
+                            m.delay.period === "minutes"
+                              ? "мин"
+                              : m.delay.period === "hours"
+                              ? "ч"
+                              : "дн"
+                          }`}
+                    </div>
+                    <div className="truncate text-zinc-700">
+                      {m.text || (
+                        <span className="italic text-zinc-400">пусто</span>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ol>
+              <p className="pt-1 text-[11px] text-zinc-500">
+                Цепочка скопируется в проект — после создания её можно править,
+                на шаблон это не повлияет.
+              </p>
             </div>
           )}
 

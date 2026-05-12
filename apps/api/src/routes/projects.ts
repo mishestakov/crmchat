@@ -7,11 +7,13 @@ import {
   contactCreationTrigger,
   contacts,
   DEFAULT_OUTREACH_STAGES,
+  messageTemplates,
   outreachAccounts,
   outreachAccountsMode,
   projectItems,
   projects,
   stageTemplates,
+  tgChats,
   tracks,
   projectStatus,
   scheduledMessages,
@@ -48,6 +50,10 @@ const DelaySchema = z.object({
 const MessageSchema = z.object({
   id: z.string(),
   text: z.string().min(1).max(4000),
+  // Альтернативный текст для «тёплых» лидов (тех, кто хоть раз отвечал нам
+  // через любой аккаунт воркспейса). Сейчас применяется только к первому
+  // сообщению (idx=0) — UI отдаёт это поле только для первого шага.
+  warmText: z.string().max(4000).nullable().optional(),
   delay: DelaySchema,
 });
 
@@ -87,6 +93,10 @@ const CreateProjectBody = z
     // Опциональный stage_template — стадии скопируются из шаблона. Если
     // не передан, используется DEFAULT_OUTREACH_STAGES (4 стадии).
     templateId: z.string().min(1).max(64).optional(),
+    // Опциональный message_template — цепочка сообщений скопируется в
+    // projects.messages. Не передан → проект создаётся с пустой цепочкой,
+    // юзер её набьёт руками в редакторе.
+    messageTemplateId: z.string().min(1).max(64).optional(),
   })
   .openapi("CreateProject");
 
@@ -239,6 +249,25 @@ app.openapi(
       initialStages = tpl.stages;
     }
 
+    // Цепочка: либо копия из message-шаблона, либо пустой массив.
+    let initialMessages: ProjectMessage[] = [];
+    if (body.messageTemplateId) {
+      const [tpl] = await db
+        .select({ messages: messageTemplates.messages })
+        .from(messageTemplates)
+        .where(
+          and(
+            eq(messageTemplates.id, body.messageTemplateId),
+            eq(messageTemplates.workspaceId, wsId),
+          ),
+        )
+        .limit(1);
+      if (!tpl) {
+        throw new HTTPException(404, { message: "message template not found" });
+      }
+      initialMessages = tpl.messages;
+    }
+
     const [row] = await db
       .insert(projects)
       .values({
@@ -246,6 +275,7 @@ app.openapi(
         trackId: body.trackId,
         name: body.name,
         stages: initialStages,
+        messages: initialMessages,
         createdBy: userId,
       })
       .returning();
@@ -465,6 +495,25 @@ app.openapi(
       .filter((x): x is string => x !== null);
     const priorByTgUserId = await resolveStickyByTgUserIds(wsId, tgUserIds);
 
+    // Warm-set для альтернативного текста первого сообщения: peer
+    // отвечал нам хоть раз через любой аккаунт воркспейса
+    // (tg_chats.has_inbound=true). Один запрос на батч.
+    const warmTgUserIds = new Set<string>();
+    if (tgUserIds.length > 0) {
+      const warmRows = await db
+        .selectDistinct({ peerUserId: tgChats.peerUserId })
+        .from(tgChats)
+        .innerJoin(outreachAccounts, eq(tgChats.accountId, outreachAccounts.id))
+        .where(
+          and(
+            eq(outreachAccounts.workspaceId, wsId),
+            eq(tgChats.hasInbound, true),
+            inArray(tgChats.peerUserId, tgUserIds),
+          ),
+        );
+      for (const r of warmRows) warmTgUserIds.add(r.peerUserId);
+    }
+
     const remaining = tgUserIds.filter((id) => !priorByTgUserId.has(id));
     if (remaining.length > 0) {
       // DISTINCT ON (tg_user_id) ORDER BY tg_user_id, sentAt DESC — отдаёт
@@ -499,19 +548,30 @@ app.openapi(
         : undefined;
       const accountId = prior ?? accountIds[rrIdx % accountIds.length]!;
       if (!prior) rrIdx++;
-      return project.messages.map((msg, msgIdx) => ({
-        workspaceId: wsId,
-        projectId: project.id,
-        itemId: lead.id,
-        accountId,
-        messageIdx: msgIdx,
-        text: substituteVariables(msg.text, {
-          username: lead.username,
-          phone: lead.phone,
-          properties: lead.properties,
-        }),
-        sendAt: new Date(activatedAt.getTime() + offsetsMs[msgIdx]!),
-      }));
+      const isWarm = lead.tgUserId
+        ? warmTgUserIds.has(lead.tgUserId)
+        : false;
+      return project.messages.map((msg, msgIdx) => {
+        // Warm-альтернатива применяется только к первому сообщению (idx=0)
+        // и только если в шаблоне реально что-то набито (пустая строка ≠
+        // «использовать warm»). Остальные шаги всегда text.
+        const warmText = msg.warmText?.trim();
+        const template =
+          msgIdx === 0 && isWarm && warmText ? warmText : msg.text;
+        return {
+          workspaceId: wsId,
+          projectId: project.id,
+          itemId: lead.id,
+          accountId,
+          messageIdx: msgIdx,
+          text: substituteVariables(template, {
+            username: lead.username,
+            phone: lead.phone,
+            properties: lead.properties,
+          }),
+          sendAt: new Date(activatedAt.getTime() + offsetsMs[msgIdx]!),
+        };
+      });
     });
 
     await db.transaction(async (tx) => {

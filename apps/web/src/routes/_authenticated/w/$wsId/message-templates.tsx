@@ -6,27 +6,25 @@ import { api } from "../../../../lib/api";
 import { errorMessage } from "../../../../lib/errors";
 import { useMyRole } from "../../../../lib/hooks";
 import { BackButton } from "../../../../components/back-button";
-import { StagesEditor, type Stage } from "../../../../components/stages-editor";
+import {
+  MessagesEditor,
+  type Message,
+} from "../../../../components/messages-editor";
+
+// Библиотека шаблонов цепочек сообщений (12.2.1). По UX зеркальна
+// /stage-templates: список карточек, inline-edit имени, MessagesEditor
+// внутри, dirty-check сравнением JSON.stringify. Создание — через
+// inline-карточку с автофокусом в имени (не через window.prompt).
 
 export const Route = createFileRoute(
-  "/_authenticated/w/$wsId/stage-templates",
+  "/_authenticated/w/$wsId/message-templates",
 )({
-  component: StageTemplatesPage,
+  component: MessageTemplatesPage,
 });
 
-const TEMPLATES_QK = (wsId: string) => ["stage-templates", wsId] as const;
+const TEMPLATES_QK = (wsId: string) => ["message-templates", wsId] as const;
 
-// Клиентское зеркало DEFAULT_OUTREACH_STAGES из apps/api/src/db/schema.ts.
-// Используется для стартового набора стадий в inline-карточке «Новый шаблон»;
-// в БД default тот же, серверный fallback тоже сходится.
-const DEFAULT_STAGES: Stage[] = [
-  { id: "new", name: "Новый", order: 0 },
-  { id: "in_progress", name: "В работе", order: 1 },
-  { id: "replied", name: "Ответил", order: 2 },
-  { id: "done", name: "Закрыт", order: 3 },
-];
-
-function StageTemplatesPage() {
+function MessageTemplatesPage() {
   const { wsId } = Route.useParams();
   const isAdmin = useMyRole(wsId) === "admin";
   const qc = useQueryClient();
@@ -36,7 +34,7 @@ function StageTemplatesPage() {
     queryKey: TEMPLATES_QK(wsId),
     queryFn: async () => {
       const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/stage-templates",
+        "/v1/workspaces/{wsId}/message-templates",
         { params: { path: { wsId } } },
       );
       if (error) throw error;
@@ -49,7 +47,7 @@ function StageTemplatesPage() {
       <BackButton />
       <div className="mx-auto w-full max-w-3xl space-y-4">
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-semibold">Шаблоны стадий</h1>
+          <h1 className="text-2xl font-semibold">Шаблоны цепочек</h1>
           {isAdmin && !showNew && (
             <button
               type="button"
@@ -62,8 +60,8 @@ function StageTemplatesPage() {
         </div>
 
         <p className="text-sm text-zinc-500">
-          Шаблоны применяются при создании проекта — стадии копируются в
-          проект и дальше живут независимо. Правка шаблона не трогает
+          Шаблоны применяются при создании проекта — цепочка копируется в
+          проект и дальше живёт независимо. Правка шаблона не трогает
           существующие проекты.
         </p>
 
@@ -107,17 +105,17 @@ function NewTemplateCard(props: {
   onCreated: () => void;
 }) {
   const [name, setName] = useState("");
-  const [stages, setStages] = useState<Stage[]>(DEFAULT_STAGES);
+  const [messages, setMessages] = useState<Message[]>([]);
 
   const create = useMutation({
     mutationFn: async () => {
       const trimmed = name.trim();
       if (!trimmed) throw new Error("Введите имя шаблона");
       const { error } = await api.POST(
-        "/v1/workspaces/{wsId}/stage-templates",
+        "/v1/workspaces/{wsId}/message-templates",
         {
           params: { path: { wsId: props.wsId } },
-          body: { name: trimmed, stages },
+          body: { name: trimmed, messages },
         },
       );
       if (error) throw error;
@@ -134,11 +132,11 @@ function NewTemplateCard(props: {
         type="text"
         value={name}
         autoFocus
-        placeholder="Имя шаблона (например, «Привлечение»)"
+        placeholder="Имя шаблона (например, «Привлечение январь»)"
         onChange={(e) => setName(e.target.value)}
         className="w-full rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium focus:border-emerald-500 focus:outline-none"
       />
-      <StagesEditor value={stages} onChange={setStages} />
+      <MessagesEditor value={messages} onChange={setMessages} />
       <div className="flex items-center gap-2">
         <button
           type="button"
@@ -170,7 +168,7 @@ function TemplateCard(props: {
   template: {
     id: string;
     name: string;
-    stages: Stage[];
+    messages: Message[];
     createdAt: string;
   };
   canEdit: boolean;
@@ -179,19 +177,19 @@ function TemplateCard(props: {
   const qc = useQueryClient();
 
   const [name, setName] = useState(template.name);
-  const [stages, setStages] = useState<Stage[]>(template.stages);
+  const [messages, setMessages] = useState<Message[]>(template.messages);
 
   const dirty =
     name !== template.name ||
-    JSON.stringify(stages) !== JSON.stringify(template.stages);
+    JSON.stringify(messages) !== JSON.stringify(template.messages);
 
   const save = useMutation({
     mutationFn: async () => {
       const { error } = await api.PATCH(
-        "/v1/workspaces/{wsId}/stage-templates/{templateId}",
+        "/v1/workspaces/{wsId}/message-templates/{templateId}",
         {
           params: { path: { wsId, templateId: template.id } },
-          body: { name, stages },
+          body: { name, messages },
         },
       );
       if (error) throw error;
@@ -202,7 +200,7 @@ function TemplateCard(props: {
   const remove = useMutation({
     mutationFn: async () => {
       const { error } = await api.DELETE(
-        "/v1/workspaces/{wsId}/stage-templates/{templateId}",
+        "/v1/workspaces/{wsId}/message-templates/{templateId}",
         { params: { path: { wsId, templateId: template.id } } },
       );
       if (error) throw error;
@@ -236,7 +234,11 @@ function TemplateCard(props: {
           </button>
         )}
       </div>
-      <StagesEditor value={stages} onChange={setStages} disabled={!canEdit} />
+      <MessagesEditor
+        value={messages}
+        onChange={setMessages}
+        disabled={!canEdit}
+      />
       {canEdit && dirty && (
         <div className="flex items-center gap-2">
           <button
@@ -251,7 +253,7 @@ function TemplateCard(props: {
             type="button"
             onClick={() => {
               setName(template.name);
-              setStages(template.stages);
+              setMessages(template.messages);
             }}
             className="text-sm text-zinc-500 hover:text-zinc-900"
           >

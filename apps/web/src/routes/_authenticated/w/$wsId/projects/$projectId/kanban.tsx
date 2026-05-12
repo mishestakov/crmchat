@@ -298,6 +298,7 @@ function StagesEditModal(props: {
   const { wsId, projectId, initial, onClose } = props;
   const qc = useQueryClient();
   const [stages, setStages] = useState<Stage[]>(initial);
+  const [showSaveAsTemplate, setShowSaveAsTemplate] = useState(false);
 
   const save = useMutation({
     mutationFn: async () => {
@@ -324,7 +325,8 @@ function StagesEditModal(props: {
   const dirty = JSON.stringify(stages) !== JSON.stringify(initial);
 
   return (
-    <Modal onClose={onClose} zIndex={30}>
+    <>
+      <Modal onClose={onClose} zIndex={30}>
         <div className="mb-3 flex items-center gap-3">
           <h2 className="text-lg font-semibold">Стадии канбана</h2>
           <button
@@ -356,12 +358,104 @@ function StagesEditModal(props: {
           >
             Отмена
           </button>
+          <button
+            type="button"
+            onClick={() => setShowSaveAsTemplate(true)}
+            disabled={stages.length === 0}
+            className="ml-auto text-xs text-zinc-500 hover:text-emerald-700 disabled:opacity-50"
+            title="Сохранить текущие стадии как шаблон воркспейса"
+          >
+            Сохранить как шаблон
+          </button>
           {save.error && (
             <span className="text-xs text-red-600">
               {errorMessage(save.error)}
             </span>
           )}
         </div>
+      </Modal>
+      {showSaveAsTemplate && (
+        <SaveAsStageTemplateDialog
+          wsId={wsId}
+          stages={stages}
+          onClose={() => setShowSaveAsTemplate(false)}
+        />
+      )}
+    </>
+  );
+}
+
+function SaveAsStageTemplateDialog(props: {
+  wsId: string;
+  stages: Stage[];
+  onClose: () => void;
+}) {
+  const [name, setName] = useState("");
+  const save = useMutation({
+    mutationFn: async () => {
+      const trimmed = name.trim();
+      if (!trimmed) throw new Error("Введите имя шаблона");
+      const { error } = await api.POST(
+        "/v1/workspaces/{wsId}/stage-templates",
+        {
+          params: { path: { wsId: props.wsId } },
+          body: { name: trimmed, stages: props.stages },
+        },
+      );
+      if (error) throw error;
+    },
+    onSuccess: () => props.onClose(),
+  });
+
+  return (
+    <Modal onClose={props.onClose} variant="sheet" zIndex={40}>
+      <div className="mb-3 flex items-center justify-between">
+        <div className="text-base font-semibold">
+          Сохранить стадии как шаблон
+        </div>
+        <button
+          type="button"
+          onClick={props.onClose}
+          aria-label="Закрыть"
+          className="text-zinc-400 hover:text-zinc-700"
+        >
+          <X size={18} />
+        </button>
+      </div>
+      <p className="mb-3 text-xs text-zinc-500">
+        Шаблон попадёт в библиотеку и будет доступен при создании новых
+        проектов. Этот проект и шаблон дальше живут независимо.
+      </p>
+      <label className="block">
+        <span className="mb-1 block text-sm text-zinc-600">Имя шаблона</span>
+        <input
+          type="text"
+          value={name}
+          autoFocus
+          onChange={(e) => setName(e.target.value)}
+          className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+        />
+      </label>
+      {save.error && (
+        <p className="mt-2 text-sm text-red-600">{errorMessage(save.error)}</p>
+      )}
+      <div className="mt-4 flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={props.onClose}
+          className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-50"
+        >
+          Отмена
+        </button>
+        <button
+          type="button"
+          onClick={() => save.mutate()}
+          disabled={save.isPending || !name.trim()}
+          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+        >
+          {save.isPending ? "Сохраняем…" : "Сохранить шаблон"}
+        </button>
+      </div>
     </Modal>
   );
 }

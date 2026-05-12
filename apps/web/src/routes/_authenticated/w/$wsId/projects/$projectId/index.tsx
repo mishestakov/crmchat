@@ -5,20 +5,20 @@ import {
   AlertTriangle,
   Check,
   CheckCheck,
-  Eye,
   MessageSquare,
   Pause,
-  Pencil,
   Play,
-  Plus,
   RefreshCw,
-  Trash2,
   X,
 } from "lucide-react";
 import type { paths } from "@repo/api-client";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
 import { BackButton } from "../../../../../../components/back-button";
+import {
+  MessagesEditor,
+  type Message,
+} from "../../../../../../components/messages-editor";
 import { Modal } from "../../../../../../components/modal";
 import {
   Section,
@@ -47,15 +47,6 @@ export const Route = createFileRoute(
 
 type SequenceData =
   paths["/v1/workspaces/{wsId}/projects/{projectId}"]["get"]["responses"][200]["content"]["application/json"];
-type Message = SequenceData["messages"][number];
-
-function newMessage(): Message {
-  return {
-    id: Math.random().toString(36).slice(2, 10),
-    text: "",
-    delay: { period: "hours", value: 0 },
-  };
-}
 
 function SequenceDetailPage() {
   const { wsId, projectId } = Route.useParams();
@@ -142,10 +133,10 @@ function SequenceDetailPage() {
   // на отдельных sub-routes, тут не редактируются.
   const [name, setName] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
-  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [previewMsg, setPreviewMsg] = useState<Message | null>(null);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
+  const [showSaveAsTemplate, setShowSaveAsTemplate] = useState(false);
 
   useEffect(() => {
     if (!seq.data) return;
@@ -401,68 +392,28 @@ function SequenceDetailPage() {
         {/* === Section: кампания (сообщения) === */}
         <Section header="Кампания">
           <div className="px-5 py-4">
-            {messages.length === 0 ? (
-              <p className="text-xs text-zinc-500">
-                Пока ни одного сообщения. Добавьте первое — оно отправится сразу
-                после запуска рассылки.
-              </p>
-            ) : (
-              <ol className="relative space-y-3 border-l border-zinc-200 pl-5">
-                {messages.map((m, idx) => (
-                  <li key={m.id} className="relative">
-                    <div className="absolute -left-[26px] top-2 h-3 w-3 rounded-full border-2 border-zinc-300 bg-white" />
-                    {editingMessageId === m.id ? (
-                      <MessageEditor
-                        message={m}
-                        index={idx}
-                        canEditDelay={idx > 0}
-                        onCancel={() => setEditingMessageId(null)}
-                        onSave={(updated) => {
-                          const next = messages.map((x) =>
-                            x.id === updated.id ? updated : x,
-                          );
-                          setMessages(next);
-                          setEditingMessageId(null);
-                          save.mutate({ messages: next });
-                        }}
-                        onPreview={() => setPreviewMsg(m)}
-                        onDelete={() => {
-                          const next = messages.filter((x) => x.id !== m.id);
-                          setMessages(next);
-                          setEditingMessageId(null);
-                          save.mutate({ messages: next });
-                        }}
-                      />
-                    ) : (
-                      <MessageRow
-                        message={m}
-                        index={idx}
-                        editable={isDraft || isPaused}
-                        onClick={() => setEditingMessageId(m.id)}
-                        onPreview={() => setPreviewMsg(m)}
-                      />
-                    )}
-                  </li>
-                ))}
-              </ol>
-            )}
-            {isDraft && !editingMessageId && (
-              <button
-                type="button"
-                onClick={() => {
-                  const m = newMessage();
-                  setMessages((prev) => [...prev, m]);
-                  setEditingMessageId(m.id);
-                }}
-                className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-emerald-700 hover:text-emerald-800"
-              >
-                <Plus size={14} /> Добавить сообщение
-              </button>
-            )}
+            <MessagesEditor
+              value={messages}
+              disabled={!isDraft && !isPaused}
+              onChange={(next) => {
+                setMessages(next);
+                save.mutate({ messages: next });
+              }}
+              onPreview={(m) => setPreviewMsg(m)}
+            />
             {!isDraft && !isPaused && messages.length > 0 && (
               <p className="mt-3 text-xs text-zinc-400">
                 Редактирование сообщений доступно в статусе «Черновик» или «Пауза».
               </p>
+            )}
+            {messages.length > 0 && (isDraft || isPaused) && (
+              <button
+                type="button"
+                onClick={() => setShowSaveAsTemplate(true)}
+                className="mt-4 inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-emerald-700"
+              >
+                <MessageSquare size={12} /> Сохранить цепочку как шаблон
+              </button>
             )}
           </div>
         </Section>
@@ -508,6 +459,15 @@ function SequenceDetailPage() {
           onCancel={() => setShowDelete(false)}
           onConfirm={() => remove.mutate()}
           isPending={remove.isPending}
+        />
+      )}
+
+      {showSaveAsTemplate && (
+        <SaveAsMessageTemplateDialog
+          wsId={wsId}
+          defaultName={data.name}
+          messages={messages}
+          onClose={() => setShowSaveAsTemplate(false)}
         />
       )}
 
@@ -573,162 +533,6 @@ function StatPill(props: {
       </div>
     </div>
   );
-}
-
-// ─────────────────────── Message Row + Editor ───────────────────────
-
-function MessageRow(props: {
-  message: Message;
-  index: number;
-  editable: boolean;
-  onClick: () => void;
-  onPreview: () => void;
-}) {
-  const m = props.message;
-  return (
-    <div
-      role={props.editable ? "button" : undefined}
-      onClick={props.editable ? props.onClick : undefined}
-      className={
-        "rounded-lg border border-zinc-200 bg-white p-3 " +
-        (props.editable ? "cursor-pointer hover:border-emerald-300" : "")
-      }
-    >
-      <div className="flex items-center justify-between text-xs text-zinc-500">
-        <span>
-          {props.index === 0
-            ? "Первое сообщение"
-            : `Сообщение ${props.index + 1}, через ${m.delay.value} ${pluralizeDelayPeriod(m.delay)}`}
-        </span>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              props.onPreview();
-            }}
-            disabled={!m.text.trim()}
-            className="text-zinc-400 hover:text-emerald-700 disabled:opacity-30"
-            aria-label="Превью"
-            title="Превью с подстановкой переменных"
-          >
-            <Eye size={14} />
-          </button>
-          {props.editable && (
-            <Pencil size={14} className="text-zinc-400" />
-          )}
-        </div>
-      </div>
-      <div className="mt-1 text-sm whitespace-pre-wrap text-zinc-800">
-        {m.text || (
-          <span className="text-zinc-400 italic">Пустое сообщение</span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function MessageEditor(props: {
-  message: Message;
-  index: number;
-  canEditDelay: boolean;
-  onCancel: () => void;
-  onSave: (m: Message) => void;
-  onPreview: () => void;
-  onDelete: () => void;
-}) {
-  const [text, setText] = useState(props.message.text);
-  const [delayValue, setDelayValue] = useState(props.message.delay.value);
-  const [delayPeriod, setDelayPeriod] = useState(props.message.delay.period);
-
-  return (
-    <div className="rounded-lg border border-emerald-300 bg-white p-3 space-y-3">
-      <div className="flex items-center justify-between text-xs text-zinc-500">
-        <span>
-          {props.index === 0 ? "Первое сообщение" : `Сообщение ${props.index + 1}`}
-        </span>
-        <button
-          type="button"
-          onClick={props.onDelete}
-          className="text-zinc-400 hover:text-red-600"
-          aria-label="Удалить"
-        >
-          <Trash2 size={14} />
-        </button>
-      </div>
-
-      {props.canEditDelay && (
-        <div className="flex items-center gap-2 text-xs">
-          <span className="text-zinc-500">Через</span>
-          <input
-            type="number"
-            min={0}
-            value={delayValue}
-            onChange={(e) =>
-              setDelayValue(Math.max(0, Number(e.target.value) || 0))
-            }
-            className="w-16 rounded-md border border-zinc-300 px-2 py-1"
-          />
-          <select
-            value={delayPeriod}
-            onChange={(e) => setDelayPeriod(e.target.value as Message["delay"]["period"])}
-            className="rounded-md border border-zinc-300 bg-white px-2 py-1"
-          >
-            <option value="minutes">минут</option>
-            <option value="hours">часов</option>
-            <option value="days">дней</option>
-          </select>
-          <span className="text-zinc-500">после предыдущего</span>
-        </div>
-      )}
-
-      <textarea
-        value={text}
-        rows={4}
-        autoFocus
-        placeholder="Привет, {{username}}! ..."
-        onChange={(e) => setText(e.target.value)}
-        className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
-      />
-
-      <div className="grid grid-cols-3 gap-2">
-        <button
-          type="button"
-          onClick={props.onPreview}
-          disabled={!text.trim()}
-          className="inline-flex items-center justify-center gap-1 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-50 disabled:opacity-50"
-        >
-          <Eye size={14} /> Превью
-        </button>
-        <button
-          type="button"
-          onClick={props.onCancel}
-          className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-50"
-        >
-          Отмена
-        </button>
-        <button
-          type="button"
-          onClick={() =>
-            props.onSave({
-              ...props.message,
-              text,
-              delay: { value: delayValue, period: delayPeriod },
-            })
-          }
-          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
-        >
-          Сохранить
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function pluralizeDelayPeriod(d: Message["delay"]): string {
-  if (d.period === "minutes") return pluralize(d.value, "минуту", "минуты", "минут");
-  if (d.period === "hours") return pluralize(d.value, "час", "часа", "часов");
-  return pluralize(d.value, "день", "дня", "дней");
 }
 
 // ─────────────────────── Preview Dialog ───────────────────────
@@ -1067,6 +871,84 @@ function DeleteConfirm(props: {
             {props.isPending ? "Удаляем…" : "Удалить рассылку"}
           </button>
         </div>
+    </Modal>
+  );
+}
+
+// ─────────────────────── Save as message-template ───────────────────────
+
+function SaveAsMessageTemplateDialog(props: {
+  wsId: string;
+  defaultName: string;
+  messages: Message[];
+  onClose: () => void;
+}) {
+  const [name, setName] = useState(props.defaultName);
+  const save = useMutation({
+    mutationFn: async () => {
+      const trimmed = name.trim();
+      if (!trimmed) throw new Error("Введите имя шаблона");
+      const { error } = await api.POST(
+        "/v1/workspaces/{wsId}/message-templates",
+        {
+          params: { path: { wsId: props.wsId } },
+          body: { name: trimmed, messages: props.messages },
+        },
+      );
+      if (error) throw error;
+    },
+    onSuccess: () => props.onClose(),
+  });
+
+  return (
+    <Modal onClose={props.onClose} variant="sheet">
+      <div className="mb-3 flex items-center justify-between">
+        <div className="text-base font-semibold">
+          Сохранить цепочку как шаблон
+        </div>
+        <button
+          type="button"
+          onClick={props.onClose}
+          aria-label="Закрыть"
+          className="text-zinc-400 hover:text-zinc-700"
+        >
+          <X size={18} />
+        </button>
+      </div>
+      <p className="mb-3 text-xs text-zinc-500">
+        Шаблон попадёт в библиотеку и будет доступен при создании новых
+        проектов. Этот проект и шаблон дальше живут независимо.
+      </p>
+      <label className="block">
+        <span className="mb-1 block text-sm text-zinc-600">Имя шаблона</span>
+        <input
+          type="text"
+          value={name}
+          autoFocus
+          onChange={(e) => setName(e.target.value)}
+          className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+        />
+      </label>
+      {save.error && (
+        <p className="mt-2 text-sm text-red-600">{errorMessage(save.error)}</p>
+      )}
+      <div className="mt-4 flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={props.onClose}
+          className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-50"
+        >
+          Отмена
+        </button>
+        <button
+          type="button"
+          onClick={() => save.mutate()}
+          disabled={save.isPending || !name.trim()}
+          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+        >
+          {save.isPending ? "Сохраняем…" : "Сохранить шаблон"}
+        </button>
+      </div>
     </Modal>
   );
 }
