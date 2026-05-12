@@ -149,6 +149,10 @@ const LeadProgressSchema = z
     id: z.string(),
     username: z.string().nullable(),
     phone: z.string().nullable(),
+    // tg_user_id зафиксирован после первой отправки worker'а (или из
+    // pre-resolve sticky на импорте, если контакт был в базе). Нужен на
+    // фронте для quick send'а лиду, у которого ещё нет привязанного контакта.
+    tgUserId: z.string().nullable(),
     // CSV-properties (для toggle «Показать CSV-данные» в leads-таблице).
     // Сюда уезжают и raw CSV-headers, и mapped-keys.
     properties: z.record(z.string(), z.string()),
@@ -833,6 +837,7 @@ app.openapi(
           id: l.id,
           username: l.username,
           phone: l.phone,
+          tgUserId: l.tgUserId,
           properties: l.properties,
           account,
           accountSource,
