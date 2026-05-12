@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node --env-file=../../.env --watch-path=src --experimental-strip-types src/index.ts",
+    "dev": "node --env-file=../../.env --watch-path=src src/index.ts",
     "typecheck": "tsc --noEmit",
     "db:push": "drizzle-kit push",
-    "db:seed": "node --env-file=../../.env --experimental-strip-types src/seed.ts"
+    "db:seed": "node --env-file=../../.env src/seed.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.2",

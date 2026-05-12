@@ -4,9 +4,8 @@ import {
   useNavigate,
 } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useForm } from "@tanstack/react-form";
+import { useState } from "react";
 import { ArrowLeft } from "lucide-react";
-import { CreateWorkspaceSchema } from "@repo/core";
 import { api } from "../../lib/api";
 import { errorMessage } from "../../lib/errors";
 
@@ -69,13 +68,8 @@ function CreateWorkspacePage() {
     },
   });
 
-  const form = useForm({
-    defaultValues: { name: "" },
-    validators: { onChange: CreateWorkspaceSchema },
-    onSubmit: async ({ value }) => {
-      await create.mutateAsync(value.name);
-    },
-  });
+  const [name, setName] = useState("");
+  const canSubmit = name.trim().length > 0 && !create.isPending;
 
   return (
     <div className="mx-auto max-w-md p-8 space-y-6">
@@ -99,23 +93,19 @@ function CreateWorkspacePage() {
         className="space-y-3"
         onSubmit={(e) => {
           e.preventDefault();
-          form.handleSubmit();
+          if (canSubmit) create.mutate(name.trim());
         }}
       >
-        <form.Field name="name">
-          {(field) => (
-            <input
-              autoFocus
-              className="w-full rounded border border-zinc-300 px-3 py-2"
-              placeholder="Название workspace"
-              value={field.state.value}
-              onChange={(e) => field.handleChange(e.target.value)}
-            />
-          )}
-        </form.Field>
+        <input
+          autoFocus
+          className="w-full rounded border border-zinc-300 px-3 py-2"
+          placeholder="Название workspace"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
         <button
           type="submit"
-          disabled={create.isPending}
+          disabled={!canSubmit}
           className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
         >
           Создать
