@@ -1,6 +1,6 @@
 // Общая форма полей контакта — используется в /contacts/new и /contacts/$id/edit.
 // Один блок, одно правило отображения:
-//   ALWAYS_SHOWN_KEYS — всегда поле (full_name, description, stage)
+//   ALWAYS_SHOWN_KEYS — всегда поле (full_name, description)
 //   filled (есть значение) — поле
 //   иначе — chip «+ Email» внизу, по клику раскрывается в поле
 // Без деления identity/properties и спец-исключений.
@@ -9,7 +9,7 @@ import { useState } from "react";
 import type { Property, PropertyType } from "@repo/core";
 
 // Жёсткий порядок верхушки. Дальше — properties.order.
-const ALWAYS_SHOWN_KEYS = ["full_name", "description", "stage"] as const;
+const ALWAYS_SHOWN_KEYS = ["full_name", "description"] as const;
 
 export function ContactFormFields(props: {
   properties: Property[];

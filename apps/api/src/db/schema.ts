@@ -411,135 +411,9 @@ export const outreachAccountDelegations = pgTable(
   ],
 );
 
-// Outreach-список: источник лидов для будущей рассылки. Источники: csv (фаза 2),
-// crm/crm-groups (потом). После импорта статус completed + importStats.
-export const outreachListStatus = pgEnum("outreach_list_status", [
-  "pending",
-  "processing",
-  "completed",
-  "failed",
-]);
-export const outreachListSourceType = pgEnum("outreach_list_source_type", [
-  "csv",
-  // 'crm', 'crm_groups' — фаза 2.5/3
-]);
-
-export type OutreachListSourceMeta = {
-  fileName?: string;
-  usernameColumn?: string;
-  phoneColumn?: string;
-  columns?: string[];
-  // Маппинг CRM-properties workspace → CSV-колонки (key = property.key,
-  // value = column header). Смапленные значения попадают в lead.properties под
-  // property.key; неcмапленные CSV-колонки — под raw header (для шаблонов).
-  propertyMappings?: Record<string, string>;
-};
-
-export type OutreachListImportStats = {
-  imported: number;
-  skippedMissingIdentifier: number;
-  skippedInvalidPhone: number;
-  skippedDuplicate: number;
-};
-
-export const outreachLists = pgTable(
-  "outreach_lists",
-  {
-    id: text("id").primaryKey().$defaultFn(shortId),
-    workspaceId: text("workspace_id")
-      .notNull()
-      .references(() => workspaces.id, { onDelete: "cascade" }),
-    name: text("name").notNull(),
-    sourceType: outreachListSourceType("source_type").notNull(),
-    sourceMeta: jsonb("source_meta")
-      .$type<OutreachListSourceMeta>()
-      .notNull()
-      .default({}),
-    status: outreachListStatus("status").notNull().default("pending"),
-    totalSize: integer("total_size"),
-    importStats: jsonb("import_stats").$type<OutreachListImportStats>(),
-    createdBy: text("created_by")
-      .notNull()
-      .references(() => users.id),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [index("outreach_lists_workspace_id_idx").on(t.workspaceId)],
-);
-
-// Outreach-лид: один peer в листе. tg_user_id заполнится при отправке (Phase 3 —
-// resolve username через MTProto). До этого identifier = username || phone.
-// `properties` — доп. колонки из CSV для подстановок типа {{firstName}}.
-export const outreachLeads = pgTable(
-  "outreach_leads",
-  {
-    id: text("id").primaryKey().$defaultFn(shortId),
-    workspaceId: text("workspace_id")
-      .notNull()
-      .references(() => workspaces.id, { onDelete: "cascade" }),
-    listId: text("list_id")
-      .notNull()
-      .references(() => outreachLists.id, { onDelete: "cascade" }),
-    username: text("username"),
-    phone: text("phone"),
-    tgUserId: text("tg_user_id"),
-    // Когда лид впервые ответил нам (любой incoming от него после того как мы
-    // ему написали). Заполняется outreach-listener'ом при NewMessage event.
-    // Триггер для воркера: «не слать больше ничего этому лиду, в любой
-    // sequence». Хранение момента (а не bool) — чтобы UI мог показать «ответил
-    // 12 минут назад» и для будущих метрик «time-to-reply».
-    repliedAt: timestamp("replied_at", { withTimezone: true }),
-    // Контакт, в который сконвертировался лид при первом ответе. Listener
-    // создаёт contact (или находит дедуп по tg_user_id) и проставляет сюда.
-    // ON DELETE SET NULL: удалили контакта руками — лид остаётся в outreach
-    // для метрик, contactId просто очищается.
-    contactId: text("contact_id").references(() => contacts.id, {
-      onDelete: "set null",
-    }),
-    properties: jsonb("properties")
-      .$type<Record<string, string>>()
-      .notNull()
-      .default({}),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [
-    index("outreach_leads_list_id_idx").on(t.listId),
-    index("outreach_leads_workspace_id_idx").on(t.workspaceId),
-    // Composite-индекс для inbound-listener: на каждое incoming TG-сообщение
-    // делаем lookup `WHERE workspace_id = ? AND tg_user_id = ?`. Без индекса
-    // — full scan по всем лидам workspace.
-    index("outreach_leads_workspace_tg_user_id_idx").on(
-      t.workspaceId,
-      t.tgUserId,
-    ),
-    // Identity-уникальность лидов в одном листе: username (если есть) ИЛИ
-    // phone — каждый сам по себе уникальный TG-идентификатор. Делаем ДВА
-    // partial unique indexes, потому что один и тот же лид не должен иметь
-    // ни двух записей по username, ни двух по phone.
-    uniqueIndex("outreach_leads_list_username_unique")
-      .on(t.listId, sql`lower(${t.username})`)
-      .where(sql`${t.username} IS NOT NULL`),
-    uniqueIndex("outreach_leads_list_phone_unique")
-      .on(t.listId, t.phone)
-      .where(sql`${t.phone} IS NOT NULL AND ${t.username} IS NULL`),
-  ],
-);
-
-// Outreach-sequence: рассылка по одному списку лидов с N сообщениями и задержками.
-// На активации (status: draft → active) воркер пресчитывает scheduled_messages
-// для каждого лида × каждого сообщения. Изменения текста после активации НЕ
-// влияют на уже распланированные — они snapshot-нуты в scheduled_messages.text.
-//   - accountsMode 'all'      — использовать все active outreach-аккаунты workspace
-//   - accountsMode 'selected' — только перечисленные в accountsSelected
-// Аккаунт лиду назначается round-robin при активации и фиксируется в
-// scheduled_messages.accountId — continuity-of-identity (один лид всегда от
-// одного аккаунта).
-export const outreachSequenceStatus = pgEnum("outreach_sequence_status", [
-  "draft",
-  "active",
-  "paused",
-  "completed",
-]);
+// outreachAccountsMode и contactCreationTrigger — enum'ы для project'а
+// (kind='outreach'). Раньше использовались на outreach_sequences, теперь
+// на projects.
 export const outreachAccountsMode = pgEnum("outreach_accounts_mode", [
   "all",
   "selected",
@@ -549,45 +423,176 @@ export const contactCreationTrigger = pgEnum("contact_creation_trigger", [
   "on-first-message-sent",
 ]);
 
-export type OutreachSequenceMessageDelay = {
-  // 'minutes' нужен для тестов/демо; в проде разумно 'hours'/'days'.
-  period: "minutes" | "hours" | "days";
-  value: number;
-};
-export type OutreachSequenceMessage = {
-  id: string;
-  text: string;
-  // Задержка ОТНОСИТЕЛЬНО предыдущего сообщения этой же sequence для этого лида.
-  // Для первого сообщения (idx=0) применяется относительно момента активации.
-  delay: OutreachSequenceMessageDelay;
-};
+// === Этап 12: универсальная иерархия Track → Project → Item ===========
+//
+// Track (папка/группа задач) — Project (задача/проект с канбаном) —
+// Item (карточка на канбане). Структура общая для двух юз-кейсов:
+// (1) BD-команда продакта: Track=программа («Привлечение/Удержание/Отток»),
+//     Project=инстанс программы за период, Item=лид-в-задаче.
+// (2) Рекламное агентство: Track=клиент (Coca-Cola), Project=кампания
+//     (Q4 Holiday), Item=размещение (channel × project × date).
+//
+// `kind` discriminator на каждом уровне определяет UI-лейблы и какие
+// табы/поля видны. На этапе 12.0 поддерживаются program/client/generic
+// (Track), outreach/agency/generic (Project), lead/placement (Item);
+// agency- и placement-специфичные расширения добавятся в 12.6+.
+//
+// Старые `outreach_sequences` / `outreach_lists` / `outreach_leads`
+// удаляются в 12.2 после переезда кода на новые таблицы.
 
-export const outreachSequences = pgTable(
-  "outreach_sequences",
+export const trackKind = pgEnum("track_kind", [
+  "program",
+  "client",
+  "generic",
+]);
+
+export const projectKind = pgEnum("project_kind", [
+  "outreach",
+  "agency",
+  "generic",
+]);
+
+export const projectStatus = pgEnum("project_status", [
+  "draft",
+  "active",
+  "paused",
+  "done",
+]);
+
+export const projectItemKind = pgEnum("project_item_kind", [
+  "lead",
+  "placement",
+]);
+
+// Track — родительская «папка» проектов. У BD-команды: «Привлечение»,
+// «Удержание», «Отток», «Ad-hoc». У агентства: «Coca-Cola», «Beeline».
+// Спец-поля типа ИНН/договора (для клиента-агентства) живут в `properties`.
+export const tracks = pgTable(
+  "tracks",
   {
     id: text("id").primaryKey().$defaultFn(shortId),
     workspaceId: text("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
-    listId: text("list_id")
-      .notNull()
-      .references(() => outreachLists.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
-    status: outreachSequenceStatus("status").notNull().default("draft"),
+    kind: trackKind("kind").notNull().default("generic"),
+    properties: jsonb("properties")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("tracks_workspace_id_idx").on(t.workspaceId)],
+);
+
+// Stage template — переиспользуемый шаблон стадий канбана на воркспейс
+// (12.2). Юзер заводит «Привлечение» / «Размещение в TG» / «Удержание»,
+// при создании проекта выбирает шаблон, и project.stages копируется из
+// template.stages. Шаблон → проект — однонаправленное копирование, без
+// последующей синхронизации (правка шаблона не трогает существующие
+// проекты, только новые).
+//
+// Видимость: workspace-wide, все member'ы видят все шаблоны. CRUD —
+// только admin.
+export const stageTemplates = pgTable(
+  "stage_templates",
+  {
+    id: text("id").primaryKey().$defaultFn(shortId),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    stages: jsonb("stages").$type<ProjectStage[]>().notNull().default([]),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("stage_templates_workspace_id_idx").on(t.workspaceId)],
+);
+
+export type ProjectMessageDelay = {
+  // 'minutes' нужен для тестов/демо; в проде разумно 'hours'/'days'.
+  period: "minutes" | "hours" | "days";
+  value: number;
+};
+export type ProjectMessage = {
+  id: string;
+  text: string;
+  // Задержка ОТНОСИТЕЛЬНО предыдущего сообщения этого же project'а для лида.
+  // Для первого сообщения (idx=0) — относительно момента активации.
+  delay: ProjectMessageDelay;
+};
+
+// Стадия канбана проекта (12.1). У каждого проекта свой набор stages —
+// JSON-массив на projects.stages, без отдельной таблицы. lead/placement-item
+// движется по этим стадиям через project_items.stage_id (text — id из
+// json'а, без FK).
+export type ProjectStage = {
+  id: string;
+  name: string;
+  order: number;
+};
+
+// Default-набор стадий для outreach-проекта при создании, если юзер ничего
+// не указал. После создания юзер может переименовать/добавить/удалить.
+export const DEFAULT_OUTREACH_STAGES: ProjectStage[] = [
+  { id: "new", name: "Новый", order: 0 },
+  { id: "in_progress", name: "В работе", order: 1 },
+  { id: "replied", name: "Ответил", order: 2 },
+  { id: "done", name: "Закрыт", order: 3 },
+];
+
+// Project — единица работы с собственным канбаном. Outreach-проект
+// содержит цепочку сообщений + лидов; agency-проект — медиаплан размещений.
+//
+// Outreach-specific колонки (accounts_mode/messages/contact_*) валидны
+// только при kind='outreach'; для других kind'ов остаются дефолтными
+// и не используются API/worker'ом.
+export const projects = pgTable(
+  "projects",
+  {
+    id: text("id").primaryKey().$defaultFn(shortId),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    trackId: text("track_id")
+      .notNull()
+      .references(() => tracks.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    kind: projectKind("kind").notNull().default("outreach"),
+    status: projectStatus("status").notNull().default("draft"),
+    properties: jsonb("properties")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    // Стадии канбана этого проекта (12.1). Default-набор для outreach
+    // см. DEFAULT_OUTREACH_STAGES. Юзер свободно правит — ID стадий
+    // ссылочны из project_items.stage_id (без FK), удаление стадии не
+    // каскадит — карточки в удалённой стадии «сиротеют» (UI должен
+    // показать их в специальной колонке «Без стадии» либо принудительно
+    // переместить).
+    stages: jsonb("stages")
+      .$type<ProjectStage[]>()
+      .notNull()
+      .default([]),
+
+    // === outreach-specific =================================================
+
     accountsMode: outreachAccountsMode("accounts_mode").notNull().default("all"),
     accountsSelected: jsonb("accounts_selected")
       .$type<string[]>()
       .notNull()
       .default([]),
     messages: jsonb("messages")
-      .$type<OutreachSequenceMessage[]>()
+      .$type<ProjectMessage[]>()
       .notNull()
       .default([]),
-    // CRM-автоматизация: когда из лида создавать контакт + кому назначать
-    // (round-robin по списку, пусто = createdBy sequence) + какие свойства
-    // предзаполнить. Применяется в outreach-listener convertLeadToContact и
-    // в worker'е (если trigger = on-first-message-sent — вызывается из
-    // sendOne success-ветки, не дожидаясь ответа лида).
     contactCreationTrigger: contactCreationTrigger("contact_creation_trigger")
       .notNull()
       .default("on-reply"),
@@ -599,14 +604,12 @@ export const outreachSequences = pgTable(
       .$type<Record<string, unknown>>()
       .notNull()
       .default({}),
-    // Round-robin counter для contact_default_owner_ids — увеличиваем при
-    // каждом успешном create-contact из этой sequence. Хранится в БД, чтобы
-    // не сбрасываться на рестартах api.
     contactOwnerRoundRobin: integer("contact_owner_round_robin")
       .notNull()
       .default(0),
     activatedAt: timestamp("activated_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
+
     createdBy: text("created_by")
       .notNull()
       .references(() => users.id),
@@ -614,15 +617,126 @@ export const outreachSequences = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    index("outreach_sequences_workspace_id_idx").on(t.workspaceId),
-    index("outreach_sequences_list_id_idx").on(t.listId),
+    index("projects_workspace_id_idx").on(t.workspaceId),
+    index("projects_track_id_idx").on(t.trackId),
   ],
 );
 
-// Запланированное сообщение: одна строка = одна предстоящая отправка. Создаётся
-// пачкой при активации sequence (lead × message_idx). text — snapshot ПОСЛЕ
-// подстановки {{key}} переменных, чтобы редактирование sequence не порвало
-// уже запланированное.
+// Project import — история CSV-импортов в проект (для 12.5 «доливка лидов»
+// важно знать какие батчи приходили и когда). Заменяет `outreach_lists` —
+// теперь не отдельная сущность, а лог импортов проекта.
+export type ProjectImportSourceMeta = {
+  fileName?: string;
+  usernameColumn?: string;
+  phoneColumn?: string;
+  columns?: string[];
+  // Маппинг CRM-properties workspace → CSV-колонки (key = property.key,
+  // value = column header). Смапленные значения попадают в item.properties
+  // под property.key; неcмапленные CSV-колонки — под raw header (для шаблонов).
+  propertyMappings?: Record<string, string>;
+};
+
+export type ProjectImportStats = {
+  imported: number;
+  skippedMissingIdentifier: number;
+  skippedInvalidPhone: number;
+  skippedDuplicate: number;
+  // Сколько лидов узнали в существующих contacts (sticky подхватит).
+  recognized?: number;
+};
+
+export const projectImports = pgTable(
+  "project_imports",
+  {
+    id: text("id").primaryKey().$defaultFn(shortId),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    sourceMeta: jsonb("source_meta")
+      .$type<ProjectImportSourceMeta>()
+      .notNull()
+      .default({}),
+    importStats: jsonb("import_stats").$type<ProjectImportStats>(),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("project_imports_project_id_idx").on(t.projectId)],
+);
+
+// Project item — карточка на канбане проекта. Lead (контакт-в-задаче) или
+// placement (channel-в-проекте, добавится в 12.6).
+export const projectItems = pgTable(
+  "project_items",
+  {
+    id: text("id").primaryKey().$defaultFn(shortId),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    // FK на batch CSV-импорта, из которого пришёл item. NULL — item создан
+    // вручную или 12.5 доливкой без batch-меток. ON DELETE SET NULL: запись
+    // импорта могут удалить, item остаётся.
+    importId: text("import_id").references(() => projectImports.id, {
+      onDelete: "set null",
+    }),
+    kind: projectItemKind("kind").notNull().default("lead"),
+    // Текущая стадия канбана. text — id из projects.stages[*].id, без FK
+    // (stages — json на проекте). null = «без стадии»; новые лиды лучше
+    // создавать с stage_id первой стадии (см. project-imports.ts), но
+    // явно null остаётся валидным для UI «Без стадии».
+    stageId: text("stage_id"),
+
+    // === lead-specific (kind='lead') =======================================
+
+    username: text("username"),
+    phone: text("phone"),
+    tgUserId: text("tg_user_id"),
+    repliedAt: timestamp("replied_at", { withTimezone: true }),
+    contactId: text("contact_id").references(() => contacts.id, {
+      onDelete: "set null",
+    }),
+
+    properties: jsonb("properties")
+      .$type<Record<string, string>>()
+      .notNull()
+      .default({}),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("project_items_project_id_idx").on(t.projectId),
+    index("project_items_workspace_id_idx").on(t.workspaceId),
+    // Под inbound-listener: lookup `WHERE workspace_id = ? AND tg_user_id = ?`.
+    index("project_items_workspace_tg_user_id_idx").on(
+      t.workspaceId,
+      t.tgUserId,
+    ),
+    // Identity-уникальность лидов в одном проекте: username (если есть)
+    // ИЛИ phone — каждый сам по себе уникальный TG-идентификатор. Defaul
+    // dedup при доливке (12.5) использует те же ключи.
+    uniqueIndex("project_items_project_username_unique")
+      .on(t.projectId, sql`lower(${t.username})`)
+      .where(sql`${t.username} IS NOT NULL AND ${t.kind} = 'lead'`),
+    uniqueIndex("project_items_project_phone_unique")
+      .on(t.projectId, t.phone)
+      .where(
+        sql`${t.phone} IS NOT NULL AND ${t.username} IS NULL AND ${t.kind} = 'lead'`,
+      ),
+  ],
+);
+
+// Запланированное сообщение outreach-проекта: одна строка = одна предстоящая
+// отправка. Создаётся пачкой при активации проекта (item × message_idx).
+// `text` — snapshot ПОСЛЕ подстановки {{key}} переменных, чтобы редактирование
+// project.messages не порвало уже распланированное.
 //   pending → sent | failed | cancelled
 // Worker (фаза 3b) выбирает pending где sendAt <= now AND respect schedule.
 export const scheduledMessageStatus = pgEnum("scheduled_message_status", [
@@ -639,12 +753,12 @@ export const scheduledMessages = pgTable(
     workspaceId: text("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
-    sequenceId: text("sequence_id")
+    projectId: text("project_id")
       .notNull()
-      .references(() => outreachSequences.id, { onDelete: "cascade" }),
-    leadId: text("lead_id")
+      .references(() => projects.id, { onDelete: "cascade" }),
+    itemId: text("item_id")
       .notNull()
-      .references(() => outreachLeads.id, { onDelete: "cascade" }),
+      .references(() => projectItems.id, { onDelete: "cascade" }),
     accountId: text("account_id")
       .notNull()
       .references(() => outreachAccounts.id, { onDelete: "cascade" }),
@@ -662,8 +776,8 @@ export const scheduledMessages = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    index("scheduled_messages_sequence_id_idx").on(t.sequenceId),
-    index("scheduled_messages_lead_id_idx").on(t.leadId),
+    index("scheduled_messages_project_id_idx").on(t.projectId),
+    index("scheduled_messages_item_id_idx").on(t.itemId),
     // Composite-индекс под главный запрос воркера: pending по sendAt asc.
     index("scheduled_messages_worker_pick_idx").on(t.status, t.sendAt),
   ],

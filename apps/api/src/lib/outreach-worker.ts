@@ -2,8 +2,8 @@ import { and, asc, eq, gte, inArray, lte, max, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
   outreachAccounts,
-  outreachLeads,
-  outreachSequences,
+  projectItems,
+  projects,
   scheduledMessages,
   tgUsers,
   workspaces,
@@ -14,7 +14,7 @@ import {
   evictWorkerClient,
   getOutreachWorkerClient,
 } from "./outreach-account-client.ts";
-import { emitSequenceChanged } from "./outreach-events.ts";
+import { emitProjectChanged } from "./outreach-events.ts";
 import { convertLeadToContact, rememberPendingSend } from "./outreach-listener.ts";
 import { isNowInWindow, startOfDayInTz } from "./outreach-schedule.ts";
 import type { TdClient } from "./tdlib/index.ts";
@@ -112,8 +112,8 @@ async function runTick() {
   const due = await db
     .select({
       id: scheduledMessages.id,
-      sequenceId: scheduledMessages.sequenceId,
-      leadId: scheduledMessages.leadId,
+      sequenceId: scheduledMessages.projectId,
+      leadId: scheduledMessages.itemId,
       accountId: scheduledMessages.accountId,
       messageIdx: scheduledMessages.messageIdx,
       text: scheduledMessages.text,
@@ -121,13 +121,13 @@ async function runTick() {
     })
     .from(scheduledMessages)
     .innerJoin(
-      outreachSequences,
-      eq(scheduledMessages.sequenceId, outreachSequences.id),
+      projects,
+      eq(scheduledMessages.projectId, projects.id),
     )
     .where(
       and(
         eq(scheduledMessages.status, "pending"),
-        eq(outreachSequences.status, "active"),
+        eq(projects.status, "active"),
         lte(scheduledMessages.sendAt, now),
       ),
     )
@@ -223,10 +223,10 @@ async function processAccount(accountId: string, items: DueItem[]) {
 
   const leadRows = await db
     .select()
-    .from(outreachLeads)
+    .from(projectItems)
     .where(
       inArray(
-        outreachLeads.id,
+        projectItems.id,
         items.map((it) => it.leadId),
       ),
     );
@@ -243,7 +243,7 @@ async function processAccount(accountId: string, items: DueItem[]) {
         .update(scheduledMessages)
         .set({ status: "cancelled", error: "lead deleted" })
         .where(eq(scheduledMessages.id, item.id));
-      emitSequenceChanged(item.sequenceId);
+      emitProjectChanged(item.sequenceId);
       continue;
     }
 
@@ -253,13 +253,13 @@ async function processAccount(accountId: string, items: DueItem[]) {
         .set({ status: "cancelled", error: "lead replied" })
         .where(
           and(
-            eq(scheduledMessages.leadId, item.leadId),
+            eq(scheduledMessages.itemId, item.leadId),
             eq(scheduledMessages.status, "pending"),
           ),
         )
-        .returning({ sequenceId: scheduledMessages.sequenceId });
+        .returning({ sequenceId: scheduledMessages.projectId });
       for (const seqId of new Set(cancelled.map((r) => r.sequenceId))) {
-        emitSequenceChanged(seqId);
+        emitProjectChanged(seqId);
       }
       continue;
     }
@@ -287,11 +287,11 @@ async function processAccount(accountId: string, items: DueItem[]) {
       rememberPendingSend(accountId, tgChatId, tgPlaceholderId, item.id);
       if (!lead.tgUserId) {
         await db
-          .update(outreachLeads)
+          .update(projectItems)
           .set({ tgUserId })
-          .where(eq(outreachLeads.id, lead.id));
+          .where(eq(projectItems.id, lead.id));
       }
-      emitSequenceChanged(item.sequenceId);
+      emitProjectChanged(item.sequenceId);
       if (item.messageIdx === 0) {
         newLeadsRemaining--;
         lastNewLeadInTick = now.getTime();
@@ -316,7 +316,7 @@ async function processAccount(accountId: string, items: DueItem[]) {
           .update(scheduledMessages)
           .set({ sendAt: new Date(Date.now() + waitMs) })
           .where(eq(scheduledMessages.id, item.id));
-        emitSequenceChanged(item.sequenceId);
+        emitProjectChanged(item.sequenceId);
         console.warn(
           `[outreach-worker] FloodWait on account ${accountId}: ${flood}s`,
         );
@@ -336,7 +336,7 @@ async function processAccount(accountId: string, items: DueItem[]) {
           .update(scheduledMessages)
           .set({ status: "failed", error: msg })
           .where(eq(scheduledMessages.id, item.id));
-        emitSequenceChanged(item.sequenceId);
+        emitProjectChanged(item.sequenceId);
       }
     }
 
@@ -349,7 +349,7 @@ async function processAccount(accountId: string, items: DueItem[]) {
   }
 }
 
-type LeadRow = typeof outreachLeads.$inferSelect;
+type LeadRow = typeof projectItems.$inferSelect;
 
 async function sendOne(
   client: TdClient,
@@ -492,16 +492,16 @@ async function maybeCreateContactOnFirstSent(
 ): Promise<void> {
   const [seq] = await db
     .select({
-      contactCreationTrigger: outreachSequences.contactCreationTrigger,
+      contactCreationTrigger: projects.contactCreationTrigger,
     })
-    .from(outreachSequences)
-    .where(eq(outreachSequences.id, sequenceId))
+    .from(projects)
+    .where(eq(projects.id, sequenceId))
     .limit(1);
   if (!seq || seq.contactCreationTrigger !== "on-first-message-sent") return;
   const [lead] = await db
     .select()
-    .from(outreachLeads)
-    .where(eq(outreachLeads.id, leadId))
+    .from(projectItems)
+    .where(eq(projectItems.id, leadId))
     .limit(1);
   if (!lead) return;
   // Sticky НЕ передаём: это исходящее без ответа, по правилу v2 sticky
@@ -514,15 +514,15 @@ async function maybeCompleteSequence(seqId: string) {
   // и закрывает race с конкурентным INSERT'ом scheduled_messages.
   const now = new Date();
   await db
-    .update(outreachSequences)
-    .set({ status: "completed", completedAt: now, updatedAt: now })
+    .update(projects)
+    .set({ status: "done", completedAt: now, updatedAt: now })
     .where(
       and(
-        eq(outreachSequences.id, seqId),
-        eq(outreachSequences.status, "active"),
+        eq(projects.id, seqId),
+        eq(projects.status, "active"),
         sql`NOT EXISTS (
           SELECT 1 FROM ${scheduledMessages}
-          WHERE ${scheduledMessages.sequenceId} = ${seqId}
+          WHERE ${scheduledMessages.projectId} = ${seqId}
             AND ${scheduledMessages.status} = 'pending'
         )`,
       ),

@@ -6,6 +6,7 @@ import type { Channel, ImportChannelsMapping } from "@repo/core";
 import { api } from "../../../../lib/api";
 import { ChannelCard, formatMembers } from "../../../../components/channel-card";
 import { SearchInput } from "../../../../components/search-input";
+import { TruncationBanner } from "../../../../components/truncation-banner";
 import { parseCsv, type ParsedCsv } from "../../../../lib/csv";
 import { formatRelative } from "../../../../lib/date-utils";
 import { errorMessage } from "../../../../lib/errors";
@@ -223,10 +224,7 @@ function ChannelsPage() {
       )}
 
       {channelsQ.data && rows.length === PAGE_LIMIT && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          Показаны первые {PAGE_LIMIT.toLocaleString("ru-RU")} каналов. Уточните
-          поиск, чтобы увидеть остальные.
-        </div>
+        <TruncationBanner shown={PAGE_LIMIT} entity="каналов" />
       )}
 
       {channelsQ.data && (

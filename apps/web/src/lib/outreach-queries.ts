@@ -17,13 +17,13 @@ export function useOutreachAccounts(wsId: string) {
 }
 
 // Sequence detail — переиспользуется на index/accounts/leads/contact-settings.
-export function useSequence(wsId: string, seqId: string) {
+export function useProject(wsId: string, projectId: string) {
   return useQuery({
-    queryKey: OUTREACH_QK.sequence(wsId, seqId),
+    queryKey: OUTREACH_QK.project(wsId, projectId),
     queryFn: async () => {
       const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/outreach/sequences/{seqId}",
-        { params: { path: { wsId, seqId } } },
+        "/v1/workspaces/{wsId}/projects/{projectId}",
+        { params: { path: { wsId, projectId } } },
       );
       if (error) throw error;
       return data;

@@ -6,33 +6,36 @@ import { db } from "../db/client.ts";
 import {
   contactCreationTrigger,
   contacts,
+  DEFAULT_OUTREACH_STAGES,
   outreachAccounts,
   outreachAccountsMode,
-  outreachLeads,
-  outreachLists,
-  outreachSequences,
-  outreachSequenceStatus,
+  projectItems,
+  projects,
+  stageTemplates,
+  tracks,
+  projectStatus,
   scheduledMessages,
   scheduledMessageStatus,
-  type OutreachSequenceMessage,
+  type ProjectMessage,
+  type ProjectStage,
 } from "../db/schema.ts";
-import { subscribeSequence } from "../lib/outreach-events.ts";
+import { subscribeProject } from "../lib/outreach-events.ts";
 import {
-  assertSequenceAccess,
-  sequenceAccessClause,
-} from "../lib/sequences-access.ts";
+  assertProjectAccess,
+  projectAccessClause,
+} from "../lib/projects-access.ts";
 import { substituteVariables } from "../lib/substitute-variables.ts";
 import { assertRole, type WorkspaceVars } from "../middleware/assert-member.ts";
 
-// Outreach-sequence: рассылка по одному списку с N сообщениями и задержками.
+// Outreach-проект: рассылка по одному списку с N сообщениями и задержками.
 // Активация = pre-schedule всех scheduled_messages с round-robin аккаунтом и
 // snapshot'ом текста после {{}}-подстановок. Worker (фаза 3b) забирает pending
 // scheduled_messages по sendAt + расписанию workspace.
 
 const WsParam = z.object({ wsId: z.string().min(1).max(64) });
-const WsSeqParam = z.object({
+const WsProjectParam = z.object({
   wsId: z.string().min(1).max(64),
-  seqId: z.string().min(1).max(64),
+  projectId: z.string().min(1).max(64),
 });
 
 const DelaySchema = z.object({
@@ -46,16 +49,23 @@ const MessageSchema = z.object({
   delay: DelaySchema,
 });
 
-const SequenceStatusSchema = z.enum(outreachSequenceStatus.enumValues);
+const ProjectStatusSchema = z.enum(projectStatus.enumValues);
 const AccountsModeSchema = z.enum(outreachAccountsMode.enumValues);
 const ContactCreationTriggerSchema = z.enum(contactCreationTrigger.enumValues);
 
-const SequenceSchema = z
+const StageSchema = z.object({
+  id: z.string().min(1).max(64),
+  name: z.string().min(1).max(80),
+  order: z.number().int(),
+});
+
+const ProjectSchema = z
   .object({
     id: z.string(),
-    listId: z.string(),
+    trackId: z.string(),
     name: z.string(),
-    status: SequenceStatusSchema,
+    status: ProjectStatusSchema,
+    stages: z.array(StageSchema),
     accountsMode: AccountsModeSchema,
     accountsSelected: z.array(z.string()),
     messages: z.array(MessageSchema),
@@ -66,18 +76,22 @@ const SequenceSchema = z
     completedAt: z.iso.datetime().nullable(),
     createdAt: z.iso.datetime(),
   })
-  .openapi("OutreachSequence");
+  .openapi("Project");
 
-const CreateSequenceBody = z
+const CreateProjectBody = z
   .object({
-    listId: z.string().min(1).max(64),
+    trackId: z.string().min(1).max(64),
     name: z.string().min(1).max(200),
+    // Опциональный stage_template — стадии скопируются из шаблона. Если
+    // не передан, используется DEFAULT_OUTREACH_STAGES (4 стадии).
+    templateId: z.string().min(1).max(64).optional(),
   })
-  .openapi("CreateOutreachSequence");
+  .openapi("CreateProject");
 
-const UpdateSequenceBody = z
+const UpdateProjectBody = z
   .object({
     name: z.string().min(1).max(200).optional(),
+    stages: z.array(StageSchema).optional(),
     accountsMode: AccountsModeSchema.optional(),
     accountsSelected: z.array(z.string()).optional(),
     messages: z.array(MessageSchema).optional(),
@@ -85,7 +99,14 @@ const UpdateSequenceBody = z
     contactDefaultOwnerIds: z.array(z.string()).optional(),
     contactDefaults: z.record(z.string(), z.unknown()).optional(),
   })
-  .openapi("UpdateOutreachSequence");
+  .openapi("UpdateProject");
+
+const MoveItemBody = z
+  .object({
+    // null валиден — «убрать из канбана» (вернуться в «Без стадии»).
+    stageId: z.string().min(1).max(64).nullable(),
+  })
+  .openapi("MoveProjectItem");
 
 // Расширенный progress: на каждое сообщение sequence у лида либо одно
 // scheduled_messages-row (одна попытка), либо ничего (msg ещё не запланирован).
@@ -132,6 +153,9 @@ const LeadProgressSchema = z
     messages: z.array(LeadMessageProgressSchema),
     repliedAt: z.iso.datetime().nullable(),
     contactId: z.string().nullable(),
+    // Текущая стадия канбана (id из project.stages[*].id). null = «без
+    // стадии» — карточка не на канбане.
+    stageId: z.string().nullable(),
   })
   .openapi("OutreachLeadProgress");
 
@@ -140,13 +164,13 @@ const app = new OpenAPIHono<{ Variables: WorkspaceVars }>();
 app.openapi(
   createRoute({
     method: "get",
-    path: "/v1/workspaces/{wsId}/outreach/sequences",
+    path: "/v1/workspaces/{wsId}/projects",
     tags: ["outreach"],
     request: { params: WsParam },
     responses: {
       200: {
-        content: { "application/json": { schema: z.array(SequenceSchema) } },
-        description: "Sequences",
+        content: { "application/json": { schema: z.array(ProjectSchema) } },
+        description: "Projects",
       },
     },
   }),
@@ -156,29 +180,29 @@ app.openapi(
     const role = c.get("workspaceRole");
     const rows = await db
       .select()
-      .from(outreachSequences)
-      .where(sequenceAccessClause(wsId, userId, role))
-      .orderBy(asc(outreachSequences.createdAt));
-    return c.json(rows.map(serializeSequence));
+      .from(projects)
+      .where(projectAccessClause(wsId, userId, role))
+      .orderBy(asc(projects.createdAt));
+    return c.json(rows.map(serializeProject));
   },
 );
 
 app.openapi(
   createRoute({
     method: "post",
-    path: "/v1/workspaces/{wsId}/outreach/sequences",
+    path: "/v1/workspaces/{wsId}/projects",
     tags: ["outreach"],
     middleware: [assertRole("admin")] as const,
     request: {
       params: WsParam,
       body: {
-        content: { "application/json": { schema: CreateSequenceBody } },
+        content: { "application/json": { schema: CreateProjectBody } },
         required: true,
       },
     },
     responses: {
       201: {
-        content: { "application/json": { schema: SequenceSchema } },
+        content: { "application/json": { schema: ProjectSchema } },
         description: "Created",
       },
     },
@@ -187,40 +211,56 @@ app.openapi(
     const wsId = c.get("workspaceId");
     const userId = c.get("userId");
     const body = c.req.valid("json");
-    const [list] = await db
-      .select({ id: outreachLists.id })
-      .from(outreachLists)
-      .where(
-        and(
-          eq(outreachLists.id, body.listId),
-          eq(outreachLists.workspaceId, wsId),
-        ),
-      )
+    const [track] = await db
+      .select({ id: tracks.id })
+      .from(tracks)
+      .where(and(eq(tracks.id, body.trackId), eq(tracks.workspaceId, wsId)))
       .limit(1);
-    if (!list) throw new HTTPException(404, { message: "list not found" });
+    if (!track) throw new HTTPException(404, { message: "track not found" });
+
+    // Стадии: либо копия из шаблона, либо DEFAULT_OUTREACH_STAGES.
+    let initialStages: ProjectStage[] = DEFAULT_OUTREACH_STAGES;
+    if (body.templateId) {
+      const [tpl] = await db
+        .select({ stages: stageTemplates.stages })
+        .from(stageTemplates)
+        .where(
+          and(
+            eq(stageTemplates.id, body.templateId),
+            eq(stageTemplates.workspaceId, wsId),
+          ),
+        )
+        .limit(1);
+      if (!tpl) {
+        throw new HTTPException(404, { message: "template not found" });
+      }
+      initialStages = tpl.stages;
+    }
+
     const [row] = await db
-      .insert(outreachSequences)
+      .insert(projects)
       .values({
         workspaceId: wsId,
-        listId: body.listId,
+        trackId: body.trackId,
         name: body.name,
+        stages: initialStages,
         createdBy: userId,
       })
       .returning();
-    return c.json(serializeSequence(row!), 201);
+    return c.json(serializeProject(row!), 201);
   },
 );
 
 app.openapi(
   createRoute({
     method: "get",
-    path: "/v1/workspaces/{wsId}/outreach/sequences/{seqId}",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}",
     tags: ["outreach"],
-    request: { params: WsSeqParam },
+    request: { params: WsProjectParam },
     responses: {
       200: {
-        content: { "application/json": { schema: SequenceSchema } },
-        description: "Sequence",
+        content: { "application/json": { schema: ProjectSchema } },
+        description: "Project",
       },
     },
   }),
@@ -228,28 +268,28 @@ app.openapi(
     const wsId = c.get("workspaceId");
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
-    const { seqId } = c.req.valid("param");
-    const row = await assertSequenceAccess(seqId, wsId, userId, role);
-    return c.json(serializeSequence(row));
+    const { projectId } = c.req.valid("param");
+    const row = await assertProjectAccess(projectId, wsId, userId, role);
+    return c.json(serializeProject(row));
   },
 );
 
 app.openapi(
   createRoute({
     method: "patch",
-    path: "/v1/workspaces/{wsId}/outreach/sequences/{seqId}",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}",
     tags: ["outreach"],
     middleware: [assertRole("admin")] as const,
     request: {
-      params: WsSeqParam,
+      params: WsProjectParam,
       body: {
-        content: { "application/json": { schema: UpdateSequenceBody } },
+        content: { "application/json": { schema: UpdateProjectBody } },
         required: true,
       },
     },
     responses: {
       200: {
-        content: { "application/json": { schema: SequenceSchema } },
+        content: { "application/json": { schema: ProjectSchema } },
         description: "Updated",
       },
     },
@@ -258,9 +298,9 @@ app.openapi(
     const wsId = c.get("workspaceId");
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
-    const { seqId } = c.req.valid("param");
+    const { projectId } = c.req.valid("param");
     const body = c.req.valid("json");
-    const existing = await assertSequenceAccess(seqId, wsId, userId, role);
+    const existing = await assertProjectAccess(projectId, wsId, userId, role);
 
     // Snapshot-fields (зашиваются в scheduled_messages при activate) можно
     // менять только в draft. Contact-settings влияют на ещё-не-созданные
@@ -278,9 +318,12 @@ app.openapi(
     }
 
     const [row] = await db
-      .update(outreachSequences)
+      .update(projects)
       .set({
         ...(body.name !== undefined && { name: body.name }),
+        // stages можно править в любом статусе — это атрибут канбана
+        // не уходит в snapshot scheduled_messages.
+        ...(body.stages !== undefined && { stages: body.stages }),
         ...(body.accountsMode !== undefined && {
           accountsMode: body.accountsMode,
         }),
@@ -299,35 +342,35 @@ app.openapi(
         }),
         updatedAt: new Date(),
       })
-      .where(eq(outreachSequences.id, seqId))
+      .where(eq(projects.id, projectId))
       .returning();
-    return c.json(serializeSequence(row!));
+    return c.json(serializeProject(row!));
   },
 );
 
 app.openapi(
   createRoute({
     method: "delete",
-    path: "/v1/workspaces/{wsId}/outreach/sequences/{seqId}",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}",
     tags: ["outreach"],
     middleware: [assertRole("admin")] as const,
-    request: { params: WsSeqParam },
+    request: { params: WsProjectParam },
     responses: { 204: { description: "Deleted" } },
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
-    const { seqId } = c.req.valid("param");
+    const { projectId } = c.req.valid("param");
     const result = await db
-      .delete(outreachSequences)
+      .delete(projects)
       .where(
         and(
-          eq(outreachSequences.id, seqId),
-          eq(outreachSequences.workspaceId, wsId),
+          eq(projects.id, projectId),
+          eq(projects.workspaceId, wsId),
         ),
       )
-      .returning({ id: outreachSequences.id });
+      .returning({ id: projects.id });
     if (result.length === 0) {
-      throw new HTTPException(404, { message: "sequence not found" });
+      throw new HTTPException(404, { message: "project not found" });
     }
     return c.body(null, 204);
   },
@@ -336,13 +379,13 @@ app.openapi(
 app.openapi(
   createRoute({
     method: "post",
-    path: "/v1/workspaces/{wsId}/outreach/sequences/{seqId}/activate",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/activate",
     tags: ["outreach"],
     middleware: [assertRole("admin")] as const,
-    request: { params: WsSeqParam },
+    request: { params: WsProjectParam },
     responses: {
       200: {
-        content: { "application/json": { schema: SequenceSchema } },
+        content: { "application/json": { schema: ProjectSchema } },
         description: "Activated",
       },
     },
@@ -351,11 +394,11 @@ app.openapi(
     const wsId = c.get("workspaceId");
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
-    const { seqId } = c.req.valid("param");
-    const seq = await assertSequenceAccess(seqId, wsId, userId, role);
+    const { projectId } = c.req.valid("param");
+    const seq = await assertProjectAccess(projectId, wsId, userId, role);
     if (seq.status !== "draft") {
       throw new HTTPException(400, {
-        message: "Only draft sequences can be activated",
+        message: "Only draft projects can be activated",
       });
     }
     if (seq.messages.length === 0) {
@@ -388,9 +431,9 @@ app.openapi(
 
     const allLeads = await db
       .select()
-      .from(outreachLeads)
-      .where(eq(outreachLeads.listId, seq.listId))
-      .orderBy(asc(outreachLeads.createdAt));
+      .from(projectItems)
+      .where(eq(projectItems.projectId, seq.id))
+      .orderBy(asc(projectItems.createdAt));
     if (allLeads.length === 0) {
       throw new HTTPException(400, { message: "List has no leads" });
     }
@@ -432,20 +475,20 @@ app.openapi(
     if (remaining.length > 0) {
       const priors = await db
         .select({
-          tgUserId: outreachLeads.tgUserId,
+          tgUserId: projectItems.tgUserId,
           accountId: scheduledMessages.accountId,
           sentAt: scheduledMessages.sentAt,
         })
         .from(scheduledMessages)
         .innerJoin(
-          outreachLeads,
-          eq(scheduledMessages.leadId, outreachLeads.id),
+          projectItems,
+          eq(scheduledMessages.itemId, projectItems.id),
         )
         .where(
           and(
             eq(scheduledMessages.workspaceId, wsId),
             eq(scheduledMessages.status, "sent"),
-            inArray(outreachLeads.tgUserId, remaining),
+            inArray(projectItems.tgUserId, remaining),
           ),
         )
         .orderBy(desc(scheduledMessages.sentAt));
@@ -466,8 +509,8 @@ app.openapi(
       if (!prior) rrIdx++;
       return seq.messages.map((msg, msgIdx) => ({
         workspaceId: wsId,
-        sequenceId: seq.id,
-        leadId: lead.id,
+        projectId: seq.id,
+        itemId: lead.id,
         accountId,
         messageIdx: msgIdx,
         text: substituteVariables(msg.text, {
@@ -484,30 +527,30 @@ app.openapi(
       // VALUES tuple, postgres-js справляется до десятков-сотен тысяч.
       await tx.insert(scheduledMessages).values(rows);
       await tx
-        .update(outreachSequences)
+        .update(projects)
         .set({
           status: "active",
           activatedAt,
           updatedAt: new Date(),
         })
-        .where(eq(outreachSequences.id, seq.id));
+        .where(eq(projects.id, seq.id));
     });
 
-    const refreshed = await assertSequenceAccess(seqId, wsId, userId, role);
-    return c.json(serializeSequence(refreshed));
+    const refreshed = await assertProjectAccess(projectId, wsId, userId, role);
+    return c.json(serializeProject(refreshed));
   },
 );
 
 app.openapi(
   createRoute({
     method: "post",
-    path: "/v1/workspaces/{wsId}/outreach/sequences/{seqId}/pause",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/pause",
     tags: ["outreach"],
     middleware: [assertRole("admin")] as const,
-    request: { params: WsSeqParam },
+    request: { params: WsProjectParam },
     responses: {
       200: {
-        content: { "application/json": { schema: SequenceSchema } },
+        content: { "application/json": { schema: ProjectSchema } },
         description: "Paused",
       },
     },
@@ -516,35 +559,35 @@ app.openapi(
     const wsId = c.get("workspaceId");
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
-    const { seqId } = c.req.valid("param");
-    const seq = await assertSequenceAccess(seqId, wsId, userId, role);
+    const { projectId } = c.req.valid("param");
+    const seq = await assertProjectAccess(projectId, wsId, userId, role);
     if (seq.status !== "active") {
       throw new HTTPException(400, {
-        message: "Only active sequences can be paused",
+        message: "Only active projects can be paused",
       });
     }
     // Pending scheduled_messages не трогаем — worker (фаза 3b) проверит
     // sequence.status='active' при выборке. Resume вернёт sequence в active
     // и worker подтянет всё, что должно было уйти за время паузы.
     await db
-      .update(outreachSequences)
+      .update(projects)
       .set({ status: "paused", updatedAt: new Date() })
-      .where(eq(outreachSequences.id, seq.id));
-    const refreshed = await assertSequenceAccess(seqId, wsId, userId, role);
-    return c.json(serializeSequence(refreshed));
+      .where(eq(projects.id, seq.id));
+    const refreshed = await assertProjectAccess(projectId, wsId, userId, role);
+    return c.json(serializeProject(refreshed));
   },
 );
 
 app.openapi(
   createRoute({
     method: "post",
-    path: "/v1/workspaces/{wsId}/outreach/sequences/{seqId}/resume",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/resume",
     tags: ["outreach"],
     middleware: [assertRole("admin")] as const,
-    request: { params: WsSeqParam },
+    request: { params: WsProjectParam },
     responses: {
       200: {
-        content: { "application/json": { schema: SequenceSchema } },
+        content: { "application/json": { schema: ProjectSchema } },
         description: "Resumed",
       },
     },
@@ -553,31 +596,31 @@ app.openapi(
     const wsId = c.get("workspaceId");
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
-    const { seqId } = c.req.valid("param");
-    const seq = await assertSequenceAccess(seqId, wsId, userId, role);
+    const { projectId } = c.req.valid("param");
+    const seq = await assertProjectAccess(projectId, wsId, userId, role);
     if (seq.status !== "paused") {
       throw new HTTPException(400, {
-        message: "Only paused sequences can be resumed",
+        message: "Only paused projects can be resumed",
       });
     }
     await db
-      .update(outreachSequences)
+      .update(projects)
       .set({ status: "active", updatedAt: new Date() })
-      .where(eq(outreachSequences.id, seq.id));
-    const refreshed = await assertSequenceAccess(seqId, wsId, userId, role);
-    return c.json(serializeSequence(refreshed));
+      .where(eq(projects.id, seq.id));
+    const refreshed = await assertProjectAccess(projectId, wsId, userId, role);
+    return c.json(serializeProject(refreshed));
   },
 );
 
 app.openapi(
   createRoute({
     method: "get",
-    path: "/v1/workspaces/{wsId}/outreach/sequences/{seqId}/leads",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/leads",
     tags: ["outreach"],
     request: {
-      params: WsSeqParam,
+      params: WsProjectParam,
       query: z.object({
-        limit: z.coerce.number().int().min(1).max(500).default(100),
+        limit: z.coerce.number().int().min(1).max(1000).default(100),
         offset: z.coerce.number().int().min(0).default(0),
       }),
     },
@@ -601,35 +644,36 @@ app.openapi(
     const wsId = c.get("workspaceId");
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
-    const { seqId } = c.req.valid("param");
+    const { projectId } = c.req.valid("param");
     const { limit, offset } = c.req.valid("query");
-    const seq = await assertSequenceAccess(seqId, wsId, userId, role);
+    const seq = await assertProjectAccess(projectId, wsId, userId, role);
     const totalCount = seq.messages.length;
 
     // repliedAgg + leadRows независимы — параллелим. repliedCount по всему
     // списку (не пагинированному) для шапки «N ответили из M».
     const [repliedCount, leadRows] = await Promise.all([
       db.$count(
-        outreachLeads,
+        projectItems,
         and(
-          eq(outreachLeads.listId, seq.listId),
-          isNotNull(outreachLeads.repliedAt),
+          eq(projectItems.projectId, seq.id),
+          isNotNull(projectItems.repliedAt),
         ),
       ),
       db
         .select({
-          id: outreachLeads.id,
-          username: outreachLeads.username,
-          phone: outreachLeads.phone,
-          tgUserId: outreachLeads.tgUserId,
-          properties: outreachLeads.properties,
-          repliedAt: outreachLeads.repliedAt,
-          contactId: outreachLeads.contactId,
+          id: projectItems.id,
+          username: projectItems.username,
+          phone: projectItems.phone,
+          tgUserId: projectItems.tgUserId,
+          properties: projectItems.properties,
+          repliedAt: projectItems.repliedAt,
+          contactId: projectItems.contactId,
+          stageId: projectItems.stageId,
           total: sql<number>`count(*) OVER ()::int`,
         })
-        .from(outreachLeads)
-        .where(eq(outreachLeads.listId, seq.listId))
-        .orderBy(asc(outreachLeads.createdAt))
+        .from(projectItems)
+        .where(eq(projectItems.projectId, seq.id))
+        .orderBy(asc(projectItems.createdAt))
         .limit(limit)
         .offset(offset),
     ]);
@@ -644,7 +688,7 @@ app.openapi(
     // рассылается этому лиду.
     const sched = await db
       .select({
-        leadId: scheduledMessages.leadId,
+        itemId: scheduledMessages.itemId,
         accountId: scheduledMessages.accountId,
         messageIdx: scheduledMessages.messageIdx,
         status: scheduledMessages.status,
@@ -656,9 +700,9 @@ app.openapi(
       .from(scheduledMessages)
       .where(
         and(
-          eq(scheduledMessages.sequenceId, seqId),
+          eq(scheduledMessages.projectId, projectId),
           inArray(
-            scheduledMessages.leadId,
+            scheduledMessages.itemId,
             leadRows.map((l) => l.id),
           ),
         ),
@@ -667,7 +711,7 @@ app.openapi(
     // Sticky-предсказание для draft-лидов (без scheduled_messages):
     // тот же резолвер, что в /activate — гарантирует, что UI совпадёт с
     // реальным распределением при активации.
-    const byLead = Map.groupBy(sched, (s) => s.leadId);
+    const byLead = Map.groupBy(sched, (s) => s.itemId);
     const tgUserIdsNeedingSticky = leadRows
       .filter((l) => l.tgUserId && !byLead.has(l.id))
       .map((l) => l.tgUserId!);
@@ -740,9 +784,58 @@ app.openapi(
           messages,
           repliedAt: l.repliedAt?.toISOString() ?? null,
           contactId: l.contactId,
+          stageId: l.stageId,
         };
       }),
     });
+  },
+);
+
+// Перенос карточки между стадиями канбана (drag-drop). Принимает stageId
+// — id из project.stages[*].id или null (вернуть в «Без стадии»). Сервер
+// валидирует что stageId существует в текущем project.stages.
+app.openapi(
+  createRoute({
+    method: "patch",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/items/{itemId}",
+    tags: ["outreach"],
+    request: {
+      params: WsProjectParam.extend({
+        itemId: z.string().min(1).max(64),
+      }),
+      body: {
+        content: { "application/json": { schema: MoveItemBody } },
+        required: true,
+      },
+    },
+    responses: { 204: { description: "Moved" } },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const { projectId, itemId } = c.req.valid("param");
+    const { stageId } = c.req.valid("json");
+
+    const project = await assertProjectAccess(projectId, wsId, userId, role);
+    if (
+      stageId !== null &&
+      !(project.stages as ProjectStage[]).some((s) => s.id === stageId)
+    ) {
+      throw new HTTPException(400, { message: "unknown stage" });
+    }
+
+    const result = await db
+      .update(projectItems)
+      .set({ stageId })
+      .where(
+        and(eq(projectItems.id, itemId), eq(projectItems.projectId, projectId)),
+      )
+      .returning({ id: projectItems.id });
+    if (result.length === 0) {
+      throw new HTTPException(404, { message: "item not found" });
+    }
+    return c.body(null, 204);
   },
 );
 
@@ -772,10 +865,10 @@ const ViewModeSchema = z.enum(["eventDate", "sendDate"]);
 app.openapi(
   createRoute({
     method: "get",
-    path: "/v1/workspaces/{wsId}/outreach/sequences/{seqId}/analytics",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/analytics",
     tags: ["outreach"],
     request: {
-      params: WsSeqParam,
+      params: WsProjectParam,
       query: z.object({
         period: z.coerce.number().int().min(1).max(365).default(30),
         grouping: GroupingSchema.default("day"),
@@ -797,7 +890,7 @@ app.openapi(
             }),
           },
         },
-        description: "Sequence analytics aggregates + timeseries",
+        description: "Project analytics aggregates + timeseries",
       },
     },
   }),
@@ -805,7 +898,7 @@ app.openapi(
     const wsId = c.get("workspaceId");
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
-    const { seqId } = c.req.valid("param");
+    const { projectId } = c.req.valid("param");
     const { period, grouping, viewMode } = c.req.valid("query");
 
     // grouping валидирован zod'ом до 'day'/'week'/'month' — кладём inline,
@@ -814,16 +907,16 @@ app.openapi(
     // и date_trunc($2) разными expression'ами → 42803.
     const gKw = sql.raw(`'${grouping}'`);
 
-    // Параллельно: short SELECT (нужен только listId, фильтр через
-    // sequenceAccessClause — RBAC) + total-агрегаты.
+    // Параллельно: проверяем доступ к проекту через projectAccessClause +
+    // считаем total-агрегаты по scheduled_messages.
     const [seqRows, aggRows] = await Promise.all([
       db
-        .select({ listId: outreachSequences.listId })
-        .from(outreachSequences)
+        .select({ id: projects.id })
+        .from(projects)
         .where(
           and(
-            eq(outreachSequences.id, seqId),
-            sequenceAccessClause(wsId, userId, role),
+            eq(projects.id, projectId),
+            projectAccessClause(wsId, userId, role),
           ),
         )
         .limit(1),
@@ -833,19 +926,19 @@ app.openapi(
           read: sql<number>`count(*) FILTER (WHERE ${scheduledMessages.readAt} IS NOT NULL)::int`,
         })
         .from(scheduledMessages)
-        .where(eq(scheduledMessages.sequenceId, seqId)),
+        .where(eq(scheduledMessages.projectId, projectId)),
     ]);
     const seq = seqRows[0];
-    if (!seq) throw new HTTPException(404, { message: "sequence not found" });
+    if (!seq) throw new HTTPException(404, { message: "project not found" });
     const agg = aggRows[0];
 
     const [leadsAgg] = await db
       .select({
         total: sql<number>`count(*)::int`,
-        replied: sql<number>`count(*) FILTER (WHERE ${outreachLeads.repliedAt} IS NOT NULL)::int`,
+        replied: sql<number>`count(*) FILTER (WHERE ${projectItems.repliedAt} IS NOT NULL)::int`,
       })
-      .from(outreachLeads)
-      .where(eq(outreachLeads.listId, seq.listId));
+      .from(projectItems)
+      .where(eq(projectItems.projectId, seq.id));
 
     const since = new Date(Date.now() - period * 86_400_000);
 
@@ -859,7 +952,7 @@ app.openapi(
       .from(scheduledMessages)
       .where(
         and(
-          eq(scheduledMessages.sequenceId, seqId),
+          eq(scheduledMessages.projectId, projectId),
           eq(scheduledMessages.status, "sent"),
           gte(scheduledMessages.sentAt, since),
         ),
@@ -881,7 +974,7 @@ app.openapi(
       .from(scheduledMessages)
       .where(
         and(
-          eq(scheduledMessages.sequenceId, seqId),
+          eq(scheduledMessages.projectId, projectId),
           isNotNull(scheduledMessages.readAt),
           gte(
             viewMode === "sendDate"
@@ -900,25 +993,25 @@ app.openapi(
     if (viewMode === "sendDate") {
       const sub = db
         .select({
-          leadId: scheduledMessages.leadId,
+          itemId: scheduledMessages.itemId,
           firstSentAt: sql<Date>`min(${scheduledMessages.sentAt})`.as(
             "first_sent_at",
           ),
         })
         .from(scheduledMessages)
         .innerJoin(
-          outreachLeads,
-          eq(outreachLeads.id, scheduledMessages.leadId),
+          projectItems,
+          eq(projectItems.id, scheduledMessages.itemId),
         )
         .where(
           and(
-            eq(scheduledMessages.sequenceId, seqId),
+            eq(scheduledMessages.projectId, projectId),
             isNotNull(scheduledMessages.sentAt),
-            isNotNull(outreachLeads.repliedAt),
+            isNotNull(projectItems.repliedAt),
             gte(scheduledMessages.sentAt, since),
           ),
         )
-        .groupBy(scheduledMessages.leadId)
+        .groupBy(scheduledMessages.itemId)
         .as("sub");
       const subTrunc = sql`date_trunc(${gKw}, sub.first_sent_at)`;
       repliedRows = await db
@@ -929,18 +1022,18 @@ app.openapi(
         .from(sub)
         .groupBy(subTrunc);
     } else {
-      const repTrunc = sql`date_trunc(${gKw}, ${outreachLeads.repliedAt})`;
+      const repTrunc = sql`date_trunc(${gKw}, ${projectItems.repliedAt})`;
       repliedRows = await db
         .select({
           bucket: sql<Date>`${repTrunc}`,
           replied: sql<number>`count(*)::int`,
         })
-        .from(outreachLeads)
+        .from(projectItems)
         .where(
           and(
-            eq(outreachLeads.listId, seq.listId),
-            isNotNull(outreachLeads.repliedAt),
-            gte(outreachLeads.repliedAt, since),
+            eq(projectItems.projectId, seq.id),
+            isNotNull(projectItems.repliedAt),
+            gte(projectItems.repliedAt, since),
           ),
         )
         .groupBy(repTrunc);
@@ -1058,15 +1151,15 @@ const SampleLeadSchema = z
 app.openapi(
   createRoute({
     method: "get",
-    path: "/v1/workspaces/{wsId}/outreach/sequences/{seqId}/sample-lead",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/sample-lead",
     tags: ["outreach"],
-    request: { params: WsSeqParam },
+    request: { params: WsProjectParam },
     responses: {
       200: {
         content: {
           "application/json": { schema: SampleLeadSchema.nullable() },
         },
-        description: "Random lead from sequence list (or null if empty)",
+        description: "Random lead from project (or null if empty)",
       },
     },
   }),
@@ -1074,17 +1167,17 @@ app.openapi(
     const wsId = c.get("workspaceId");
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
-    const { seqId } = c.req.valid("param");
-    const seq = await assertSequenceAccess(seqId, wsId, userId, role);
+    const { projectId } = c.req.valid("param");
+    const seq = await assertProjectAccess(projectId, wsId, userId, role);
     const [row] = await db
       .select({
-        id: outreachLeads.id,
-        username: outreachLeads.username,
-        phone: outreachLeads.phone,
-        properties: outreachLeads.properties,
+        id: projectItems.id,
+        username: projectItems.username,
+        phone: projectItems.phone,
+        properties: projectItems.properties,
       })
-      .from(outreachLeads)
-      .where(eq(outreachLeads.listId, seq.listId))
+      .from(projectItems)
+      .where(eq(projectItems.projectId, seq.id))
       .orderBy(sql`random()`)
       .limit(1);
     if (!row) return c.json(null);
@@ -1127,12 +1220,13 @@ async function resolveStickyByTgUserIds(
 }
 
 
-function serializeSequence(row: typeof outreachSequences.$inferSelect) {
+function serializeProject(row: typeof projects.$inferSelect) {
   return {
     id: row.id,
-    listId: row.listId,
+    trackId: row.trackId,
     name: row.name,
     status: row.status,
+    stages: row.stages,
     accountsMode: row.accountsMode,
     accountsSelected: row.accountsSelected,
     messages: row.messages,
@@ -1145,7 +1239,7 @@ function serializeSequence(row: typeof outreachSequences.$inferSelect) {
   };
 }
 
-function cumulativeOffsetsMs(messages: OutreachSequenceMessage[]): number[] {
+function cumulativeOffsetsMs(messages: ProjectMessage[]): number[] {
   const out: number[] = [];
   let acc = 0;
   for (const m of messages) {
@@ -1179,25 +1273,25 @@ function delayToMs(delay: { period: string; value: number }): number {
 // что у openapi-роутов). EventSource шлёт cookie если withCredentials:true +
 // CORS allow-credentials в app.ts.
 app.get(
-  "/v1/workspaces/:wsId/outreach/sequences/:seqId/stream",
+  "/v1/workspaces/:wsId/projects/:projectId/stream",
   async (c) => {
     const wsId = c.get("workspaceId");
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
-    const seqId = c.req.param("seqId");
-    if (!seqId) throw new HTTPException(400, { message: "seqId required" });
+    const projectId = c.req.param("projectId");
+    if (!projectId) throw new HTTPException(400, { message: "projectId required" });
     // Verify sequence доступна юзеру до открытия стрима (RBAC).
     const [row] = await db
-      .select({ id: outreachSequences.id })
-      .from(outreachSequences)
+      .select({ id: projects.id })
+      .from(projects)
       .where(
         and(
-          eq(outreachSequences.id, seqId),
-          sequenceAccessClause(wsId, userId, role),
+          eq(projects.id, projectId),
+          projectAccessClause(wsId, userId, role),
         ),
       )
       .limit(1);
-    if (!row) throw new HTTPException(404, { message: "sequence not found" });
+    if (!row) throw new HTTPException(404, { message: "project not found" });
 
     return streamSSE(c, async (stream) => {
       let unsub = () => {};
@@ -1208,7 +1302,7 @@ app.get(
       // перетягивать. Можно было бы слать payload, но тогда сервер должен знать
       // полную форму lead-progress'а — лишнее связывание; пусть фронт читает свой
       // же endpoint.
-      unsub = subscribeSequence(seqId, () => {
+      unsub = subscribeProject(projectId, () => {
         // writeSSE может бросить если клиент уже отключился между abort'ом и
         // emit'ом — глушим, иначе unhandled rejection.
         stream.writeSSE({ event: "changed", data: "1" }).catch(() => {});

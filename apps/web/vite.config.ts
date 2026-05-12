@@ -21,7 +21,7 @@ export default defineConfig({
     exclude: ["lucide-react"],
   },
   build: {
-    rollupOptions: {
+    rolldownOptions: {
       output: {
         manualChunks(id) {
           if (id.includes("@tanstack/react-router") || id.includes("@tanstack/react-query")) {

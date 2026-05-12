@@ -19,14 +19,10 @@ type PresetSpec = {
   values?: PropertyValue[];
 };
 
-const DEFAULT_STAGE_VALUES: PropertyValue[] = [
-  { id: "lead", name: "Лид" },
-  { id: "talk", name: "Беседа" },
-  { id: "offer", name: "Предложение" },
-  { id: "deal", name: "Переговоры" },
-  { id: "won", name: "Закрыт" },
-];
-
+// `stage` preset-property удалена в 12.6: после 12.1 стадии канбана живут
+// на проекте (project.stages jsonb), а не как single_select-property
+// контакта. Старые записи property с key='stage' в существующих
+// воркспейсах безвредны — они сиротствуют и не используются.
 const PRESETS: PresetSpec[] = [
   { key: "full_name", name: "Имя", type: "text", required: true, showInList: true },
   { key: "description", name: "Описание", type: "textarea", showInList: false },
@@ -39,14 +35,6 @@ const PRESETS: PresetSpec[] = [
   { key: "tg_user_id", name: "TG ID", type: "text", showInList: false },
   { key: "url", name: "Ссылка", type: "url", showInList: false },
   { key: "amount", name: "Сумма", type: "number", showInList: true },
-  {
-    key: "stage",
-    name: "Стадия",
-    type: "single_select",
-    required: true,
-    showInList: true,
-    values: DEFAULT_STAGE_VALUES,
-  },
 ];
 
 export async function seedDefaultProperties(workspaceId: string) {

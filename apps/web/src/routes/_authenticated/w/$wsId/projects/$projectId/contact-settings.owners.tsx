@@ -1,29 +1,29 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { api } from "../../../../../../../lib/api";
-import { errorMessage } from "../../../../../../../lib/errors";
-import { BackButton } from "../../../../../../../components/back-button";
+import { api } from "../../../../../../lib/api";
+import { errorMessage } from "../../../../../../lib/errors";
+import { BackButton } from "../../../../../../components/back-button";
 import {
   Section,
   SectionItem,
   SectionItemTitle,
-} from "../../../../../../../components/section";
-import { useSequence } from "../../../../../../../lib/outreach-queries";
-import { OUTREACH_QK } from "../../../../../../../lib/query-keys";
+} from "../../../../../../components/section";
+import { useProject } from "../../../../../../lib/outreach-queries";
+import { OUTREACH_QK } from "../../../../../../lib/query-keys";
 
 export const Route = createFileRoute(
-  "/_authenticated/w/$wsId/outreach/sequences/$seqId/contact-settings/owners",
+  "/_authenticated/w/$wsId/projects/$projectId/contact-settings/owners",
 )({
   component: OwnersPage,
 });
 
 function OwnersPage() {
-  const { wsId, seqId } = Route.useParams();
+  const { wsId, projectId } = Route.useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
 
-  const seq = useSequence(wsId, seqId);
+  const seq = useProject(wsId, projectId);
 
   const members = useQuery({
     queryKey: ["workspace-members", wsId],
@@ -44,19 +44,19 @@ function OwnersPage() {
   const save = useMutation({
     mutationFn: async () => {
       const { error } = await api.PATCH(
-        "/v1/workspaces/{wsId}/outreach/sequences/{seqId}",
+        "/v1/workspaces/{wsId}/projects/{projectId}",
         {
-          params: { path: { wsId, seqId } },
+          params: { path: { wsId, projectId } },
           body: { contactDefaultOwnerIds: selected },
         },
       );
       if (error) throw error;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.sequence(wsId, seqId) });
+      qc.invalidateQueries({ queryKey: OUTREACH_QK.project(wsId, projectId) });
       navigate({
-        to: "/w/$wsId/outreach/sequences/$seqId/contact-settings",
-        params: { wsId, seqId },
+        to: "/w/$wsId/projects/$projectId/contact-settings",
+        params: { wsId, projectId },
       });
     },
   });

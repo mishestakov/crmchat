@@ -50,12 +50,9 @@ function AuthLayout() {
                   Каналы
                 </SidebarLink>
               </SidebarGroup>
-              <SidebarGroup title="Аутрич">
-                <SidebarLink to="/w/$wsId/outreach/sequences" wsId={wsId}>
-                  Задачи
-                </SidebarLink>
-                <SidebarLink to="/w/$wsId/outreach/pipeline" wsId={wsId}>
-                  Воронка
+              <SidebarGroup title="Работа">
+                <SidebarLink to="/w/$wsId/projects" wsId={wsId}>
+                  Проекты
                 </SidebarLink>
                 <SidebarLink to="/w/$wsId/outreach/chat" wsId={wsId}>
                   Чат
@@ -63,12 +60,12 @@ function AuthLayout() {
                 <SidebarLink to="/w/$wsId/outreach/accounts" wsId={wsId}>
                   Telegram-аккаунты
                 </SidebarLink>
+                <SidebarLink to="/w/$wsId/outreach/schedule" wsId={wsId}>
+                  Расписание
+                </SidebarLink>
               </SidebarGroup>
               <SidebarGroup title="Конфигурация">
-                <SidebarLink to="/w/$wsId/properties" wsId={wsId}>
-                  Кастомные поля
-                </SidebarLink>
-                <SidebarLink to="/w/$wsId/settings/workspace" wsId={wsId}>
+                <SidebarLink to="/w/$wsId/settings" wsId={wsId}>
                   Настройки
                 </SidebarLink>
               </SidebarGroup>
@@ -150,12 +147,11 @@ function SidebarLink(props: {
   to:
     | "/w/$wsId/contacts"
     | "/w/$wsId/channels"
-    | "/w/$wsId/properties"
-    | "/w/$wsId/settings/workspace"
+    | "/w/$wsId/settings"
     | "/w/$wsId/outreach/accounts"
-    | "/w/$wsId/outreach/sequences"
-    | "/w/$wsId/outreach/pipeline"
-    | "/w/$wsId/outreach/chat";
+    | "/w/$wsId/projects"
+    | "/w/$wsId/outreach/chat"
+    | "/w/$wsId/outreach/schedule";
   wsId: string;
   children: ReactNode;
 }) {

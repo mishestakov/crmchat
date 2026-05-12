@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
+import { BackButton } from "../../../../../../components/back-button";
 
 export const Route = createFileRoute(
   "/_authenticated/w/$wsId/settings/workspace/invite",
@@ -48,7 +49,7 @@ function InviteForm() {
       ? `https://t.me/${encodeURIComponent(username.trim().replace(/^@/, ""))}`
       : null;
     return (
-      <div className="mx-auto max-w-xl p-6 space-y-6">
+      <div className="space-y-3 p-6"><BackButton /><div className="mx-auto max-w-xl space-y-6">
         <h1 className="text-2xl font-semibold">Приглашение создано</h1>
         <p className="text-sm text-zinc-600">
           Отправьте эту ссылку пользователю любым удобным способом. Срок
@@ -105,12 +106,12 @@ function InviteForm() {
             К списку команды
           </Link>
         </div>
-      </div>
+      </div></div>
     );
   }
 
   return (
-    <div className="mx-auto max-w-xl p-6 space-y-6">
+    <div className="space-y-3 p-6"><BackButton /><div className="mx-auto max-w-xl space-y-6">
       <h1 className="text-2xl font-semibold">Пригласить в команду</h1>
       <form
         className="space-y-4"
@@ -175,6 +176,6 @@ function InviteForm() {
           )}
         </div>
       </form>
-    </div>
+    </div></div>
   );
 }

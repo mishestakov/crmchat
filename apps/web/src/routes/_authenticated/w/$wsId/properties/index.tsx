@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { Property } from "@repo/core";
 import { api } from "../../../../../lib/api";
 import { errorMessage } from "../../../../../lib/errors";
+import { BackButton } from "../../../../../components/back-button";
 
 export const Route = createFileRoute("/_authenticated/w/$wsId/properties/")({
   component: PropertiesList,
@@ -46,12 +47,9 @@ function PropertiesList() {
     onSettled: () => qc.invalidateQueries({ queryKey: propertiesKey(wsId) }),
   });
 
-  // Системные (internal=true) поля скрыты со страницы — юзер их не создавал и
-  // не управляет ими в обычном смысле. Исключение — `stage`: на нём строится канбан,
-  // юзер реально настраивает его опции (стадии воронки) и переименовывает.
-  const items = (list.data ?? []).filter(
-    (p) => !p.internal || p.key === "stage",
-  );
+  // Системные (internal=true) поля скрыты со страницы — юзер их не создавал
+  // и не управляет ими в обычном смысле.
+  const items = (list.data ?? []).filter((p) => !p.internal);
 
   // motion Reorder требует controlled values. Обновляем кэш React Query
   // (он же source-of-truth) → motion видит новый порядок, анимирует.
@@ -82,7 +80,9 @@ function PropertiesList() {
   };
 
   return (
-    <div className="mx-auto max-w-xl p-6 space-y-4">
+    <div className="space-y-3 p-6">
+      <BackButton />
+      <div className="mx-auto max-w-xl space-y-4">
       {list.isLoading && <p className="text-sm">Загрузка…</p>}
       {list.error && (
         <p className="text-red-600">{errorMessage(list.error)}</p>
@@ -141,6 +141,7 @@ function PropertiesList() {
           чтобы изменить порядок полей.
         </p>
       )}
+      </div>
     </div>
   );
 }
@@ -178,11 +179,6 @@ function PropertyRow(props: {
       </span>
       <div className="flex flex-1 items-center gap-2">
         <span>{props.property.name}</span>
-        {props.property.key === "stage" && (
-          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">
-            воронка
-          </span>
-        )}
       </div>
       <span className="text-2xl leading-none text-zinc-300">›</span>
     </Reorder.Item>

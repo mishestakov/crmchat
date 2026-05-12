@@ -16,20 +16,20 @@ import {
   X,
 } from "lucide-react";
 import type { paths } from "@repo/api-client";
-import { api } from "../../../../../../../lib/api";
-import { errorMessage } from "../../../../../../../lib/errors";
-import { BackButton } from "../../../../../../../components/back-button";
+import { api } from "../../../../../../lib/api";
+import { errorMessage } from "../../../../../../lib/errors";
+import { BackButton } from "../../../../../../components/back-button";
 import {
   Section,
   SectionItem,
   SectionItemTitle,
   SectionItemValue,
-} from "../../../../../../../components/section";
-import { pluralize } from "../../../../../../../lib/date-utils";
-import { useEscapeKey, useEventSourceEvent, useMyRole } from "../../../../../../../lib/hooks";
-import { useSequence } from "../../../../../../../lib/outreach-queries";
-import { OUTREACH_QK } from "../../../../../../../lib/query-keys";
-import { substituteVariables } from "../../../../../../../lib/substitute-variables";
+} from "../../../../../../components/section";
+import { pluralize } from "../../../../../../lib/date-utils";
+import { useEscapeKey, useEventSourceEvent, useMyRole } from "../../../../../../lib/hooks";
+import { useProject } from "../../../../../../lib/outreach-queries";
+import { OUTREACH_QK } from "../../../../../../lib/query-keys";
+import { substituteVariables } from "../../../../../../lib/substitute-variables";
 
 // Sequence detail — главный экран. Структура донора:
 //   Section "детали": Название (inline edit) → Статус (с кнопкой Pause/Play
@@ -39,13 +39,20 @@ import { substituteVariables } from "../../../../../../../lib/substitute-variabl
 //   Внизу: Удалить рассылку (через подтверждение).
 
 export const Route = createFileRoute(
-  "/_authenticated/w/$wsId/outreach/sequences/$seqId/",
+  "/_authenticated/w/$wsId/projects/$projectId/",
 )({
+  // ?edit=1 — флаг «не редиректить на канбан, показать редактор». Нужен
+  // чтобы с канбана можно было вернуться к настройкам/цепочке у уже
+  // запущенного проекта. Optional, чтобы callers могли навигировать без search.
+  validateSearch: (s: Record<string, unknown>): { edit?: boolean } => {
+    const edit = s.edit === "1" || s.edit === true;
+    return edit ? { edit: true } : {};
+  },
   component: SequenceDetailPage,
 });
 
 type SequenceData =
-  paths["/v1/workspaces/{wsId}/outreach/sequences/{seqId}"]["get"]["responses"][200]["content"]["application/json"];
+  paths["/v1/workspaces/{wsId}/projects/{projectId}"]["get"]["responses"][200]["content"]["application/json"];
 type Message = SequenceData["messages"][number];
 
 function newMessage(): Message {
@@ -57,20 +64,34 @@ function newMessage(): Message {
 }
 
 function SequenceDetailPage() {
-  const { wsId, seqId } = Route.useParams();
+  const { wsId, projectId } = Route.useParams();
+  const { edit } = Route.useSearch();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const isAdmin = useMyRole(wsId) === "admin";
 
-  const seq = useSequence(wsId, seqId);
+  const seq = useProject(wsId, projectId);
+
+  // После запуска проекта (status != draft) дефолт-страница = канбан.
+  // С канбана можно вернуться сюда через ?edit=1 (кнопка «Настройки»),
+  // чтобы поправить цепочку/аккаунты/удалить и т.д.
+  useEffect(() => {
+    if (!edit && seq.data && seq.data.status !== "draft") {
+      navigate({
+        to: "/w/$wsId/projects/$projectId/kanban",
+        params: { wsId, projectId },
+        replace: true,
+      });
+    }
+  }, [edit, seq.data, navigate, wsId, projectId]);
 
   const leadsQ = useQuery({
-    queryKey: OUTREACH_QK.sequenceLeads(wsId, seqId),
+    queryKey: OUTREACH_QK.projectLeads(wsId, projectId),
     queryFn: async () => {
       const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/outreach/sequences/{seqId}/leads",
+        "/v1/workspaces/{wsId}/projects/{projectId}/leads",
         {
-          params: { path: { wsId, seqId }, query: { limit: 1, offset: 0 } },
+          params: { path: { wsId, projectId }, query: { limit: 1, offset: 0 } },
         },
       );
       if (error) throw error;
@@ -79,11 +100,11 @@ function SequenceDetailPage() {
   });
 
   const analyticsQ = useQuery({
-    queryKey: OUTREACH_QK.sequenceAnalytics(wsId, seqId, 30),
+    queryKey: OUTREACH_QK.projectAnalytics(wsId, projectId, 30),
     queryFn: async () => {
       const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/outreach/sequences/{seqId}/analytics",
-        { params: { path: { wsId, seqId }, query: { period: 30 } } },
+        "/v1/workspaces/{wsId}/projects/{projectId}/analytics",
+        { params: { path: { wsId, projectId }, query: { period: 30 } } },
       );
       if (error) throw error;
       return data;
@@ -95,15 +116,15 @@ function SequenceDetailPage() {
   const needsLiveUpdates = seqStatus === "active" || seqStatus === "paused";
   useEventSourceEvent(
     needsLiveUpdates
-      ? `/v1/workspaces/${wsId}/outreach/sequences/${seqId}/stream`
+      ? `/v1/workspaces/${wsId}/projects/${projectId}/stream`
       : null,
     "changed",
     () => {
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.sequenceLeads(wsId, seqId) });
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.sequence(wsId, seqId) });
+      qc.invalidateQueries({ queryKey: OUTREACH_QK.projectLeads(wsId, projectId) });
+      qc.invalidateQueries({ queryKey: OUTREACH_QK.project(wsId, projectId) });
       qc.invalidateQueries({
         // partial-key match — accordion'и в dialog'е используют разные period/grouping/viewMode
-        queryKey: ["outreach-sequence-analytics", wsId, seqId],
+        queryKey: ["project-analytics", wsId, projectId],
       });
     },
   );
@@ -130,9 +151,9 @@ function SequenceDetailPage() {
   const save = useMutation({
     mutationFn: async (overrides?: { messages?: Message[]; name?: string }) => {
       const { data, error } = await api.PATCH(
-        "/v1/workspaces/{wsId}/outreach/sequences/{seqId}",
+        "/v1/workspaces/{wsId}/projects/{projectId}",
         {
-          params: { path: { wsId, seqId } },
+          params: { path: { wsId, projectId } },
           body: {
             name: (overrides?.name ?? name).trim(),
             messages: overrides?.messages ?? messages,
@@ -143,8 +164,8 @@ function SequenceDetailPage() {
       return data!;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.sequence(wsId, seqId) });
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.sequences(wsId) });
+      qc.invalidateQueries({ queryKey: OUTREACH_QK.project(wsId, projectId) });
+      qc.invalidateQueries({ queryKey: OUTREACH_QK.projects(wsId) });
     },
   });
 
@@ -152,58 +173,58 @@ function SequenceDetailPage() {
     mutationFn: async () => {
       await save.mutateAsync(undefined);
       const { data, error } = await api.POST(
-        "/v1/workspaces/{wsId}/outreach/sequences/{seqId}/activate",
-        { params: { path: { wsId, seqId } } },
+        "/v1/workspaces/{wsId}/projects/{projectId}/activate",
+        { params: { path: { wsId, projectId } } },
       );
       if (error) throw error;
       return data!;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.sequence(wsId, seqId) });
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.sequences(wsId) });
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.sequenceLeads(wsId, seqId) });
+      qc.invalidateQueries({ queryKey: OUTREACH_QK.project(wsId, projectId) });
+      qc.invalidateQueries({ queryKey: OUTREACH_QK.projects(wsId) });
+      qc.invalidateQueries({ queryKey: OUTREACH_QK.projectLeads(wsId, projectId) });
     },
   });
 
   const pause = useMutation({
     mutationFn: async () => {
       const { error } = await api.POST(
-        "/v1/workspaces/{wsId}/outreach/sequences/{seqId}/pause",
-        { params: { path: { wsId, seqId } } },
+        "/v1/workspaces/{wsId}/projects/{projectId}/pause",
+        { params: { path: { wsId, projectId } } },
       );
       if (error) throw error;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.sequence(wsId, seqId) });
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.sequences(wsId) });
+      qc.invalidateQueries({ queryKey: OUTREACH_QK.project(wsId, projectId) });
+      qc.invalidateQueries({ queryKey: OUTREACH_QK.projects(wsId) });
     },
   });
 
   const resume = useMutation({
     mutationFn: async () => {
       const { error } = await api.POST(
-        "/v1/workspaces/{wsId}/outreach/sequences/{seqId}/resume",
-        { params: { path: { wsId, seqId } } },
+        "/v1/workspaces/{wsId}/projects/{projectId}/resume",
+        { params: { path: { wsId, projectId } } },
       );
       if (error) throw error;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.sequence(wsId, seqId) });
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.sequences(wsId) });
+      qc.invalidateQueries({ queryKey: OUTREACH_QK.project(wsId, projectId) });
+      qc.invalidateQueries({ queryKey: OUTREACH_QK.projects(wsId) });
     },
   });
 
   const remove = useMutation({
     mutationFn: async () => {
       const { error } = await api.DELETE(
-        "/v1/workspaces/{wsId}/outreach/sequences/{seqId}",
-        { params: { path: { wsId, seqId } } },
+        "/v1/workspaces/{wsId}/projects/{projectId}",
+        { params: { path: { wsId, projectId } } },
       );
       if (error) throw error;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.sequences(wsId) });
-      navigate({ to: "/w/$wsId/outreach/sequences", params: { wsId } });
+      qc.invalidateQueries({ queryKey: OUTREACH_QK.projects(wsId) });
+      navigate({ to: "/w/$wsId/projects", params: { wsId } });
     },
   });
 
@@ -297,8 +318,8 @@ function SequenceDetailPage() {
           </SectionItem>
 
           <Link
-            to="/w/$wsId/outreach/sequences/$seqId/accounts"
-            params={{ wsId, seqId }}
+            to="/w/$wsId/projects/$projectId/accounts"
+            params={{ wsId, projectId }}
           >
             <SectionItem withChevron>
               <SectionItemTitle>Аккаунты</SectionItemTitle>
@@ -307,8 +328,8 @@ function SequenceDetailPage() {
           </Link>
 
           <Link
-            to="/w/$wsId/outreach/sequences/$seqId/contact-settings"
-            params={{ wsId, seqId }}
+            to="/w/$wsId/projects/$projectId/contact-settings"
+            params={{ wsId, projectId }}
           >
             <SectionItem withChevron>
               <SectionItemTitle>CRM-автоматизации</SectionItemTitle>
@@ -317,8 +338,8 @@ function SequenceDetailPage() {
           </Link>
 
           <Link
-            to="/w/$wsId/outreach/sequences/$seqId/leads"
-            params={{ wsId, seqId }}
+            to="/w/$wsId/projects/$projectId/leads"
+            params={{ wsId, projectId }}
           >
             <SectionItem withChevron>
               <SectionItemTitle>Контакты</SectionItemTitle>
@@ -471,7 +492,7 @@ function SequenceDetailPage() {
       {previewMsg && (
         <PreviewDialog
           wsId={wsId}
-          seqId={seqId}
+          projectId={projectId}
           message={previewMsg}
           onClose={() => setPreviewMsg(null)}
         />
@@ -480,7 +501,7 @@ function SequenceDetailPage() {
       {showAnalytics && analyticsQ.data && (
         <AnalyticsDialog
           wsId={wsId}
-          seqId={seqId}
+          projectId={projectId}
           onClose={() => setShowAnalytics(false)}
         />
       )}
@@ -522,7 +543,7 @@ function statusRu(status: string): string {
       draft: "Черновик",
       active: "Идёт",
       paused: "Пауза",
-      completed: "Завершена",
+      done: "Завершена",
     }[status] ?? status
   );
 }
@@ -718,18 +739,18 @@ function pluralizeDelayPeriod(d: Message["delay"]): string {
 
 function PreviewDialog(props: {
   wsId: string;
-  seqId: string;
+  projectId: string;
   message: Message;
   onClose: () => void;
 }) {
-  const { wsId, seqId, message } = props;
+  const { wsId, projectId, message } = props;
   const [seed, setSeed] = useState(0);
   const sampleQ = useQuery({
-    queryKey: OUTREACH_QK.sampleLead(wsId, seqId, seed),
+    queryKey: OUTREACH_QK.sampleLead(wsId, projectId, seed),
     queryFn: async () => {
       const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/outreach/sequences/{seqId}/sample-lead",
-        { params: { path: { wsId, seqId } } },
+        "/v1/workspaces/{wsId}/projects/{projectId}/sample-lead",
+        { params: { path: { wsId, projectId } } },
       );
       if (error) throw error;
       return data;
@@ -844,33 +865,33 @@ function PreviewDialog(props: {
 // ─────────────────────── Analytics Dialog ───────────────────────
 
 type AnalyticsData =
-  paths["/v1/workspaces/{wsId}/outreach/sequences/{seqId}/analytics"]["get"]["responses"][200]["content"]["application/json"];
+  paths["/v1/workspaces/{wsId}/projects/{projectId}/analytics"]["get"]["responses"][200]["content"]["application/json"];
 
 function AnalyticsDialog(props: {
   wsId: string;
-  seqId: string;
+  projectId: string;
   onClose: () => void;
 }) {
-  const { wsId, seqId } = props;
+  const { wsId, projectId } = props;
   const [period, setPeriod] = useState<7 | 30 | 90>(30);
   const [grouping, setGrouping] = useState<"day" | "week" | "month">("day");
   const [viewMode, setViewMode] = useState<"eventDate" | "sendDate">(
     "eventDate",
   );
   const dataQ = useQuery({
-    queryKey: OUTREACH_QK.sequenceAnalytics(
+    queryKey: OUTREACH_QK.projectAnalytics(
       wsId,
-      seqId,
+      projectId,
       period,
       grouping,
       viewMode,
     ),
     queryFn: async () => {
       const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/outreach/sequences/{seqId}/analytics",
+        "/v1/workspaces/{wsId}/projects/{projectId}/analytics",
         {
           params: {
-            path: { wsId, seqId },
+            path: { wsId, projectId },
             query: { period, grouping, viewMode },
           },
         },

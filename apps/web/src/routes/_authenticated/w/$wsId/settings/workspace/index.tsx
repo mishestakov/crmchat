@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
+import { BackButton } from "../../../../../../components/back-button";
 
 export const Route = createFileRoute("/_authenticated/w/$wsId/settings/workspace/")({
   component: WorkspaceSettings,
@@ -71,7 +72,9 @@ function WorkspaceSettings() {
   });
 
   return (
-    <div className="mx-auto max-w-xl p-6 space-y-8">
+    <div className="space-y-3 p-6">
+      <BackButton />
+      <div className="mx-auto max-w-xl space-y-8">
       <h1 className="text-2xl font-semibold">Настройки</h1>
 
       {ws.isLoading && <p>Загрузка…</p>}
@@ -127,6 +130,7 @@ function WorkspaceSettings() {
       {isAdmin && <PendingInvites wsId={wsId} />}
 
       {isAdmin && <DangerZone wsId={wsId} wsName={ws.data?.name ?? ""} />}
+      </div>
     </div>
   );
 }

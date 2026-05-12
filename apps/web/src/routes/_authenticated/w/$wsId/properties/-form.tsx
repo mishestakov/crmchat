@@ -93,7 +93,6 @@ export function PropertyForm(props: {
   const isValid =
     name.trim().length > 0 && (!needsValues || values.length > 0);
   const canSave = isDirty && isValid;
-  const isStage = props.initial?.key === "stage";
 
   return (
     <form
@@ -111,13 +110,6 @@ export function PropertyForm(props: {
         });
       }}
     >
-      {isStage && (
-        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          Это поле управляет канбаном. Его опции — колонки на странице
-          «Воронка».
-        </p>
-      )}
-
       <Section label="Название поля">
         <input
           autoFocus

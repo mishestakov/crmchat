@@ -9,45 +9,51 @@ import {
   Sparkles,
 } from "lucide-react";
 import type { paths } from "@repo/api-client";
-import { api } from "../../../../../../../lib/api";
-import { errorMessage } from "../../../../../../../lib/errors";
-import { BackButton } from "../../../../../../../components/back-button";
+import { api } from "../../../../../../lib/api";
+import { errorMessage } from "../../../../../../lib/errors";
+import { BackButton } from "../../../../../../components/back-button";
+import { TruncationBanner } from "../../../../../../components/truncation-banner";
 import {
   formatDateTime,
   formatRelative,
   pluralize,
-} from "../../../../../../../lib/date-utils";
-import { useSequence } from "../../../../../../../lib/outreach-queries";
-import { OUTREACH_QK } from "../../../../../../../lib/query-keys";
+} from "../../../../../../lib/date-utils";
+import { useProject } from "../../../../../../lib/outreach-queries";
+import { OUTREACH_QK } from "../../../../../../lib/query-keys";
 
 // Лиды + per-message статусы. По донор-стилю — по колонке на каждое сообщение
 // sequence, в каждой ячейке иконка ✓ / ✓✓ / 💬 / ✗ + дата. Toggle «Показать
 // CSV-данные» раскрывает дополнительные колонки из CSV-properties.
 
 export const Route = createFileRoute(
-  "/_authenticated/w/$wsId/outreach/sequences/$seqId/leads",
+  "/_authenticated/w/$wsId/projects/$projectId/leads",
 )({
   component: LeadsPage,
 });
 
+const LEADS_PAGE_LIMIT = 1000;
+
 type LeadsResponse =
-  paths["/v1/workspaces/{wsId}/outreach/sequences/{seqId}/leads"]["get"]["responses"][200]["content"]["application/json"];
+  paths["/v1/workspaces/{wsId}/projects/{projectId}/leads"]["get"]["responses"][200]["content"]["application/json"];
 type Lead = LeadsResponse["leads"][number];
 type LeadMessage = Lead["messages"][number];
 
 function LeadsPage() {
-  const { wsId, seqId } = Route.useParams();
+  const { wsId, projectId } = Route.useParams();
   const [showCsv, setShowCsv] = useState(false);
 
-  const seq = useSequence(wsId, seqId);
+  const seq = useProject(wsId, projectId);
 
   const leadsQ = useQuery({
-    queryKey: OUTREACH_QK.sequenceLeads(wsId, seqId),
+    queryKey: OUTREACH_QK.projectLeads(wsId, projectId, LEADS_PAGE_LIMIT, 0),
     queryFn: async () => {
       const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/outreach/sequences/{seqId}/leads",
+        "/v1/workspaces/{wsId}/projects/{projectId}/leads",
         {
-          params: { path: { wsId, seqId }, query: { limit: 200, offset: 0 } },
+          params: {
+            path: { wsId, projectId },
+            query: { limit: LEADS_PAGE_LIMIT, offset: 0 },
+          },
         },
       );
       if (error) throw error;
@@ -89,18 +95,34 @@ function LeadsPage() {
     <div className="space-y-3 p-6">
       <BackButton />
       <div className="mx-auto w-full max-w-6xl space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <h1 className="text-2xl font-semibold">Контакты</h1>
-          {csvKeys.length > 0 && (
-            <label className="inline-flex items-center gap-2 text-sm text-zinc-600">
-              <input
-                type="checkbox"
-                checked={showCsv}
-                onChange={(e) => setShowCsv(e.target.checked)}
-              />
-              Показать CSV-данные
-            </label>
-          )}
+          <div className="flex items-center gap-3">
+            {csvKeys.length > 0 && (
+              <label className="inline-flex items-center gap-2 text-sm text-zinc-600">
+                <input
+                  type="checkbox"
+                  checked={showCsv}
+                  onChange={(e) => setShowCsv(e.target.checked)}
+                />
+                Показать CSV-данные
+              </label>
+            )}
+            <Link
+              to="/w/$wsId/projects/$projectId/kanban"
+              params={{ wsId, projectId }}
+              className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
+            >
+              Канбан →
+            </Link>
+            <Link
+              to="/w/$wsId/projects/$projectId/import"
+              params={{ wsId, projectId }}
+              className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
+            >
+              + Подлить CSV
+            </Link>
+          </div>
         </div>
 
         <div className="text-xs text-zinc-500">
@@ -136,6 +158,13 @@ function LeadsPage() {
           <div className="rounded-2xl bg-white p-6 text-sm text-zinc-500 shadow-sm">
             В исходном списке нет лидов.
           </div>
+        )}
+        {leadsQ.data && leadsQ.data.leads.length === LEADS_PAGE_LIMIT && (
+          <TruncationBanner
+            shown={LEADS_PAGE_LIMIT}
+            total={leadsQ.data.total}
+            entity="лидов"
+          />
         )}
         {leadsQ.data && leadsQ.data.leads.length > 0 && (
           <div className="overflow-x-auto rounded-2xl bg-white shadow-sm">

@@ -2,24 +2,24 @@ import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import type { Property } from "@repo/core";
-import { api } from "../../../../../../../lib/api";
-import { errorMessage } from "../../../../../../../lib/errors";
-import { BackButton } from "../../../../../../../components/back-button";
+import { api } from "../../../../../../lib/api";
+import { errorMessage } from "../../../../../../lib/errors";
+import { BackButton } from "../../../../../../components/back-button";
 import {
   Section,
   SectionItem,
   SectionItemTitle,
   SectionItemValue,
-} from "../../../../../../../components/section";
-import { useSequence } from "../../../../../../../lib/outreach-queries";
-import { OUTREACH_QK } from "../../../../../../../lib/query-keys";
+} from "../../../../../../components/section";
+import { useProject } from "../../../../../../lib/outreach-queries";
+import { OUTREACH_QK } from "../../../../../../lib/query-keys";
 
 // CRM-автоматизации: когда лид становится контактом, кому назначается
 // (default owners — round-robin) и с какими предзаполненными свойствами.
 // Owners живут в sub-page `/owners`, defaults — в простой форме здесь.
 
 export const Route = createFileRoute(
-  "/_authenticated/w/$wsId/outreach/sequences/$seqId/contact-settings",
+  "/_authenticated/w/$wsId/projects/$projectId/contact-settings",
 )({
   component: ContactSettingsPage,
 });
@@ -27,11 +27,11 @@ export const Route = createFileRoute(
 type Trigger = "on-reply" | "on-first-message-sent";
 
 function ContactSettingsPage() {
-  const { wsId, seqId } = Route.useParams();
+  const { wsId, projectId } = Route.useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
 
-  const seq = useSequence(wsId, seqId);
+  const seq = useProject(wsId, projectId);
 
   const properties = useQuery({
     queryKey: ["properties", wsId],
@@ -84,9 +84,9 @@ function ContactSettingsPage() {
   const save = useMutation({
     mutationFn: async () => {
       const { error } = await api.PATCH(
-        "/v1/workspaces/{wsId}/outreach/sequences/{seqId}",
+        "/v1/workspaces/{wsId}/projects/{projectId}",
         {
-          params: { path: { wsId, seqId } },
+          params: { path: { wsId, projectId } },
           body: {
             contactCreationTrigger: trigger,
             contactDefaults: defaults,
@@ -97,10 +97,10 @@ function ContactSettingsPage() {
       if (error) throw error;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: OUTREACH_QK.sequence(wsId, seqId) });
+      qc.invalidateQueries({ queryKey: OUTREACH_QK.project(wsId, projectId) });
       navigate({
-        to: "/w/$wsId/outreach/sequences/$seqId",
-        params: { wsId, seqId },
+        to: "/w/$wsId/projects/$projectId",
+        params: { wsId, projectId },
       });
     },
   });
@@ -173,8 +173,8 @@ function ContactSettingsPage() {
 
         <Section header="Ответственные за лидов">
           <Link
-            to="/w/$wsId/outreach/sequences/$seqId/contact-settings/owners"
-            params={{ wsId, seqId }}
+            to="/w/$wsId/projects/$projectId/contact-settings/owners"
+            params={{ wsId, projectId }}
           >
             <SectionItem withChevron>
               <SectionItemTitle>По умолчанию</SectionItemTitle>

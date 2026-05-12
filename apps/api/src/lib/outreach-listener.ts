@@ -3,9 +3,9 @@ import { db } from "../db/client.ts";
 import {
   contacts,
   outreachAccounts,
-  outreachLeads,
-  outreachLists,
-  outreachSequences,
+  projectItems,
+  projectImports,
+  projects,
   properties as propsTable,
   scheduledMessages,
   tgUsers,
@@ -16,7 +16,7 @@ import {
 } from "./contact-properties.ts";
 import { emitContactChanged } from "./contact-events.ts";
 import { errMsg } from "./errors.ts";
-import { emitSequenceChanged } from "./outreach-events.ts";
+import { emitProjectChanged } from "./outreach-events.ts";
 import type { TdClient } from "./tdlib/index.ts";
 import { extractActiveUsername, extractFullName } from "./tdlib/td-user.ts";
 
@@ -32,7 +32,7 @@ export function rememberPendingSend(a: string, c: string, p: string, id: string)
 
 // Inbound listener: подписываем глобальный update-handler за каждый authorized
 // outreach-account TDLib-инстанс. На каждое incoming DM от человека, который у
-// нас в outreach_leads (по tg_user_id + workspace_id), помечаем `replied_at` и
+// нас в project_items (по tg_user_id + workspace_id), помечаем `replied_at` и
 // отменяем все его pending scheduled_messages во всех его sequences. Параллельно
 // зеркалим unread у contacts.
 //
@@ -184,13 +184,13 @@ async function onNewMessage(
   try {
     // Outreach-лид → отметка repliedAt + отмена pending sequence-сообщений.
     const updated = await db
-      .update(outreachLeads)
+      .update(projectItems)
       .set({ repliedAt: new Date() })
       .where(
         and(
-          eq(outreachLeads.workspaceId, workspaceId),
-          eq(outreachLeads.tgUserId, senderIdStr),
-          isNull(outreachLeads.repliedAt),
+          eq(projectItems.workspaceId, workspaceId),
+          eq(projectItems.tgUserId, senderIdStr),
+          isNull(projectItems.repliedAt),
         ),
       )
       .returning();
@@ -203,12 +203,12 @@ async function onNewMessage(
         .where(
           and(
             eq(scheduledMessages.status, "pending"),
-            inArray(scheduledMessages.leadId, leadIds),
+            inArray(scheduledMessages.itemId, leadIds),
           ),
         )
-        .returning({ sequenceId: scheduledMessages.sequenceId });
+        .returning({ sequenceId: scheduledMessages.projectId });
       for (const seqId of new Set(cancelled.map((r) => r.sequenceId))) {
-        emitSequenceChanged(seqId);
+        emitProjectChanged(seqId);
       }
       for (const lead of updated) {
         try {
@@ -366,8 +366,8 @@ async function onSendFailed(
       .update(scheduledMessages)
       .set({ status: "failed", error: errText, sentAt: null })
       .where(eq(scheduledMessages.id, id))
-      .returning({ sequenceId: scheduledMessages.sequenceId });
-    if (rows[0]) emitSequenceChanged(rows[0].sequenceId);
+      .returning({ sequenceId: scheduledMessages.projectId });
+    if (rows[0]) emitProjectChanged(rows[0].sequenceId);
   } catch (e) {
     console.error("[outreach-listener] onSendFailed:", errMsg(e));
   }
@@ -387,22 +387,22 @@ async function onReadOutbox(workspaceId: string, chatId: number): Promise<void> 
           eq(scheduledMessages.status, "sent"),
           isNull(scheduledMessages.readAt),
           inArray(
-            scheduledMessages.leadId,
+            scheduledMessages.itemId,
             db
-              .select({ id: outreachLeads.id })
-              .from(outreachLeads)
+              .select({ id: projectItems.id })
+              .from(projectItems)
               .where(
                 and(
-                  eq(outreachLeads.workspaceId, workspaceId),
-                  eq(outreachLeads.tgUserId, tgUserIdStr),
+                  eq(projectItems.workspaceId, workspaceId),
+                  eq(projectItems.tgUserId, tgUserIdStr),
                 ),
               ),
           ),
         ),
       )
-      .returning({ sequenceId: scheduledMessages.sequenceId });
+      .returning({ sequenceId: scheduledMessages.projectId });
     for (const seqId of new Set(updated.map((r) => r.sequenceId))) {
-      emitSequenceChanged(seqId);
+      emitProjectChanged(seqId);
     }
   } catch (e) {
     console.error("[outreach-listener] onReadOutbox:", errMsg(e));
@@ -411,15 +411,15 @@ async function onReadOutbox(workspaceId: string, chatId: number): Promise<void> 
 
 // convertLeadToContact:
 //   - находит contact по tg_user_id (если уже есть — переиспользует);
-//   - применяет CRM-автоматизации sequence: contactDefaults +
+//   - применяет CRM-автоматизации project'а: contactDefaults +
 //     contactDefaultOwnerIds (round-robin);
-//   - upsert'ит contactId в outreach_leads;
+//   - upsert'ит contactId в project_items;
 //   - first-write-wins sticky на primary_account_id (если accountId передан).
 //
-// sequenceId опциональный — NewMessage-ветка вызывает без контекста sequence.
+// projectId опциональный — NewMessage-ветка вызывает без контекста проекта.
 export async function convertLeadToContact(
-  lead: typeof outreachLeads.$inferSelect,
-  sequenceId?: string,
+  lead: typeof projectItems.$inferSelect,
+  projectId?: string,
   accountId?: string,
 ) {
   if (!lead.tgUserId) return;
@@ -430,45 +430,41 @@ export async function convertLeadToContact(
   );
 
   if (!contactId) {
-    const [listRows, seqRows, defs] = await Promise.all([
+    // Грузим проект через lead.projectId — даже если caller не передал
+    // projectId, нам нужен project.createdBy для FK contacts.created_by →
+    // users.id. Раньше фоллбек был на lead.workspaceId, что давало FK
+    // violation в дефолтном sad-path (listener вызывает без projectId).
+    const lookupProjectId = projectId ?? lead.projectId;
+    const [seqRows, defs] = await Promise.all([
       db
-        .select({ createdBy: outreachLists.createdBy })
-        .from(outreachLists)
-        .where(eq(outreachLists.id, lead.listId))
+        .select({
+          id: projects.id,
+          createdBy: projects.createdBy,
+          contactDefaults: projects.contactDefaults,
+          contactDefaultOwnerIds: projects.contactDefaultOwnerIds,
+          contactOwnerRoundRobin: projects.contactOwnerRoundRobin,
+        })
+        .from(projects)
+        .where(eq(projects.id, lookupProjectId))
         .limit(1),
-      sequenceId
-        ? db
-            .select({
-              id: outreachSequences.id,
-              contactDefaults: outreachSequences.contactDefaults,
-              contactDefaultOwnerIds: outreachSequences.contactDefaultOwnerIds,
-              contactOwnerRoundRobin: outreachSequences.contactOwnerRoundRobin,
-            })
-            .from(outreachSequences)
-            .where(eq(outreachSequences.id, sequenceId))
-            .limit(1)
-        : Promise.resolve([] as {
-            id: string;
-            contactDefaults: Record<string, unknown>;
-            contactDefaultOwnerIds: string[];
-            contactOwnerRoundRobin: number;
-          }[]),
       db
         .select()
         .from(propsTable)
         .where(eq(propsTable.workspaceId, lead.workspaceId)),
     ]);
-    const list = listRows[0];
-    if (!list) return;
-    const seqRow = seqRows[0] ?? null;
+    const projectRow = seqRows[0];
+    if (!projectRow) return; // race с DELETE project — пропускаем тихо
+    const projectCreatedBy = projectRow.createdBy;
+    // CRM-автоматизации (contactDefaults + owner round-robin) применяем
+    // только когда projectId был передан явно (worker on-first-sent flow).
+    // Listener-входы (с undefined) — просто создаём contact с дефолтами.
+    const seqRow = projectId ? projectRow : null;
     const safeKeys = new Set(
       defs
         .filter((d) => COPY_SAFE_PROPERTY_TYPES.has(d.type))
         .map((d) => d.key),
     );
     const allKeys = new Set(defs.map((d) => d.key));
-    const stageDef = defs.find((d) => d.key === "stage");
-    const defaultStageId = stageDef?.values?.[0]?.id;
 
     const props: Record<string, unknown> = {
       tg_user_id: lead.tgUserId,
@@ -492,10 +488,8 @@ export async function convertLeadToContact(
       if (k === "telegram_username" || k === "phone" || k === "tg_user_id") {
         continue;
       }
-      if (k === "stage") continue;
       if (safeKeys.has(k)) props[k] = v;
     }
-    if (allKeys.has("stage") && defaultStageId) props.stage = defaultStageId;
 
     if (seqRow) {
       for (const [k, v] of Object.entries(seqRow.contactDefaults)) {
@@ -509,11 +503,11 @@ export async function convertLeadToContact(
           seqRow.contactDefaultOwnerIds.length;
         props.owner_id = seqRow.contactDefaultOwnerIds[idx];
         await db
-          .update(outreachSequences)
+          .update(projects)
           .set({
-            contactOwnerRoundRobin: sql`${outreachSequences.contactOwnerRoundRobin} + 1`,
+            contactOwnerRoundRobin: sql`${projects.contactOwnerRoundRobin} + 1`,
           })
-          .where(eq(outreachSequences.id, seqRow.id));
+          .where(eq(projects.id, seqRow.id));
       }
     }
 
@@ -525,7 +519,7 @@ export async function convertLeadToContact(
         .values({
           workspaceId: lead.workspaceId,
           properties: validated,
-          createdBy: list.createdBy,
+          createdBy: projectCreatedBy,
           primaryAccountId: accountId ?? null,
         })
         .returning({ id: contacts.id });
@@ -553,9 +547,9 @@ export async function convertLeadToContact(
   }
 
   await db
-    .update(outreachLeads)
+    .update(projectItems)
     .set({ contactId })
-    .where(eq(outreachLeads.id, lead.id));
+    .where(eq(projectItems.id, lead.id));
 }
 
 async function findContactByTgUserId(
@@ -621,13 +615,13 @@ async function ensureContactFromTraffic(opts: {
     isInbound
       ? Promise.resolve(undefined)
       : db
-          .select({ id: outreachLeads.id })
-          .from(outreachLeads)
+          .select({ id: projectItems.id })
+          .from(projectItems)
           .where(
             and(
-              eq(outreachLeads.workspaceId, workspaceId),
-              eq(outreachLeads.tgUserId, peerUserId),
-              isNull(outreachLeads.contactId),
+              eq(projectItems.workspaceId, workspaceId),
+              eq(projectItems.tgUserId, peerUserId),
+              isNull(projectItems.contactId),
             ),
           )
           .limit(1)
