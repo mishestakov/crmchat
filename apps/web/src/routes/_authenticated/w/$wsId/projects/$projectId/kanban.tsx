@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { MessageCircleReply, Send, Settings, X } from "lucide-react";
+import { Send, Settings, X } from "lucide-react";
 import type { paths } from "@repo/api-client";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
@@ -11,7 +11,7 @@ import {
   type Stage,
 } from "../../../../../../components/stages-editor";
 import { TruncationBanner } from "../../../../../../components/truncation-banner";
-import { useMyRole } from "../../../../../../lib/hooks";
+import { useEventSourceEvent, useMyRole } from "../../../../../../lib/hooks";
 import { Modal } from "../../../../../../components/modal";
 import { useProject } from "../../../../../../lib/outreach-queries";
 import { OUTREACH_QK } from "../../../../../../lib/query-keys";
@@ -113,6 +113,31 @@ function KanbanPage() {
         queryKey: OUTREACH_QK.projectLeads(wsId, projectId),
       });
     },
+  });
+
+  // Живой счётчик непрочитанных: contact-stream шлёт `contact` event при каждом
+  // изменении unreadCount/lastMessageAt у любого контакта в воркспейсе. Один
+  // контакт может быть прицеплен к нескольким лидам (в разных проектах) —
+  // обновляем всех совпадающих в кэше этой страницы.
+  useEventSourceEvent<{
+    contactId: string;
+    unreadCount: number;
+    lastMessageAt: string | null;
+  }>(`/v1/workspaces/${wsId}/contact-stream`, "contact", (ev) => {
+    qc.setQueriesData<LeadsResponse>(
+      { queryKey: OUTREACH_QK.projectLeads(wsId, projectId) },
+      (prev) => {
+        if (!prev) return prev;
+        let changed = false;
+        const nextLeads = prev.leads.map((l) => {
+          if (l.contactId !== ev.contactId) return l;
+          if (l.unreadCount === ev.unreadCount) return l;
+          changed = true;
+          return { ...l, unreadCount: ev.unreadCount };
+        });
+        return changed ? { ...prev, leads: nextLeads } : prev;
+      },
+    );
   });
 
   const stages = projectQ.data?.stages ?? [];
@@ -468,7 +493,7 @@ function LeadCard(props: { lead: Lead; onOpen: () => void }) {
       : null;
   const display = fullName ?? lead.username ?? lead.phone ?? "—";
   const tg = lead.username;
-  const replied = !!lead.repliedAt;
+  const unread = lead.unreadCount;
 
   return (
     <div
@@ -482,12 +507,13 @@ function LeadCard(props: { lead: Lead; onOpen: () => void }) {
     >
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1 font-medium truncate">{display}</div>
-        {replied && (
-          <MessageCircleReply
-            size={14}
-            className="shrink-0 text-emerald-600"
-            aria-label="ответил"
-          />
+        {unread > 0 && (
+          <span
+            className="shrink-0 rounded-full bg-emerald-500 px-1.5 text-xs font-semibold leading-5 text-white"
+            title={`${unread} непрочитанных`}
+          >
+            {unread > 99 ? "99+" : unread}
+          </span>
         )}
       </div>
       {tg && (

@@ -169,6 +169,10 @@ const LeadProgressSchema = z
     messages: z.array(LeadMessageProgressSchema),
     repliedAt: z.iso.datetime().nullable(),
     contactId: z.string().nullable(),
+    // Непрочитанные входящие — счётчик с прицепленного контакта (если есть).
+    // Для лидов без contactId всегда 0. Бэйдж на канбане; синхронизация через
+    // contact-stream SSE — листенер на /kanban апдейтит лидов с этим contactId.
+    unreadCount: z.number().int(),
     // Текущая стадия канбана (id из project.stages[*].id). null = «без
     // стадии» — карточка не на канбане.
     stageId: z.string().nullable(),
@@ -730,11 +734,13 @@ app.openapi(
           properties: projectItems.properties,
           repliedAt: projectItems.repliedAt,
           contactId: projectItems.contactId,
+          unreadCount: sql<number>`coalesce(${contacts.unreadCount}, 0)::int`,
           stageId: projectItems.stageId,
           importId: projectItems.importId,
           total: sql<number>`count(*) OVER ()::int`,
         })
         .from(projectItems)
+        .leftJoin(contacts, eq(contacts.id, projectItems.contactId))
         .where(eq(projectItems.projectId, project.id))
         .orderBy(asc(projectItems.createdAt))
         .limit(limit)
@@ -848,6 +854,7 @@ app.openapi(
           messages,
           repliedAt: l.repliedAt?.toISOString() ?? null,
           contactId: l.contactId,
+          unreadCount: l.unreadCount,
           stageId: l.stageId,
           importId: l.importId,
         };

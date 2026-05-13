@@ -248,9 +248,11 @@ const TableView = memo(function TableView(props: {
                         params: { wsId: props.wsId, id: c.id },
                       });
                     }}
-                    className="flex items-center gap-2 font-medium text-zinc-900 hover:underline"
+                    className="flex min-w-0 items-center gap-2 font-medium text-zinc-900 hover:underline"
                   >
-                    <span className="truncate">{name}</span>
+                    <span className="block max-w-[280px] truncate" title={name}>
+                      {name}
+                    </span>
                     {c.unreadCount > 0 && (
                       <span className="shrink-0 rounded-full bg-emerald-500 px-1.5 text-xs font-semibold leading-5 text-white">
                         {c.unreadCount > 99 ? "99+" : c.unreadCount}

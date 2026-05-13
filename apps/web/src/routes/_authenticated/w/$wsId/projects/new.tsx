@@ -126,6 +126,12 @@ function NewProjectPage() {
     },
   });
 
+  // Если папка пришла из URL и резолвится — не показываем селект, кейс
+  // «открыл форму из tree-кнопки папки» это 99% сценарий. Селект остаётся
+  // только когда пришли без preset'а или папка из ?trackId уже удалена.
+  const presetTrack =
+    presetTrackId && tracksQ.data?.find((t) => t.id === presetTrackId);
+
   const selectedTemplate = templatesQ.data?.find((t) => t.id === templateId);
   const selectedMessageTemplate = messageTemplatesQ.data?.find(
     (t) => t.id === messageTemplateId,
@@ -140,21 +146,27 @@ function NewProjectPage() {
         <h1 className="text-xl font-semibold">Новый проект</h1>
 
         <div className="rounded-2xl bg-white p-5 shadow-sm space-y-3">
-          <label className="block">
-            <span className="mb-1 block text-sm text-zinc-600">Папка</span>
-            <select
-              value={trackId}
-              onChange={(e) => setTrackId(e.target.value)}
-              className="w-full rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
-            >
-              <option value="">— выбрать —</option>
-              {tracksQ.data?.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          {presetTrack ? (
+            <div className="text-sm text-zinc-600">
+              Папка: <span className="font-medium text-zinc-900">{presetTrack.name}</span>
+            </div>
+          ) : (
+            <label className="block">
+              <span className="mb-1 block text-sm text-zinc-600">Папка</span>
+              <select
+                value={trackId}
+                onChange={(e) => setTrackId(e.target.value)}
+                className="w-full rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+              >
+                <option value="">— выбрать —</option>
+                {tracksQ.data?.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
 
           <label className="block">
             <span className="mb-1 block text-sm text-zinc-600">Название</span>
