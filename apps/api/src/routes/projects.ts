@@ -24,6 +24,7 @@ import {
 import { contactTgUserIdSql } from "../lib/contact-sql.ts";
 import { pickDefined } from "../lib/pick-defined.ts";
 import { subscribeProject } from "../lib/outreach-events.ts";
+import { myAccountIdsSql } from "../lib/outreach-access.ts";
 import {
   assertProjectAccess,
   projectAccessClause,
@@ -715,6 +716,19 @@ app.openapi(
     const project = await assertProjectAccess(projectId, wsId, userId, role);
     const totalCount = project.messages.length;
 
+    // Фильтр лидов внутри проекта: admin видит всё, member — только лиды,
+    // у которых scheduled_messages.account_id ∈ его аккаунтов. Draft-проекты
+    // (без scheduled) member'у пустые — это OK: настройку ведёт admin, member
+    // включается после активации, когда лиды распределены.
+    const memberFilter =
+      role === "admin"
+        ? undefined
+        : sql`EXISTS (
+            SELECT 1 FROM scheduled_messages sm
+            WHERE sm.item_id = ${projectItems.id}
+              AND sm.account_id IN ${myAccountIdsSql(wsId, userId)}
+          )`;
+
     // repliedAgg + leadRows независимы — параллелим. repliedCount по всему
     // списку (не пагинированному) для шапки «N ответили из M».
     const [repliedCount, leadRows] = await Promise.all([
@@ -723,6 +737,7 @@ app.openapi(
         and(
           eq(projectItems.projectId, project.id),
           isNotNull(projectItems.repliedAt),
+          memberFilter,
         ),
       ),
       db
@@ -741,7 +756,7 @@ app.openapi(
         })
         .from(projectItems)
         .leftJoin(contacts, eq(contacts.id, projectItems.contactId))
-        .where(eq(projectItems.projectId, project.id))
+        .where(and(eq(projectItems.projectId, project.id), memberFilter))
         .orderBy(asc(projectItems.createdAt))
         .limit(limit)
         .offset(offset),

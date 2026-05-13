@@ -41,10 +41,8 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
-    const userId = c.get("userId");
-    const role = c.get("workspaceRole");
     const { contactId } = c.req.valid("param");
-    await assertContactAccess(contactId, wsId, userId, role);
+    await assertContactAccess(contactId, wsId);
     const rows = await db
       .select()
       .from(activities)
@@ -76,10 +74,9 @@ app.openapi(
   async (c) => {
     const wsId = c.get("workspaceId");
     const userId = c.get("userId");
-    const role = c.get("workspaceRole");
     const { contactId } = c.req.valid("param");
     const body = c.req.valid("json");
-    await assertContactAccess(contactId, wsId, userId, role);
+    await assertContactAccess(contactId, wsId);
 
     const [row] = await db
       .insert(activities)
@@ -119,11 +116,9 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
-    const userId = c.get("userId");
-    const role = c.get("workspaceRole");
     const { contactId, id } = c.req.valid("param");
     const body = c.req.valid("json");
-    await assertContactAccess(contactId, wsId, userId, role);
+    await assertContactAccess(contactId, wsId);
 
     const [existing] = await db
       .select()
@@ -185,10 +180,8 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
-    const userId = c.get("userId");
-    const role = c.get("workspaceRole");
     const { contactId, id } = c.req.valid("param");
-    await assertContactAccess(contactId, wsId, userId, role);
+    await assertContactAccess(contactId, wsId);
     const result = await db
       .delete(activities)
       .where(and(eq(activities.id, id), eq(activities.contactId, contactId)))

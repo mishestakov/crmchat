@@ -191,8 +191,6 @@ app.openapi(
   async (c) => {
     const { wsId } = c.req.valid("param");
     const { q } = c.req.valid("query");
-    const userId = c.get("userId");
-    const role = c.get("workspaceRole");
     // Поиск: ILIKE по title + username. Юзер вводит подстроку, regex не
     // нужен — escape '%' и '_' чтобы спецсимволы не превращали запрос в
     // wildcard'ный.
@@ -205,7 +203,7 @@ app.openapi(
     const rows = await db
       .select()
       .from(channels)
-      .where(and(channelAccessClause(wsId, userId, role), searchClause))
+      .where(and(channelAccessClause(wsId), searchClause))
       .orderBy(
         sql`${channels.memberCount} desc nulls last, ${channels.createdAt} desc`,
       )
@@ -231,9 +229,7 @@ app.openapi(
   }),
   async (c) => {
     const { wsId, id } = c.req.valid("param");
-    const userId = c.get("userId");
-    const role = c.get("workspaceRole");
-    const channel = await assertChannelAccess(id, wsId, userId, role);
+    const channel = await assertChannelAccess(id, wsId);
     const [serialized] = await joinAdmins([channel]);
     return c.json(serialized!);
   },
@@ -334,11 +330,9 @@ app.openapi(
   }),
   async (c) => {
     const { wsId, id } = c.req.valid("param");
-    const userId = c.get("userId");
-    const role = c.get("workspaceRole");
     const { contactIds } = c.req.valid("json");
 
-    const channel = await assertChannelAccess(id, wsId, userId, role);
+    const channel = await assertChannelAccess(id, wsId);
 
     // Проверяем, что все contactIds доступны юзеру (а не просто принадлежат
     // workspace'у): member не должен прилинковать к каналу контакт коллеги,
@@ -348,7 +342,7 @@ app.openapi(
       .from(contacts)
       .where(
         and(
-          contactAccessClause(wsId, userId, role),
+          contactAccessClause(wsId),
           inArray(contacts.id, contactIds),
         ),
       );
@@ -378,11 +372,9 @@ app.openapi(
   }),
   async (c) => {
     const { wsId, id, contactId } = c.req.valid("param");
-    const userId = c.get("userId");
-    const role = c.get("workspaceRole");
     // Канал должен быть доступен этому юзеру (без проверки можно было бы
     // дёрнуть DELETE по подобранному channelId, в том числе чужому).
-    await assertChannelAccess(id, wsId, userId, role);
+    await assertChannelAccess(id, wsId);
     await db
       .delete(channelAdmins)
       .where(
@@ -429,7 +421,7 @@ app.openapi(
     const { force } = c.req.valid("query");
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
-    const channel = await assertChannelAccess(id, wsId, userId, role);
+    const channel = await assertChannelAccess(id, wsId);
 
     if (channel.platform !== "telegram") {
       throw new HTTPException(400, {
@@ -615,9 +607,7 @@ app.openapi(
   }),
   async (c) => {
     const { wsId, id } = c.req.valid("param");
-    const userId = c.get("userId");
-    const role = c.get("workspaceRole");
-    const channel = await assertChannelAccess(id, wsId, userId, role);
+    const channel = await assertChannelAccess(id, wsId);
     const body = c.req.valid("json");
 
     // Юзер может ввести «@channelname» или «channelname» — нормализуем.
@@ -708,7 +698,7 @@ app.openapi(
     const { fromMessageId, limit } = c.req.valid("query");
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
-    const channel = await assertChannelAccess(id, wsId, userId, role);
+    const channel = await assertChannelAccess(id, wsId);
 
     if (channel.platform !== "telegram") {
       throw new HTTPException(400, {

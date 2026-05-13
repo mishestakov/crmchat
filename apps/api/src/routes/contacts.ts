@@ -48,7 +48,7 @@ import {
   extractFormattedText,
   extractMediaThumb,
 } from "../lib/td-message.ts";
-import type { WorkspaceVars } from "../middleware/assert-member.ts";
+import { assertRole, type WorkspaceVars } from "../middleware/assert-member.ts";
 
 // Subquery: ближайший открытый reminder для контакта. Тащим в каждый GET — чтобы
 // kanban-карточки могли показывать NextStep без N+1 запросов. Возвращает null,
@@ -142,8 +142,6 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
-    const userId = c.get("userId");
-    const role = c.get("workspaceRole");
     const { q, filters: filtersStr } = c.req.valid("query");
 
     let filters: Record<string, string> = {};
@@ -160,7 +158,7 @@ app.openapi(
       }
     }
 
-    const conditions: SQL[] = [contactAccessClause(wsId, userId, role)];
+    const conditions: SQL[] = [contactAccessClause(wsId)];
 
     if (q && q.trim()) {
       const pat = `%${q.trim()}%`;
@@ -221,10 +219,8 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
-    const userId = c.get("userId");
-    const role = c.get("workspaceRole");
     const { id } = c.req.valid("param");
-    const row = await selectOne(wsId, id, userId, role);
+    const row = await selectOne(wsId, id);
     if (!row) throw new HTTPException(404, { message: "contact not found" });
     return c.json(serialize(row));
   },
@@ -254,8 +250,6 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
-    const userId = c.get("userId");
-    const role = c.get("workspaceRole");
     const { tgUserId, username } = c.req.valid("query");
     if (!tgUserId && !username) {
       throw new HTTPException(400, {
@@ -275,7 +269,7 @@ app.openapi(
     const [row] = await db
       .select(getTableColumns(contacts))
       .from(contacts)
-      .where(and(contactAccessClause(wsId, userId, role), or(...conds)))
+      .where(and(contactAccessClause(wsId), or(...conds)))
       .limit(1);
     if (!row) throw new HTTPException(404, { message: "contact not found" });
     return c.json(
@@ -310,19 +304,17 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
-    const userId = c.get("userId");
-    const role = c.get("workspaceRole");
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
 
     if (body.properties === undefined) {
       // Нечего обновлять — возвращаем текущий контакт без записи.
-      const row = await selectOne(wsId, id, userId, role);
+      const row = await selectOne(wsId, id);
       if (!row) throw new HTTPException(404, { message: "contact not found" });
       return c.json(serialize(row));
     }
 
-    const existing = await assertContactAccess(id, wsId, userId, role);
+    const existing = await assertContactAccess(id, wsId);
 
     // null / "" / [] в body.properties → удалить ключ; остальное мерджится поверх.
     const merged = { ...existing.properties };
@@ -340,7 +332,7 @@ app.openapi(
       .update(contacts)
       .set({ properties: merged, updatedAt: new Date() })
       .where(and(eq(contacts.id, id), eq(contacts.workspaceId, wsId)));
-    const row = await selectOne(wsId, id, userId, role);
+    const row = await selectOne(wsId, id);
     if (!row) throw new HTTPException(404, { message: "contact not found" });
     return c.json(serialize(row));
   },
@@ -351,15 +343,14 @@ app.openapi(
     method: "delete",
     path: "/v1/workspaces/{wsId}/contacts/{id}",
     tags: ["contacts"],
+    middleware: [assertRole("admin")] as const,
     request: { params: WsIdParam },
     responses: { 204: { description: "Deleted" } },
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
-    const userId = c.get("userId");
-    const role = c.get("workspaceRole");
     const { id } = c.req.valid("param");
-    await assertContactAccess(id, wsId, userId, role);
+    await assertContactAccess(id, wsId);
     const result = await db
       .delete(contacts)
       .where(and(eq(contacts.id, id), eq(contacts.workspaceId, wsId)))
@@ -371,12 +362,7 @@ app.openapi(
   },
 );
 
-async function selectOne(
-  wsId: string,
-  id: string,
-  userId: string,
-  role: "admin" | "member",
-) {
+async function selectOne(wsId: string, id: string) {
   const [row] = await db
     .select({
       ...getTableColumns(contacts),
@@ -385,7 +371,7 @@ async function selectOne(
       channels: channelsSql,
     })
     .from(contacts)
-    .where(and(eq(contacts.id, id), contactAccessClause(wsId, userId, role)))
+    .where(and(eq(contacts.id, id), contactAccessClause(wsId)))
     .limit(1);
   return row;
 }
@@ -447,14 +433,12 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
-    const userId = c.get("userId");
-    const role = c.get("workspaceRole");
     const { id } = c.req.valid("param");
     const { accountId } = c.req.valid("json");
 
     // Проверка контакт-доступа: чужой контакт мы не должны помечать прочитанным
     // (он у коллеги в badge'ах висит). 404 если не виден этому юзеру.
-    await assertContactAccess(id, wsId, userId, role);
+    await assertContactAccess(id, wsId);
 
     // 1) Локальный UPDATE + emit. Главное действие — пользователь увидит сброс
     //    badge'а немедленно, остальные вкладки канбана через SSE.
@@ -614,14 +598,12 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
-    const userId = c.get("userId");
-    const role = c.get("workspaceRole");
     const { id } = c.req.valid("param");
     const { accountId, limit, before } = c.req.valid("query");
 
     // accountId намеренно НЕ валидируется по доступу (см.
     // specs/permissions.md §3 «Намеренные исключения»).
-    const contact = await assertContactAccess(id, wsId, userId, role);
+    const contact = await assertContactAccess(id, wsId);
     const props = contact.properties as Record<string, unknown>;
 
     const [acc] = await db
@@ -776,11 +758,9 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
-    const userId = c.get("userId");
-    const role = c.get("workspaceRole");
     const { id } = c.req.valid("param");
     const { accountId } = c.req.valid("json");
-    const contact = await assertContactAccess(id, wsId, userId, role);
+    const contact = await assertContactAccess(id, wsId);
     const tgUserId = (contact.properties as Record<string, unknown>).tg_user_id;
     if (typeof tgUserId !== "string") return c.json({ ok: false });
 
