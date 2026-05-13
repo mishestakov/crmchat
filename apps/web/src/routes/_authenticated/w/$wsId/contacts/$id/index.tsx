@@ -106,43 +106,10 @@ function ContactDetail() {
 
   const canOpenChat = !!defaultDrawerAccountId;
 
-  // Mark-read: дёргаем messages.ReadHistory через активный outreach-аккаунт.
-  // Бэк не обновляет БД сам — TG сервер разошлёт UpdateReadHistoryInbox на
-  // listener, тот обновит unread_count и эмитит SSE-событие, канбан моментально
-  // гасит badge во всех открытых вкладках. Оптимистично патчим cache, чтобы
-  // не ждать round-trip TG → listener → SSE (~200-500ms).
-  const markRead = useMutation({
-    mutationFn: async (accountId: string) => {
-      const { error } = await api.POST(
-        "/v1/workspaces/{wsId}/contacts/{id}/read",
-        {
-          params: { path: { wsId, id } },
-          body: { accountId },
-        },
-      );
-      if (error) throw error;
-    },
-    onMutate: () => {
-      qc.setQueriesData<Contact[]>(
-        { queryKey: ["contacts", wsId] },
-        (prev) =>
-          prev?.map((c) =>
-            c.id === id && c.unreadCount > 0 ? { ...c, unreadCount: 0 } : c,
-          ),
-      );
-      qc.setQueryData<Contact>(["contact", wsId, id], (prev) =>
-        prev && prev.unreadCount > 0 ? { ...prev, unreadCount: 0 } : prev,
-      );
-    },
-  });
-
-  const unread = contact.data?.unreadCount ?? 0;
-  useEffect(() => {
-    if (drawerAccountId && unread > 0) {
-      markRead.mutate(drawerAccountId);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drawerAccountId, unread, id]);
+  // Mark-read не дёргаем при открытии drawer'а — менеджерская privacy: peer
+  // не должен видеть «прочитано» от факта что мы посмотрели. Сообщения
+  // помечаются прочитанными только при отправке ответа (бэк quick-send
+  // вызывает viewMessages сразу после sendMessage).
 
   // Inline-сохранение одного property из view (Сумма / Стадия / custom). PATCH с
   // { properties: { key: value } } → бэк merge'ит поверх существующего. Пустое

@@ -16,6 +16,7 @@ import {
   setAccountCooldown,
 } from "../lib/outreach-account-client.ts";
 import { emitProjectChanged } from "../lib/outreach-events.ts";
+import { readOnTelegram } from "./contacts.ts";
 import type { WorkspaceVars } from "../middleware/assert-member.ts";
 
 // Quick send — ручная одиночная отправка из drawer'а контакта/лида (12.4+).
@@ -266,6 +267,13 @@ app.openapi(
           clear_draft: false,
         },
       } as never);
+
+      // Privacy-policy: помечаем прочитанным только при отправке ответа, не
+      // при просмотре. Fire-and-forget — TG потом пришлёт updateChatReadInbox
+      // → listener сбросит contacts.unread_count → SSE → бэйдж погаснет в UI.
+      void readOnTelegram(wsId, body.accountId, tgUserId).catch((e) => {
+        console.error(`[quick-send] viewMessages failed:`, errMsg(e));
+      });
     } catch (e) {
       const msg = errMsg(e);
       const flood = parseFloodWaitSeconds(msg);

@@ -27,7 +27,7 @@ import {
   assertContactAccess,
   contactAccessClause,
 } from "../lib/contacts-access.ts";
-import { emitContactChanged, subscribeContacts } from "../lib/contact-events.ts";
+import { subscribeContacts } from "../lib/contact-events.ts";
 import {
   contactTgUserIdSql,
   contactUsernameSql,
@@ -400,89 +400,7 @@ function serialize(row: ContactRow) {
   };
 }
 
-// Mark-read: (а) локально UPDATE unread=0 + emit SSE, (б) синхронизируем с TG
-// через messages.ReadHistory от имени переданного outreach-аккаунта.
-//
-// Локальный UPDATE обязателен: TG НЕ присылает UpdateReadHistoryInbox обратно
-// тому клиенту, который сам инициировал readHistory (только на ОСТАЛЬНЫЕ
-// устройства юзера). То есть наш listener эту операцию не услышит, и без
-// локального UPDATE счётчик в БД останется грязным до следующей синхронизации.
-//
-// Вызов TG — fire-and-forget после ответа (на телефоне в TG чат тоже отметится
-// прочитанным). Если упадёт — счётчик в CRM уже сброшен, на телефоне останется
-// как было. Логируем но не валим запрос.
-app.openapi(
-  createRoute({
-    method: "post",
-    path: "/v1/workspaces/{wsId}/contacts/{id}/read",
-    tags: ["contacts"],
-    request: {
-      params: WsIdParam,
-      body: {
-        content: {
-          "application/json": {
-            schema: z.object({
-              accountId: z.string().min(1).max(64),
-            }),
-          },
-        },
-        required: true,
-      },
-    },
-    responses: { 204: { description: "Marked as read" } },
-  }),
-  async (c) => {
-    const wsId = c.get("workspaceId");
-    const { id } = c.req.valid("param");
-    const { accountId } = c.req.valid("json");
-
-    // Проверка контакт-доступа: чужой контакт мы не должны помечать прочитанным
-    // (он у коллеги в badge'ах висит). 404 если не виден этому юзеру.
-    await assertContactAccess(id, wsId);
-
-    // 1) Локальный UPDATE + emit. Главное действие — пользователь увидит сброс
-    //    badge'а немедленно, остальные вкладки канбана через SSE.
-    const result = await db
-      .update(contacts)
-      .set({ unreadCount: 0 })
-      .where(
-        and(
-          eq(contacts.id, id),
-          eq(contacts.workspaceId, wsId),
-          sql`${contacts.unreadCount} > 0`,
-        ),
-      )
-      .returning({
-        id: contacts.id,
-        properties: contacts.properties,
-        lastMessageAt: contacts.lastMessageAt,
-      });
-
-    if (result.length > 0) {
-      const row = result[0]!;
-      emitContactChanged(wsId, {
-        contactId: row.id,
-        unreadCount: 0,
-        lastMessageAt: row.lastMessageAt?.toISOString() ?? null,
-      });
-
-      // 2) Синхронизация с TG — fire-and-forget. Не ждём ответ TG чтобы фронт
-      //    не висел на сетевом round-trip MTProto.
-      const tgUserId = (row.properties as Record<string, unknown>).tg_user_id;
-      if (typeof tgUserId === "string") {
-        void readOnTelegram(wsId, accountId, tgUserId).catch((e) => {
-          console.error(
-            `[contacts/read] TG sync failed (contact=${id}):`,
-            errMsg(e),
-          );
-        });
-      }
-    }
-    return c.body(null, 204);
-  },
-);
-
-async function readOnTelegram(
+export async function readOnTelegram(
   wsId: string,
   accountId: string,
   tgUserId: string,
