@@ -5,7 +5,6 @@ import {
   outreachAccounts,
   projectItems,
   projectImports,
-  projects,
   properties as propsTable,
   scheduledMessages,
   tgChats,
@@ -44,14 +43,6 @@ export function rememberPendingSend(a: string, c: string, p: string, id: string)
 // tg_user_id у лида заполняется воркером после первой успешной отправки. Если
 // лид нам ещё не написан — нет tgUserId — нет матча. «остановить sequence на
 // ответ» имеет смысл только когда мы УЖЕ что-то послали.
-
-const COPY_SAFE_PROPERTY_TYPES = new Set([
-  "text",
-  "textarea",
-  "tel",
-  "url",
-  "user_select",
-]);
 
 function isUniqueViolation(e: unknown): boolean {
   return (e as { code?: string } | null)?.code === "23505";
@@ -236,23 +227,10 @@ async function onNewMessage(
       for (const projectId of new Set(cancelled.map((r) => r.projectId))) {
         emitProjectChanged(projectId);
       }
-      // Когда несколько лидов ответили одним батчем (групповая рассылка),
-      // загружаем propsTable один раз и переиспользуем в каждом convert.
-      const propsDefs = await db
-        .select()
-        .from(propsTable)
-        .where(eq(propsTable.workspaceId, workspaceId));
-      await Promise.all(
-        updated.map((lead) =>
-          convertLeadToContact(lead, undefined, accountId, propsDefs).catch(
-            (e) =>
-              console.error(
-                `[outreach-listener] convert lead ${lead.id}:`,
-                errMsg(e),
-              ),
-          ),
-        ),
-      );
+      // После 5A: contact уже создан на импорте, lead.contactId заполнен.
+      // Sticky на тот аккаунт, на который peer ответил, ставится одним
+      // UPDATE'ом ниже по contacts.tg_user_id — отдельный convertLeadToContact
+      // не нужен.
     }
 
     // unread_count поверх contacts держит onReadInbox: TG на каждое incoming
@@ -500,152 +478,6 @@ async function onReadOutbox(
   } catch (e) {
     console.error("[outreach-listener] onReadOutbox:", errMsg(e));
   }
-}
-
-// convertLeadToContact:
-//   - находит contact по tg_user_id (если уже есть — переиспользует);
-//   - применяет CRM-автоматизации project'а: contactDefaults +
-//     contactDefaultOwnerIds (round-robin);
-//   - upsert'ит contactId в project_items;
-//   - first-write-wins sticky на primary_account_id (если accountId передан).
-//
-// projectId опциональный — NewMessage-ветка вызывает без контекста проекта.
-export async function convertLeadToContact(
-  lead: typeof projectItems.$inferSelect,
-  projectId?: string,
-  accountId?: string,
-  cachedPropsDefs?: (typeof propsTable.$inferSelect)[],
-) {
-  if (!lead.tgUserId) return;
-
-  let contactId = await findContactByTgUserId(
-    lead.workspaceId,
-    lead.tgUserId,
-  );
-
-  if (!contactId) {
-    // Грузим проект через lead.projectId — даже если caller не передал
-    // projectId, нам нужен project.createdBy для FK contacts.created_by →
-    // users.id. Раньше фоллбек был на lead.workspaceId, что давало FK
-    // violation в дефолтном sad-path (listener вызывает без projectId).
-    const lookupProjectId = projectId ?? lead.projectId;
-    const [seqRows, defs] = await Promise.all([
-      db
-        .select({
-          id: projects.id,
-          createdBy: projects.createdBy,
-          contactDefaults: projects.contactDefaults,
-          contactDefaultOwnerIds: projects.contactDefaultOwnerIds,
-          contactOwnerRoundRobin: projects.contactOwnerRoundRobin,
-        })
-        .from(projects)
-        .where(eq(projects.id, lookupProjectId))
-        .limit(1),
-      cachedPropsDefs
-        ? Promise.resolve(cachedPropsDefs)
-        : db
-            .select()
-            .from(propsTable)
-            .where(eq(propsTable.workspaceId, lead.workspaceId)),
-    ]);
-    const projectRow = seqRows[0];
-    if (!projectRow) return; // race с DELETE project — пропускаем тихо
-    const projectCreatedBy = projectRow.createdBy;
-    // CRM-автоматизации (contactDefaults + owner round-robin) применяем
-    // только когда projectId был передан явно (worker on-first-sent flow).
-    // Listener-входы (с undefined) — просто создаём contact с дефолтами.
-    const seqRow = projectId ? projectRow : null;
-    const safeKeys = new Set(
-      defs
-        .filter((d) => COPY_SAFE_PROPERTY_TYPES.has(d.type))
-        .map((d) => d.key),
-    );
-    const allKeys = new Set(defs.map((d) => d.key));
-
-    const props: Record<string, unknown> = {
-      tg_user_id: lead.tgUserId,
-    };
-    if (safeKeys.has("telegram_username") && lead.username) {
-      props.telegram_username = lead.username;
-    }
-    if (safeKeys.has("phone") && lead.phone) {
-      props.phone = lead.phone;
-    }
-    const fullName =
-      (typeof lead.properties.full_name === "string"
-        ? lead.properties.full_name
-        : "") ||
-      lead.username ||
-      lead.phone ||
-      "Без имени";
-    if (safeKeys.has("full_name")) props.full_name = fullName;
-    for (const [k, v] of Object.entries(lead.properties)) {
-      if (k === "full_name") continue;
-      if (k === "telegram_username" || k === "phone" || k === "tg_user_id") {
-        continue;
-      }
-      if (safeKeys.has(k)) props[k] = v;
-    }
-
-    if (seqRow) {
-      for (const [k, v] of Object.entries(seqRow.contactDefaults)) {
-        if (props[k] === undefined && allKeys.has(k)) {
-          props[k] = v;
-        }
-      }
-      if (seqRow.contactDefaultOwnerIds.length > 0 && allKeys.has("owner_id")) {
-        const idx =
-          seqRow.contactOwnerRoundRobin %
-          seqRow.contactDefaultOwnerIds.length;
-        props.owner_id = seqRow.contactDefaultOwnerIds[idx];
-        await db
-          .update(projects)
-          .set({
-            contactOwnerRoundRobin: sql`${projects.contactOwnerRoundRobin} + 1`,
-          })
-          .where(eq(projects.id, seqRow.id));
-      }
-    }
-
-    const validated = validateContactProperties(defs, props);
-
-    try {
-      const [created] = await db
-        .insert(contacts)
-        .values({
-          workspaceId: lead.workspaceId,
-          properties: validated,
-          createdBy: projectCreatedBy,
-          primaryAccountId: accountId ?? null,
-        })
-        .returning({ id: contacts.id });
-      contactId = created!.id;
-      emitContactChanged(lead.workspaceId, {
-        contactId,
-        unreadCount: 0,
-        lastMessageAt: null,
-      });
-    } catch (e) {
-      if (!isUniqueViolation(e)) throw e;
-      contactId = await findContactByTgUserId(
-        lead.workspaceId,
-        lead.tgUserId,
-      );
-      if (!contactId) throw e;
-    }
-  } else if (accountId) {
-    await db
-      .update(contacts)
-      .set({ primaryAccountId: accountId })
-      .where(
-        and(eq(contacts.id, contactId), isNull(contacts.primaryAccountId)),
-      );
-  }
-
-  await db
-    .update(projectItems)
-    .set({ contactId })
-    .where(eq(projectItems.id, lead.id));
 }
 
 async function findContactByTgUserId(

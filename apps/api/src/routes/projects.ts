@@ -24,8 +24,6 @@ import {
 import { contactTgUserIdSql } from "../lib/contact-sql.ts";
 import { pickDefined } from "../lib/pick-defined.ts";
 import { subscribeProject } from "../lib/outreach-events.ts";
-import { ensureLeadTgUserId } from "../lib/ensure-lead-tg-user-id.ts";
-import { getOutreachWorkerClient } from "../lib/outreach-account-client.ts";
 import { myAccountIdsSql } from "../lib/outreach-access.ts";
 import {
   assertProjectAccess,
@@ -925,87 +923,6 @@ app.openapi(
       throw new HTTPException(404, { message: "item not found" });
     }
     return c.body(null, 204);
-  },
-);
-
-// Lazy-резолв tg_user_id для лида с известным @username — нужен, чтобы quick
-// send drawer на /leads и канбане открылся даже если peer ещё не отвечал
-// и worker до него не дошёл. searchPublicChat идёт через любой active
-// outreach-аккаунт воркспейса (TG-search не зависит от auth-аккаунта).
-app.openapi(
-  createRoute({
-    method: "post",
-    path: "/v1/workspaces/{wsId}/projects/{projectId}/leads/{leadId}/resolve-tg",
-    tags: ["outreach"],
-    request: {
-      params: WsProjectParam.extend({
-        leadId: z.string().min(1).max(64),
-      }),
-    },
-    responses: {
-      200: {
-        content: {
-          "application/json": {
-            schema: z.object({ tgUserId: z.string().nullable() }),
-          },
-        },
-        description: "Resolved tg_user_id (null если @ приватный/удалённый)",
-      },
-    },
-  }),
-  async (c) => {
-    const wsId = c.get("workspaceId");
-    const userId = c.get("userId");
-    const role = c.get("workspaceRole");
-    const { projectId, leadId } = c.req.valid("param");
-    await assertProjectAccess(projectId, wsId, userId, role);
-
-    const [lead] = await db
-      .select({
-        id: projectItems.id,
-        username: projectItems.username,
-        tgUserId: projectItems.tgUserId,
-      })
-      .from(projectItems)
-      .where(
-        and(eq(projectItems.id, leadId), eq(projectItems.projectId, projectId)),
-      )
-      .limit(1);
-    if (!lead) throw new HTTPException(404, { message: "lead not found" });
-    if (lead.tgUserId) return c.json({ tgUserId: lead.tgUserId });
-    if (!lead.username) {
-      return c.json({ tgUserId: null });
-    }
-
-    const [acc] = await db
-      .select({ id: outreachAccounts.id })
-      .from(outreachAccounts)
-      .where(
-        and(
-          eq(outreachAccounts.workspaceId, wsId),
-          eq(outreachAccounts.status, "active"),
-        ),
-      )
-      .limit(1);
-    if (!acc) {
-      throw new HTTPException(503, { message: "no active outreach account" });
-    }
-
-    const client = await getOutreachWorkerClient({
-      id: acc.id,
-      workspaceId: wsId,
-    });
-    if (!client) {
-      throw new HTTPException(503, { message: "tg client unavailable" });
-    }
-
-    const tgUserId = await ensureLeadTgUserId({
-      leadId: lead.id,
-      username: lead.username,
-      tgUserId: null,
-      client,
-    });
-    return c.json({ tgUserId });
   },
 );
 

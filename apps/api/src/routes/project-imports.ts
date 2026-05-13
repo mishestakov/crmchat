@@ -1,19 +1,23 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { and, asc, eq, inArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
   contacts,
   projectImports,
   projectItems,
+  projects,
   scheduledMessages,
   type ProjectStage,
 } from "../db/schema.ts";
 import {
-  contactPhoneSql,
   contactTgUserIdSql,
   contactUsernameLowerSql,
 } from "../lib/contact-sql.ts";
+import {
+  loadPropertyDefs,
+  validateContactProperties,
+} from "../lib/contact-properties.ts";
 import { assertProjectAccess } from "../lib/projects-access.ts";
 import {
   buildScheduledRows,
@@ -221,51 +225,137 @@ app.openapi(
       candidates.push({ username, phone, properties });
     }
 
-    // Pre-resolve sticky: лезем в contacts по username/phone и копируем
-    // tg_user_id в lead. Без этого sticky-резолвер при активации проекта
-    // не находит знакомых (он ходит через project_items.tg_user_id), и
-    // первая активация уходит в round-robin даже для импортированных
-    // собеседников.
-    const usernames = candidates
-      .map((c) => c.username)
-      .filter((x): x is string => x !== null);
-    const phones = candidates
-      .map((c) => c.phone)
-      .filter((x): x is string => x !== null);
+    // Eager-конверсия: лид всегда указывает на contact. Сейчас ищем
+    // существующие контакты по @username (lower), для незнакомых создаём
+    // stub-контакты (без tg_user_id — он подтянется через
+    // ensureContactTgUserId при первом открытии drawer'а или send'е).
+    // Stub'ы получают contactDefaults и owner round-robin проекта.
+    const usernames = candidates.map((c) => c.username);
 
-    const tgByUsername = new Map<string, string>();
-    const tgByPhone = new Map<string, string>();
-    if (usernames.length > 0 || phones.length > 0) {
-      const conds: SQL[] = [];
-      if (usernames.length > 0) {
-        conds.push(inArray(contactUsernameLowerSql, usernames));
+    const known =
+      usernames.length > 0
+        ? await db
+            .select({
+              id: contacts.id,
+              tgUserId: contactTgUserIdSql,
+              username: contactUsernameLowerSql,
+            })
+            .from(contacts)
+            .where(
+              and(
+                eq(contacts.workspaceId, wsId),
+                inArray(contactUsernameLowerSql, usernames),
+              ),
+            )
+        : [];
+    const contactByUsername = new Map<
+      string,
+      { id: string; tgUserId: string | null }
+    >();
+    for (const k of known) {
+      if (k.username) {
+        contactByUsername.set(k.username, { id: k.id, tgUserId: k.tgUserId });
       }
-      if (phones.length > 0) {
-        conds.push(inArray(contactPhoneSql, phones));
-      }
-      const known = await db
-        .select({
-          tgUserId: contactTgUserIdSql,
+    }
+    const recognized = [...contactByUsername.values()].filter(
+      (c) => c.tgUserId !== null,
+    ).length;
+
+    const missingUsernames = candidates
+      .filter((c) => !contactByUsername.has(c.username))
+      .map((c) => c.username);
+
+    if (missingUsernames.length > 0) {
+      const defs = await loadPropertyDefs(wsId);
+      const allKeys = new Set(defs.map((d) => d.key));
+      const projectDefaults =
+        (project.contactDefaults as Record<string, unknown>) ?? {};
+      const ownerIds = project.contactDefaultOwnerIds as string[];
+      const rrStart = project.contactOwnerRoundRobin;
+      const projectCreatedBy = project.createdBy;
+
+      const stubRows = missingUsernames.map((username, idx) => {
+        const props: Record<string, unknown> = { telegram_username: username };
+        if (allKeys.has("full_name")) props.full_name = `@${username}`;
+        for (const [k, v] of Object.entries(projectDefaults)) {
+          if (props[k] === undefined && allKeys.has(k)) props[k] = v;
+        }
+        if (ownerIds.length > 0 && allKeys.has("owner_id")) {
+          props.owner_id = ownerIds[(rrStart + idx) % ownerIds.length];
+        }
+        return {
+          workspaceId: wsId,
+          properties: validateContactProperties(defs, props),
+          createdBy: projectCreatedBy,
+        };
+      });
+
+      // ON CONFLICT по партиальному unique (workspace, lower(@username)) — если
+      // параллельный импорт уже вставил тот же @, проглатываем и подтянем
+      // contactId через re-fetch ниже.
+      const inserted = await db
+        .insert(contacts)
+        .values(stubRows)
+        .onConflictDoNothing()
+        .returning({
+          id: contacts.id,
           username: contactUsernameLowerSql,
-          phone: contactPhoneSql,
-        })
-        .from(contacts)
-        .where(and(eq(contacts.workspaceId, wsId), or(...conds)));
-      for (const k of known) {
-        if (!k.tgUserId) continue;
-        if (k.username) tgByUsername.set(k.username, k.tgUserId);
-        if (k.phone) tgByPhone.set(k.phone, k.tgUserId);
+          tgUserId: contactTgUserIdSql,
+        });
+      for (const s of inserted) {
+        if (s.username) {
+          contactByUsername.set(s.username, {
+            id: s.id,
+            tgUserId: s.tgUserId,
+          });
+        }
+      }
+      const stillMissing = missingUsernames.filter(
+        (u) => !contactByUsername.has(u),
+      );
+      if (stillMissing.length > 0) {
+        const refetched = await db
+          .select({
+            id: contacts.id,
+            tgUserId: contactTgUserIdSql,
+            username: contactUsernameLowerSql,
+          })
+          .from(contacts)
+          .where(
+            and(
+              eq(contacts.workspaceId, wsId),
+              inArray(contactUsernameLowerSql, stillMissing),
+            ),
+          );
+        for (const r of refetched) {
+          if (r.username) {
+            contactByUsername.set(r.username, {
+              id: r.id,
+              tgUserId: r.tgUserId,
+            });
+          }
+        }
+      }
+
+      // Сдвигаем round-robin counter на число реально использованных слотов.
+      if (ownerIds.length > 0 && stubRows.length > 0) {
+        await db
+          .update(projects)
+          .set({
+            contactOwnerRoundRobin: sql`${projects.contactOwnerRoundRobin} + ${stubRows.length}`,
+          })
+          .where(eq(projects.id, projectId));
       }
     }
 
-    const resolved = candidates.map((c) => ({
-      ...c,
-      tgUserId:
-        (c.username && tgByUsername.get(c.username)) ||
-        (c.phone && tgByPhone.get(c.phone)) ||
-        null,
-    }));
-    const recognized = resolved.filter((l) => l.tgUserId !== null).length;
+    const resolved = candidates.map((c) => {
+      const contact = contactByUsername.get(c.username)!;
+      return {
+        ...c,
+        contactId: contact.id,
+        tgUserId: contact.tgUserId,
+      };
+    });
 
     // INSERT batch'а импорта + лидов в одной транзакции. ON CONFLICT DO
     // NOTHING на partial unique индексе (project, lower(username)) и
@@ -330,6 +420,7 @@ app.openapi(
           username: c.username,
           phone: c.phone,
           tgUserId: c.tgUserId,
+          contactId: c.contactId,
           properties: c.properties,
         }));
         for (let i = 0; i < rows.length; i += CHUNK) {

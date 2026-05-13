@@ -226,6 +226,10 @@ function fakeTgId() {
 // отображаются только те у кого есть contactId — реалистично симулирует
 // «ответил → стал контактом»). Накапливаем здесь, в конце дамп'ом INSERT'им.
 const seedContacts: (typeof contacts.$inferInsert)[] = [];
+// Дедуп: один @username в одном воркспейсе — один contact. Если тот же @
+// встречается в нескольких проектах, второй лид цепляется за того же contact.
+// Это правило 5A — partial unique по (workspace, lower(@)) на уровне БД.
+const contactByWsUsername = new Map<string, string>();
 
 function buildLeads(
   projectId: string,
@@ -236,10 +240,24 @@ function buildLeads(
 ) {
   return specs.map((s) => {
     const lid = leadId();
-    const tg = fakeTgId();
-    let contactId: string | null = null;
-    if (s.replied) {
+    const usernameKey = `${workspaceId}:${s.username.toLowerCase()}`;
+    let contactId = contactByWsUsername.get(usernameKey) ?? null;
+    let tg: string;
+    if (contactId) {
+      // Подцепляем tgUserId уже выданный первому лиду с этим @.
+      tg = (
+        seedContacts.find((c) => c.id === contactId)!.properties as Record<
+          string,
+          string
+        >
+      ).tg_user_id;
+    } else {
+      tg = fakeTgId();
+      // После 5A контакт создаётся на импорте, не только для replied. Для
+      // правдоподобия sticky-логики оставляем replied → primary_account_id
+      // (это уже не делается тут, но лид с replied=true потом нужен в /contacts).
       contactId = `cont_${lid}`;
+      contactByWsUsername.set(usernameKey, contactId);
       seedContacts.push({
         id: contactId,
         workspaceId,
@@ -768,51 +786,6 @@ console.log(
     ccQ4Leads.length + blYouthLeads.length + blSmbLeads.length + blSummerLeads.length
   }, contacts=${cppSeedContacts.length}`,
 );
-
-// === Контакты — пара демо в каждом workspace для chat-history-вида ========
-
-await db
-  .insert(contacts)
-  .values([
-    {
-      id: "cont_sasha_demo1",
-      workspaceId: SASHA_WS,
-      properties: {
-        full_name: "Игорь Малько",
-        telegram_username: "moneyflow_top",
-        amount: 28000,
-      },
-      createdBy: SASHA_ID,
-    },
-    {
-      id: "cont_sasha_demo2",
-      workspaceId: SASHA_WS,
-      properties: {
-        full_name: "Слава Курилов",
-        telegram_username: "btc_pulse",
-      },
-      createdBy: SASHA_ID,
-    },
-    {
-      id: "cont_cpp_demo1",
-      workspaceId: CPP_WS,
-      properties: {
-        full_name: "Музыкант (Music Lab)",
-        telegram_username: "music_lab",
-      },
-      createdBy: ZHENYA_ID,
-    },
-    {
-      id: "cont_cpp_demo2",
-      workspaceId: CPP_WS,
-      properties: {
-        full_name: "Tech Review",
-        telegram_username: "tech_review",
-      },
-      createdBy: ZHENYA_ID,
-    },
-  ])
-  .onConflictDoNothing({ target: contacts.id });
 
 // === Top-100 реальных каналов в обоих workspace'ах =========================
 //

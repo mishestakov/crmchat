@@ -144,7 +144,7 @@ function ContactsList() {
       {drawer && (
         <ChatDrawer
           wsId={wsId}
-          target={{ kind: "contact", contact: drawer.contact }}
+          contact={drawer.contact}
           accountId={drawer.accountId}
           accounts={accounts.data ?? []}
           onSelectAccount={(accountId) =>

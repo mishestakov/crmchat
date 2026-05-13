@@ -16,7 +16,7 @@ import {
   setAccountCooldown,
 } from "./outreach-account-client.ts";
 import { emitProjectChanged } from "./outreach-events.ts";
-import { convertLeadToContact, rememberPendingSend } from "./outreach-listener.ts";
+import { rememberPendingSend } from "./outreach-listener.ts";
 import { isNowInWindow, startOfDayInTz } from "./outreach-schedule.ts";
 import type { TdClient } from "./tdlib/index.ts";
 
@@ -299,16 +299,6 @@ async function processAccount(accountId: string, items: DueItem[]) {
       if (item.messageIdx === 0) {
         newLeadsRemaining--;
         lastNewLeadInTick = now.getTime();
-
-        void maybeCreateContactOnFirstSent(
-          item.projectId,
-          item.leadId,
-        ).catch((e) =>
-          console.error(
-            `[outreach-worker] convert lead ${item.leadId} on-first-sent:`,
-            errMsg(e),
-          ),
-        );
       }
     } catch (e) {
       const msg = errMsg(e);
@@ -492,34 +482,6 @@ async function getNewLeadsStatsToday(
     newLeadsToday: row?.todayCount ?? 0,
     lastNewLeadAt: row?.lastSentAt ?? null,
   };
-}
-
-async function maybeCreateContactOnFirstSent(
-  projectId: string,
-  leadId: string,
-): Promise<void> {
-  const [project] = await db
-    .select({
-      contactCreationTrigger: projects.contactCreationTrigger,
-    })
-    .from(projects)
-    .where(eq(projects.id, projectId))
-    .limit(1);
-  if (
-    !project ||
-    project.contactCreationTrigger !== "on-first-message-sent"
-  ) {
-    return;
-  }
-  const [lead] = await db
-    .select()
-    .from(projectItems)
-    .where(eq(projectItems.id, leadId))
-    .limit(1);
-  if (!lead) return;
-  // Sticky НЕ передаём: это исходящее без ответа, по правилу v2 sticky
-  // отдаётся только на входящие (когда контакт реально нам отвечал).
-  await convertLeadToContact(lead, projectId);
 }
 
 async function maybeCompleteProject(projectId: string) {

@@ -21,13 +21,10 @@ import {
   renderMessageEntities,
 } from "../lib/tg-message";
 
-// Универсальный drawer переписки + quick send. Два режима через discriminated
-// union в props.target:
-//   - 'contact' — есть Contact, тянем chat-history через /contacts/{id}/chat-history,
-//                 показываем табы аккаунтов из contact.chatAccounts.
-//   - 'lead-no-contact' — контакта ещё нет в CRM (например, лид в проекте до
-//                 первой авто-отправки). Историю не запрашиваем, показываем
-//                 плашку «переписки нет», compose шлёт через tgUserId.
+// Drawer переписки + quick send. Принимает Contact, тянет chat-history через
+// /contacts/{id}/chat-history, показывает табы аккаунтов из contact.chatAccounts.
+// После 5A (eager-конверсия лидов в контакты на импорте) lead-no-contact режим
+// не нужен — у любого лида в проекте уже есть привязанный contact.
 
 export type AccountRow = {
   id: string;
@@ -57,18 +54,9 @@ type ChatMessage = {
   mediaThumb: MessageThumb | null;
 };
 
-type ContactTarget = { kind: "contact"; contact: Contact };
-type LeadTarget = {
-  kind: "lead-no-contact";
-  displayName: string;
-  tgUserId: string;
-  hint?: string; // например «первое сообщение от автоматики уйдёт в HH:MM»
-};
-type Target = ContactTarget | LeadTarget;
-
 export function ChatDrawer(props: {
   wsId: string;
-  target: Target;
+  contact: Contact;
   accountId: string;
   accounts: AccountRow[];
   onSelectAccount: (accountId: string) => void;
@@ -77,46 +65,33 @@ export function ChatDrawer(props: {
   const qc = useQueryClient();
   const accountById = new Map(props.accounts.map((a) => [a.id, a]));
 
-  const displayName =
-    props.target.kind === "contact"
-      ? contactFullName(props.target.contact) || "—"
-      : props.target.displayName;
-
-  const peerKey =
-    props.target.kind === "contact"
-      ? props.target.contact.id
-      : `lead:${props.target.tgUserId}`;
+  const displayName = contactFullName(props.contact) || "—";
+  const peerKey = props.contact.id;
 
   // Identifier для deep-link на /outreach/chat. Приоритет: tg_user_id (точно)
-  // → username (если CSV-импорт по @ и tg_user_id ещё не зафетчился). Без обоих
-  // кнопка «Открыть в чате» скрыта — открывать не по чему.
+  // → username (CSV-импорт по @ без резолва). Без обоих кнопка скрыта.
   const peerLink = ((): { peerUserId: string } | { peerUsername: string } | null => {
-    if (props.target.kind === "contact") {
-      const v = props.target.contact.properties as Record<string, unknown>;
-      if (typeof v.tg_user_id === "string") {
-        return { peerUserId: v.tg_user_id };
-      }
-      if (typeof v.telegram_username === "string" && v.telegram_username) {
-        return { peerUsername: v.telegram_username.replace(/^@/, "") };
-      }
-      return null;
+    const v = props.contact.properties as Record<string, unknown>;
+    if (typeof v.tg_user_id === "string") {
+      return { peerUserId: v.tg_user_id };
     }
-    return { peerUserId: props.target.tgUserId };
+    if (typeof v.telegram_username === "string" && v.telegram_username) {
+      return { peerUsername: v.telegram_username.replace(/^@/, "") };
+    }
+    return null;
   })();
 
-  // Preview активных проектов: и для contact, и для lead-no-contact — по
-  // tgUserId под капотом. Бэк находит project_items.tg_user_id и считает
+  // Preview активных проектов: бэк находит project_items.tg_user_id и считает
   // pending'и. Если у peer'а есть pending'и → warning перед отправкой.
   const previewQ = useQuery({
     queryKey: ["quick-send-preview", props.wsId, peerKey] as const,
     queryFn: async () => {
-      const body =
-        props.target.kind === "contact"
-          ? { contactId: props.target.contact.id }
-          : { tgUserId: props.target.tgUserId };
       const { data, error } = await api.POST(
         "/v1/workspaces/{wsId}/quick-send/preview",
-        { params: { path: { wsId: props.wsId } }, body },
+        {
+          params: { path: { wsId: props.wsId } },
+          body: { contactId: props.contact.id },
+        },
       );
       if (error) throw error;
       return data!.activeProjects;
@@ -125,58 +100,29 @@ export function ChatDrawer(props: {
   });
 
   const [composeText, setComposeText] = useState("");
-  // Lead-no-contact mode: chat-history эндпоинта нет (нужен contactId).
-  // После успешного send показываем локальные bubble'ы, чтобы юзер видел
-  // что ушло. Параллельно invalidate'им projectLeads — listener создаст
-  // contact на ensureContactFromTraffic, после следующего рефетча lead.contactId
-  // подтянется и drawer перерисуется в contact-mode с настоящей history.
-  const [localSent, setLocalSent] = useState<ChatMessage[]>([]);
   const sendMut = useMutation({
     mutationFn: async () => {
       const text = composeText.trim();
       if (!text) throw new Error("Пустое сообщение");
-      const body =
-        props.target.kind === "contact"
-          ? {
-              accountId: props.accountId,
-              contactId: props.target.contact.id,
-              text,
-            }
-          : {
-              accountId: props.accountId,
-              tgUserId: props.target.tgUserId,
-              text,
-            };
       const { data, error } = await api.POST(
         "/v1/workspaces/{wsId}/quick-send",
-        { params: { path: { wsId: props.wsId } }, body },
+        {
+          params: { path: { wsId: props.wsId } },
+          body: {
+            accountId: props.accountId,
+            contactId: props.contact.id,
+            text,
+          },
+        },
       );
       if (error) throw error;
-      return { ...data!, text };
+      return data!;
     },
-    onSuccess: (result) => {
+    onSuccess: () => {
       setComposeText("");
-      // Refetch history (для contact) — наше сообщение появится в списке.
-      if (props.target.kind === "contact") {
-        qc.invalidateQueries({
-          queryKey: ["chat-history", props.wsId, props.target.contact.id],
-        });
-      } else {
-        setLocalSent((prev) => [
-          ...prev,
-          {
-            id: `local-${Date.now()}-${prev.length}`,
-            date: new Date().toISOString(),
-            isOutgoing: true,
-            text: result.text,
-            entities: [],
-            mediaThumb: null,
-          },
-        ]);
-        // Подтолкнуть рефетч leads-таблиц — listener создаст contact, после
-        // чего LeadChatDrawer перерисуется в contact-mode.
-        qc.invalidateQueries({ queryKey: ["project-leads"] });
-      }
+      qc.invalidateQueries({
+        queryKey: ["chat-history", props.wsId, props.contact.id],
+      });
       qc.invalidateQueries({
         queryKey: ["quick-send-preview", props.wsId, peerKey],
       });
@@ -192,32 +138,19 @@ export function ChatDrawer(props: {
     return () => window.removeEventListener("keydown", onKey);
   }, [props]);
 
-  // History — только для contact. Для lead-no-contact оставляем пустое.
   const initialQ = useQuery({
-    queryKey:
-      props.target.kind === "contact"
-        ? ([
-            "chat-history",
-            props.wsId,
-            props.target.contact.id,
-            props.accountId,
-          ] as const)
-        : (["chat-history-skip", props.wsId, peerKey] as const),
+    queryKey: [
+      "chat-history",
+      props.wsId,
+      props.contact.id,
+      props.accountId,
+    ] as const,
     queryFn: async () => {
-      if (props.target.kind !== "contact")
-        return {
-          messages: [] as ChatMessage[],
-          lastReadOutboxId: null as string | null,
-          peerStatus: null as {
-            isOnline: boolean;
-            lastSeenAt: string | null;
-          } | null,
-        };
       const { data, error } = await api.GET(
         "/v1/workspaces/{wsId}/contacts/{id}/chat-history",
         {
           params: {
-            path: { wsId: props.wsId, id: props.target.contact.id },
+            path: { wsId: props.wsId, id: props.contact.id },
             query: { accountId: props.accountId, limit: 50 },
           },
         },
@@ -226,19 +159,15 @@ export function ChatDrawer(props: {
       return data!;
     },
     staleTime: 60_000,
-    enabled: props.target.kind === "contact",
   });
 
   // closeChat: TDLib держит чат «открытым» с момента первого fetch
   // chat-history — без явного close там копятся background-push'и по
   // неактуальным peer'ам. Cleanup срабатывает на закрытии drawer'а и на
   // смене accountId; следующий openChat нового accountId произойдёт
-  // автоматически на refetch. Deps — стабильные string'и, иначе target-
-  // объект пересоздаётся на каждом render родителя и cleanup стреляет.
-  const targetContactId =
-    props.target.kind === "contact" ? props.target.contact.id : null;
+  // автоматически на refetch.
+  const targetContactId = props.contact.id;
   useEffect(() => {
-    if (!targetContactId) return;
     const wsId = props.wsId;
     const accountId = props.accountId;
     return () => {
@@ -259,15 +188,12 @@ export function ChatDrawer(props: {
     `/v1/workspaces/${props.wsId}/contact-stream`,
     "contact",
     (ev) => {
-      if (
-        props.target.kind === "contact" &&
-        ev.contactId === props.target.contact.id
-      ) {
+      if (ev.contactId === props.contact.id) {
         qc.invalidateQueries({
           queryKey: [
             "chat-history",
             props.wsId,
-            props.target.contact.id,
+            props.contact.id,
             props.accountId,
           ],
         });
@@ -330,7 +256,6 @@ export function ChatDrawer(props: {
     const el = e.currentTarget;
     wasNearBottomRef.current =
       el.scrollHeight - el.scrollTop - el.clientHeight < 100;
-    if (props.target.kind !== "contact") return;
     if (!initialQ.isSuccess || !hasMore || loadingMore) return;
     if (el.scrollTop > 50) return;
     const oldestId = messages[0]?.id;
@@ -338,7 +263,7 @@ export function ChatDrawer(props: {
     setLoadingMore(true);
     setLoadMoreError(null);
     const prevHeight = el.scrollHeight;
-    const contactId = props.target.contact.id;
+    const contactId = props.contact.id;
     api
       .GET("/v1/workspaces/{wsId}/contacts/{id}/chat-history", {
         params: {
@@ -371,8 +296,7 @@ export function ChatDrawer(props: {
       });
   };
 
-  const chatAccounts =
-    props.target.kind === "contact" ? props.target.contact.chatAccounts : [];
+  const chatAccounts = props.contact.chatAccounts;
 
   return (
     <>
@@ -438,58 +362,20 @@ export function ChatDrawer(props: {
           onScroll={onScroll}
           className="flex-1 overflow-y-auto bg-zinc-50 p-4"
         >
-          {props.target.kind === "lead-no-contact" && (
-            <>
-              {localSent.length === 0 && (
-                <div className="rounded-md bg-white p-3 text-sm text-zinc-500 ring-1 ring-zinc-200">
-                  Переписки нет — этому лиду ещё ничего не отправляли.
-                  {props.target.hint && (
-                    <div className="mt-1 text-xs text-zinc-400">
-                      {props.target.hint}
-                    </div>
-                  )}
-                </div>
-              )}
-              {localSent.length > 0 && (
-                <div className="flex flex-col gap-2">
-                  {localSent.map((m) => (
-                    <div
-                      key={m.id}
-                      className="ml-auto max-w-[80%] overflow-hidden rounded-lg bg-emerald-600 text-sm text-white"
-                    >
-                      <div className="px-3 py-2">
-                        <div className="whitespace-pre-wrap break-words">
-                          {m.text}
-                        </div>
-                        <div
-                          className="mt-1 flex items-center justify-end gap-0.5 text-[10px] text-emerald-100"
-                          title={formatDateTime(m.date)}
-                        >
-                          <span>{formatHHMM(m.date)}</span>
-                          <Check size={12} />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-          {props.target.kind === "contact" && (
-            <>
-              {initialQ.isLoading && (
-                <p className="text-sm text-zinc-400">Загрузка истории…</p>
-              )}
-              {initialQ.error && (
-                <p className="text-sm text-red-600">
-                  {errorMessage(initialQ.error)}
-                </p>
-              )}
-              {initialQ.isSuccess && messages.length === 0 && (
-                <p className="text-sm text-zinc-400">
-                  Сообщений нет — этот аккаунт ещё не общался с контактом.
-                </p>
-              )}
+          <>
+            {initialQ.isLoading && (
+              <p className="text-sm text-zinc-400">Загрузка истории…</p>
+            )}
+            {initialQ.error && (
+              <p className="text-sm text-red-600">
+                {errorMessage(initialQ.error)}
+              </p>
+            )}
+            {initialQ.isSuccess && messages.length === 0 && (
+              <p className="text-sm text-zinc-400">
+                Сообщений нет — этот аккаунт ещё не общался с контактом.
+              </p>
+            )}
               {messages.length > 0 && (
                 <div className="flex flex-col gap-2">
                   {loadingMore && (
@@ -553,8 +439,7 @@ export function ChatDrawer(props: {
                   })}
                 </div>
               )}
-            </>
-          )}
+          </>
         </div>
         <ComposeFooter
           activeProjects={previewQ.data ?? []}

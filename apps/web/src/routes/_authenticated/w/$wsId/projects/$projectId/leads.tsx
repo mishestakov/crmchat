@@ -346,7 +346,6 @@ function LeadsPage() {
           return (
             <LeadChatDrawer
               wsId={wsId}
-              projectId={projectId}
               lead={lead}
               accounts={accountsQ.data ?? []}
               onClose={() => setDrawerLeadId(null)}

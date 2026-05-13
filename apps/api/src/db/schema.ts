@@ -293,6 +293,17 @@ export const contacts = pgTable(
     uniqueIndex("contacts_workspace_tg_user_id_unique")
       .on(t.workspaceId, sql`(${t.properties} ->> 'tg_user_id')`)
       .where(sql`(${t.properties} ->> 'tg_user_id') IS NOT NULL`),
+    // UNIQUE на (workspace, lower(telegram_username)) — нужен для stub-контактов
+    // из импорта лидов / channels (созданы без tg_user_id, только @username).
+    // Чтобы второй импорт того же @vasya подцепился к существующему stub'у,
+    // а не плодил дубли. На lazy-резолве tg_user_id stub доукомплектуется и
+    // переезжает под первый unique, этот остаётся «бесполезным» (но не мешает).
+    uniqueIndex("contacts_workspace_username_unique")
+      .on(
+        t.workspaceId,
+        sql`lower(${t.properties} ->> 'telegram_username')`,
+      )
+      .where(sql`(${t.properties} ->> 'telegram_username') IS NOT NULL`),
   ],
 );
 

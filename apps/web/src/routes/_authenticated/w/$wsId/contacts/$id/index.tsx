@@ -185,7 +185,7 @@ function ContactDetail() {
       {drawerAccountId && contact.data && (
         <ChatDrawer
           wsId={wsId}
-          target={{ kind: "contact", contact: contact.data }}
+          contact={contact.data}
           accountId={drawerAccountId}
           accounts={accounts}
           onSelectAccount={setDrawerAccountId}

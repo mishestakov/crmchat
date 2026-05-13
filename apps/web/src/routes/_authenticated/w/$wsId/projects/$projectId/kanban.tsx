@@ -149,17 +149,22 @@ function KanbanPage() {
   });
 
   const stages = projectQ.data?.stages ?? [];
-  // На канбане отображаются только конвертированные в контакт лиды:
-  //   - contactCreationTrigger='on-first-message-sent' → contact создаётся
-  //     при первом исходящем (worker), и лид появляется на канбане сразу
-  //     после первой отправки.
-  //   - contactCreationTrigger='on-reply' (default) → contact создаётся
-  //     только когда лид ответил (listener), и лид появляется только тогда.
-  // Лиды без contactId не на канбане — они в табличном виде leads.tsx
-  // (где видны прогресс по сообщениям и счётчики).
+  // Канбан показывает лидов с момента срабатывания триггера проекта:
+  //   - 'on-reply' (дефолт) — после ответа peer'а (project_items.repliedAt).
+  //   - 'on-first-message-sent' — после первой отправки worker'a
+  //     (messages[0].sentAt). До триггера лиды только в табличке /leads.
+  // Контакты создаются раньше — при импорте (5A), но это не управляет
+  // появлением карточки. Триггер per-проект, поэтому смотрим в projectQ.
+  const trigger = projectQ.data?.contactCreationTrigger;
   const leads = useMemo(
-    () => (leadsQ.data?.leads ?? []).filter((l) => l.contactId !== null),
-    [leadsQ.data?.leads],
+    () =>
+      (leadsQ.data?.leads ?? []).filter((l) => {
+        if (trigger === "on-first-message-sent") {
+          return !!l.messages[0]?.sentAt;
+        }
+        return !!l.repliedAt;
+      }),
+    [leadsQ.data?.leads, trigger],
   );
 
   // Группировка по stageId. Лиды со stageId который не существует в
@@ -285,7 +290,6 @@ function KanbanPage() {
       {drawerLead && (
         <LeadChatDrawer
           wsId={wsId}
-          projectId={projectId}
           lead={drawerLead}
           accounts={accountsQ.data ?? []}
           onClose={() => setDrawerLead(null)}
