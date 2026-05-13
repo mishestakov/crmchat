@@ -20,6 +20,7 @@ import {
 } from "../lib/td-message.ts";
 import {
   channelAdmins,
+  channelSubscriptions,
   channelThumbnails,
   channels,
   contacts,
@@ -129,6 +130,39 @@ async function pickOutreachClient(
   const client = await getOutreachWorkerClient(acc);
   if (!client) return null;
   return { client, accountId: acc.id };
+}
+
+// Выбор аккаунта для чтения канала. Приоритет: любой подписанный аккаунт
+// workspace'a (для приватных каналов это единственный способ + позволяет
+// команде читать через коллегин аккаунт). Fallback — мой собственный
+// аккаунт (для публичных каналов работает без подписки, как раньше).
+async function pickChannelReader(
+  channelId: string,
+  wsId: string,
+  userId: string,
+  role: WorkspaceRole,
+): Promise<{ client: TdClient; accountId: string } | null> {
+  const [subscribed] = await db
+    .select({ id: outreachAccounts.id, workspaceId: outreachAccounts.workspaceId })
+    .from(channelSubscriptions)
+    .innerJoin(
+      outreachAccounts,
+      eq(outreachAccounts.id, channelSubscriptions.accountId),
+    )
+    .where(
+      and(
+        eq(channelSubscriptions.channelId, channelId),
+        eq(channelSubscriptions.status, "subscribed"),
+        eq(outreachAccounts.workspaceId, wsId),
+        eq(outreachAccounts.status, "active"),
+      ),
+    )
+    .limit(1);
+  if (subscribed) {
+    const client = await getOutreachWorkerClient(subscribed);
+    if (client) return { client, accountId: subscribed.id };
+  }
+  return pickOutreachClient(wsId, userId, role);
 }
 
 const ChannelSchema = BaseChannelSchema.openapi("Channel");
@@ -578,6 +612,186 @@ app.openapi(
   },
 );
 
+// Подписать аккаунт workspace'a на канал. Публичный канал (есть @) идёт
+// через joinChat(chat_id); приватный (только invite-link типа t.me/+abc)
+// — через joinChatByInviteLink. Read history после подписки идёт через
+// этот аккаунт (см. GET /channels/{id}/history). Команда видит подписки
+// друг друга — один подписанный = читают все.
+//
+// `INVITE_REQUEST_SENT` (закрытый канал, нужно подтверждение админа) →
+// сохраняем status=pending, read через такой аккаунт ещё не работает.
+const SubscribeBody = z.object({ accountId: z.string().min(1).max(64) });
+
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/channels/{id}/subscribe",
+    tags: ["channels"],
+    request: {
+      params: WsIdParam,
+      body: {
+        content: { "application/json": { schema: SubscribeBody } },
+        required: true,
+      },
+    },
+    responses: { 204: { description: "Subscribed (or pending approval)" } },
+  }),
+  async (c) => {
+    const { wsId, id } = c.req.valid("param");
+    const { accountId } = c.req.valid("json");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const channel = await assertChannelAccess(id, wsId);
+    if (channel.platform !== "telegram") {
+      throw new HTTPException(400, {
+        message: "subscribe supported only for platform=telegram",
+      });
+    }
+    // Право подписки = право write через аккаунт. Member может подписать
+    // только свои аккаунты, admin — любой в workspace'е.
+    const [acc] = await db
+      .select({ id: outreachAccounts.id })
+      .from(outreachAccounts)
+      .where(
+        and(
+          eq(outreachAccounts.id, accountId),
+          accountAccessClause(wsId, userId, role),
+          eq(outreachAccounts.status, "active"),
+        ),
+      )
+      .limit(1);
+    if (!acc) {
+      throw new HTTPException(404, { message: "account not found" });
+    }
+    const client = await getOutreachWorkerClient({ id: acc.id, workspaceId: wsId });
+    if (!client) {
+      throw new HTTPException(503, { message: "tg client unavailable" });
+    }
+
+    // Резолв chat_id перед joinChat. Для импортированных каналов externalId
+    // может быть null (CSV без явного chat_id) — в этом случае идём через
+    // searchPublicChat (public) или joinChatByInviteLink (private, который
+    // сам возвращает Chat с id). После резолва сохраняем externalId — без
+    // этого getChatHistory упадёт на NaN.
+    let resolvedChatId: number | null = channel.externalId
+      ? Number(channel.externalId)
+      : null;
+    let status: "subscribed" | "pending" = "subscribed";
+    try {
+      if (channel.username && !resolvedChatId) {
+        const tdChat = (await client.invoke({
+          _: "searchPublicChat",
+          username: channel.username,
+        } as never)) as { id: number };
+        resolvedChatId = tdChat.id;
+      }
+      if (resolvedChatId) {
+        await client.invoke({
+          _: "joinChat",
+          chat_id: resolvedChatId,
+        } as never);
+      } else if (channel.link) {
+        const tdChat = (await client.invoke({
+          _: "joinChatByInviteLink",
+          invite_link: channel.link,
+        } as never)) as { id: number };
+        resolvedChatId = tdChat.id;
+      } else {
+        throw new HTTPException(400, {
+          message: "channel has neither @username nor invite link",
+        });
+      }
+    } catch (e) {
+      const msg = errMsg(e);
+      // TDLib возвращает специальное сообщение когда канал требует одобрения
+      // (см. td_api.tl §joinChat: «May return an error with a message
+      // INVITE_REQUEST_SENT if only a join request was created»).
+      if (msg.includes("INVITE_REQUEST_SENT")) {
+        status = "pending";
+      } else {
+        throw new HTTPException(400, { message: msg });
+      }
+    }
+
+    if (resolvedChatId && !channel.externalId) {
+      await db
+        .update(channels)
+        .set({ externalId: String(resolvedChatId) })
+        .where(eq(channels.id, id));
+    }
+
+    await db
+      .insert(channelSubscriptions)
+      .values({ accountId, channelId: id, status })
+      .onConflictDoUpdate({
+        target: [channelSubscriptions.accountId, channelSubscriptions.channelId],
+        set: { status, subscribedAt: new Date() },
+      });
+
+    return c.body(null, 204);
+  },
+);
+
+// Отписать аккаунт. Если других подписанных нет — приватный канал станет
+// недоступен для read'a команды. UX-предупреждение делается на фронте.
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/channels/{id}/unsubscribe",
+    tags: ["channels"],
+    request: {
+      params: WsIdParam,
+      body: {
+        content: { "application/json": { schema: SubscribeBody } },
+        required: true,
+      },
+    },
+    responses: { 204: { description: "Unsubscribed" } },
+  }),
+  async (c) => {
+    const { wsId, id } = c.req.valid("param");
+    const { accountId } = c.req.valid("json");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const channel = await assertChannelAccess(id, wsId);
+    const [acc] = await db
+      .select({ id: outreachAccounts.id })
+      .from(outreachAccounts)
+      .where(
+        and(
+          eq(outreachAccounts.id, accountId),
+          accountAccessClause(wsId, userId, role),
+        ),
+      )
+      .limit(1);
+    if (!acc) {
+      throw new HTTPException(404, { message: "account not found" });
+    }
+    const client = await getOutreachWorkerClient({ id: acc.id, workspaceId: wsId });
+    if (client && channel.externalId) {
+      try {
+        await client.invoke({
+          _: "leaveChat",
+          chat_id: Number(channel.externalId),
+        } as never);
+      } catch (e) {
+        // Если уже не подписан в TG — продолжаем чистить нашу запись.
+        console.error(`[channels/unsubscribe] leaveChat:`, errMsg(e));
+      }
+    }
+    await db
+      .delete(channelSubscriptions)
+      .where(
+        and(
+          eq(channelSubscriptions.accountId, accountId),
+          eq(channelSubscriptions.channelId, id),
+        ),
+      );
+
+    return c.body(null, 204);
+  },
+);
+
 // PATCH /channels/{id} — редактирование «наших» полей. На MVP только
 // username: типичный кейс — админ переименовал канал, мы поправили @ и
 // заново резолвим. На смене username сбрасываем unavailable_*-флаги, чтобы
@@ -717,7 +931,34 @@ app.openapi(
       });
     }
 
-    const picked = await pickOutreachClient(wsId, userId, role);
+    // Приватный канал (нет @username) можно прочитать только подписанным
+    // аккаунтом — TDLib без подписки отдаст «Chat not found». Явный 412
+    // с маркером, чтобы фронт показал плашку «Подписаться».
+    if (!channel.username) {
+      const [anySub] = await db
+        .select({ accountId: channelSubscriptions.accountId })
+        .from(channelSubscriptions)
+        .innerJoin(
+          outreachAccounts,
+          eq(outreachAccounts.id, channelSubscriptions.accountId),
+        )
+        .where(
+          and(
+            eq(channelSubscriptions.channelId, id),
+            eq(channelSubscriptions.status, "subscribed"),
+            eq(outreachAccounts.workspaceId, wsId),
+            eq(outreachAccounts.status, "active"),
+          ),
+        )
+        .limit(1);
+      if (!anySub) {
+        throw new HTTPException(412, {
+          message: "subscription required to read private channel",
+        });
+      }
+    }
+
+    const picked = await pickChannelReader(id, wsId, userId, role);
     if (!picked) {
       throw new HTTPException(412, {
         message:

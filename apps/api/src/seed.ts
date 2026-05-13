@@ -250,7 +250,7 @@ function buildLeads(
           string,
           string
         >
-      ).tg_user_id;
+      ).tg_user_id!;
     } else {
       tg = fakeTgId();
       // После 5A контакт создаётся на импорте, не только для replied. Для

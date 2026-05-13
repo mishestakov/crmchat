@@ -947,6 +947,48 @@ export const channelAdmins = pgTable(
   ],
 );
 
+// channel_subscriptions — подписка outreach-аккаунта на TG-канал.
+// Источник истины: сделана через наш subscribe endpoint (joinChat /
+// joinChatByInviteLink) или явно зарегистрирована. Не пытаемся отражать
+// подписки «снаружи CRM» (с телефона/TWA) — пока менеджер не нажмёт
+// «Подписаться» в нашем UI, мы считаем что аккаунт не подписан.
+//
+// Используется в /channels/{id}/history: первый приоритет — читаем через
+// любой подписанный аккаунт (для приватных каналов это единственный способ).
+// Fallback — pickOutreachClient через свой аккаунт (для публичных каналов
+// работает без подписки).
+export const channelSubscriptionStatus = pgEnum(
+  "channel_subscription_status",
+  ["subscribed", "pending"],
+);
+
+export const channelSubscriptions = pgTable(
+  "channel_subscriptions",
+  {
+    accountId: text("account_id")
+      .notNull()
+      .references(() => outreachAccounts.id, { onDelete: "cascade" }),
+    channelId: text("channel_id")
+      .notNull()
+      .references(() => channels.id, { onDelete: "cascade" }),
+    // 'subscribed' — joinChat вернул Ok, аккаунт в канале.
+    // 'pending' — joinChat вернул INVITE_REQUEST_SENT, ждём подтверждения
+    // админа канала. Read через такой аккаунт не сработает.
+    status: channelSubscriptionStatus("status").notNull().default("subscribed"),
+    subscribedAt: timestamp("subscribed_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    primaryKey({
+      columns: [t.accountId, t.channelId],
+      name: "channel_subscriptions_pk",
+    }),
+    // Обратный lookup «кто подписан на этот канал» для pickChannelReader.
+    index("channel_subscriptions_channel_id_idx").on(t.channelId),
+  ],
+);
+
 // === TG-репликация (этап 9.2) ===
 // Локальная копия Telegram chat list / user directory, обновляемая push'ом
 // через client.on('update'). Read-сценарии (поиск контактов, импорт, аналитика)

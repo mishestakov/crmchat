@@ -16,6 +16,7 @@ import type { Channel } from "@repo/core";
 import { api } from "../lib/api";
 import { formatRelative } from "../lib/date-utils";
 import { errorMessage } from "../lib/errors";
+import { useOutreachAccounts } from "../lib/outreach-queries";
 import {
   type MessageEntity,
   MessageMediaThumb,
@@ -37,6 +38,9 @@ const UNAVAILABLE_COOLDOWN_MS = 60 * 60 * 1000;
 export function ChannelCard(props: { wsId: string; channel: Channel }) {
   const { wsId, channel } = props;
   const qc = useQueryClient();
+  const accountsQ = useOutreachAccounts(wsId);
+  const hasActiveAccount =
+    !!accountsQ.data && accountsQ.data.some((a) => a.status === "active");
 
   // Sync свежей карточки из TG: stale-while-revalidate с TTL 24h. UI рендерит
   // что есть в БД, в фоне fetch'им свежее. На mount запускаем один раз через
@@ -116,6 +120,7 @@ export function ChannelCard(props: { wsId: string; channel: Channel }) {
     if (
       needsSync &&
       !inUnavailableCooldown &&
+      hasActiveAccount &&
       syncedForRef.current !== channel.id &&
       !syncMut.isPending
     ) {
@@ -123,7 +128,7 @@ export function ChannelCard(props: { wsId: string; channel: Channel }) {
       syncMut.mutate({});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channel.id]);
+  }, [channel.id, hasActiveAccount]);
 
   // Плашка причины из БД сразу при render'е, чтобы не было мерцания
   // «пустой sidebar → 410 → плашка». Незнакомый код или null reason →
@@ -167,6 +172,7 @@ export function ChannelCard(props: { wsId: string; channel: Channel }) {
         syncing={syncMut.isPending}
         syncFailed={syncFailed}
         unavailable={inUnavailableCooldown}
+        hasActiveAccount={hasActiveAccount}
       />
     </div>
   );
@@ -586,6 +592,83 @@ function matchUnavailableReason(raw: string): string | null {
   return null;
 }
 
+// Подписка как fallback для приватных каналов: бэк отдал 412 «subscription
+// required», показываем плашку. Один аккаунт — кнопка работает сразу; несколько
+// — выбор. Подписка идёт через свой аккаунт (write — только владелец).
+function SubscribePrompt(props: { wsId: string; channelId: string }) {
+  const qc = useQueryClient();
+  const accountsQ = useOutreachAccounts(props.wsId);
+  const myActive = (accountsQ.data ?? []).filter((a) => a.status === "active");
+
+  const subscribeMut = useMutation({
+    mutationFn: async (accountId: string) => {
+      const { error } = await api.POST(
+        "/v1/workspaces/{wsId}/channels/{id}/subscribe",
+        {
+          params: { path: { wsId: props.wsId, id: props.channelId } },
+          body: { accountId },
+        },
+      );
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({
+        queryKey: ["channel-history", props.wsId, props.channelId],
+      });
+    },
+  });
+
+  if (myActive.length === 0) {
+    return (
+      <div className="min-h-0 flex-1 px-6 py-4">
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Чтобы читать переписку приватного канала, нужен подписанный
+          Telegram-аккаунт. Подключите аккаунт в разделе{" "}
+          <strong>Telegram-аккаунты</strong>.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-0 flex-1 px-6 py-4">
+      <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-700">
+        Подпишитесь, чтобы читать приватный канал.
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {myActive.map((a) => {
+            const label =
+              a.firstName ||
+              (a.tgUsername ? `@${a.tgUsername}` : a.phoneNumber) ||
+              a.id;
+            return (
+              <button
+                key={a.id}
+                type="button"
+                onClick={() => subscribeMut.mutate(a.id)}
+                disabled={subscribeMut.isPending}
+                className="rounded-md bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {myActive.length === 1
+                  ? subscribeMut.isPending
+                    ? "Подписываемся…"
+                    : "Подписаться"
+                  : subscribeMut.isPending
+                    ? "…"
+                    : `Подписать ${label}`}
+              </button>
+            );
+          })}
+        </div>
+        {subscribeMut.error && (
+          <p className="mt-2 text-xs text-red-600">
+            {errorMessage(subscribeMut.error)}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 type ChannelMessage = {
   id: string;
   date: string;
@@ -608,13 +691,17 @@ function PostsFeed(props: {
   // Канал помечен недоступным и кулдаун ещё не истёк. /history всё равно
   // вернёт 410, поэтому не дёргаем — UI поверх показывает persistedReason.
   unavailable: boolean;
+  // Есть ли в воркспейсе хоть один active outreach-аккаунт. Без него
+  // /history гарантированно вернёт 412 «нет аккаунта», поэтому не дёргаем.
+  hasActiveAccount: boolean;
 }) {
   const PAGE_LIMIT = 50;
   const enabled =
     !!props.channelExternalId &&
     !props.syncing &&
     !props.syncFailed &&
-    !props.unavailable;
+    !props.unavailable &&
+    props.hasActiveAccount;
 
   // Initial page (newest 50). Стабильный queryKey без before — повторное
   // открытие drawer'а идёт из кэша, не дёргает TDLib (см. staleTime).
@@ -722,6 +809,16 @@ function PostsFeed(props: {
     // оставляем пустым, без второго объяснения.
     return <div className="min-h-0 flex-1" />;
   }
+  if (!props.hasActiveAccount) {
+    return (
+      <div className="min-h-0 flex-1 px-6 py-4">
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Чтобы читать каналы — подключите Telegram-аккаунт в разделе{" "}
+          <strong>Telegram-аккаунты</strong>.
+        </div>
+      </div>
+    );
+  }
   if (props.syncFailed) {
     return (
       <div className="min-h-0 flex-1 px-6 py-4 text-sm text-zinc-400">
@@ -745,6 +842,14 @@ function PostsFeed(props: {
   }
   if (initialQ.error) {
     const msg = errorMessage(initialQ.error);
+    if (msg.includes("subscription required")) {
+      return (
+        <SubscribePrompt
+          wsId={props.wsId}
+          channelId={props.channelId}
+        />
+      );
+    }
     const reason = matchUnavailableReason(msg);
     return (
       <div className="min-h-0 flex-1 px-6 py-4">
