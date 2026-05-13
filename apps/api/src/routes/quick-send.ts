@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
   contacts,
@@ -16,6 +16,7 @@ import {
   setAccountCooldown,
 } from "../lib/outreach-account-client.ts";
 import { emitProjectChanged } from "../lib/outreach-events.ts";
+import { convertLeadToContact } from "../lib/outreach-listener.ts";
 import { readOnTelegram } from "./contacts.ts";
 import type { WorkspaceVars } from "../middleware/assert-member.ts";
 
@@ -274,6 +275,28 @@ app.openapi(
       void readOnTelegram(wsId, body.accountId, tgUserId).catch((e) => {
         console.error(`[quick-send] viewMessages failed:`, errMsg(e));
       });
+
+      // Конвертим pending-лидов с этим peer'ом в contact: ensureContactFromTraffic
+      // в listener'е выходит на pendingLead-чеке (он рассчитан на worker-flow,
+      // который convertLeadToContact зовёт сам). После quick-send'а никто этого
+      // не делает — lead.contactId остался бы null, drawer перерисовывался бы
+      // в lead-no-contact mode даже после успешной отправки. accountId не
+      // передаём — outgoing без ответа sticky не ставит (правило v2).
+      const pendingLeads = await db
+        .select()
+        .from(projectItems)
+        .where(
+          and(
+            eq(projectItems.workspaceId, wsId),
+            eq(projectItems.tgUserId, tgUserId),
+            isNull(projectItems.contactId),
+          ),
+        );
+      for (const lead of pendingLeads) {
+        await convertLeadToContact(lead).catch((e) =>
+          console.error(`[quick-send] convertLeadToContact:`, errMsg(e)),
+        );
+      }
     } catch (e) {
       const msg = errMsg(e);
       const flood = parseFloodWaitSeconds(msg);

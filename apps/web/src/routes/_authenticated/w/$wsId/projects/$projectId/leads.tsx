@@ -8,15 +8,12 @@ import {
   MessageCircleReply,
   Sparkles,
 } from "lucide-react";
-import type { Contact } from "@repo/core";
 import type { paths } from "@repo/api-client";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
 import { BackButton } from "../../../../../../components/back-button";
-import {
-  type AccountRow,
-  ChatDrawer,
-} from "../../../../../../components/chat-drawer";
+import { type AccountRow } from "../../../../../../components/chat-drawer";
+import { LeadChatDrawer } from "../../../../../../components/lead-chat-drawer";
 import { TruncationBanner } from "../../../../../../components/truncation-banner";
 import {
   formatDateTime,
@@ -349,6 +346,7 @@ function LeadsPage() {
           return (
             <LeadChatDrawer
               wsId={wsId}
+              projectId={projectId}
               lead={lead}
               accounts={accountsQ.data ?? []}
               onClose={() => setDrawerLeadId(null)}
@@ -359,102 +357,6 @@ function LeadsPage() {
   );
 }
 
-function LeadChatDrawer(props: {
-  wsId: string;
-  lead: Lead;
-  accounts: AccountRow[];
-  onClose: () => void;
-}) {
-  // Если у лида есть contactId — фетчим Contact и открываем drawer в режиме
-  // contact (с историей через /contacts/{id}/chat-history). Иначе — режим
-  // lead-no-contact: история не доступна, compose отправляет по tg_user_id.
-  const contactQ = useQuery({
-    queryKey: ["contact", props.wsId, props.lead.contactId ?? ""] as const,
-    enabled: !!props.lead.contactId,
-    queryFn: async () => {
-      const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/contacts/{id}",
-        {
-          params: { path: { wsId: props.wsId, id: props.lead.contactId! } },
-        },
-      );
-      if (error) throw error;
-      return data as Contact;
-    },
-  });
-
-  const initialAccountId =
-    props.lead.account?.id ?? props.accounts[0]?.id ?? null;
-
-  const [accountId, setAccountId] = useState<string | null>(initialAccountId);
-  if (!accountId) {
-    // Нет ни одного аккаунта вообще — закрыть.
-    return null;
-  }
-
-  if (props.lead.contactId) {
-    if (contactQ.isLoading) return null;
-    if (!contactQ.data) return null;
-    return (
-      <ChatDrawer
-        wsId={props.wsId}
-        target={{ kind: "contact", contact: contactQ.data }}
-        accountId={accountId}
-        accounts={props.accounts}
-        onSelectAccount={setAccountId}
-        onClose={props.onClose}
-      />
-    );
-  }
-
-  if (!props.lead.tgUserId) {
-    // Quick send недоступен — нет идентификатора.
-    return (
-      <div
-        className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/30"
-        onClick={props.onClose}
-      >
-        <div
-          className="max-w-sm rounded-lg bg-white p-5 text-sm text-zinc-700 shadow-2xl"
-          onClick={(e) => e.stopPropagation()}
-        >
-          У лида ещё нет Telegram-идентификатора — quick send недоступен.
-          Подождите первой авто-отправки или активируйте проект.
-          <div className="mt-3 text-right">
-            <button
-              type="button"
-              onClick={props.onClose}
-              className="text-xs text-zinc-500 hover:text-zinc-900"
-            >
-              Закрыть
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const displayName =
-    props.lead.username
-      ? `@${props.lead.username}`
-      : props.lead.phone ?? "(без identifier)";
-
-  return (
-    <ChatDrawer
-      wsId={props.wsId}
-      target={{
-        kind: "lead-no-contact",
-        tgUserId: props.lead.tgUserId,
-        displayName,
-        hint: "Контакт ещё не привязан. Ручная отправка остановит авто-цепочку этого проекта для лида.",
-      }}
-      accountId={accountId}
-      accounts={props.accounts}
-      onSelectAccount={setAccountId}
-      onClose={props.onClose}
-    />
-  );
-}
 
 function LeadCell({ lead, wsId }: { lead: Lead; wsId: string }) {
   const ident = lead.username ? `@${lead.username}` : lead.phone ?? "—";

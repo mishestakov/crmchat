@@ -125,6 +125,12 @@ export function ChatDrawer(props: {
   });
 
   const [composeText, setComposeText] = useState("");
+  // Lead-no-contact mode: chat-history эндпоинта нет (нужен contactId).
+  // После успешного send показываем локальные bubble'ы, чтобы юзер видел
+  // что ушло. Параллельно invalidate'им projectLeads — listener создаст
+  // contact на ensureContactFromTraffic, после следующего рефетча lead.contactId
+  // подтянется и drawer перерисуется в contact-mode с настоящей history.
+  const [localSent, setLocalSent] = useState<ChatMessage[]>([]);
   const sendMut = useMutation({
     mutationFn: async () => {
       const text = composeText.trim();
@@ -146,15 +152,30 @@ export function ChatDrawer(props: {
         { params: { path: { wsId: props.wsId } }, body },
       );
       if (error) throw error;
-      return data!;
+      return { ...data!, text };
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
       setComposeText("");
       // Refetch history (для contact) — наше сообщение появится в списке.
       if (props.target.kind === "contact") {
         qc.invalidateQueries({
           queryKey: ["chat-history", props.wsId, props.target.contact.id],
         });
+      } else {
+        setLocalSent((prev) => [
+          ...prev,
+          {
+            id: `local-${Date.now()}-${prev.length}`,
+            date: new Date().toISOString(),
+            isOutgoing: true,
+            text: result.text,
+            entities: [],
+            mediaThumb: null,
+          },
+        ]);
+        // Подтолкнуть рефетч leads-таблиц — listener создаст contact, после
+        // чего LeadChatDrawer перерисуется в contact-mode.
+        qc.invalidateQueries({ queryKey: ["project-leads"] });
       }
       qc.invalidateQueries({
         queryKey: ["quick-send-preview", props.wsId, peerKey],
@@ -418,14 +439,41 @@ export function ChatDrawer(props: {
           className="flex-1 overflow-y-auto bg-zinc-50 p-4"
         >
           {props.target.kind === "lead-no-contact" && (
-            <div className="rounded-md bg-white p-3 text-sm text-zinc-500 ring-1 ring-zinc-200">
-              Переписки нет — этому лиду ещё ничего не отправляли.
-              {props.target.hint && (
-                <div className="mt-1 text-xs text-zinc-400">
-                  {props.target.hint}
+            <>
+              {localSent.length === 0 && (
+                <div className="rounded-md bg-white p-3 text-sm text-zinc-500 ring-1 ring-zinc-200">
+                  Переписки нет — этому лиду ещё ничего не отправляли.
+                  {props.target.hint && (
+                    <div className="mt-1 text-xs text-zinc-400">
+                      {props.target.hint}
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
+              {localSent.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  {localSent.map((m) => (
+                    <div
+                      key={m.id}
+                      className="ml-auto max-w-[80%] overflow-hidden rounded-lg bg-emerald-600 text-sm text-white"
+                    >
+                      <div className="px-3 py-2">
+                        <div className="whitespace-pre-wrap break-words">
+                          {m.text}
+                        </div>
+                        <div
+                          className="mt-1 flex items-center justify-end gap-0.5 text-[10px] text-emerald-100"
+                          title={formatDateTime(m.date)}
+                        >
+                          <span>{formatHHMM(m.date)}</span>
+                          <Check size={12} />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
           )}
           {props.target.kind === "contact" && (
             <>

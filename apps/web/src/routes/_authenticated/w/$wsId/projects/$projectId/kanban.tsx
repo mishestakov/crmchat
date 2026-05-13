@@ -11,9 +11,13 @@ import {
   type Stage,
 } from "../../../../../../components/stages-editor";
 import { TruncationBanner } from "../../../../../../components/truncation-banner";
+import { LeadChatDrawer } from "../../../../../../components/lead-chat-drawer";
 import { useEventSourceEvent, useMyRole } from "../../../../../../lib/hooks";
 import { Modal } from "../../../../../../components/modal";
-import { useProject } from "../../../../../../lib/outreach-queries";
+import {
+  useOutreachAccounts,
+  useProject,
+} from "../../../../../../lib/outreach-queries";
 import { OUTREACH_QK } from "../../../../../../lib/query-keys";
 
 export const Route = createFileRoute(
@@ -36,6 +40,10 @@ function KanbanPage() {
   const qc = useQueryClient();
   const isAdmin = useMyRole(wsId) === "admin";
   const [editingStages, setEditingStages] = useState(false);
+  // Drawer переписки — открывается по клику на бэйдж непрочитанных (#11).
+  // Альтернатива openLead → переход на /contacts/$id, который дальше.
+  const [drawerLead, setDrawerLead] = useState<Lead | null>(null);
+  const accountsQ = useOutreachAccounts(wsId);
 
   // Клик по карточке = открыть контакт (где чат, заметки, напоминания).
   // У лида до ответа contactId = null — некуда переходить, в этом случае
@@ -260,6 +268,7 @@ function KanbanPage() {
               move.mutate({ itemId, stageId: stage.id })
             }
             onOpen={openLead}
+            onOpenChat={setDrawerLead}
           />
         ))}
         {noStageLeads.length > 0 && (
@@ -269,9 +278,19 @@ function KanbanPage() {
             leads={noStageLeads}
             onDrop={(itemId) => move.mutate({ itemId, stageId: null })}
             onOpen={openLead}
+            onOpenChat={setDrawerLead}
           />
         )}
       </div>
+      {drawerLead && (
+        <LeadChatDrawer
+          wsId={wsId}
+          projectId={projectId}
+          lead={drawerLead}
+          accounts={accountsQ.data ?? []}
+          onClose={() => setDrawerLead(null)}
+        />
+      )}
     </div>
   );
 }
@@ -281,6 +300,7 @@ function Column(props: {
   leads: Lead[];
   onDrop: (itemId: string) => void;
   onOpen: (lead: Lead) => void;
+  onOpenChat: (lead: Lead) => void;
 }) {
   const [over, setOver] = useState(false);
   return (
@@ -307,7 +327,12 @@ function Column(props: {
       </div>
       <div className="flex-1 space-y-2 overflow-y-auto">
         {props.leads.map((l) => (
-          <LeadCard key={l.id} lead={l} onOpen={() => props.onOpen(l)} />
+          <LeadCard
+            key={l.id}
+            lead={l}
+            onOpen={() => props.onOpen(l)}
+            onOpenChat={() => props.onOpenChat(l)}
+          />
         ))}
       </div>
     </div>
@@ -485,7 +510,11 @@ function SaveAsStageTemplateDialog(props: {
   );
 }
 
-function LeadCard(props: { lead: Lead; onOpen: () => void }) {
+function LeadCard(props: {
+  lead: Lead;
+  onOpen: () => void;
+  onOpenChat: () => void;
+}) {
   const { lead } = props;
   const fullName =
     typeof lead.properties.full_name === "string"
@@ -508,12 +537,17 @@ function LeadCard(props: { lead: Lead; onOpen: () => void }) {
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1 font-medium truncate">{display}</div>
         {unread > 0 && (
-          <span
-            className="shrink-0 rounded-full bg-emerald-500 px-1.5 text-xs font-semibold leading-5 text-white"
-            title={`${unread} непрочитанных`}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              props.onOpenChat();
+            }}
+            className="shrink-0 rounded-full bg-emerald-500 px-1.5 text-xs font-semibold leading-5 text-white hover:bg-emerald-600"
+            title={`${unread} непрочитанных — открыть чат`}
           >
             {unread > 99 ? "99+" : unread}
-          </span>
+          </button>
         )}
       </div>
       {tg && (
