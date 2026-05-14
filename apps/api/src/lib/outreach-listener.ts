@@ -509,7 +509,6 @@ type TdUserPayload = {
   type: { _: string };
   first_name: string;
   last_name: string;
-  phone_number: string;
   usernames?: { active_usernames: string[]; editable_username: string };
 };
 
@@ -584,7 +583,6 @@ async function ensureContactFromTraffic(opts: {
 
   const fullName = extractFullName(tdUser);
   const username = extractActiveUsername(tdUser);
-  const phone = tdUser.phone_number || null;
 
   const allKeys = new Set(defs.map((d) => d.key));
   const rawProps: Record<string, unknown> = {};
@@ -595,7 +593,6 @@ async function ensureContactFromTraffic(opts: {
   if (username && allKeys.has("telegram_username")) {
     rawProps.telegram_username = username;
   }
-  if (phone && allKeys.has("phone")) rawProps.phone = phone;
   const validated = validateContactProperties(defs, rawProps);
   // tg_user_id — internal-поле, может не быть в defs; добавляем вручную для
   // unique-constraint и lookup'ов.

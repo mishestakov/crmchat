@@ -566,7 +566,6 @@ function PreviewDialog(props: {
   const rendered = lead
     ? substituteVariables(message.text, {
         username: lead.username,
-        phone: lead.phone,
         properties: lead.properties,
       })
     : null;
@@ -601,9 +600,7 @@ function PreviewDialog(props: {
               <div className="mb-2 text-xs text-zinc-500">
                 Лид:{" "}
                 <span className="text-zinc-700">
-                  {lead.username
-                    ? `@${lead.username}`
-                    : lead.phone ?? "без identifier"}
+                  {lead.username ? `@${lead.username}` : "без identifier"}
                 </span>
               </div>
             )}

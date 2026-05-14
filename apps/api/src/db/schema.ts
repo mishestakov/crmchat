@@ -651,7 +651,12 @@ export const projects = pgTable(
 export type ProjectImportSourceMeta = {
   fileName?: string;
   usernameColumn?: string;
-  phoneColumn?: string;
+  // CSV-колонка с @username канала, который ведёт лид. На импорте такие
+  // каналы upsert'ятся в `channels` и связываются с контактом через
+  // `channel_admins`. Цель — один залив CSV даёт и лидов, и карточки каналов
+  // в `/channels`. Минимум полей: только username; title/member_count
+  // заполнятся при первом sync'е из соцсети.
+  channelUsernameColumn?: string;
   columns?: string[];
   // Маппинг CRM-properties workspace → CSV-колонки (key = property.key,
   // value = column header). Смапленные значения попадают в item.properties
@@ -662,7 +667,6 @@ export type ProjectImportSourceMeta = {
 export type ProjectImportStats = {
   imported: number;
   skippedMissingIdentifier: number;
-  skippedInvalidPhone: number;
   skippedDuplicate: number;
   // Сколько лидов узнали в существующих contacts (sticky подхватит).
   recognized?: number;
@@ -720,7 +724,6 @@ export const projectItems = pgTable(
     // === lead-specific (kind='lead') =======================================
 
     username: text("username"),
-    phone: text("phone"),
     tgUserId: text("tg_user_id"),
     repliedAt: timestamp("replied_at", { withTimezone: true }),
     contactId: text("contact_id").references(() => contacts.id, {
@@ -742,16 +745,11 @@ export const projectItems = pgTable(
       t.workspaceId,
       t.tgUserId,
     ),
-    // Identity-уникальность лидов в одном проекте: username (если есть)
-    // ИЛИ phone — каждый сам по себе уникальный TG-идентификатор.
+    // Identity-уникальность лидов в одном проекте: @username — единственный
+    // TG-идентификатор, по которому импорт может найти и отправить DM.
     uniqueIndex("project_items_project_username_unique")
       .on(t.projectId, sql`lower(${t.username})`)
       .where(sql`${t.username} IS NOT NULL AND ${t.kind} = 'lead'`),
-    uniqueIndex("project_items_project_phone_unique")
-      .on(t.projectId, t.phone)
-      .where(
-        sql`${t.phone} IS NOT NULL AND ${t.username} IS NULL AND ${t.kind} = 'lead'`,
-      ),
   ],
 );
 
@@ -1057,15 +1055,13 @@ export const tgChats = pgTable(
 // через WHERE is_deleted = false.
 //
 // Один блогер у пяти аккаунтов = одна строка. Tenancy isolation не нужна —
-// данные публичные. Phone заполняется только если TDLib его видит
-// (контакт из address book аккаунта).
+// данные публичные.
 export const tgUsers = pgTable(
   "tg_users",
   {
     userId: text("user_id").primaryKey(),
     username: text("username"),
     fullName: text("full_name"),
-    phone: text("phone"),
     isDeleted: boolean("is_deleted").notNull().default(false),
     // Presence: peer сейчас в сети (userStatusOnline) или был последний раз
     // онлайн в lastSeenAt (userStatusOffline). recently/lastWeek/lastMonth

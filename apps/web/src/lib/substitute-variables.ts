@@ -10,7 +10,6 @@ export function substituteVariables(
   text: string,
   lead: {
     username: string | null;
-    phone: string | null;
     properties: Record<string, string>;
   },
 ): string {
@@ -18,7 +17,6 @@ export function substituteVariables(
     const key = rawKey.trim();
     if (key in lead.properties) return lead.properties[key] ?? match;
     if (key === "username" && lead.username) return lead.username;
-    if (key === "phone" && lead.phone) return lead.phone;
     return match;
   });
 }

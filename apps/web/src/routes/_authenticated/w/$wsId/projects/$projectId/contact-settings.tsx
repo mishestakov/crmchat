@@ -71,7 +71,6 @@ function ContactSettingsPage() {
       "owner_id",
       "tg_user_id",
       "telegram_username",
-      "phone",
       "full_name",
     ]);
     return properties.data.filter((p) => !SKIP.has(p.key));

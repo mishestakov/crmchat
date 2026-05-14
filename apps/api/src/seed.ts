@@ -276,7 +276,6 @@ function buildLeads(
       kind: "lead" as const,
       stageId: s.stageId,
       username: s.username,
-      phone: null,
       tgUserId: tg,
       repliedAt: s.replied
         ? new Date(Date.now() - Math.random() * 7 * 86_400_000)

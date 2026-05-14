@@ -149,7 +149,6 @@ const LeadProgressSchema = z
   .object({
     id: z.string(),
     username: z.string().nullable(),
-    phone: z.string().nullable(),
     // tg_user_id зафиксирован после первой отправки worker'а (или из
     // pre-resolve sticky на импорте, если контакт был в базе). Нужен на
     // фронте для quick send'а лиду, у которого ещё нет привязанного контакта.
@@ -473,16 +472,14 @@ app.openapi(
     if (allLeads.length === 0) {
       throw new HTTPException(400, { message: "List has no leads" });
     }
-    // Defense-in-depth: identity-приоритет username > phone. Один и тот же
+    // Defense-in-depth: identity-приоритет по lower(username). Один и тот же
     // TG-юзер не должен получить N сообщений из-за того, что в CSV у него
-    // были разные форматы phone-колонки.
+    // @-handle написан в разном регистре.
     const seen = new Set<string>();
     const leads: typeof allLeads = [];
     for (const l of allLeads) {
-      const key = l.username
-        ? `u:${l.username.toLowerCase()}`
-        : `p:${l.phone ?? ""}`;
-      if (seen.has(key)) continue;
+      const key = l.username ? `u:${l.username.toLowerCase()}` : null;
+      if (!key || seen.has(key)) continue;
       seen.add(key);
       leads.push(l);
     }
@@ -578,7 +575,6 @@ app.openapi(
           messageIdx: msgIdx,
           text: substituteVariables(template, {
             username: lead.username,
-            phone: lead.phone,
             properties: lead.properties,
           }),
           sendAt: new Date(activatedAt.getTime() + offsetsMs[msgIdx]!),
@@ -744,7 +740,6 @@ app.openapi(
         .select({
           id: projectItems.id,
           username: projectItems.username,
-          phone: projectItems.phone,
           tgUserId: projectItems.tgUserId,
           properties: projectItems.properties,
           repliedAt: projectItems.repliedAt,
@@ -861,7 +856,6 @@ app.openapi(
         return {
           id: l.id,
           username: l.username,
-          phone: l.phone,
           tgUserId: l.tgUserId,
           properties: l.properties,
           account,
@@ -1232,7 +1226,6 @@ const SampleLeadSchema = z
   .object({
     id: z.string(),
     username: z.string().nullable(),
-    phone: z.string().nullable(),
     properties: z.record(z.string(), z.string()),
   })
   .openapi("OutreachSampleLead");
@@ -1270,7 +1263,6 @@ app.openapi(
       .select({
         id: projectItems.id,
         username: projectItems.username,
-        phone: projectItems.phone,
         properties: projectItems.properties,
       })
       .from(projectItems)
@@ -1281,7 +1273,6 @@ app.openapi(
     return c.json({
       id: row.id,
       username: row.username,
-      phone: row.phone,
       properties: row.properties,
     });
   },

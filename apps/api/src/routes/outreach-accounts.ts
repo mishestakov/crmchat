@@ -516,7 +516,6 @@ app.openapi(
         peerUserId: tgChats.peerUserId,
         fullName: tgUsers.fullName,
         username: tgUsers.username,
-        phone: tgUsers.phone,
         lastMessageAt: tgChats.lastMessageAt,
       })
       .from(tgChats)
@@ -545,7 +544,6 @@ app.openapi(
         full_name: cand.fullName || cand.username || "Без имени",
       };
       if (cand.username) properties.telegram_username = cand.username;
-      if (cand.phone) properties.phone = cand.phone;
       return {
         workspaceId: wsId,
         createdBy: userId,

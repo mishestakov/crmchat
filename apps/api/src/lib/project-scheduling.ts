@@ -126,7 +126,6 @@ export async function fillStickyFromScheduledMessages(
 export type SchedulingLead = {
   id: string;
   username: string | null;
-  phone: string | null;
   tgUserId: string | null;
   properties: Record<string, unknown>;
 };
@@ -175,7 +174,6 @@ export function buildScheduledRows(opts: {
         messageIdx: msgIdx,
         text: substituteVariables(template, {
           username: lead.username,
-          phone: lead.phone,
           properties: lead.properties as Record<string, string>,
         }),
         sendAt: new Date(opts.baseTime.getTime() + offsetsMs[msgIdx]!),

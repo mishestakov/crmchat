@@ -349,7 +349,6 @@ function ExistingContactCard({
     typeof props.telegram_username === "string"
       ? props.telegram_username
       : null;
-  const phone = typeof props.phone === "string" ? props.phone : null;
   const description =
     typeof props.description === "string" ? props.description : null;
 
@@ -358,8 +357,6 @@ function ExistingContactCard({
       <div className="text-sm font-medium">{fullName}</div>
       <div className="mt-0.5 text-xs text-zinc-500">
         {username ? `@${username}` : null}
-        {username && phone ? " · " : null}
-        {phone}
       </div>
       {description && (
         <div className="mt-2 text-xs text-zinc-600">{description}</div>

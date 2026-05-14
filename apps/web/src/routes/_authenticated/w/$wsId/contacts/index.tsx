@@ -189,7 +189,6 @@ const TableView = memo(function TableView(props: {
           <tr>
             <th className="px-3 py-2 font-medium">Имя</th>
             <th className="px-3 py-2 font-medium">@username</th>
-            <th className="px-3 py-2 font-medium">Телефон</th>
             <th className="px-3 py-2 font-medium">Последнее сообщение</th>
             <th className="px-3 py-2 font-medium">Закреплён за</th>
             <th className="px-3 py-2 font-medium">Кто общался</th>
@@ -217,7 +216,6 @@ const TableView = memo(function TableView(props: {
               typeof v.telegram_username === "string"
                 ? v.telegram_username.replace(/^@/, "")
                 : null;
-            const phone = typeof v.phone === "string" ? v.phone : null;
             const acc = c.primaryAccountId
               ? accountById.get(c.primaryAccountId)
               : null;
@@ -263,7 +261,6 @@ const TableView = memo(function TableView(props: {
                 <td className="px-3 py-2 text-zinc-600">
                   {username ? `@${username}` : "—"}
                 </td>
-                <td className="px-3 py-2 text-zinc-600">{phone ?? "—"}</td>
                 <td className="px-3 py-2 text-zinc-600">
                   {c.lastMessageAt ? formatRelative(c.lastMessageAt) : "—"}
                 </td>

@@ -358,7 +358,7 @@ function LeadsPage() {
 
 
 function LeadCell({ lead, wsId }: { lead: Lead; wsId: string }) {
-  const ident = lead.username ? `@${lead.username}` : lead.phone ?? "—";
+  const ident = lead.username ? `@${lead.username}` : "—";
   return (
     <div className="space-y-0.5">
       <div className="font-medium">{ident}</div>

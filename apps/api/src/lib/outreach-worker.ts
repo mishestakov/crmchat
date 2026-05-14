@@ -359,9 +359,7 @@ async function sendOne(
   tgPlaceholderId: string;
 }> {
   if (!lead.username) {
-    throw new Error(
-      "PHONE_NOT_SUPPORTED — phone-only лиды пока нельзя отправлять, нужен @username",
-    );
+    throw new Error("lead has no @username — cannot resolve TG user");
   }
 
   const username = stripAt(lead.username);

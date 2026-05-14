@@ -26,15 +26,11 @@ type PresetSpec = {
 const PRESETS: PresetSpec[] = [
   { key: "full_name", name: "Имя", type: "text", required: true, showInList: true },
   { key: "description", name: "Описание", type: "textarea", showInList: false },
-  { key: "email", name: "Email", type: "email", showInList: true },
-  { key: "phone", name: "Телефон", type: "tel", showInList: true },
   { key: "telegram_username", name: "Telegram", type: "text", showInList: true },
   // tg_user_id — служебное поле, не показываем в списке. Заполняется системно
   // (TG-импорт, outreach worker, listener, lead→contact конверсия). Юзер не
   // редактирует, но валидатору нужно знать что ключ существует.
   { key: "tg_user_id", name: "TG ID", type: "text", showInList: false },
-  { key: "url", name: "Ссылка", type: "url", showInList: false },
-  { key: "amount", name: "Сумма", type: "number", showInList: true },
 ];
 
 export async function seedDefaultProperties(workspaceId: string) {

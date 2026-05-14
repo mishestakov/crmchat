@@ -4,12 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bell,
   ChevronDown,
-  Globe,
   Hash,
-  Mail,
   MessageCircle,
   MoreHorizontal,
-  Phone,
   Plus,
   Send,
   StickyNote,
@@ -297,38 +294,14 @@ function ContactView(props: {
 
 function SocialRow({ values }: { values: Record<string, unknown> }) {
   const links: { href: string; icon: React.ReactNode; bg: string }[] = [];
-  const email = stringValue(values.email);
-  const phone = stringValue(values.phone);
   const tg = stringValue(values.telegram_username);
-  const url = stringValue(values.url);
 
-  if (email) {
-    links.push({
-      href: `mailto:${email}`,
-      icon: <Mail size={14} />,
-      bg: "bg-zinc-500",
-    });
-  }
-  if (phone) {
-    links.push({
-      href: `tel:${phone}`,
-      icon: <Phone size={14} />,
-      bg: "bg-zinc-500",
-    });
-  }
   if (tg) {
     const u = tg.replace(/^@/, "");
     links.push({
       href: `https://t.me/${u}`,
       icon: <Send size={14} />,
       bg: "bg-sky-500",
-    });
-  }
-  if (url) {
-    links.push({
-      href: url,
-      icon: <Globe size={14} />,
-      bg: "bg-zinc-500",
     });
   }
   if (links.length === 0) return null;

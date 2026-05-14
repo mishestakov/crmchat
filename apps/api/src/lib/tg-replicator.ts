@@ -61,7 +61,6 @@ type UserPayload = {
   id: number | string;
   first_name: string;
   last_name: string;
-  phone_number: string;
   usernames?: { active_usernames: string[]; editable_username: string };
   type: { _: string };
   // Presence на момент initial chat list / refresh. Дальше — через
@@ -195,7 +194,6 @@ export function attachReplicator(
           set: {
             username: sql`excluded.username`,
             fullName: sql`excluded.full_name`,
-            phone: sql`excluded.phone`,
             isDeleted: sql`excluded.is_deleted`,
             isOnline: sql`excluded.is_online`,
             // GREATEST — see flush() для userStatusBuf, не откатываем
@@ -520,7 +518,6 @@ function mapUser(user: UserPayload): UserRow | null {
     userId: String(user.id),
     username: extractActiveUsername(user),
     fullName: extractFullName(user),
-    phone: user.phone_number || null,
     isDeleted,
     ...(status
       ? { isOnline: status.isOnline, lastSeenAt: status.lastSeenAt }

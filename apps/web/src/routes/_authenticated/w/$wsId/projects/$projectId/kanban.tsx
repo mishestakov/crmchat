@@ -524,7 +524,7 @@ function LeadCard(props: {
     typeof lead.properties.full_name === "string"
       ? lead.properties.full_name
       : null;
-  const display = fullName ?? lead.username ?? lead.phone ?? "—";
+  const display = fullName ?? lead.username ?? "—";
   const tg = lead.username;
   const unread = lead.unreadCount;
 
