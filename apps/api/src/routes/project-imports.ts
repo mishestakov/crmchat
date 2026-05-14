@@ -3,6 +3,8 @@ import { HTTPException } from "hono/http-exception";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
+  channelAdmins,
+  channels,
   contacts,
   projectImports,
   projectItems,
@@ -18,6 +20,7 @@ import {
   loadPropertyDefs,
   validateContactProperties,
 } from "../lib/contact-properties.ts";
+import { parseChannelInput } from "@repo/core";
 import { assertProjectAccess } from "../lib/projects-access.ts";
 import {
   buildScheduledRows,
@@ -35,9 +38,6 @@ import { assertRole, type WorkspaceVars } from "../middleware/assert-member.ts";
 // (этап 12.5 «доливка лидов»).
 
 const TG_USERNAME_RE = /^[a-zA-Z0-9_]{5,32}$/;
-// Очень мягкий E.164 — 7-15 цифр с опциональным +. Реальная валидация
-// (страна-специфичная) — выше нашей зоны ответственности.
-const PHONE_RE = /^\+?\d{7,15}$/;
 
 const WsProjectParam = z.object({
   wsId: z.string().min(1).max(64),
@@ -51,7 +51,7 @@ const ImportSchema = z
     sourceMeta: z.object({
       fileName: z.string().optional(),
       usernameColumn: z.string().optional(),
-      phoneColumn: z.string().optional(),
+      channelUsernameColumn: z.string().optional(),
       columns: z.array(z.string()).optional(),
       propertyMappings: z.record(z.string(), z.string()).optional(),
     }),
@@ -59,7 +59,6 @@ const ImportSchema = z
       .object({
         imported: z.number().int(),
         skippedMissingIdentifier: z.number().int(),
-        skippedInvalidPhone: z.number().int(),
         skippedDuplicate: z.number().int(),
         recognized: z.number().int().optional(),
       })
@@ -74,7 +73,7 @@ const CreateImportBody = z
     sourceMeta: z.object({
       fileName: z.string().optional(),
       usernameColumn: z.string().optional(),
-      phoneColumn: z.string().optional(),
+      channelUsernameColumn: z.string().optional(),
       columns: z.array(z.string()).optional(),
       propertyMappings: z.record(z.string(), z.string()).optional(),
     }),
@@ -147,19 +146,29 @@ app.openapi(
     }
 
     const body = c.req.valid("json");
-    const { usernameColumn, phoneColumn, propertyMappings = {} } = body.sourceMeta;
+    const {
+      usernameColumn,
+      channelUsernameColumn,
+      propertyMappings = {},
+    } = body.sourceMeta;
 
     const seen = new Set<string>();
     const stats = {
       imported: 0,
       skippedMissingIdentifier: 0,
-      skippedInvalidPhone: 0,
       skippedDuplicate: 0,
     };
     const candidates: {
       username: string;
-      phone: string | null;
       properties: Record<string, string>;
+      // Канал, на который ведёт лид. Извлекается из CSV-колонки
+      // body.sourceMeta.channelUsernameColumn парсером parseChannelInput
+      // (понимает @foo / t.me/foo / t.me/+abc и т.д.). Один из двух слотов:
+      // channelUsername — публичный канал, channelInviteLink — приватный.
+      // Используется после транзакции для upsert'а каналов и
+      // channel_admins-связок с контактом лида.
+      channelUsername: string | null;
+      channelInviteLink: string | null;
     }[] = [];
 
     for (const row of body.rows) {
@@ -169,27 +178,13 @@ app.openapi(
         usernameColumn && row[usernameColumn]
           ? row[usernameColumn]!.trim().replace(/^@/, "").toLowerCase()
           : "";
-      const phoneRaw =
-        phoneColumn && row[phoneColumn] ? row[phoneColumn]!.trim() : "";
 
       const username = usernameRaw && TG_USERNAME_RE.test(usernameRaw)
         ? usernameRaw
         : null;
-      let phone: string | null = null;
-      if (phoneRaw) {
-        const normalized = phoneRaw.replace(/[\s\-()]/g, "");
-        if (PHONE_RE.test(normalized)) {
-          phone = normalized.startsWith("+") ? normalized : `+${normalized}`;
-        } else {
-          stats.skippedInvalidPhone++;
-          continue;
-        }
-      }
 
-      // Phone-only лиды бесполезны для outreach: без @ мы не можем ни найти
-      // их через searchPublicChat, ни открыть deep-link в TG-клиенте. Поэтому
-      // импортируем только строки с валидным @username. Phone остаётся
-      // опциональным полем для матчинга с contacts.
+      // Лид без @username бесполезен для outreach: ни через searchPublicChat
+      // не найдём, ни через deep-link в TG-клиенте не откроем.
       if (!username) {
         stats.skippedMissingIdentifier++;
         continue;
@@ -205,12 +200,11 @@ app.openapi(
       seen.add(dedupKey);
 
       // properties: смапленные на CRM-property keys + остальные CSV-колонки
-      // под raw header (для {{}}-подстановок). Username/phone уже использованы
-      // как identifier'ы — не дублируем.
+      // под raw header (для {{}}-подстановок). Username уже использован
+      // как identifier — не дублируем.
       const properties: Record<string, string> = {};
       const consumed = new Set<string>();
       if (usernameColumn) consumed.add(usernameColumn);
-      if (phoneColumn) consumed.add(phoneColumn);
       for (const [propKey, csvCol] of Object.entries(propertyMappings)) {
         const v = row[csvCol]?.trim();
         if (v) {
@@ -222,7 +216,24 @@ app.openapi(
         if (consumed.has(k)) continue;
         if (v && v.trim()) properties[k] = v.trim();
       }
-      candidates.push({ username, phone, properties });
+
+      // Канал лида — парсим из CSV-колонки. Парсер понимает голый username,
+      // ссылку t.me/foo, invite-link t.me/+abc. Не распознанное молчаливо
+      // отбрасываем (вспомогательное обогащение, не identifier лида).
+      let channelUsername: string | null = null;
+      let channelInviteLink: string | null = null;
+      if (channelUsernameColumn) {
+        const parsed = parseChannelInput(row[channelUsernameColumn]);
+        channelUsername = parsed.username;
+        channelInviteLink = parsed.inviteLink;
+      }
+
+      candidates.push({
+        username,
+        properties,
+        channelUsername,
+        channelInviteLink,
+      });
     }
 
     // Eager-конверсия: лид всегда указывает на contact. Сейчас ищем
@@ -358,9 +369,9 @@ app.openapi(
     });
 
     // INSERT batch'а импорта + лидов в одной транзакции. ON CONFLICT DO
-    // NOTHING на partial unique индексе (project, lower(username)) и
-    // (project, phone) — закрывает дубли с предыдущих импортов в этот
-    // же проект (12.5 доливка). Считаем сколько реально вставили.
+    // NOTHING на partial unique индексе (project, lower(username)) —
+    // закрывает дубли с предыдущих импортов в этот же проект (12.5
+    // доливка). Считаем сколько реально вставили.
     // Дефолтная стадия для новых импортируемых лидов = первая stage
     // канбана проекта (по order). Если у проекта нет stages (теоретически
     // возможно если кто-то их все удалил) — лиды создаются с null
@@ -418,7 +429,6 @@ app.openapi(
           kind: "lead" as const,
           stageId: initialStageId,
           username: c.username,
-          phone: c.phone,
           tgUserId: c.tgUserId,
           contactId: c.contactId,
           properties: c.properties,
@@ -452,7 +462,6 @@ app.openapi(
           leads: insertedLeads.map((l) => ({
             id: l.id,
             username: l.username,
-            phone: l.phone,
             tgUserId: l.tgUserId,
             properties: (l.properties ?? {}) as Record<string, unknown>,
           })),
@@ -482,6 +491,127 @@ app.openapi(
         .returning();
       return withStats!;
     });
+
+    // === Bonus: каналы из CSV ===========================================
+    // Если в маппинге указана колонка с адресом канала — заводим карточки
+    // каналов в /channels и связываем их с контактами-админами через
+    // channel_admins. Публичные (есть @username) и приватные (invite-link)
+    // идут двумя ветками: у первых дедуп по lower(username) и sync догонит
+    // title/member_count; у вторых дедуп по link внутри батча, между
+    // импортами могут возникнуть дубли — лечатся отдельным sub-task'ом
+    // через checkChatInviteLink. Падать импорт из-за этого не должен: лиды
+    // уже закоммичены выше.
+    if (channelUsernameColumn) {
+      const adminsByUsername = new Map<string, Set<string>>();
+      const adminsByInvite = new Map<string, Set<string>>();
+      for (const r of resolved) {
+        if (r.channelUsername) {
+          const set = adminsByUsername.get(r.channelUsername) ?? new Set();
+          set.add(r.contactId);
+          adminsByUsername.set(r.channelUsername, set);
+        } else if (r.channelInviteLink) {
+          const set = adminsByInvite.get(r.channelInviteLink) ?? new Set();
+          set.add(r.contactId);
+          adminsByInvite.set(r.channelInviteLink, set);
+        }
+      }
+
+      const channelIdByKey = new Map<string, string>();
+
+      // Публичные. ON CONFLICT по partial unique (ws, platform,
+      // lower(username)) — если канал уже в /channels, не трогаем.
+      if (adminsByUsername.size > 0) {
+        const uniqueUsernames = [...adminsByUsername.keys()];
+        await db
+          .insert(channels)
+          .values(
+            uniqueUsernames.map((u) => ({
+              workspaceId: wsId,
+              platform: "telegram" as const,
+              username: u,
+              title: `@${u}`,
+              link: `https://t.me/${u}`,
+              createdBy: userId,
+            })),
+          )
+          .onConflictDoNothing();
+        const existing = await db
+          .select({
+            id: channels.id,
+            usernameLower: sql<string>`lower(${channels.username})`,
+          })
+          .from(channels)
+          .where(
+            and(
+              eq(channels.workspaceId, wsId),
+              eq(channels.platform, "telegram"),
+              inArray(sql`lower(${channels.username})`, uniqueUsernames),
+            ),
+          );
+        for (const e of existing) {
+          channelIdByKey.set(`u:${e.usernameLower}`, e.id);
+        }
+      }
+
+      // Приватные. Уникального индекса на link в БД нет: дедуп ТОЛЬКО
+      // внутри батча (через Map по link). Между батчами/импортами дубли
+      // возможны — закроется отдельным sub-task'ом через
+      // checkChatInviteLink (резолв chat_id до Subscribe).
+      // Сначала ищем существующие карточки с тем же link, чтобы не плодить
+      // дубли при доливке того же CSV.
+      if (adminsByInvite.size > 0) {
+        const uniqueLinks = [...adminsByInvite.keys()];
+        const existing = await db
+          .select({ id: channels.id, link: channels.link })
+          .from(channels)
+          .where(
+            and(
+              eq(channels.workspaceId, wsId),
+              eq(channels.platform, "telegram"),
+              inArray(channels.link, uniqueLinks),
+            ),
+          );
+        const existingLinks = new Set(existing.map((e) => e.link!));
+        for (const e of existing) channelIdByKey.set(`i:${e.link!}`, e.id);
+        const toInsert = uniqueLinks.filter((l) => !existingLinks.has(l));
+        if (toInsert.length > 0) {
+          const inserted = await db
+            .insert(channels)
+            .values(
+              toInsert.map((link) => ({
+                workspaceId: wsId,
+                platform: "telegram" as const,
+                username: null,
+                title: "Приватный канал",
+                link,
+                createdBy: userId,
+              })),
+            )
+            .returning({ id: channels.id, link: channels.link });
+          for (const ins of inserted) channelIdByKey.set(`i:${ins.link!}`, ins.id);
+        }
+      }
+
+      // INSERT channel_admins по парам (channelId, contactId). ON CONFLICT
+      // DO NOTHING — связь уже могла существовать с предыдущих импортов.
+      const adminRows: { channelId: string; contactId: string }[] = [];
+      for (const [u, contactSet] of adminsByUsername) {
+        const channelId = channelIdByKey.get(`u:${u}`);
+        if (!channelId) continue;
+        for (const cid of contactSet) adminRows.push({ channelId, contactId: cid });
+      }
+      for (const [l, contactSet] of adminsByInvite) {
+        const channelId = channelIdByKey.get(`i:${l}`);
+        if (!channelId) continue;
+        for (const cid of contactSet) adminRows.push({ channelId, contactId: cid });
+      }
+      if (adminRows.length > 0) {
+        await db
+          .insert(channelAdmins)
+          .values(adminRows)
+          .onConflictDoNothing();
+      }
+    }
 
     return c.json(serialize(importRow), 201);
   },

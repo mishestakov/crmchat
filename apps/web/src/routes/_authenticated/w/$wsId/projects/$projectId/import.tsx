@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FileInput } from "lucide-react";
+import { parseChannelInput } from "@repo/core";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
 import { parseCsv, type ParsedCsv } from "../../../../../../lib/csv";
@@ -16,14 +17,25 @@ export const Route = createFileRoute(
 
 const SKIP_PROPS_IN_MAPPING = new Set(["stage"]);
 
+// Спец-маркер для CSV-колонки с @username канала. Не относится к
+// workspace-properties — обрабатывается отдельно и кладётся в
+// sourceMeta.channelUsernameColumn на сабмите. Каналы upsert'ятся в
+// /channels и связываются с контактом-лидом через channel_admins.
+const CHANNEL_USERNAME_KEY = "_channel_username";
+
 const PROPERTY_SYNONYMS: Record<string, string[]> = {
   telegram_username: ["telegram", "tg", "username", "handle"],
-  phone: ["phone", "телефон", "номер", "tel", "phone_number", "phonenumber"],
   full_name: ["name", "имя", "fullname", "full_name", "fio", "фио"],
-  email: ["email", "e-mail", "mail", "почта"],
-  amount: ["amount", "sum", "сумма", "стоимость", "цена"],
-  url: ["url", "link", "ссылка", "сайт", "website"],
   description: ["desc", "description", "описание", "note", "заметка"],
+  [CHANNEL_USERNAME_KEY]: [
+    "channel",
+    "канал",
+    "channel_username",
+    "channel_link",
+    "link",
+    "ссылка",
+    "url",
+  ],
 };
 
 function ImportLeadsPage() {
@@ -62,22 +74,25 @@ function ImportLeadsPage() {
     if (!parsed || mappableProps.length === 0) return;
     const map: Record<string, string> = {};
     const claimedColumns = new Set<string>();
-    for (const p of mappableProps) {
-      const synonyms = [
-        ...(PROPERTY_SYNONYMS[p.key] ?? []),
-        p.key.toLowerCase(),
-        p.name.toLowerCase(),
-      ];
+    const tryClaim = (key: string, synonyms: string[]) => {
       const match = parsed.headers.find((h) => {
         if (claimedColumns.has(h)) return false;
         const lh = h.toLowerCase().trim();
         return synonyms.some((s) => s.toLowerCase() === lh);
       });
       if (match) {
-        map[match] = p.key;
+        map[match] = key;
         claimedColumns.add(match);
       }
+    };
+    for (const p of mappableProps) {
+      tryClaim(p.key, [
+        ...(PROPERTY_SYNONYMS[p.key] ?? []),
+        p.key.toLowerCase(),
+        p.name.toLowerCase(),
+      ]);
     }
+    tryClaim(CHANNEL_USERNAME_KEY, PROPERTY_SYNONYMS[CHANNEL_USERNAME_KEY]!);
     setColumnMap(map);
   }, [parsed, mappableProps]);
 
@@ -104,16 +119,36 @@ function ImportLeadsPage() {
   const propertyMappings = useMemo(() => {
     const m: Record<string, string> = {};
     for (const [col, key] of Object.entries(columnMap)) {
-      if (key) m[key] = col;
+      if (key && key !== CHANNEL_USERNAME_KEY) m[key] = col;
     }
     return m;
   }, [columnMap]);
 
+  const channelUsernameColumn = useMemo(() => {
+    for (const [col, key] of Object.entries(columnMap)) {
+      if (key === CHANNEL_USERNAME_KEY) return col;
+    }
+    return undefined;
+  }, [columnMap]);
+
   const usernameColumn = propertyMappings.telegram_username;
-  const phoneColumn = propertyMappings.phone;
-  const hasIdentifier = !!(usernameColumn || phoneColumn);
+  const hasIdentifier = !!usernameColumn;
 
   const previewRows = useMemo(() => parsed?.rows.slice(0, 5) ?? [], [parsed]);
+
+  // Считаем уникальные каналы из CSV для счётчика «N каналов будет создано»
+  // в превью. Тот же парсер что и на бэке: публичные дедупим по username,
+  // приватные — по invite-link.
+  const uniqueChannelCount = useMemo(() => {
+    if (!parsed || !channelUsernameColumn) return 0;
+    const seen = new Set<string>();
+    for (const row of parsed.rows) {
+      const { username, inviteLink } = parseChannelInput(row[channelUsernameColumn]);
+      if (username) seen.add(`u:${username}`);
+      else if (inviteLink) seen.add(`i:${inviteLink}`);
+    }
+    return seen.size;
+  }, [parsed, channelUsernameColumn]);
 
   const create = useMutation({
     mutationFn: async () => {
@@ -127,7 +162,7 @@ function ImportLeadsPage() {
             sourceMeta: {
               fileName: fileName ?? undefined,
               usernameColumn: usernameColumn ?? undefined,
-              phoneColumn: phoneColumn ?? undefined,
+              channelUsernameColumn: channelUsernameColumn ?? undefined,
               columns: parsed.headers,
               propertyMappings,
             },
@@ -219,7 +254,7 @@ function ImportLeadsPage() {
                 <div className="text-sm font-medium">Маппинг колонок</div>
                 <p className="mt-0.5 text-xs text-zinc-500">
                   Что означает каждая колонка из файла. Хотя бы одна должна
-                  быть Telegram username или Телефон — иначе отправлять некуда.
+                  быть Telegram username — иначе отправлять некуда.
                   Несмапленные колонки сохранятся для подстановок типа{" "}
                   <code>{"{{Company Name}}"}</code>.
                 </p>
@@ -249,18 +284,34 @@ function ImportLeadsPage() {
                         {p.name}
                       </option>
                     ))}
+                    <option
+                      value={CHANNEL_USERNAME_KEY}
+                      disabled={
+                        !!channelUsernameColumn &&
+                        channelUsernameColumn !== header
+                      }
+                    >
+                      @ канала
+                    </option>
                   </select>
                 </Field>
               ))}
               {!hasIdentifier && (
                 <p className="text-xs text-amber-700">
-                  Выберите колонку для Telegram username или Телефон.
+                  Выберите колонку для Telegram username.
                 </p>
               )}
             </div>
 
             <div className="rounded-2xl bg-white p-5 shadow-sm">
-              <div className="mb-2 text-sm font-medium">Превью первых 5 строк</div>
+              <div className="mb-2 flex items-baseline justify-between">
+                <div className="text-sm font-medium">Превью первых 5 строк</div>
+                {uniqueChannelCount > 0 && (
+                  <div className="text-xs text-zinc-500">
+                    + {uniqueChannelCount} каналов будет создано
+                  </div>
+                )}
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead className="bg-zinc-50 text-zinc-500">
@@ -268,7 +319,7 @@ function ImportLeadsPage() {
                       {parsed.headers.map((h) => {
                         const mapped =
                           h === usernameColumn ||
-                          h === phoneColumn ||
+                          h === channelUsernameColumn ||
                           Object.values(propertyMappings).includes(h);
                         return (
                           <th
