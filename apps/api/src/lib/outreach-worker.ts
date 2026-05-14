@@ -15,7 +15,7 @@ import {
   getOutreachWorkerClient,
   setAccountCooldown,
 } from "./outreach-account-client.ts";
-import { emitProjectChanged } from "./outreach-events.ts";
+import { emitProjectChanged } from "./events.ts";
 import { rememberPendingSend } from "./outreach-listener.ts";
 import { isNowInWindow, startOfDayInTz } from "./outreach-schedule.ts";
 import type { TdClient } from "./tdlib/index.ts";

@@ -94,35 +94,6 @@ export async function resolveWarmTgUserIds(
   return out;
 }
 
-// Legacy-путь по последнему sent для лидов без contact-sticky. Закрывает
-// TG-юзеров, у которых ещё нет contact-записи (получили холодную, не
-// ответили, не импортировались).
-export async function fillStickyFromScheduledMessages(
-  wsId: string,
-  remaining: string[],
-  priorByTgUserId: Map<string, string>,
-): Promise<void> {
-  if (remaining.length === 0) return;
-  const priors = await db
-    .selectDistinctOn([projectItems.tgUserId], {
-      tgUserId: projectItems.tgUserId,
-      accountId: scheduledMessages.accountId,
-    })
-    .from(scheduledMessages)
-    .innerJoin(projectItems, eq(scheduledMessages.itemId, projectItems.id))
-    .where(
-      and(
-        eq(scheduledMessages.workspaceId, wsId),
-        eq(scheduledMessages.status, "sent"),
-        inArray(projectItems.tgUserId, remaining),
-      ),
-    )
-    .orderBy(projectItems.tgUserId, desc(scheduledMessages.sentAt));
-  for (const p of priors) {
-    if (p.tgUserId) priorByTgUserId.set(p.tgUserId, p.accountId);
-  }
-}
-
 export type SchedulingLead = {
   id: string;
   username: string | null;

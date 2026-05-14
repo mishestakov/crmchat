@@ -1,7 +1,7 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { streamSSE } from "hono/streaming";
-import { and, asc, desc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
   contactCreationTrigger,
@@ -13,7 +13,6 @@ import {
   projectItems,
   projects,
   stageTemplates,
-  tgChats,
   tracks,
   projectStatus,
   scheduledMessages,
@@ -21,15 +20,19 @@ import {
   type ProjectMessage,
   type ProjectStage,
 } from "../db/schema.ts";
-import { contactTgUserIdSql } from "../lib/contact-sql.ts";
 import { pickDefined } from "../lib/pick-defined.ts";
-import { subscribeProject } from "../lib/outreach-events.ts";
+import { subscribeProject } from "../lib/events.ts";
 import { myAccountIdsSql } from "../lib/outreach-access.ts";
 import {
   assertProjectAccess,
   projectAccessClause,
 } from "../lib/projects-access.ts";
-import { substituteVariables } from "../lib/substitute-variables.ts";
+import {
+  buildScheduledRows,
+  resolveProjectAccountIds,
+  resolveStickyByTgUserIds,
+  resolveWarmTgUserIds,
+} from "../lib/project-scheduling.ts";
 import { assertRole, type WorkspaceVars } from "../middleware/assert-member.ts";
 
 // Outreach-проект: рассылка по одному списку с N сообщениями и задержками.
@@ -440,24 +443,7 @@ app.openapi(
       throw new HTTPException(400, { message: "Add at least one message" });
     }
 
-    // Аккаунты: фильтр по mode + статус active. Banned/frozen/unauthorized/offline
-    // сейчас не должен использоваться worker'ом. UI юзеру при selected'е не даст
-    // выбрать неактивные, но прийти могут устаревшие IDs — отфильтруем здесь.
-    const accountRows = await db
-      .select({ id: outreachAccounts.id })
-      .from(outreachAccounts)
-      .where(
-        and(
-          eq(outreachAccounts.workspaceId, wsId),
-          eq(outreachAccounts.status, "active"),
-        ),
-      );
-    const accountIds =
-      project.accountsMode === "all"
-        ? accountRows.map((a) => a.id)
-        : accountRows
-            .map((a) => a.id)
-            .filter((id) => project.accountsSelected.includes(id));
+    const accountIds = await resolveProjectAccountIds(wsId, project);
     if (accountIds.length === 0) {
       throw new HTTPException(400, {
         message: "No active outreach accounts available",
@@ -473,8 +459,7 @@ app.openapi(
       throw new HTTPException(400, { message: "List has no leads" });
     }
     // Defense-in-depth: identity-приоритет по lower(username). Один и тот же
-    // TG-юзер не должен получить N сообщений из-за того, что в CSV у него
-    // @-handle написан в разном регистре.
+    // TG-юзер не должен получить N сообщений из-за разного регистра @-handle.
     const seen = new Set<string>();
     const leads: typeof allLeads = [];
     for (const l of allLeads) {
@@ -484,102 +469,26 @@ app.openapi(
       leads.push(l);
     }
 
-    const activatedAt = new Date();
-    // Для каждого message i: cumulativeOffsetMs = сумма delays[0..i] в ms.
-    // delay у первого сообщения (idx=0) — это пауза от момента активации.
-    const offsetsMs = cumulativeOffsetsMs(project.messages);
-
-    // Sticky lead → account: «с каким аккаунтом блогер общался, с тем и
-    // продолжает». Round-robin — только для новых лидов без истории.
-    //
-    // Источники в порядке приоритета:
-    //   1. contacts.primary_account_id — first-write-wins sticky на уровне
-    //      контакта (заполняется при импорте DM, первой исходящей и первом
-    //      входящем; см. schema.ts contacts.primaryAccountId).
-    //   2. scheduledMessages — legacy путь по последнему sent. Закрывает
-    //      аккаунты, у которых ещё нет contact-записи (TG-юзер только
-    //      получил холодную, не ответил, не импортировался).
     const tgUserIds = leads
       .map((l) => l.tgUserId)
       .filter((x): x is string => x !== null);
     const priorByTgUserId = await resolveStickyByTgUserIds(wsId, tgUserIds);
+    const warmTgUserIds = await resolveWarmTgUserIds(wsId, tgUserIds);
 
-    // Warm-set для альтернативного текста первого сообщения: peer
-    // отвечал нам хоть раз через любой аккаунт воркспейса
-    // (tg_chats.has_inbound=true). Один запрос на батч.
-    const warmTgUserIds = new Set<string>();
-    if (tgUserIds.length > 0) {
-      const warmRows = await db
-        .selectDistinct({ peerUserId: tgChats.peerUserId })
-        .from(tgChats)
-        .innerJoin(outreachAccounts, eq(tgChats.accountId, outreachAccounts.id))
-        .where(
-          and(
-            eq(outreachAccounts.workspaceId, wsId),
-            eq(tgChats.hasInbound, true),
-            inArray(tgChats.peerUserId, tgUserIds),
-          ),
-        );
-      for (const r of warmRows) warmTgUserIds.add(r.peerUserId);
-    }
-
-    const remaining = tgUserIds.filter((id) => !priorByTgUserId.has(id));
-    if (remaining.length > 0) {
-      // DISTINCT ON (tg_user_id) ORDER BY tg_user_id, sentAt DESC — отдаёт
-      // последний sent для каждого tg-юзера одним проходом, без JS first-wins.
-      const priors = await db
-        .selectDistinctOn([projectItems.tgUserId], {
-          tgUserId: projectItems.tgUserId,
-          accountId: scheduledMessages.accountId,
-        })
-        .from(scheduledMessages)
-        .innerJoin(
-          projectItems,
-          eq(scheduledMessages.itemId, projectItems.id),
-        )
-        .where(
-          and(
-            eq(scheduledMessages.workspaceId, wsId),
-            eq(scheduledMessages.status, "sent"),
-            inArray(projectItems.tgUserId, remaining),
-          ),
-        )
-        .orderBy(projectItems.tgUserId, desc(scheduledMessages.sentAt));
-      for (const p of priors) {
-        if (p.tgUserId) priorByTgUserId.set(p.tgUserId, p.accountId);
-      }
-    }
-
-    let rrIdx = 0;
-    const rows = leads.flatMap((lead) => {
-      const prior = lead.tgUserId
-        ? priorByTgUserId.get(lead.tgUserId)
-        : undefined;
-      const accountId = prior ?? accountIds[rrIdx % accountIds.length]!;
-      if (!prior) rrIdx++;
-      const isWarm = lead.tgUserId
-        ? warmTgUserIds.has(lead.tgUserId)
-        : false;
-      return project.messages.map((msg, msgIdx) => {
-        // Warm-альтернатива применяется только к первому сообщению (idx=0)
-        // и только если в шаблоне реально что-то набито (пустая строка ≠
-        // «использовать warm»). Остальные шаги всегда text.
-        const warmText = msg.warmText?.trim();
-        const template =
-          msgIdx === 0 && isWarm && warmText ? warmText : msg.text;
-        return {
-          workspaceId: wsId,
-          projectId: project.id,
-          itemId: lead.id,
-          accountId,
-          messageIdx: msgIdx,
-          text: substituteVariables(template, {
-            username: lead.username,
-            properties: lead.properties,
-          }),
-          sendAt: new Date(activatedAt.getTime() + offsetsMs[msgIdx]!),
-        };
-      });
+    const activatedAt = new Date();
+    const rows = buildScheduledRows({
+      wsId,
+      project,
+      accountIds,
+      leads: leads.map((l) => ({
+        id: l.id,
+        username: l.username,
+        tgUserId: l.tgUserId,
+        properties: (l.properties ?? {}) as Record<string, unknown>,
+      })),
+      baseTime: activatedAt,
+      priorByTgUserId,
+      warmTgUserIds,
     });
 
     await db.transaction(async (tx) => {
@@ -1278,36 +1187,6 @@ app.openapi(
   },
 );
 
-// Sticky-резолвер: для набора tg_user_id возвращает Map → primary_account_id
-// из contacts. Используется в /activate (резолв sticky перед round-robin) и
-// в /leads (sticky-предсказание для draft-sequence — UI должен совпадать с
-// фактическим распределением на activate).
-async function resolveStickyByTgUserIds(
-  wsId: string,
-  tgUserIds: string[],
-): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
-  if (tgUserIds.length === 0) return map;
-  const rows = await db
-    .select({
-      tgUserId: contactTgUserIdSql,
-      accountId: contacts.primaryAccountId,
-    })
-    .from(contacts)
-    .where(
-      and(
-        eq(contacts.workspaceId, wsId),
-        isNotNull(contacts.primaryAccountId),
-        inArray(contactTgUserIdSql, tgUserIds),
-      ),
-    );
-  for (const r of rows) {
-    if (r.tgUserId && r.accountId) map.set(r.tgUserId, r.accountId);
-  }
-  return map;
-}
-
-
 function serializeProject(row: typeof projects.$inferSelect) {
   return {
     id: row.id,
@@ -1325,30 +1204,6 @@ function serializeProject(row: typeof projects.$inferSelect) {
     completedAt: row.completedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
   };
-}
-
-function cumulativeOffsetsMs(messages: ProjectMessage[]): number[] {
-  const out: number[] = [];
-  let acc = 0;
-  for (const m of messages) {
-    acc += delayToMs(m.delay);
-    out.push(acc);
-  }
-  return out;
-}
-
-function delayToMs(delay: { period: string; value: number }): number {
-  const v = delay.value;
-  switch (delay.period) {
-    case "minutes":
-      return v * 60_000;
-    case "hours":
-      return v * 3_600_000;
-    case "days":
-      return v * 86_400_000;
-    default:
-      return 0;
-  }
 }
 
 // SSE-стрим обновлений sequence — фронт открывает EventSource, на каждое

@@ -15,7 +15,7 @@ import {
   getOutreachWorkerClient,
   setAccountCooldown,
 } from "../lib/outreach-account-client.ts";
-import { emitProjectChanged } from "../lib/outreach-events.ts";
+import { emitProjectChanged } from "../lib/events.ts";
 import { readOnTelegram } from "./contacts.ts";
 import type { WorkspaceVars } from "../middleware/assert-member.ts";
 

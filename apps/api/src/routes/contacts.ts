@@ -27,7 +27,7 @@ import {
   assertContactAccess,
   contactAccessClause,
 } from "../lib/contacts-access.ts";
-import { subscribeContacts } from "../lib/contact-events.ts";
+import { subscribeContacts } from "../lib/events.ts";
 import {
   contactTgUserIdSql,
   contactUsernameSql,
@@ -810,7 +810,7 @@ function fallbackLabel(contentType: string): string {
 // SSE-стрим контактных апдейтов. Фронт открывает один EventSource на канбан,
 // на каждый event делает qc.setQueryData патч / invalidate. Не openapi —
 // EventSource не работает с api-client'ом, JSON-shape — `{contactId,
-// unreadCount, lastMessageAt}` (см. lib/contact-events.ts ContactEvent).
+// unreadCount, lastMessageAt}` (см. lib/events.ts ContactEvent).
 // NB: путь намеренно НЕ внутри /contacts/{id}/* — иначе stream-сегмент
 // конфликтует с `:id` параметром openapi-роута GET /contacts/{id}
 // (Hono матчит первый зарегистрированный, и openapi-роут шире).

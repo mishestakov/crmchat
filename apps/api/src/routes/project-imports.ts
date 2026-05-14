@@ -24,7 +24,6 @@ import { parseChannelInput } from "@repo/core";
 import { assertProjectAccess } from "../lib/projects-access.ts";
 import {
   buildScheduledRows,
-  fillStickyFromScheduledMessages,
   resolveProjectAccountIds,
   resolveStickyByTgUserIds,
   resolveWarmTgUserIds,
@@ -451,8 +450,6 @@ app.openapi(
           .map((l) => l.tgUserId)
           .filter((x): x is string => x !== null);
         const priorByTgUserId = await resolveStickyByTgUserIds(wsId, tgUserIds);
-        const remaining = tgUserIds.filter((id) => !priorByTgUserId.has(id));
-        await fillStickyFromScheduledMessages(wsId, remaining, priorByTgUserId);
         const warmTgUserIds = await resolveWarmTgUserIds(wsId, tgUserIds);
 
         const scheduledRows = buildScheduledRows({
