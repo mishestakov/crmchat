@@ -3,9 +3,9 @@ import type { VariableOption } from "../components/variable-textarea";
 import { PLACEHOLDER_RE } from "./substitute-variables";
 
 // Источники переменных шаблона рассылки. Бэк substituteVariables берёт:
-//   1) lead.properties[key] — то что лежит в jsonb лида.
+//   1) lead.properties[key] — снимок CSV-строки под raw header'ами.
 //   2) canonical scalar `username` — TG @-handle, не в properties.
-// Список variables для UI должен зеркалить эти источники.
+// Список variables для UI зеркалит CSV-колонки прошлых импортов.
 
 export const CANONICAL: VariableOption = {
   key: "username",
@@ -15,10 +15,9 @@ export const CANONICAL: VariableOption = {
 type ProjectImport =
   paths["/v1/workspaces/{wsId}/projects/{projectId}/imports"]["get"]["responses"][200]["content"]["application/json"][number];
 
-// Для проектного шаблона показываем только то что реально лежит в
-// lead.properties: identifier'ы (usernameColumn, channelUsernameColumn)
-// исключаем — они в jsonb не идут; замаппленные через propertyMappings —
-// под property-key, не под raw header; остальные columns — под raw header.
+// Все CSV-headers из импортов проекта — под теми же именами что в файле.
+// Identifier-колонку (usernameColumn) исключаем: её значение доступно как
+// canonical {{username}}, дубль в jsonb не делаем.
 export function buildVariablesFromImports(
   imports: ProjectImport[] | undefined,
 ): VariableOption[] {
@@ -26,18 +25,8 @@ export function buildVariablesFromImports(
   const options: VariableOption[] = [];
   for (const imp of imports ?? []) {
     const sm = imp.sourceMeta;
-    const consumed = new Set<string>();
-    if (sm.usernameColumn) consumed.add(sm.usernameColumn);
-    if (sm.channelUsernameColumn) consumed.add(sm.channelUsernameColumn);
-    for (const [propKey, csvHeader] of Object.entries(sm.propertyMappings ?? {})) {
-      consumed.add(csvHeader);
-      const k = propKey.toLowerCase();
-      if (seen.has(k)) continue;
-      seen.add(k);
-      options.push({ key: propKey, label: `← ${csvHeader}` });
-    }
     for (const col of sm.columns ?? []) {
-      if (consumed.has(col)) continue;
+      if (col === sm.usernameColumn) continue;
       const k = col.toLowerCase();
       if (seen.has(k)) continue;
       seen.add(k);

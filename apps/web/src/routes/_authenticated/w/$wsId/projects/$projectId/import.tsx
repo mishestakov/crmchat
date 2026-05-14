@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FileInput } from "lucide-react";
 import { parseChannelInput } from "@repo/core";
@@ -15,28 +15,23 @@ export const Route = createFileRoute(
   component: ImportLeadsPage,
 });
 
-const SKIP_PROPS_IN_MAPPING = new Set(["stage"]);
+const USERNAME_SYNONYMS = ["telegram", "tg", "username", "handle"];
+const CHANNEL_SYNONYMS = [
+  "channel",
+  "канал",
+  "channel_username",
+  "channel_link",
+  "link",
+  "ссылка",
+  "url",
+];
 
-// Спец-маркер для CSV-колонки с @username канала. Не относится к
-// workspace-properties — обрабатывается отдельно и кладётся в
-// sourceMeta.channelUsernameColumn на сабмите. Каналы upsert'ятся в
-// /channels и связываются с контактом-лидом через channel_admins.
-const CHANNEL_USERNAME_KEY = "_channel_username";
-
-const PROPERTY_SYNONYMS: Record<string, string[]> = {
-  telegram_username: ["telegram", "tg", "username", "handle"],
-  full_name: ["name", "имя", "fullname", "full_name", "fio", "фио"],
-  description: ["desc", "description", "описание", "note", "заметка"],
-  [CHANNEL_USERNAME_KEY]: [
-    "channel",
-    "канал",
-    "channel_username",
-    "channel_link",
-    "link",
-    "ссылка",
-    "url",
-  ],
-};
+function pickColumn(headers: string[], synonyms: string[]): string | "" {
+  const found = headers.find((h) =>
+    synonyms.some((s) => s === h.toLowerCase().trim()),
+  );
+  return found ?? "";
+}
 
 function ImportLeadsPage() {
   const { wsId, projectId } = Route.useParams();
@@ -44,62 +39,22 @@ function ImportLeadsPage() {
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const properties = useQuery({
-    queryKey: ["properties", wsId],
-    queryFn: async () => {
-      const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/properties",
-        { params: { path: { wsId } } },
-      );
-      if (error) throw error;
-      return data;
-    },
-  });
-
   const [name, setName] = useState("");
   const [fileName, setFileName] = useState<string | null>(null);
   const [parsed, setParsed] = useState<ParsedCsv | null>(null);
-  // Inverted mapping: ключ — CSV-колонка, значение — propertyKey ("" = skip).
-  const [columnMap, setColumnMap] = useState<Record<string, string>>({});
+  const [usernameColumn, setUsernameColumn] = useState<string>("");
+  const [channelColumn, setChannelColumn] = useState<string>("");
   const [parseError, setParseError] = useState<string | null>(null);
 
-  const mappableProps = useMemo(
-    () =>
-      (properties.data ?? []).filter((p) => !SKIP_PROPS_IN_MAPPING.has(p.key)),
-    [properties.data],
-  );
-
-  // Auto-suggest при появлении и parsed-csv, и workspace-properties.
   useEffect(() => {
-    if (!parsed || mappableProps.length === 0) return;
-    const map: Record<string, string> = {};
-    const claimedColumns = new Set<string>();
-    const tryClaim = (key: string, synonyms: string[]) => {
-      const match = parsed.headers.find((h) => {
-        if (claimedColumns.has(h)) return false;
-        const lh = h.toLowerCase().trim();
-        return synonyms.some((s) => s.toLowerCase() === lh);
-      });
-      if (match) {
-        map[match] = key;
-        claimedColumns.add(match);
-      }
-    };
-    for (const p of mappableProps) {
-      tryClaim(p.key, [
-        ...(PROPERTY_SYNONYMS[p.key] ?? []),
-        p.key.toLowerCase(),
-        p.name.toLowerCase(),
-      ]);
-    }
-    tryClaim(CHANNEL_USERNAME_KEY, PROPERTY_SYNONYMS[CHANNEL_USERNAME_KEY]!);
-    setColumnMap(map);
-  }, [parsed, mappableProps]);
+    if (!parsed) return;
+    setUsernameColumn(pickColumn(parsed.headers, USERNAME_SYNONYMS));
+    setChannelColumn(pickColumn(parsed.headers, CHANNEL_SYNONYMS));
+  }, [parsed]);
 
   const handleFile = async (file: File) => {
     setParseError(null);
     setFileName(file.name);
-    setColumnMap({});
     if (!name) setName(file.name.replace(/\.csv$/i, ""));
     try {
       const text = await file.text();
@@ -116,39 +71,18 @@ function ImportLeadsPage() {
     }
   };
 
-  const propertyMappings = useMemo(() => {
-    const m: Record<string, string> = {};
-    for (const [col, key] of Object.entries(columnMap)) {
-      if (key && key !== CHANNEL_USERNAME_KEY) m[key] = col;
-    }
-    return m;
-  }, [columnMap]);
-
-  const channelUsernameColumn = useMemo(() => {
-    for (const [col, key] of Object.entries(columnMap)) {
-      if (key === CHANNEL_USERNAME_KEY) return col;
-    }
-    return undefined;
-  }, [columnMap]);
-
-  const usernameColumn = propertyMappings.telegram_username;
-  const hasIdentifier = !!usernameColumn;
-
   const previewRows = useMemo(() => parsed?.rows.slice(0, 5) ?? [], [parsed]);
 
-  // Считаем уникальные каналы из CSV для счётчика «N каналов будет создано»
-  // в превью. Тот же парсер что и на бэке: публичные дедупим по username,
-  // приватные — по invite-link.
   const uniqueChannelCount = useMemo(() => {
-    if (!parsed || !channelUsernameColumn) return 0;
+    if (!parsed || !channelColumn) return 0;
     const seen = new Set<string>();
     for (const row of parsed.rows) {
-      const { username, inviteLink } = parseChannelInput(row[channelUsernameColumn]);
+      const { username, inviteLink } = parseChannelInput(row[channelColumn]);
       if (username) seen.add(`u:${username}`);
       else if (inviteLink) seen.add(`i:${inviteLink}`);
     }
     return seen.size;
-  }, [parsed, channelUsernameColumn]);
+  }, [parsed, channelColumn]);
 
   const create = useMutation({
     mutationFn: async () => {
@@ -161,10 +95,9 @@ function ImportLeadsPage() {
             name: name.trim(),
             sourceMeta: {
               fileName: fileName ?? undefined,
-              usernameColumn: usernameColumn ?? undefined,
-              channelUsernameColumn: channelUsernameColumn ?? undefined,
+              usernameColumn: usernameColumn || undefined,
+              channelUsernameColumn: channelColumn || undefined,
               columns: parsed.headers,
-              propertyMappings,
             },
             rows: parsed.rows,
           },
@@ -184,7 +117,7 @@ function ImportLeadsPage() {
   });
 
   const canSubmit =
-    !!parsed && name.trim().length > 0 && hasIdentifier && !create.isPending;
+    !!parsed && name.trim().length > 0 && !!usernameColumn && !create.isPending;
 
   return (
     <div className="space-y-3 p-6">
@@ -251,54 +184,45 @@ function ImportLeadsPage() {
 
             <div className="rounded-2xl bg-white p-5 shadow-sm space-y-3">
               <div>
-                <div className="text-sm font-medium">Маппинг колонок</div>
+                <div className="text-sm font-medium">Идентификаторы</div>
                 <p className="mt-0.5 text-xs text-zinc-500">
-                  Что означает каждая колонка из файла. Хотя бы одна должна
-                  быть Telegram username — иначе отправлять некуда.
-                  Несмапленные колонки сохранятся для подстановок типа{" "}
-                  <code>{"{{Company Name}}"}</code>.
+                  Подскажите какая колонка — Telegram-username (обязательно,
+                  иначе отправлять некуда) и какая — @ канала (опционально, для
+                  связи лида с каналом). Все остальные колонки автоматически
+                  доступны в шаблоне как <code>{"{{header}}"}</code>.
                 </p>
               </div>
-              {parsed.headers.map((header) => (
-                <Field key={header} label={header}>
-                  <select
-                    value={columnMap[header] ?? ""}
-                    onChange={(e) =>
-                      setColumnMap((prev) => ({
-                        ...prev,
-                        [header]: e.target.value,
-                      }))
-                    }
-                    className="w-full rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
-                  >
-                    <option value="">— не используется —</option>
-                    {mappableProps.map((p) => (
-                      <option
-                        key={p.id}
-                        value={p.key}
-                        disabled={
-                          !!propertyMappings[p.key] &&
-                          propertyMappings[p.key] !== header
-                        }
-                      >
-                        {p.name}
-                      </option>
-                    ))}
-                    <option
-                      value={CHANNEL_USERNAME_KEY}
-                      disabled={
-                        !!channelUsernameColumn &&
-                        channelUsernameColumn !== header
-                      }
-                    >
-                      @ канала
+              <Field label="Колонка с Telegram username">
+                <select
+                  value={usernameColumn}
+                  onChange={(e) => setUsernameColumn(e.target.value)}
+                  className="w-full rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+                >
+                  <option value="">— выбрать —</option>
+                  {parsed.headers.map((h) => (
+                    <option key={h} value={h}>
+                      {h}
                     </option>
-                  </select>
-                </Field>
-              ))}
-              {!hasIdentifier && (
+                  ))}
+                </select>
+              </Field>
+              <Field label="Колонка с @ канала (опционально)">
+                <select
+                  value={channelColumn}
+                  onChange={(e) => setChannelColumn(e.target.value)}
+                  className="w-full rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+                >
+                  <option value="">— не используется —</option>
+                  {parsed.headers.map((h) => (
+                    <option key={h} value={h} disabled={h === usernameColumn}>
+                      {h}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              {!usernameColumn && (
                 <p className="text-xs text-amber-700">
-                  Выберите колонку для Telegram username.
+                  Без колонки Telegram username импорт невозможен.
                 </p>
               )}
             </div>
@@ -317,16 +241,14 @@ function ImportLeadsPage() {
                   <thead className="bg-zinc-50 text-zinc-500">
                     <tr>
                       {parsed.headers.map((h) => {
-                        const mapped =
-                          h === usernameColumn ||
-                          h === channelUsernameColumn ||
-                          Object.values(propertyMappings).includes(h);
+                        const isIdentifier =
+                          h === usernameColumn || h === channelColumn;
                         return (
                           <th
                             key={h}
                             className={
                               "px-2 py-1.5 text-left font-normal " +
-                              (mapped ? "text-emerald-700" : "")
+                              (isIdentifier ? "text-emerald-700" : "")
                             }
                           >
                             {h}

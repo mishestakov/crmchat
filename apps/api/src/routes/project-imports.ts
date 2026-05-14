@@ -52,7 +52,6 @@ const ImportSchema = z
       usernameColumn: z.string().optional(),
       channelUsernameColumn: z.string().optional(),
       columns: z.array(z.string()).optional(),
-      propertyMappings: z.record(z.string(), z.string()).optional(),
     }),
     importStats: z
       .object({
@@ -74,7 +73,6 @@ const CreateImportBody = z
       usernameColumn: z.string().optional(),
       channelUsernameColumn: z.string().optional(),
       columns: z.array(z.string()).optional(),
-      propertyMappings: z.record(z.string(), z.string()).optional(),
     }),
     rows: z.array(z.record(z.string(), z.string())).max(50000),
   })
@@ -145,11 +143,7 @@ app.openapi(
     }
 
     const body = c.req.valid("json");
-    const {
-      usernameColumn,
-      channelUsernameColumn,
-      propertyMappings = {},
-    } = body.sourceMeta;
+    const { usernameColumn, channelUsernameColumn } = body.sourceMeta;
 
     const seen = new Set<string>();
     const stats = {
@@ -198,21 +192,13 @@ app.openapi(
       }
       seen.add(dedupKey);
 
-      // properties: смапленные на CRM-property keys + остальные CSV-колонки
-      // под raw header (для {{}}-подстановок). Username уже использован
-      // как identifier — не дублируем.
+      // properties: снимок CSV-строки под raw header'ами (для {{}}-подстановок
+      // в шаблонах). Username — identifier, в jsonb не дублируем (есть
+      // canonical {{username}}). Остальные колонки — как есть, чтобы юзер в
+      // шаблоне писал ровно те имена что видел в файле.
       const properties: Record<string, string> = {};
-      const consumed = new Set<string>();
-      if (usernameColumn) consumed.add(usernameColumn);
-      for (const [propKey, csvCol] of Object.entries(propertyMappings)) {
-        const v = row[csvCol]?.trim();
-        if (v) {
-          properties[propKey] = v;
-          consumed.add(csvCol);
-        }
-      }
       for (const [k, v] of Object.entries(row)) {
-        if (consumed.has(k)) continue;
+        if (k === usernameColumn) continue;
         if (v && v.trim()) properties[k] = v.trim();
       }
 
