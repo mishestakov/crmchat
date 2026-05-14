@@ -31,6 +31,7 @@ import { useEventSourceEvent, useMyRole } from "../../../../../../lib/hooks";
 import { useProject } from "../../../../../../lib/outreach-queries";
 import { OUTREACH_QK, invalidateProject } from "../../../../../../lib/query-keys";
 import { substituteVariables } from "../../../../../../lib/substitute-variables";
+import { buildVariablesFromImports } from "../../../../../../lib/template-variables";
 
 export const Route = createFileRoute(
   "/_authenticated/w/$wsId/projects/$projectId/",
@@ -133,6 +134,24 @@ function SequenceDetailPage() {
   // на отдельных sub-routes, тут не редактируются.
   const [name, setName] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
+
+  // Список переменных для autocomplete — только CSV-колонки из импортов
+  // проекта (точное соответствие lead.properties) + canonical username.
+  const importsQ = useQuery({
+    queryKey: ["project-imports", wsId, projectId],
+    queryFn: async () => {
+      const { data, error } = await api.GET(
+        "/v1/workspaces/{wsId}/projects/{projectId}/imports",
+        { params: { path: { wsId, projectId } } },
+      );
+      if (error) throw error;
+      return data;
+    },
+  });
+  const templateVariables = useMemo(
+    () => buildVariablesFromImports(importsQ.data),
+    [importsQ.data],
+  );
   const [previewMsg, setPreviewMsg] = useState<Message | null>(null);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
@@ -394,6 +413,8 @@ function SequenceDetailPage() {
           <div className="px-5 py-4">
             <MessagesEditor
               value={messages}
+              variables={templateVariables}
+              validate
               disabled={!isDraft && !isPaused}
               onChange={(next) => {
                 setMessages(next);

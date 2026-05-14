@@ -4,7 +4,7 @@
 // один раз при активации (snapshot в scheduled_messages.text), здесь — только
 // для UI. Если ключ не нашёлся — оставляем placeholder как есть.
 
-const PLACEHOLDER_RE = /\{\{\s*([^{}]+?)\s*\}\}/g;
+export const PLACEHOLDER_RE = /\{\{\s*([^{}]+?)\s*\}\}/g;
 
 export function substituteVariables(
   text: string,

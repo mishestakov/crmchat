@@ -10,6 +10,12 @@ import {
   MessagesEditor,
   type Message,
 } from "../../../../components/messages-editor";
+import type { VariableOption } from "../../../../components/variable-textarea";
+import { CANONICAL } from "../../../../lib/template-variables";
+
+// В библиотеке шаблонов нет проекта-контекста и нет CSV — список колонок
+// неизвестен до применения. Доступна только canonical-переменная.
+const LIBRARY_VARIABLES: VariableOption[] = [CANONICAL];
 
 // Библиотека шаблонов цепочек сообщений (12.2.1). По UX зеркальна
 // /stage-templates: список карточек, inline-edit имени, MessagesEditor
@@ -68,6 +74,7 @@ function MessageTemplatesPage() {
         {showNew && isAdmin && (
           <NewTemplateCard
             wsId={wsId}
+            variables={LIBRARY_VARIABLES}
             onClose={() => setShowNew(false)}
             onCreated={() =>
               qc.invalidateQueries({ queryKey: TEMPLATES_QK(wsId) })
@@ -91,6 +98,7 @@ function MessageTemplatesPage() {
             key={t.id}
             wsId={wsId}
             template={t}
+            variables={LIBRARY_VARIABLES}
             canEdit={isAdmin}
           />
         ))}
@@ -101,6 +109,7 @@ function MessageTemplatesPage() {
 
 function NewTemplateCard(props: {
   wsId: string;
+  variables: VariableOption[];
   onClose: () => void;
   onCreated: () => void;
 }) {
@@ -136,7 +145,11 @@ function NewTemplateCard(props: {
         onChange={(e) => setName(e.target.value)}
         className="w-full rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium focus:border-emerald-500 focus:outline-none"
       />
-      <MessagesEditor value={messages} onChange={setMessages} />
+      <MessagesEditor
+        value={messages}
+        variables={props.variables}
+        onChange={setMessages}
+      />
       <div className="flex items-center gap-2">
         <button
           type="button"
@@ -171,6 +184,7 @@ function TemplateCard(props: {
     messages: Message[];
     createdAt: string;
   };
+  variables: VariableOption[];
   canEdit: boolean;
 }) {
   const { wsId, template, canEdit } = props;
@@ -236,6 +250,7 @@ function TemplateCard(props: {
       </div>
       <MessagesEditor
         value={messages}
+        variables={props.variables}
         onChange={setMessages}
         disabled={!canEdit}
       />

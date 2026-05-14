@@ -1,6 +1,12 @@
-import { useState } from "react";
-import { Eye, MessageSquare, Pencil, Plus, Trash2 } from "lucide-react";
+import { useMemo, useState } from "react";
+import { AlertTriangle, Eye, MessageSquare, Pencil, Plus, Trash2 } from "lucide-react";
 import { pluralize } from "../lib/date-utils";
+import { extractUnknownVariables } from "../lib/template-variables";
+import { VariableTextarea, type VariableOption } from "./variable-textarea";
+
+// Module-level фолбэк — стабильный ref избавляет от каскадного пересчёта
+// useMemo в VariableTextarea/MessageEditor когда parent не передал variables.
+const EMPTY_VARIABLES: VariableOption[] = [];
 
 // Редактор массива сообщений outreach-цепочки. Используется в проекте
 // (/projects/$projectId — секция «Кампания») и в шаблонах
@@ -41,8 +47,18 @@ export function MessagesEditor(props: {
   onPreview?: (m: Message) => void;
   // Текст когда список пуст. Дефолт — про активацию проекта.
   emptyHint?: string;
+  // Список переменных для autocomplete по `{{`. Пустой массив отключает
+  // popover. Парент формирует список (canonical `username` + workspace
+  // properties).
+  variables?: VariableOption[];
+  // Когда true — блокируем сохранение шаблона если в тексте есть `{{...}}`
+  // которых нет в variables. В библиотеке шаблонов выключено: там список
+  // колонок неизвестен до применения к проекту.
+  validate?: boolean;
 }) {
   const { value, onChange, disabled, onPreview } = props;
+  const variables = props.variables ?? EMPTY_VARIABLES;
+  const validate = props.validate ?? false;
   // editingId — id существующего (уже в value) сообщения, открытого на
   // редактирование. draft — новое сообщение, ещё НЕ переданное parent'у:
   // живёт только локально, в value попадает на «Сохранить» внутри editor'а.
@@ -106,9 +122,10 @@ export function MessagesEditor(props: {
                 index={idx}
                 canEditDelay={idx > 0}
                 canEditWarm={idx === 0}
+                variables={variables}
+                validate={validate}
                 onCancel={() => setEditingId(null)}
                 onSave={saveMessage}
-                onPreview={onPreview ? () => onPreview(m) : undefined}
                 onDelete={() => removeMessage(m.id)}
               />
             ) : (
@@ -130,9 +147,10 @@ export function MessagesEditor(props: {
               index={value.length}
               canEditDelay={value.length > 0}
               canEditWarm={value.length === 0}
+              variables={variables}
+              validate={validate}
               onCancel={() => setDraft(null)}
               onSave={saveDraft}
-              onPreview={undefined}
               onDelete={() => setDraft(null)}
             />
           </li>
@@ -202,7 +220,7 @@ function MessageRow(props: {
       {hasWarm && (
         <div className="mt-2 rounded-md border border-emerald-100 bg-emerald-50/50 p-2">
           <div className="mb-0.5 text-[11px] font-medium text-emerald-800">
-            Альтернатива для тёплых
+            Вариант для тех, с кем уже общались
           </div>
           <div className="text-xs whitespace-pre-wrap text-zinc-700">
             {m.warmText}
@@ -218,9 +236,10 @@ function MessageEditor(props: {
   index: number;
   canEditDelay: boolean;
   canEditWarm: boolean;
+  variables: VariableOption[];
+  validate: boolean;
   onCancel: () => void;
   onSave: (m: Message) => void;
-  onPreview?: () => void;
   onDelete: () => void;
 }) {
   const [text, setText] = useState(props.message.text);
@@ -232,6 +251,16 @@ function MessageEditor(props: {
   const [warmOpen, setWarmOpen] = useState(
     !!props.message.warmText && props.message.warmText.trim().length > 0,
   );
+
+  const unknownVars = useMemo(() => {
+    if (!props.validate || props.variables.length === 0) return [];
+    const fromText = extractUnknownVariables(text, props.variables);
+    const fromWarm = warmOpen
+      ? extractUnknownVariables(warmText, props.variables)
+      : [];
+    return [...new Set([...fromText, ...fromWarm])];
+  }, [props.validate, props.variables, text, warmText, warmOpen]);
+  const hasErrors = unknownVars.length > 0;
 
   return (
     <div className="rounded-lg border border-emerald-300 bg-white p-3 space-y-3">
@@ -278,13 +307,13 @@ function MessageEditor(props: {
         </div>
       )}
 
-      <textarea
+      <VariableTextarea
         value={text}
         rows={4}
         autoFocus
         placeholder="Привет, {{username}}! ..."
-        onChange={(e) => setText(e.target.value)}
-        className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
+        variables={props.variables}
+        onChange={setText}
       />
 
       {props.canEditWarm && (
@@ -294,7 +323,7 @@ function MessageEditor(props: {
               <div className="mb-1 flex items-center justify-between">
                 <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-800">
                   <MessageSquare size={12} />
-                  Альтернатива для тёплых
+                  Вариант для тех, с кем уже общались
                 </div>
                 <button
                   type="button"
@@ -302,21 +331,19 @@ function MessageEditor(props: {
                     setWarmOpen(false);
                     setWarmText("");
                   }}
-                  className="text-xs text-zinc-500 hover:text-zinc-900"
+                  className="text-zinc-400 hover:text-red-600"
+                  aria-label="Удалить"
+                  title="Удалить вариант"
                 >
-                  убрать
+                  <Trash2 size={14} />
                 </button>
               </div>
-              <p className="mb-1.5 text-[11px] text-zinc-500">
-                Получат лиды, кто хотя бы раз отвечал нам через любой ваш
-                аккаунт. Остальные получат основной текст выше.
-              </p>
-              <textarea
+              <VariableTextarea
                 value={warmText}
                 rows={3}
                 placeholder="Привет, {{username}}! Помнишь, мы обсуждали…"
-                onChange={(e) => setWarmText(e.target.value)}
-                className="w-full rounded-md border border-emerald-200 bg-white px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
+                variables={props.variables}
+                onChange={setWarmText}
               />
             </>
           ) : (
@@ -325,25 +352,22 @@ function MessageEditor(props: {
               onClick={() => setWarmOpen(true)}
               className="flex items-center gap-1 text-xs font-medium text-emerald-700 hover:text-emerald-800"
             >
-              <Plus size={12} /> Альтернатива для тёплых
+              <Plus size={12} /> Добавить вариант для тех, с кем уже общались
             </button>
           )}
         </div>
       )}
 
-      <div className="grid grid-cols-3 gap-2">
-        {props.onPreview ? (
-          <button
-            type="button"
-            onClick={props.onPreview}
-            disabled={!text.trim()}
-            className="inline-flex items-center justify-center gap-1 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-50 disabled:opacity-50"
-          >
-            <Eye size={14} /> Превью
-          </button>
-        ) : (
-          <span />
-        )}
+      {hasErrors && (
+        <div className="flex items-center gap-1.5 text-xs text-red-700">
+          <AlertTriangle size={14} className="shrink-0" />
+          <span>
+            Неизвестные переменные:{" "}
+            {unknownVars.map((k) => `{{${k}}}`).join(", ")}
+          </span>
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-2">
         <button
           type="button"
           onClick={props.onCancel}
@@ -353,7 +377,7 @@ function MessageEditor(props: {
         </button>
         <button
           type="button"
-          disabled={!text.trim()}
+          disabled={!text.trim() || hasErrors}
           onClick={() =>
             props.onSave({
               ...props.message,
