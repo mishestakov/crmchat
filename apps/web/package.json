@@ -13,7 +13,7 @@
     "@repo/core": "workspace:*",
     "@tanstack/react-query": "^5.100.10",
     "@tanstack/react-router": "^1.169.2",
-    "lucide-react": "^1.14.0",
+    "lucide-react": "^1.16.0",
     "motion": "^12.38.0",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.6",
@@ -22,11 +22,11 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.0",
     "@tanstack/router-plugin": "^1.167.35",
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
-    "@vitejs/plugin-react": "^6.0.1",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
     "tailwindcss": "^4.3.0",
     "typescript": "^6.0.3",
-    "vite": "^8.0.12"
+    "vite": "^8.0.13"
   }
 }
