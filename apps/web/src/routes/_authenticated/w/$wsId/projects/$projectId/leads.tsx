@@ -455,9 +455,18 @@ function MessageStatusCell(props: {
     return <span className="text-xs text-zinc-400">отменено</span>;
   }
   if (msg.status === "pending") {
-    const when = msg.scheduledAt
-      ? formatRelative(msg.scheduledAt, { future: true })
-      : "позже";
+    // send_at — мягкая граница «не раньше чем». Догоны (msg_idx>0) до
+    // факт-отправки предыдущего шага лежат с sentinel в 2999 году — это
+    // маркер «ждёт предыдущего», точный момент будет известен только
+    // когда worker отправит msg_idx-1. После наступления sendAt — «в
+    // очереди»: worker дойдёт когда дойдёт (human-flow на других лидах).
+    const at = msg.scheduledAt ? new Date(msg.scheduledAt).getTime() : 0;
+    const isSentinel = at > Date.now() + 365 * 24 * 60 * 60 * 1000;
+    const when = isSentinel
+      ? "после предыдущего"
+      : at > Date.now()
+        ? formatRelative(msg.scheduledAt!, { future: true })
+        : "в очереди";
     return <span className="text-xs text-zinc-500">{when}</span>;
   }
   // sent

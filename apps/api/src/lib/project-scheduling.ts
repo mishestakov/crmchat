@@ -31,15 +31,12 @@ export function delayToMs(delay: { period: string; value: number }): number {
   }
 }
 
-export function cumulativeOffsetsMs(messages: ProjectMessage[]): number[] {
-  const out: number[] = [];
-  let acc = 0;
-  for (const m of messages) {
-    acc += delayToMs(m.delay);
-    out.push(acc);
-  }
-  return out;
-}
+// Sentinel «ещё не запланировано»: msg_idx>0 при активации ложатся в БД с
+// этим sendAt, чтобы worker их не брал. Реальный send_at пересчитывается
+// после факт-отправки предыдущего шага из now+delay (см. outreach-worker).
+// Год > 2900 дальше любых разумных follow-up'ов, UI учит этот порог и
+// показывает «после предыдущего» вместо «через 974 года».
+export const FOLLOWUP_PENDING_SENTINEL = new Date("2999-01-01T00:00:00Z");
 
 // Sticky-резолвер: для набора tg_user_id возвращает Map → primary_account_id
 // из contacts. Используется в /activate (резолв sticky перед round-robin) и
@@ -124,7 +121,6 @@ export function buildScheduledRows(opts: {
   priorByTgUserId: Map<string, string>;
   warmTgUserIds: Set<string>;
 }): ScheduledRow[] {
-  const offsetsMs = cumulativeOffsetsMs(opts.project.messages);
   let rrIdx = 0;
   return opts.leads.flatMap((lead) => {
     const prior = lead.tgUserId
@@ -147,7 +143,10 @@ export function buildScheduledRows(opts: {
           username: lead.username,
           properties: lead.properties as Record<string, string>,
         }),
-        sendAt: new Date(opts.baseTime.getTime() + offsetsMs[msgIdx]!),
+        // msg_idx=0 уходит «сразу как worker дойдёт»; догоны висят с
+        // sentinel'ом, реальный sendAt получают после факт-отправки
+        // предыдущего шага (см. scheduleNextFollowup в outreach-worker).
+        sendAt: msgIdx === 0 ? opts.baseTime : FOLLOWUP_PENDING_SENTINEL,
       };
     });
   });

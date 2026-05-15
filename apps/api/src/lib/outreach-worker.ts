@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, lte, max, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
   outreachAccounts,
@@ -18,6 +18,8 @@ import {
 import { emitProjectChanged } from "./events.ts";
 import { rememberPendingSend } from "./outreach-listener.ts";
 import { isNowInWindow, startOfDayInTz } from "./outreach-schedule.ts";
+import { delayToMs, resolveWarmTgUserIds } from "./project-scheduling.ts";
+import type { ProjectMessage } from "../db/schema.ts";
 import type { TdClient } from "./tdlib/index.ts";
 
 // Outbound worker для холодных рассылок. Каждый tick:
@@ -32,18 +34,40 @@ import type { TdClient } from "./tdlib/index.ts";
 
 const TICK_INTERVAL_MS = 10_000;
 const MAX_PER_TICK_GLOBAL = 500;
-const MAX_PER_ACCOUNT_PER_TICK = 5;
-const MIN_INTER_SEND_PAUSE_MS = 3_000;
-const MAX_INTER_SEND_PAUSE_MS = 8_000;
+// 1 сообщение на аккаунт за tick — иначе human-flow (75-190с на каждое)
+// заблокирует Promise.all всего tick'а на 6-16 минут, и остальные 44
+// аккаунта будут стоять. Следующее due-сообщение этого аккаунта возьмётся
+// на следующем tick'е (через 10с).
+const MAX_PER_ACCOUNT_PER_TICK = 1;
 
-let timer: ReturnType<typeof setInterval> | null = null;
-let tickRunning = false;
+// Human-flow: каждое сообщение оборачиваем в openChat → typing → send →
+// idle → closeChat, с человекоподобными задержками. Минимальный
+// POST_SEND ≥ 60s заменяет старый NEW_LEAD_MIN_INTERVAL_MS-гейт.
+const TYPING_MIN_MS = 15_000;
+const TYPING_MAX_MS = 40_000;
+const POST_SEND_MIN_MS = 60_000;
+const POST_SEND_MAX_MS = 150_000;
 
+// State через globalThis — иначе при HMR в dev новый module-instance видит
+// `timer=null`, стартует свой setInterval, а старый продолжает крутиться в
+// замыкании. Два worker'а тянут одни и те же due-row'и → второй отправляет
+// в TG раньше чем первый успеет update'нуть status, получаем двойную
+// отправку реальному собеседнику. В prod без HMR это эквивалентно
+// module-let'у.
+type WorkerState = {
+  timer: ReturnType<typeof setInterval> | null;
+  tickRunning: boolean;
+};
+const globalRef = globalThis as { __outreachWorker?: WorkerState };
+const state: WorkerState = (globalRef.__outreachWorker ??= {
+  timer: null,
+  tickRunning: false,
+});
 
 export function startOutreachWorker() {
-  if (timer) return;
+  if (state.timer) return;
   console.log(`[outreach-worker] started, tick=${TICK_INTERVAL_MS}ms`);
-  timer = setInterval(() => {
+  state.timer = setInterval(() => {
     void tick();
   }, TICK_INTERVAL_MS);
   // Eagerly поднимаем все active outreach-аккаунты на старте процесса. TDLib
@@ -90,21 +114,21 @@ async function warmupListeners() {
 }
 
 export function stopOutreachWorker() {
-  if (timer) {
-    clearInterval(timer);
-    timer = null;
+  if (state.timer) {
+    clearInterval(state.timer);
+    state.timer = null;
   }
 }
 
 async function tick() {
-  if (tickRunning) return;
-  tickRunning = true;
+  if (state.tickRunning) return;
+  state.tickRunning = true;
   try {
     await runTick();
   } catch (e) {
     console.error("[outreach-worker] tick failed:", errMsg(e));
   } finally {
-    tickRunning = false;
+    state.tickRunning = false;
   }
 }
 
@@ -169,8 +193,6 @@ type DueItem = {
   workspaceId: string;
 };
 
-const NEW_LEAD_MIN_INTERVAL_MS = 60_000;
-
 async function processAccount(accountId: string, items: DueItem[]) {
   // Один JOIN-SELECT вместо двух round-trip'ов: account + outreachSchedule
   // — обе таблицы маленькие, индексы по PK.
@@ -195,18 +217,54 @@ async function processAccount(accountId: string, items: DueItem[]) {
 
   if (!isNowInWindow(outreachSchedule, new Date())) return;
 
-  // Daily-stats тащим только если в tick'е есть first-message слот (msg_idx=0):
-  // для follow-up only это пустая трата round-trip'а.
-  const hasFirstMessage = items.some((it) => it.messageIdx === 0);
+  const leadRows = await db
+    .select()
+    .from(projectItems)
+    .where(
+      inArray(
+        projectItems.id,
+        items.map((it) => it.leadId),
+      ),
+    );
+  const leadById = new Map(leadRows.map((l) => [l.id, l]));
+
+  // Warm-set: peer когда-либо отвечал нам через любой аккаунт воркспейса.
+  // Cold-лиды съедают дневной слот и идут через полный human-flow; warm
+  // могут улетать без ограничения по числу — реальный менеджер с тем кто
+  // ему уже отвечал общается без оглядки на лимит.
+  const peerTgUserIds = [
+    ...new Set(
+      leadRows
+        .map((l) => l.tgUserId)
+        .filter((x): x is string => x !== null),
+    ),
+  ];
+  const warmSet = await resolveWarmTgUserIds(
+    account.workspaceId,
+    peerTgUserIds,
+  );
+  const isWarm = (lead: LeadRow) =>
+    !!lead.tgUserId && warmSet.has(lead.tgUserId);
+
+  // Дневной лимит на cold (новые контакты): считаем уже отправленные
+  // сегодня msg_idx=0 кроме warm-peer'ов. Если лимит исчерпан — cold-items
+  // ждут завтра, warm идут как обычно.
+  // Deleted-lead кейс: leadById может не содержать leadId (лид удалён
+  // между select scheduled и select projectItems). Считаем такой как cold
+  // — он ниже всё равно уйдёт в "lead deleted" cancel, лимит не съест.
+  const hasColdFirstMessage = items.some((it) => {
+    if (it.messageIdx !== 0) return false;
+    const lead = leadById.get(it.leadId);
+    return !lead || !isWarm(lead);
+  });
   let newLeadsRemaining = account.newLeadsDailyLimit;
-  let lastNewLeadInTick = 0;
-  if (hasFirstMessage) {
-    const { newLeadsToday, lastNewLeadAt } = await getNewLeadsStatsToday(
+  if (hasColdFirstMessage) {
+    const coldSentToday = await countColdFirstMessagesToday(
+      account.workspaceId,
       accountId,
       outreachSchedule.timezone,
     );
-    newLeadsRemaining = account.newLeadsDailyLimit - newLeadsToday;
-    lastNewLeadInTick = lastNewLeadAt?.getTime() ?? 0;
+    newLeadsRemaining = account.newLeadsDailyLimit - coldSentToday;
   }
 
   const client = await getOutreachWorkerClient({
@@ -225,22 +283,7 @@ async function processAccount(accountId: string, items: DueItem[]) {
     return;
   }
 
-  const leadRows = await db
-    .select()
-    .from(projectItems)
-    .where(
-      inArray(
-        projectItems.id,
-        items.map((it) => it.leadId),
-      ),
-    );
-  const leadById = new Map(leadRows.map((l) => [l.id, l]));
-
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i]!;
-    if (newLeadsRemaining <= 0 && item.messageIdx === 0) {
-      continue;
-    }
+  for (const item of items) {
     const lead = leadById.get(item.leadId);
     if (!lead) {
       await db
@@ -268,26 +311,49 @@ async function processAccount(accountId: string, items: DueItem[]) {
       continue;
     }
 
-    if (item.messageIdx === 0) {
-      const elapsed = Date.now() - lastNewLeadInTick;
-      if (elapsed < NEW_LEAD_MIN_INTERVAL_MS) continue;
+    const cold = !isWarm(lead);
+    if (item.messageIdx === 0 && cold && newLeadsRemaining <= 0) {
+      continue;
     }
 
     try {
-      const { tgUserId, tgChatId, tgPlaceholderId } = await sendOne(
+      const { tgUserId, tgChatId, tgPlaceholderId } = await sendMessagePhase(
         client,
         lead,
         item.text,
       );
-      // Оптимистично sent; updateMessageSendFailed → listener переключит
-      // на failed (см. outreach-listener.ts). Порядок важен: сначала
-      // db.update, потом rememberPendingSend — иначе failed-update,
-      // прилетевший до завершения update'а, был бы перетёрт нашим sent.
-      const now = new Date();
-      await db
+      // Оптимистично sent сразу после возврата TDLib'а — TG уже принял
+      // сообщение, юзер должен увидеть «отправлено» в UI без задержки.
+      // Залипание-и-закрытие чата выполним ниже, оно влияет только на
+      // темп следующих отправок, а не на статус текущей.
+      // WHERE status='pending' защищает от race с параллельным cancel
+      // (lead replied, quick-send manual takeover, FloodWait reschedule):
+      // если кто-то уже перевёл row из pending — наш sent не перетирает.
+      // Порядок важен: сначала db.update, потом rememberPendingSend —
+      // иначе failed-update, прилетевший до завершения update'а, был бы
+      // перетёрт нашим sent.
+      const sentUpdate = await db
         .update(scheduledMessages)
-        .set({ status: "sent", sentAt: now })
-        .where(eq(scheduledMessages.id, item.id));
+        .set({ status: "sent", sentAt: new Date() })
+        .where(
+          and(
+            eq(scheduledMessages.id, item.id),
+            eq(scheduledMessages.status, "pending"),
+          ),
+        )
+        .returning({ id: scheduledMessages.id });
+      if (sentUpdate.length === 0) {
+        // Row уже не pending — кто-то её отменил между нашими send-into-TG
+        // и update. В БД оставляем cancel-маркер (правильное намерение
+        // системы), TG-отправку откатить нельзя. Цепочку всё равно
+        // двигаем: msg_idx+1 если он не отменён, иначе застрянет с
+        // sentinel-датой навсегда.
+        console.warn(
+          `[outreach-worker] sent into TG but row ${item.id} already not pending — race with cancel`,
+        );
+        await scheduleNextFollowup(item);
+        continue;
+      }
       rememberPendingSend(accountId, tgChatId, tgPlaceholderId, item.id);
       if (!lead.tgUserId) {
         await db
@@ -296,9 +362,20 @@ async function processAccount(accountId: string, items: DueItem[]) {
           .where(eq(projectItems.id, lead.id));
       }
       emitProjectChanged(item.projectId);
-      if (item.messageIdx === 0) {
-        newLeadsRemaining--;
-        lastNewLeadInTick = now.getTime();
+      if (item.messageIdx === 0 && cold) newLeadsRemaining--;
+      // Догон msg_idx+1 ждал с sentinel-датой — теперь у него есть точка
+      // отсчёта (факт-отправка msg_idx), считаем sendAt = now + delay.
+      await scheduleNextFollowup(item);
+      // Sent уже зафиксирован — ошибки idle/closeChat не должны его
+      // откатывать; глотаем тихо, темп этого аккаунта чуть собьётся в
+      // редком кейсе и всё.
+      try {
+        await postSendIdle(client, Number(tgUserId));
+      } catch (e) {
+        console.warn(
+          `[outreach-worker] postSendIdle for ${accountId}:`,
+          errMsg(e),
+        );
       }
     } catch (e) {
       const msg = errMsg(e);
@@ -337,19 +414,18 @@ async function processAccount(accountId: string, items: DueItem[]) {
         emitProjectChanged(item.projectId);
       }
     }
-
-    if (i < items.length - 1) {
-      await sleep(
-        MIN_INTER_SEND_PAUSE_MS +
-          Math.random() * (MAX_INTER_SEND_PAUSE_MS - MIN_INTER_SEND_PAUSE_MS),
-      );
-    }
   }
 }
 
 type LeadRow = typeof projectItems.$inferSelect;
 
-async function sendOne(
+// Human-flow «фаза 1»: открыть чат, показать «печатает...», подождать
+// случайное typing-окно, отправить сообщение. Возврат — сразу после того
+// как TG принял отправку, чтобы caller успел отметить sent в БД и
+// инвалидировать UI без задержки на «залипание». Закрывающая фаза —
+// postSendIdle ниже, она блокирует обработку следующего лида и формирует
+// общий темп.
+async function sendMessagePhase(
   client: TdClient,
   lead: LeadRow,
   text: string,
@@ -381,7 +457,15 @@ async function sendOne(
     ? Number(cached.userId)
     : await resolveAndCheckNotBot(client, username);
 
-  // chatTypePrivate convention: sendMessage принимает user_id как chat_id.
+  // chatTypePrivate convention: chat_id = user_id.
+  await client.invoke({ _: "openChat", chat_id: userId } as never);
+  await client.invoke({
+    _: "sendChatAction",
+    chat_id: userId,
+    action: { _: "chatActionTyping" },
+  } as never);
+  await sleep(randomMs(TYPING_MIN_MS, TYPING_MAX_MS));
+
   const sentMsg = (await client.invoke({
     _: "sendMessage",
     chat_id: userId,
@@ -398,6 +482,45 @@ async function sendOne(
     tgChatId: String(sentMsg.chat_id),
     tgPlaceholderId: String(sentMsg.id),
   };
+}
+
+// Human-flow «фаза 2»: «залип на экране» 60-150 сек случайно, потом
+// закрыл чат. Эта пауза формирует темп между лидами и заменяет старый
+// NEW_LEAD_MIN_INTERVAL_MS-гейт.
+async function postSendIdle(client: TdClient, userId: number): Promise<void> {
+  await sleep(randomMs(POST_SEND_MIN_MS, POST_SEND_MAX_MS));
+  await client.invoke({ _: "closeChat", chat_id: userId } as never);
+}
+
+function randomMs(min: number, max: number): number {
+  return min + Math.random() * (max - min);
+}
+
+// Пересчёт sendAt для следующего шага цепочки этого лида. До факт-отправки
+// msg_idx он лежит с sentinel'ом (FOLLOWUP_PENDING_SENTINEL), worker'у не
+// видим. Сейчас у нас есть момент отсчёта — обновляем на now + delay из
+// шаблона. Если шага нет (последний msg) или pending уже не существует
+// (отменён ответом лида и т.п.) — ничего не делаем.
+async function scheduleNextFollowup(item: DueItem): Promise<void> {
+  const nextIdx = item.messageIdx + 1;
+  const [proj] = await db
+    .select({ messages: projects.messages })
+    .from(projects)
+    .where(eq(projects.id, item.projectId))
+    .limit(1);
+  const nextMsg = (proj?.messages as ProjectMessage[] | undefined)?.[nextIdx];
+  if (!nextMsg) return;
+  const nextAt = new Date(Date.now() + delayToMs(nextMsg.delay));
+  await db
+    .update(scheduledMessages)
+    .set({ sendAt: nextAt })
+    .where(
+      and(
+        eq(scheduledMessages.itemId, item.leadId),
+        eq(scheduledMessages.messageIdx, nextIdx),
+        eq(scheduledMessages.status, "pending"),
+      ),
+    );
 }
 
 async function resolveAndCheckNotBot(
@@ -454,32 +577,35 @@ function classifyKilled(msg: string): "unauthorized" | "banned" | null {
   return null;
 }
 
-async function getNewLeadsStatsToday(
+// Дневной лимит «новых контактов» — про cold-peer'ов. Warm (которые нам
+// когда-либо отвечали) не съедают слот: реальный менеджер с уже знакомым
+// собеседником общается без оглядки на счётчик. Считаем msg_idx=0 sent
+// сегодня для peer'ов, которым ни один аккаунт воркспейса ещё не получал
+// inbound (tg_chats.has_inbound=false / запись отсутствует).
+async function countColdFirstMessagesToday(
+  workspaceId: string,
   accountId: string,
   tz: string,
-): Promise<{ newLeadsToday: number; lastNewLeadAt: Date | null }> {
-  const start = startOfDayInTz(new Date(), tz);
-  // postgres-js при биндинге внутри FILTER-клаузы не выводит timestamptz и
-  // фейлится на Date.byteLength. Передаём ISO-строку — Postgres сам кастит
-  // её к timestamptz через >= оператор.
-  const startIso = start.toISOString();
-  const [row] = await db
-    .select({
-      todayCount: sql<number>`count(*) FILTER (WHERE ${scheduledMessages.sentAt} >= ${startIso}::timestamptz)::int`,
-      lastSentAt: max(scheduledMessages.sentAt),
-    })
+): Promise<number> {
+  const startIso = startOfDayInTz(new Date(), tz).toISOString();
+  const rows = await db
+    .select({ tgUserId: projectItems.tgUserId })
     .from(scheduledMessages)
+    .innerJoin(projectItems, eq(projectItems.id, scheduledMessages.itemId))
     .where(
       and(
         eq(scheduledMessages.accountId, accountId),
         eq(scheduledMessages.status, "sent"),
         eq(scheduledMessages.messageIdx, 0),
+        gte(scheduledMessages.sentAt, sql`${startIso}::timestamptz`),
       ),
     );
-  return {
-    newLeadsToday: row?.todayCount ?? 0,
-    lastNewLeadAt: row?.lastSentAt ?? null,
-  };
+  const peerIds = rows
+    .map((r) => r.tgUserId)
+    .filter((x): x is string => x !== null);
+  if (peerIds.length === 0) return 0;
+  const warm = await resolveWarmTgUserIds(workspaceId, peerIds);
+  return peerIds.filter((id) => !warm.has(id)).length;
 }
 
 async function maybeCompleteProject(projectId: string) {
