@@ -215,6 +215,7 @@ function KanbanPage() {
   }
 
   const noStageLeads = byStage.get(NO_STAGE) ?? [];
+  const isDone = projectQ.data?.status === "done";
 
   return (
     <div className="flex h-full flex-col p-4">
@@ -228,7 +229,7 @@ function KanbanPage() {
         >
           Настройки
         </Link>
-        {isAdmin && (
+        {isAdmin && !isDone && (
           <button
             type="button"
             onClick={() => setEditingStages(true)}
@@ -245,6 +246,11 @@ function KanbanPage() {
           Таблица →
         </Link>
       </div>
+      {isDone && (
+        <div className="mb-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
+          Проект завершён — карточки заморожены.
+        </div>
+      )}
       {editingStages && (
         <StagesEditModal
           wsId={wsId}
@@ -274,6 +280,7 @@ function KanbanPage() {
             }
             onOpen={openLead}
             onOpenChat={setDrawerLead}
+            readonly={isDone}
           />
         ))}
         {noStageLeads.length > 0 && (
@@ -284,6 +291,7 @@ function KanbanPage() {
             onDrop={(itemId) => move.mutate({ itemId, stageId: null })}
             onOpen={openLead}
             onOpenChat={setDrawerLead}
+            readonly={isDone}
           />
         )}
       </div>
@@ -305,21 +313,31 @@ function Column(props: {
   onDrop: (itemId: string) => void;
   onOpen: (lead: Lead) => void;
   onOpenChat: (lead: Lead) => void;
+  readonly?: boolean;
 }) {
   const [over, setOver] = useState(false);
+  const isReadonly = !!props.readonly;
   return (
     <div
-      onDragOver={(e) => {
-        e.preventDefault();
-        if (!over) setOver(true);
-      }}
-      onDragLeave={() => setOver(false)}
-      onDrop={(e) => {
-        e.preventDefault();
-        setOver(false);
-        const id = e.dataTransfer.getData("text/plain");
-        if (id) props.onDrop(id);
-      }}
+      onDragOver={
+        isReadonly
+          ? undefined
+          : (e) => {
+              e.preventDefault();
+              if (!over) setOver(true);
+            }
+      }
+      onDragLeave={isReadonly ? undefined : () => setOver(false)}
+      onDrop={
+        isReadonly
+          ? undefined
+          : (e) => {
+              e.preventDefault();
+              setOver(false);
+              const id = e.dataTransfer.getData("text/plain");
+              if (id) props.onDrop(id);
+            }
+      }
       className={
         "flex min-w-[260px] flex-1 flex-col self-stretch overflow-hidden rounded-xl p-3 transition-colors " +
         (over ? "bg-zinc-300 ring-2 ring-zinc-400" : "bg-zinc-200")
@@ -336,6 +354,7 @@ function Column(props: {
             lead={l}
             onOpen={() => props.onOpen(l)}
             onOpenChat={() => props.onOpenChat(l)}
+            readonly={isReadonly}
           />
         ))}
       </div>
@@ -518,6 +537,7 @@ function LeadCard(props: {
   lead: Lead;
   onOpen: () => void;
   onOpenChat: () => void;
+  readonly?: boolean;
 }) {
   const { lead } = props;
   const fullName =
@@ -530,13 +550,22 @@ function LeadCard(props: {
 
   return (
     <div
-      draggable
-      onDragStart={(e) => {
-        e.dataTransfer.setData("text/plain", lead.id);
-        e.dataTransfer.effectAllowed = "move";
-      }}
+      draggable={!props.readonly}
+      onDragStart={
+        props.readonly
+          ? undefined
+          : (e) => {
+              e.dataTransfer.setData("text/plain", lead.id);
+              e.dataTransfer.effectAllowed = "move";
+            }
+      }
       onClick={props.onOpen}
-      className="cursor-pointer rounded-md border border-zinc-200 bg-white p-2.5 text-sm shadow-sm hover:border-emerald-300 hover:bg-zinc-50 active:cursor-grabbing"
+      className={
+        "rounded-md border border-zinc-200 bg-white p-2.5 text-sm shadow-sm hover:border-emerald-300 hover:bg-zinc-50 " +
+        (props.readonly
+          ? "cursor-pointer"
+          : "cursor-pointer active:cursor-grabbing")
+      }
     >
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1 font-medium truncate">{display}</div>

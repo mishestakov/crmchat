@@ -195,7 +195,15 @@ function SequenceDetailPage() {
       if (error) throw error;
       return data!;
     },
-    onSuccess: () => invalidateProject(qc, wsId, projectId, { leads: true }),
+    onSuccess: () => {
+      invalidateProject(qc, wsId, projectId, { leads: true });
+      // После запуска показываем таблицу рассылки — это то место где
+      // менеджер дальше работает: видит pending/sent, отвечает.
+      navigate({
+        to: "/w/$wsId/projects/$projectId/leads",
+        params: { wsId, projectId },
+      });
+    },
   });
 
   const pause = useMutation({
@@ -427,7 +435,7 @@ function SequenceDetailPage() {
                 Редактирование сообщений доступно в статусе «Черновик» или «Пауза».
               </p>
             )}
-            {messages.length > 0 && (isDraft || isPaused) && (
+            {messages.length > 0 && (
               <button
                 type="button"
                 onClick={() => setShowSaveAsTemplate(true)}

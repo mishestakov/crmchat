@@ -808,6 +808,11 @@ app.openapi(
     const { stageId } = c.req.valid("json");
 
     const project = await assertProjectAccess(projectId, wsId, userId, role);
+    if (project.status === "done") {
+      throw new HTTPException(400, {
+        message: "Проект завершён — карточки заморожены",
+      });
+    }
     if (
       stageId !== null &&
       !(project.stages as ProjectStage[]).some((s) => s.id === stageId)

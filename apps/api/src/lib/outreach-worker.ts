@@ -179,8 +179,9 @@ async function runTick() {
     ),
   );
 
-  const projectIds = [...new Set(due.map((r) => r.projectId))];
-  await Promise.all(projectIds.map((id) => maybeCompleteProject(id)));
+  // Auto-complete (status='done' когда нет pending'ов) убран: menager
+  // продолжает работать с проектом после рассылки — двигает канбан, ведёт
+  // переписку, отвечает. Финальный статус ставит сам через UI «Завершить».
 }
 
 type DueItem = {
@@ -606,26 +607,6 @@ async function countColdFirstMessagesToday(
   if (peerIds.length === 0) return 0;
   const warm = await resolveWarmTgUserIds(workspaceId, peerIds);
   return peerIds.filter((id) => !warm.has(id)).length;
-}
-
-async function maybeCompleteProject(projectId: string) {
-  // Один UPDATE с NOT EXISTS вместо SELECT-then-UPDATE — экономит round-trip
-  // и закрывает race с конкурентным INSERT'ом scheduled_messages.
-  const now = new Date();
-  await db
-    .update(projects)
-    .set({ status: "done", completedAt: now, updatedAt: now })
-    .where(
-      and(
-        eq(projects.id, projectId),
-        eq(projects.status, "active"),
-        sql`NOT EXISTS (
-          SELECT 1 FROM ${scheduledMessages}
-          WHERE ${scheduledMessages.projectId} = ${projectId}
-            AND ${scheduledMessages.status} = 'pending'
-        )`,
-      ),
-    );
 }
 
 function sleep(ms: number) {

@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   Check,
@@ -17,6 +17,7 @@ import { LeadChatDrawer } from "../../../../../../components/lead-chat-drawer";
 import { TruncationBanner } from "../../../../../../components/truncation-banner";
 import {
   formatDateTime,
+  formatPastRelative,
   formatRelative,
   pluralize,
 } from "../../../../../../lib/date-utils";
@@ -25,6 +26,7 @@ import {
   useProject,
 } from "../../../../../../lib/outreach-queries";
 import { OUTREACH_QK } from "../../../../../../lib/query-keys";
+import { useEventSourceEvent } from "../../../../../../lib/hooks";
 
 export const Route = createFileRoute(
   "/_authenticated/w/$wsId/projects/$projectId/leads",
@@ -49,6 +51,46 @@ function LeadsPage() {
   const seq = useProject(wsId, projectId);
   const accountsQ = useOutreachAccounts(wsId);
   const isDraftStatus = seq.data?.status === "draft";
+  const qc = useQueryClient();
+
+  // Живые обновления pending/sent в таблице — те же события что слушает
+  // /projects/{id} (index.tsx). Подписка активна только для active/paused
+  // (draft и done не двигаются). Debounce 500ms схлопывает пачки сообщений
+  // от worker'а в один refetch.
+  const needsLiveUpdates =
+    seq.data?.status === "active" || seq.data?.status === "paused";
+  // Тик каждые 30с для перерисовки relative-времён («2 мин» → «3 мин»).
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  const invalidateTimerRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (invalidateTimerRef.current !== null) {
+        window.clearTimeout(invalidateTimerRef.current);
+      }
+    },
+    [],
+  );
+  useEventSourceEvent(
+    needsLiveUpdates
+      ? `/v1/workspaces/${wsId}/projects/${projectId}/stream`
+      : null,
+    "changed",
+    () => {
+      if (invalidateTimerRef.current !== null) {
+        window.clearTimeout(invalidateTimerRef.current);
+      }
+      invalidateTimerRef.current = window.setTimeout(() => {
+        qc.invalidateQueries({
+          queryKey: OUTREACH_QK.projectLeads(wsId, projectId),
+        });
+        invalidateTimerRef.current = null;
+      }, 500);
+    },
+  );
 
   const leadsQ = useQuery({
     queryKey: OUTREACH_QK.projectLeads(wsId, projectId, LEADS_PAGE_LIMIT, 0),
@@ -435,7 +477,7 @@ function MessageStatusCell(props: {
         icon={<MessageCircleReply size={12} />}
         color="emerald"
         title={`Ответил ${formatDateTime(repliedAt)}`}
-        label={`Ответил ${formatRelative(repliedAt)}`}
+        label={`Ответил ${formatPastRelative(repliedAt)}`}
       />
     );
   }
@@ -476,7 +518,7 @@ function MessageStatusCell(props: {
         icon={<CheckCheck size={12} />}
         color="blue"
         title={`Прочитано ${formatDateTime(msg.readAt)}`}
-        label={`Прочитано ${formatRelative(msg.readAt)}`}
+        label={`Прочитано ${formatPastRelative(msg.readAt)}`}
       />
     );
   }
@@ -485,7 +527,7 @@ function MessageStatusCell(props: {
       icon={<Check size={12} />}
       color="zinc"
       title={`Отправлено ${formatDateTime(msg.sentAt ?? "")}`}
-      label={`Отправлено ${formatRelative(msg.sentAt ?? "")}`}
+      label={`Отправлено ${formatPastRelative(msg.sentAt ?? "")}`}
     />
   );
 }

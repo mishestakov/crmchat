@@ -42,6 +42,16 @@ export function formatHHMM(iso: string | Date): string {
   return hhmmFormat.format(typeof iso === "string" ? new Date(iso) : iso);
 }
 
+// Прошлое для sent/read/replied: «только что» / «N мин. назад» / «N ч. назад»
+// / абс дата+время после 8 часов. Без секунд — они визуально шумят.
+export function formatPastRelative(iso: string | Date): string {
+  const d = Date.now() - new Date(iso).getTime();
+  return d < 60_000 ? "только что"
+    : d < 3_600_000 ? `${Math.floor(d / 60_000)} мин. назад`
+    : d < 28_800_000 ? `${Math.floor(d / 3_600_000)} ч. назад`
+    : formatDateTime(iso);
+}
+
 const relativeFormat = new Intl.RelativeTimeFormat("ru", { style: "short" });
 
 const RELATIVE_UNITS: { unit: Intl.RelativeTimeFormatUnit; sec: number }[] = [
