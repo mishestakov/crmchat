@@ -457,11 +457,15 @@ export const projectKind = pgEnum("project_kind", [
   "generic",
 ]);
 
+// draft → active ↔ paused → done → archived. archived проекты скрыты из
+// основного listing'а; вытащить из архива пока нельзя (или через прямой
+// URL по id). Возможно потом авто-архивация done через месяц.
 export const projectStatus = pgEnum("project_status", [
   "draft",
   "active",
   "paused",
   "done",
+  "archived",
 ]);
 
 export const projectItemKind = pgEnum("project_item_kind", [

@@ -166,6 +166,7 @@ function SequenceDetailPage() {
   const isDraft = seq.data?.status === "draft";
   const isActive = seq.data?.status === "active";
   const isPaused = seq.data?.status === "paused";
+  const isDone = seq.data?.status === "done";
 
   const save = useMutation({
     mutationFn: async (overrides?: { messages?: Message[]; name?: string }) => {
@@ -232,6 +233,31 @@ function SequenceDetailPage() {
     mutationFn: async () => {
       const { error } = await api.DELETE(
         "/v1/workspaces/{wsId}/projects/{projectId}",
+        { params: { path: { wsId, projectId } } },
+      );
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: OUTREACH_QK.projects(wsId) });
+      navigate({ to: "/w/$wsId/projects", params: { wsId } });
+    },
+  });
+
+  const complete = useMutation({
+    mutationFn: async () => {
+      const { error } = await api.POST(
+        "/v1/workspaces/{wsId}/projects/{projectId}/complete",
+        { params: { path: { wsId, projectId } } },
+      );
+      if (error) throw error;
+    },
+    onSuccess: () => invalidateProject(qc, wsId, projectId, { leads: true }),
+  });
+
+  const archive = useMutation({
+    mutationFn: async () => {
+      const { error } = await api.POST(
+        "/v1/workspaces/{wsId}/projects/{projectId}/archive",
         { params: { path: { wsId, projectId } } },
       );
       if (error) throw error;
@@ -447,21 +473,49 @@ function SequenceDetailPage() {
           </div>
         </Section>
 
-        {/* === Удалить рассылку === */}
+        {/* === Терминальное действие: меняется по статусу.
+             draft → «Удалить» (хард, со всеми лидами).
+             active/paused → «Завершить» (сначала закрыть, потом архив).
+             done → «Архивировать» (скрыть из списка).
+        */}
         <div className="mt-auto py-3 text-center">
-          <button
-            type="button"
-            onClick={() => {
-              if (isActive) {
-                alert("Сначала поставьте рассылку на паузу");
-                return;
-              }
-              setShowDelete(true);
-            }}
-            className="text-sm text-red-600 hover:text-red-700 hover:underline"
-          >
-            Удалить рассылку
-          </button>
+          {isDraft && (
+            <button
+              type="button"
+              onClick={() => setShowDelete(true)}
+              className="text-sm text-red-600 hover:text-red-700 hover:underline"
+            >
+              Удалить проект
+            </button>
+          )}
+          {(isActive || isPaused) && (
+            <button
+              type="button"
+              disabled={complete.isPending}
+              onClick={() => {
+                if (
+                  confirm(
+                    "Завершить проект? Запланированные сообщения больше не уйдут.",
+                  )
+                ) {
+                  complete.mutate();
+                }
+              }}
+              className="text-sm text-zinc-600 hover:text-zinc-900 hover:underline disabled:opacity-50"
+            >
+              {complete.isPending ? "Завершаем…" : "Завершить проект"}
+            </button>
+          )}
+          {isDone && (
+            <button
+              type="button"
+              disabled={archive.isPending}
+              onClick={() => archive.mutate()}
+              className="text-sm text-zinc-600 hover:text-zinc-900 hover:underline disabled:opacity-50"
+            >
+              {archive.isPending ? "Архивируем…" : "Архивировать проект"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -500,14 +554,22 @@ function SequenceDetailPage() {
         />
       )}
 
-      {(activate.error || pause.error || resume.error || save.error || remove.error) && (
+      {(activate.error ||
+        pause.error ||
+        resume.error ||
+        save.error ||
+        remove.error ||
+        complete.error ||
+        archive.error) && (
         <div className="fixed bottom-4 right-4 max-w-sm rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 shadow-lg">
           {errorMessage(
             activate.error ??
               pause.error ??
               resume.error ??
               save.error ??
-              remove.error,
+              remove.error ??
+              complete.error ??
+              archive.error,
           )}
         </div>
       )}

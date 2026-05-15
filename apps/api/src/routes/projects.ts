@@ -1,7 +1,7 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { streamSSE } from "hono/streaming";
-import { and, asc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNotNull, ne, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
   contactCreationTrigger,
@@ -21,7 +21,7 @@ import {
   type ProjectStage,
 } from "../db/schema.ts";
 import { pickDefined } from "../lib/pick-defined.ts";
-import { subscribeProject } from "../lib/events.ts";
+import { emitProjectChanged, subscribeProject } from "../lib/events.ts";
 import { myAccountIdsSql } from "../lib/outreach-access.ts";
 import {
   assertProjectAccess,
@@ -207,7 +207,12 @@ app.openapi(
     const rows = await db
       .select()
       .from(projects)
-      .where(projectAccessClause(wsId, userId, role))
+      .where(
+        and(
+          projectAccessClause(wsId, userId, role),
+          ne(projects.status, "archived"),
+        ),
+      )
       .orderBy(asc(projects.createdAt));
     return c.json(rows.map(serializeProject));
   },
@@ -578,6 +583,95 @@ app.openapi(
     await db
       .update(projects)
       .set({ status: "active", updatedAt: new Date() })
+      .where(eq(projects.id, project.id));
+    const refreshed = await assertProjectAccess(projectId, wsId, userId, role);
+    return c.json(serializeProject(refreshed));
+  },
+);
+
+// Завершить проект вручную. Из active/paused → done + cancel всех pending
+// сообщений (иначе они зависли бы навсегда — worker не берёт done).
+// Канбан и quick-send остаются доступны как чтение (см. /items guard).
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/complete",
+    tags: ["outreach"],
+    middleware: [assertRole("admin")] as const,
+    request: { params: WsProjectParam },
+    responses: {
+      200: {
+        content: { "application/json": { schema: ProjectSchema } },
+        description: "Completed",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const { projectId } = c.req.valid("param");
+    const project = await assertProjectAccess(projectId, wsId, userId, role);
+    if (project.status !== "active" && project.status !== "paused") {
+      throw new HTTPException(400, {
+        message: "Only active or paused projects can be completed",
+      });
+    }
+    const now = new Date();
+    await db.transaction(async (tx) => {
+      await tx
+        .update(scheduledMessages)
+        .set({ status: "cancelled", error: "project completed" })
+        .where(
+          and(
+            eq(scheduledMessages.projectId, project.id),
+            eq(scheduledMessages.status, "pending"),
+          ),
+        );
+      await tx
+        .update(projects)
+        .set({ status: "done", completedAt: now, updatedAt: now })
+        .where(eq(projects.id, project.id));
+    });
+    // Соседние вкладки/менеджеры с открытым этим проектом увидят cancel
+    // pending'ов и смену статуса без F5 (как worker делает на каждое sent).
+    emitProjectChanged(project.id);
+    const refreshed = await assertProjectAccess(projectId, wsId, userId, role);
+    return c.json(serializeProject(refreshed));
+  },
+);
+
+// Архивировать done-проект — скрыть из listing'а. Из done → archived.
+// Активные/paused архивировать нельзя: сначала «Завершить». Из draft —
+// «Удалить». archived проекты не возвращаются в GET /projects.
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/archive",
+    tags: ["outreach"],
+    middleware: [assertRole("admin")] as const,
+    request: { params: WsProjectParam },
+    responses: {
+      200: {
+        content: { "application/json": { schema: ProjectSchema } },
+        description: "Archived",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const { projectId } = c.req.valid("param");
+    const project = await assertProjectAccess(projectId, wsId, userId, role);
+    if (project.status !== "done") {
+      throw new HTTPException(400, {
+        message: "Only completed projects can be archived",
+      });
+    }
+    await db
+      .update(projects)
+      .set({ status: "archived", updatedAt: new Date() })
       .where(eq(projects.id, project.id));
     const refreshed = await assertProjectAccess(projectId, wsId, userId, role);
     return c.json(serializeProject(refreshed));

@@ -280,7 +280,7 @@ function KanbanPage() {
             }
             onOpen={openLead}
             onOpenChat={setDrawerLead}
-            readonly={isDone}
+            isReadOnly={isDone}
           />
         ))}
         {noStageLeads.length > 0 && (
@@ -291,7 +291,7 @@ function KanbanPage() {
             onDrop={(itemId) => move.mutate({ itemId, stageId: null })}
             onOpen={openLead}
             onOpenChat={setDrawerLead}
-            readonly={isDone}
+            isReadOnly={isDone}
           />
         )}
       </div>
@@ -313,23 +313,23 @@ function Column(props: {
   onDrop: (itemId: string) => void;
   onOpen: (lead: Lead) => void;
   onOpenChat: (lead: Lead) => void;
-  readonly?: boolean;
+  isReadOnly?: boolean;
 }) {
   const [over, setOver] = useState(false);
-  const isReadonly = !!props.readonly;
+  const isReadOnly = !!props.isReadOnly;
   return (
     <div
       onDragOver={
-        isReadonly
+        isReadOnly
           ? undefined
           : (e) => {
               e.preventDefault();
               if (!over) setOver(true);
             }
       }
-      onDragLeave={isReadonly ? undefined : () => setOver(false)}
+      onDragLeave={isReadOnly ? undefined : () => setOver(false)}
       onDrop={
-        isReadonly
+        isReadOnly
           ? undefined
           : (e) => {
               e.preventDefault();
@@ -354,7 +354,7 @@ function Column(props: {
             lead={l}
             onOpen={() => props.onOpen(l)}
             onOpenChat={() => props.onOpenChat(l)}
-            readonly={isReadonly}
+            isReadOnly={isReadOnly}
           />
         ))}
       </div>
@@ -537,7 +537,7 @@ function LeadCard(props: {
   lead: Lead;
   onOpen: () => void;
   onOpenChat: () => void;
-  readonly?: boolean;
+  isReadOnly?: boolean;
 }) {
   const { lead } = props;
   const fullName =
@@ -550,9 +550,9 @@ function LeadCard(props: {
 
   return (
     <div
-      draggable={!props.readonly}
+      draggable={!props.isReadOnly}
       onDragStart={
-        props.readonly
+        props.isReadOnly
           ? undefined
           : (e) => {
               e.dataTransfer.setData("text/plain", lead.id);
@@ -562,7 +562,7 @@ function LeadCard(props: {
       onClick={props.onOpen}
       className={
         "rounded-md border border-zinc-200 bg-white p-2.5 text-sm shadow-sm hover:border-emerald-300 hover:bg-zinc-50 " +
-        (props.readonly
+        (props.isReadOnly
           ? "cursor-pointer"
           : "cursor-pointer active:cursor-grabbing")
       }

@@ -179,7 +179,7 @@ async function runTick() {
     ),
   );
 
-  // Auto-complete (status='done' когда нет pending'ов) убран: menager
+  // Auto-complete (status='done' когда нет pending'ов) убран: manager
   // продолжает работать с проектом после рассылки — двигает канбан, ведёт
   // переписку, отвечает. Финальный статус ставит сам через UI «Завершить».
 }
