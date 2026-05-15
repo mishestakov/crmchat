@@ -10,6 +10,7 @@ import { Briefcase, ChevronDown, ChevronRight, FolderPlus, Plus, Search } from "
 import { api } from "../../../../../lib/api";
 import { errorMessage } from "../../../../../lib/errors";
 import { useMyRole } from "../../../../../lib/hooks";
+import { getLastProjectView } from "../../../../../lib/last-project-view";
 import { OUTREACH_QK } from "../../../../../lib/query-keys";
 
 // Двух-панельный explorer проектов: tree Track→Project слева, страница
@@ -197,7 +198,13 @@ function ProjectsLayout() {
                     {trackProjects.map((p) => (
                       <Link
                         key={p.id}
-                        to="/w/$wsId/projects/$projectId"
+                        to={
+                          p.status === "draft"
+                            ? "/w/$wsId/projects/$projectId"
+                            : getLastProjectView(p.id) === "kanban"
+                              ? "/w/$wsId/projects/$projectId/kanban"
+                              : "/w/$wsId/projects/$projectId/leads"
+                        }
                         params={{ wsId, projectId: p.id }}
                         className={
                           "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-zinc-50 " +
@@ -233,8 +240,10 @@ function ProjectsLayout() {
         </div>
       </aside>
 
-      {/* Правая панель — выбранный проект */}
-      <main className="flex min-w-0 flex-1 flex-col bg-zinc-50">
+      {/* Правая панель — выбранный проект. overflow-y-auto делает scroll
+          локальным: длинная страница проекта не утягивает за собой
+          tree-sidebar слева. */}
+      <main className="flex min-w-0 flex-1 flex-col overflow-y-auto bg-zinc-50">
         <Outlet />
       </main>
     </div>

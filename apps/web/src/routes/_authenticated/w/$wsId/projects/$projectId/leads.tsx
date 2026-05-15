@@ -11,7 +11,7 @@ import {
 import type { paths } from "@repo/api-client";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
-import { BackButton } from "../../../../../../components/back-button";
+import { ProjectTabs } from "../../../../../../components/project-tabs";
 import { type AccountRow } from "../../../../../../components/chat-drawer";
 import { LeadChatDrawer } from "../../../../../../components/lead-chat-drawer";
 import { TruncationBanner } from "../../../../../../components/truncation-banner";
@@ -50,7 +50,6 @@ function LeadsPage() {
 
   const seq = useProject(wsId, projectId);
   const accountsQ = useOutreachAccounts(wsId);
-  const isDraftStatus = seq.data?.status === "draft";
   const qc = useQueryClient();
 
   // Живые обновления pending/sent в таблице — те же события что слушает
@@ -173,70 +172,51 @@ function LeadsPage() {
     leadsQ.data?.leads.filter(
       (l) => l.accountSource === null && l.account === null,
     ).length ?? 0;
-  const isDraft = isDraftStatus;
+  const isDraft = seq.data?.status === "draft";
 
   return (
-    <div className="space-y-3 p-6">
-      <BackButton />
-      <div className="mx-auto w-full max-w-6xl space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <h1 className="text-2xl font-semibold">Контакты</h1>
-          <div className="flex items-center gap-3">
-            {importsQ.data && importsQ.data.length > 1 && (
-              <label className="inline-flex items-center gap-2 text-sm text-zinc-600">
-                Импорт:
-                <select
-                  value={importFilter}
-                  onChange={(e) => setImportFilter(e.target.value)}
-                  className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm"
-                >
-                  <option value="all">Все ({leadsQ.data?.total ?? 0})</option>
-                  {importsQ.data.map((imp) => (
-                    <option key={imp.id} value={imp.id}>
-                      {imp.name} · {formatRelative(imp.createdAt)}
-                      {importCounts.get(imp.id)
-                        ? ` · ${importCounts.get(imp.id)}`
-                        : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
+    <div className="space-y-3">
+      <ProjectTabs wsId={wsId} projectId={projectId} />
+      <div className="mx-auto w-full max-w-6xl space-y-4 px-6">
+        <div className="flex flex-wrap items-center gap-3">
+          {importsQ.data && importsQ.data.length > 1 && (
+            <label className="inline-flex items-center gap-2 text-sm text-zinc-600">
+              Импорт:
+              <select
+                value={importFilter}
+                onChange={(e) => setImportFilter(e.target.value)}
+                className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm"
+              >
+                <option value="all">Все ({leadsQ.data?.total ?? 0})</option>
+                {importsQ.data.map((imp) => (
+                  <option key={imp.id} value={imp.id}>
+                    {imp.name} · {formatRelative(imp.createdAt)}
+                    {importCounts.get(imp.id)
+                      ? ` · ${importCounts.get(imp.id)}`
+                      : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label className="inline-flex items-center gap-2 text-sm text-zinc-600">
+            <input
+              type="checkbox"
+              checked={onlyUnreplied}
+              onChange={(e) => setOnlyUnreplied(e.target.checked)}
+            />
+            Только не ответившие
+          </label>
+          {csvKeys.length > 0 && (
             <label className="inline-flex items-center gap-2 text-sm text-zinc-600">
               <input
                 type="checkbox"
-                checked={onlyUnreplied}
-                onChange={(e) => setOnlyUnreplied(e.target.checked)}
+                checked={showCsv}
+                onChange={(e) => setShowCsv(e.target.checked)}
               />
-              Только не ответившие
+              Показать CSV-данные
             </label>
-            {csvKeys.length > 0 && (
-              <label className="inline-flex items-center gap-2 text-sm text-zinc-600">
-                <input
-                  type="checkbox"
-                  checked={showCsv}
-                  onChange={(e) => setShowCsv(e.target.checked)}
-                />
-                Показать CSV-данные
-              </label>
-            )}
-            <Link
-              to="/w/$wsId/projects/$projectId/kanban"
-              params={{ wsId, projectId }}
-              className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
-            >
-              Канбан →
-            </Link>
-            {seq.data?.status !== "done" && (
-              <Link
-                to="/w/$wsId/projects/$projectId/import"
-                params={{ wsId, projectId }}
-                className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm hover:bg-zinc-50"
-              >
-                + Подлить CSV
-              </Link>
-            )}
-          </div>
+          )}
         </div>
 
         <div className="text-xs text-zinc-500">
@@ -327,11 +307,11 @@ function LeadsPage() {
                   <tr
                     key={l.id}
                     onClick={
-                      isDraftStatus ? undefined : () => setDrawerLeadId(l.id)
+                      isDraft ? undefined : () => setDrawerLeadId(l.id)
                     }
                     className={
                       "border-t border-zinc-100 " +
-                      (isDraftStatus ? "" : "cursor-pointer hover:bg-zinc-50 ") +
+                      (isDraft ? "" : "cursor-pointer hover:bg-zinc-50 ") +
                       (l.repliedAt ? "bg-emerald-50/40" : "")
                     }
                   >

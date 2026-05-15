@@ -15,6 +15,7 @@ import type { paths } from "@repo/api-client";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
 import { BackButton } from "../../../../../../components/back-button";
+import { ProjectTabs } from "../../../../../../components/project-tabs";
 import {
   MessagesEditor,
   type Message,
@@ -26,6 +27,7 @@ import {
   SectionItemTitle,
   SectionItemValue,
 } from "../../../../../../components/section";
+import { StagesEditModal } from "../../../../../../components/stages-edit-modal";
 import { pluralize } from "../../../../../../lib/date-utils";
 import { useEventSourceEvent, useMyRole } from "../../../../../../lib/hooks";
 import { useProject } from "../../../../../../lib/outreach-queries";
@@ -36,13 +38,6 @@ import { buildVariablesFromImports } from "../../../../../../lib/template-variab
 export const Route = createFileRoute(
   "/_authenticated/w/$wsId/projects/$projectId/",
 )({
-  // ?edit=1 — флаг «не редиректить на канбан, показать редактор». Нужен
-  // чтобы с канбана можно было вернуться к настройкам/цепочке у уже
-  // запущенного проекта. Optional, чтобы callers могли навигировать без search.
-  validateSearch: (s: Record<string, unknown>): { edit?: boolean } => {
-    const edit = s.edit === "1" || s.edit === true;
-    return edit ? { edit: true } : {};
-  },
   component: SequenceDetailPage,
 });
 
@@ -51,25 +46,12 @@ type SequenceData =
 
 function SequenceDetailPage() {
   const { wsId, projectId } = Route.useParams();
-  const { edit } = Route.useSearch();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const isAdmin = useMyRole(wsId) === "admin";
 
   const seq = useProject(wsId, projectId);
 
-  // После запуска проекта (status != draft) дефолт-страница = канбан.
-  // С канбана можно вернуться сюда через ?edit=1 (кнопка «Настройки»),
-  // чтобы поправить цепочку/аккаунты/удалить и т.д.
-  useEffect(() => {
-    if (!edit && seq.data && seq.data.status !== "draft") {
-      navigate({
-        to: "/w/$wsId/projects/$projectId/kanban",
-        params: { wsId, projectId },
-        replace: true,
-      });
-    }
-  }, [edit, seq.data, navigate, wsId, projectId]);
 
   const leadsQ = useQuery({
     queryKey: OUTREACH_QK.projectLeads(wsId, projectId),
@@ -155,6 +137,7 @@ function SequenceDetailPage() {
   const [previewMsg, setPreviewMsg] = useState<Message | null>(null);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
+  const [editingStages, setEditingStages] = useState(false);
   const [showSaveAsTemplate, setShowSaveAsTemplate] = useState(false);
 
   useEffect(() => {
@@ -295,11 +278,9 @@ function SequenceDetailPage() {
   const leadsCount = leadsQ.data?.total ?? 0;
 
   return (
-    <div className="flex min-h-full flex-col gap-4 p-6">
-      <BackButton />
-      <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-4">
-        <h1 className="truncate text-2xl font-semibold">{data.name}</h1>
-
+    <div className="flex min-h-full flex-col">
+      <ProjectTabs wsId={wsId} projectId={projectId} />
+      <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-4 p-6">
         {/* === Section: детали кампании === */}
         <Section>
           <SectionItem>
@@ -357,6 +338,18 @@ function SequenceDetailPage() {
             </SectionItemValue>
           </SectionItem>
 
+          <SectionItem
+            withChevron
+            onClick={isDone ? undefined : () => setEditingStages(true)}
+            className={isDone ? "opacity-60" : ""}
+          >
+            <SectionItemTitle>Стадии</SectionItemTitle>
+            <SectionItemValue>
+              {data.stages.length}{" "}
+              {pluralize(data.stages.length, "стадия", "стадии", "стадий")}
+            </SectionItemValue>
+          </SectionItem>
+
           <Link
             to="/w/$wsId/projects/$projectId/accounts"
             params={{ wsId, projectId }}
@@ -388,6 +381,18 @@ function SequenceDetailPage() {
               </SectionItemValue>
             </SectionItem>
           </Link>
+
+          {!isDone && (
+            <Link
+              to="/w/$wsId/projects/$projectId/import"
+              params={{ wsId, projectId }}
+            >
+              <SectionItem withChevron>
+                <SectionItemTitle>Подлить лиды</SectionItemTitle>
+                <SectionItemValue>из CSV</SectionItemValue>
+              </SectionItem>
+            </Link>
+          )}
         </Section>
 
         {/* === Section: статистика — для всех статусов кроме draft === */}
@@ -478,7 +483,7 @@ function SequenceDetailPage() {
              active/paused → «Завершить» (сначала закрыть, потом архив).
              done → «Архивировать» (скрыть из списка).
         */}
-        <div className="mt-auto py-3 text-center">
+        <div className="py-3 text-center">
           {isDraft && (
             <button
               type="button"
@@ -551,6 +556,15 @@ function SequenceDetailPage() {
           defaultName={data.name}
           messages={messages}
           onClose={() => setShowSaveAsTemplate(false)}
+        />
+      )}
+
+      {editingStages && (
+        <StagesEditModal
+          wsId={wsId}
+          projectId={projectId}
+          initial={[...data.stages].sort((a, b) => a.order - b.order)}
+          onClose={() => setEditingStages(false)}
         />
       )}
 
