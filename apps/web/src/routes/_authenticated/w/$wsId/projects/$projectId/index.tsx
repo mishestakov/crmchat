@@ -30,7 +30,10 @@ import {
 import { StagesEditModal } from "../../../../../../components/stages-edit-modal";
 import { pluralize } from "../../../../../../lib/date-utils";
 import { useEventSourceEvent, useMyRole } from "../../../../../../lib/hooks";
-import { useProject } from "../../../../../../lib/outreach-queries";
+import {
+  useOutreachAccounts,
+  useProject,
+} from "../../../../../../lib/outreach-queries";
 import { OUTREACH_QK, invalidateProject } from "../../../../../../lib/query-keys";
 import { substituteVariables } from "../../../../../../lib/substitute-variables";
 import { buildVariablesFromImports } from "../../../../../../lib/template-variables";
@@ -44,6 +47,9 @@ export const Route = createFileRoute(
 type SequenceData =
   paths["/v1/workspaces/{wsId}/projects/{projectId}"]["get"]["responses"][200]["content"]["application/json"];
 
+type AccountRow =
+  paths["/v1/workspaces/{wsId}/outreach/accounts"]["get"]["responses"][200]["content"]["application/json"][number];
+
 function SequenceDetailPage() {
   const { wsId, projectId } = Route.useParams();
   const navigate = useNavigate();
@@ -51,7 +57,7 @@ function SequenceDetailPage() {
   const isAdmin = useMyRole(wsId) === "admin";
 
   const seq = useProject(wsId, projectId);
-
+  const accountsQ = useOutreachAccounts(wsId);
 
   const leadsQ = useQuery({
     queryKey: OUTREACH_QK.projectLeads(wsId, projectId),
@@ -112,9 +118,10 @@ function SequenceDetailPage() {
     },
   );
 
-  // Local editor state — name + messages. Accounts/CRM-settings правятся
-  // на отдельных sub-routes, тут не редактируются.
-  const [name, setName] = useState("");
+  // Local editor state — только messages (правится здесь же через
+  // MessagesEditor). Name редактирования из настроек нет — название
+  // отображается в шапке проекта (ProjectTabs). Accounts/CRM-settings
+  // правятся на отдельных sub-routes.
   const [messages, setMessages] = useState<Message[]>([]);
 
   // Список переменных для autocomplete — только CSV-колонки из импортов
@@ -142,7 +149,6 @@ function SequenceDetailPage() {
 
   useEffect(() => {
     if (!seq.data) return;
-    setName(seq.data.name);
     setMessages(seq.data.messages);
   }, [seq.data]);
 
@@ -152,13 +158,12 @@ function SequenceDetailPage() {
   const isDone = seq.data?.status === "done";
 
   const save = useMutation({
-    mutationFn: async (overrides?: { messages?: Message[]; name?: string }) => {
+    mutationFn: async (overrides?: { messages?: Message[] }) => {
       const { data, error } = await api.PATCH(
         "/v1/workspaces/{wsId}/projects/{projectId}",
         {
           params: { path: { wsId, projectId } },
           body: {
-            name: (overrides?.name ?? name).trim(),
             messages: overrides?.messages ?? messages,
           },
         },
@@ -271,73 +276,107 @@ function SequenceDetailPage() {
   }
 
   const data = seq.data;
-  const accountsSummary =
-    data.accountsMode === "all"
-      ? "Все"
-      : `Выбрано: ${data.accountsSelected.length}`;
   const leadsCount = leadsQ.data?.total ?? 0;
+  const sortedStages = [...data.stages].sort((a, b) => a.order - b.order);
+  const accountsSummary = buildAccountsSummary(data, accountsQ.data ?? []);
+  const crmSummary = buildCrmSummary(data);
+  const messagesSummary = buildMessagesSummary(messages);
+
+  const confirmComplete = () => {
+    if (
+      confirm(
+        "Завершить проект? Запланированные сообщения больше не уйдут.",
+      )
+    ) {
+      complete.mutate();
+    }
+  };
 
   return (
     <div className="flex min-h-full flex-col">
       <ProjectTabs wsId={wsId} projectId={projectId} />
       <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-4 p-6">
-        {/* === Section: детали кампании === */}
-        <Section>
-          <SectionItem>
-            <SectionItemTitle>Название</SectionItemTitle>
-            <input
-              type="text"
-              value={name}
-              disabled={!isDraft}
-              onChange={(e) => setName(e.target.value)}
-              onBlur={() => {
-                if (isDraft && name.trim() !== data.name) {
-                  save.mutate({ name });
-                }
-              }}
-              className="w-full max-w-xs bg-transparent text-right text-sm placeholder:text-zinc-400 focus:outline-none disabled:text-zinc-500"
-            />
-          </SectionItem>
-
-          <SectionItem>
-            <SectionItemTitle>
-              <span className="text-zinc-500">Статус: </span>
-              <span className="font-medium">{statusRu(data.status)}</span>
-            </SectionItemTitle>
-            <SectionItemValue>
-              {isAdmin && isActive && (
-                <button
-                  type="button"
-                  onClick={() => pause.mutate()}
-                  disabled={pause.isPending}
-                  className="inline-flex items-center gap-1 rounded-lg border border-zinc-300 px-3 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
-                >
-                  <Pause size={12} /> Пауза
-                </button>
-              )}
-              {isAdmin && isPaused && (
-                <button
-                  type="button"
-                  onClick={() => resume.mutate()}
-                  disabled={resume.isPending}
-                  className="inline-flex items-center gap-1 rounded-lg border border-zinc-300 px-3 py-1 text-xs hover:bg-zinc-50 disabled:opacity-50"
-                >
-                  <Play size={12} /> Продолжить
-                </button>
-              )}
-              {isAdmin && isDraft && (
+        {/* === 1. Управление — кнопки по текущему статусу ===
+             Primary action слева (Запустить/Возобновить/Пауза/Архивировать),
+             терминал-link справа (Удалить для draft, Завершить для active|paused).
+             Status уже видно в шапке-плашке — здесь только actions. */}
+        {isAdmin && (
+          <div className="flex items-center gap-3 rounded-2xl bg-white p-4 shadow-sm">
+            {isDraft && (
+              <>
                 <button
                   type="button"
                   onClick={() => activate.mutate()}
                   disabled={activate.isPending || messages.length === 0}
-                  className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
                 >
-                  <Play size={12} /> Запустить
+                  <Play size={14} />
+                  {activate.isPending ? "Запускаем…" : "Запустить рассылку"}
                 </button>
-              )}
-            </SectionItemValue>
-          </SectionItem>
+                <button
+                  type="button"
+                  onClick={() => setShowDelete(true)}
+                  className="ml-auto text-sm text-red-600 hover:text-red-700 hover:underline"
+                >
+                  Удалить проект
+                </button>
+              </>
+            )}
+            {isActive && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => pause.mutate()}
+                  disabled={pause.isPending}
+                  className="inline-flex items-center gap-2 rounded-lg border border-zinc-300 px-4 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+                >
+                  <Pause size={14} /> Пауза
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmComplete}
+                  disabled={complete.isPending}
+                  className="ml-auto text-sm text-zinc-600 hover:text-zinc-900 hover:underline disabled:opacity-50"
+                >
+                  {complete.isPending ? "Завершаем…" : "Завершить проект"}
+                </button>
+              </>
+            )}
+            {isPaused && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => resume.mutate()}
+                  disabled={resume.isPending}
+                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  <Play size={14} /> Возобновить
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmComplete}
+                  disabled={complete.isPending}
+                  className="ml-auto text-sm text-zinc-600 hover:text-zinc-900 hover:underline disabled:opacity-50"
+                >
+                  {complete.isPending ? "Завершаем…" : "Завершить проект"}
+                </button>
+              </>
+            )}
+            {isDone && (
+              <button
+                type="button"
+                onClick={() => archive.mutate()}
+                disabled={archive.isPending}
+                className="inline-flex items-center gap-2 rounded-lg border border-zinc-300 px-4 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+              >
+                {archive.isPending ? "Архивируем…" : "Архивировать проект"}
+              </button>
+            )}
+          </div>
+        )}
 
+        {/* === 2. Конфигурация — что внутри проекта, видно сразу === */}
+        <Section header="Конфигурация">
           <SectionItem
             withChevron
             onClick={isDone ? undefined : () => setEditingStages(true)}
@@ -345,8 +384,16 @@ function SequenceDetailPage() {
           >
             <SectionItemTitle>Стадии</SectionItemTitle>
             <SectionItemValue>
-              {data.stages.length}{" "}
-              {pluralize(data.stages.length, "стадия", "стадии", "стадий")}
+              <span className="flex flex-wrap justify-end gap-1">
+                {sortedStages.map((s) => (
+                  <span
+                    key={s.id}
+                    className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-700"
+                  >
+                    {s.name}
+                  </span>
+                ))}
+              </span>
             </SectionItemValue>
           </SectionItem>
 
@@ -366,16 +413,19 @@ function SequenceDetailPage() {
           >
             <SectionItem withChevron>
               <SectionItemTitle>CRM-автоматизации</SectionItemTitle>
-              <SectionItemValue>—</SectionItemValue>
+              <SectionItemValue>{crmSummary}</SectionItemValue>
             </SectionItem>
           </Link>
+        </Section>
 
+        {/* === 3. База лидов === */}
+        <Section header="База">
           <Link
             to="/w/$wsId/projects/$projectId/leads"
             params={{ wsId, projectId }}
           >
             <SectionItem withChevron>
-              <SectionItemTitle>Контакты</SectionItemTitle>
+              <SectionItemTitle>Лиды</SectionItemTitle>
               <SectionItemValue>
                 {leadsCount} {pluralize(leadsCount, "лид", "лида", "лидов")}
               </SectionItemValue>
@@ -388,8 +438,8 @@ function SequenceDetailPage() {
               params={{ wsId, projectId }}
             >
               <SectionItem withChevron>
-                <SectionItemTitle>Подлить лиды</SectionItemTitle>
-                <SectionItemValue>из CSV</SectionItemValue>
+                <SectionItemTitle>Импортировать CSV</SectionItemTitle>
+                <SectionItemValue>+ ещё лидов</SectionItemValue>
               </SectionItem>
             </Link>
           )}
@@ -447,9 +497,10 @@ function SequenceDetailPage() {
           </Section>
         )}
 
-        {/* === Section: кампания (сообщения) === */}
-        <Section header="Кампания">
-          <div className="px-5 py-4">
+        {/* === 4. Цепочка сообщений === */}
+        <Section header="Цепочка сообщений">
+          <div className="px-5 py-4 space-y-3">
+            <p className="text-xs text-zinc-500">{messagesSummary}</p>
             <MessagesEditor
               value={messages}
               variables={templateVariables}
@@ -478,50 +529,6 @@ function SequenceDetailPage() {
           </div>
         </Section>
 
-        {/* === Терминальное действие: меняется по статусу.
-             draft → «Удалить» (хард, со всеми лидами).
-             active/paused → «Завершить» (сначала закрыть, потом архив).
-             done → «Архивировать» (скрыть из списка).
-        */}
-        <div className="py-3 text-center">
-          {isDraft && (
-            <button
-              type="button"
-              onClick={() => setShowDelete(true)}
-              className="text-sm text-red-600 hover:text-red-700 hover:underline"
-            >
-              Удалить проект
-            </button>
-          )}
-          {(isActive || isPaused) && (
-            <button
-              type="button"
-              disabled={complete.isPending}
-              onClick={() => {
-                if (
-                  confirm(
-                    "Завершить проект? Запланированные сообщения больше не уйдут.",
-                  )
-                ) {
-                  complete.mutate();
-                }
-              }}
-              className="text-sm text-zinc-600 hover:text-zinc-900 hover:underline disabled:opacity-50"
-            >
-              {complete.isPending ? "Завершаем…" : "Завершить проект"}
-            </button>
-          )}
-          {isDone && (
-            <button
-              type="button"
-              disabled={archive.isPending}
-              onClick={() => archive.mutate()}
-              className="text-sm text-zinc-600 hover:text-zinc-900 hover:underline disabled:opacity-50"
-            >
-              {archive.isPending ? "Архивируем…" : "Архивировать проект"}
-            </button>
-          )}
-        </div>
       </div>
 
       {previewMsg && (
@@ -598,15 +605,52 @@ const GROUPING_LABELS: Record<"day" | "week" | "month", string> = {
   month: "По месяцам",
 };
 
-function statusRu(status: string): string {
-  return (
-    {
-      draft: "Черновик",
-      active: "Идёт",
-      paused: "Пауза",
-      done: "Завершена",
-    }[status] ?? status
+function shortDelay(period: string): string {
+  if (period === "minutes") return "мин";
+  if (period === "hours") return "ч";
+  if (period === "days") return "дн";
+  return period;
+}
+
+// Сводка аккаунтов: либо «Все активные», либо до 3-х имён через запятую
+// плюс «+ N ещё». Сразу показываем имена вместо «Выбрано: N» — менеджеру
+// полезнее видеть с каких аккаунтов реально пишет проект.
+function buildAccountsSummary(
+  project: SequenceData,
+  accounts: AccountRow[],
+): string {
+  if (project.accountsMode === "all") return "Все активные";
+  const chosen = accounts
+    .filter((a) => project.accountsSelected.includes(a.id))
+    .map((a) => (a.tgUsername ? `@${a.tgUsername}` : (a.firstName ?? "—")));
+  if (chosen.length === 0) return `Выбрано: ${project.accountsSelected.length}`;
+  if (chosen.length <= 3) return chosen.join(", ");
+  return `${chosen.slice(0, 3).join(", ")} + ${chosen.length - 3}`;
+}
+
+// Сводка CRM-автоматизаций: триггер + кол-во ответственных. Заменяет
+// прежний прочерк «—» — без клика непонятно что внутри.
+function buildCrmSummary(project: SequenceData): string {
+  const trigger =
+    project.contactCreationTrigger === "on-reply"
+      ? "при ответе"
+      : "при первой отправке";
+  const owners = project.contactDefaultOwnerIds.length;
+  if (owners === 0) return trigger;
+  if (owners === 1) return `${trigger} · 1 ответственный`;
+  return `${trigger} · ${owners} ответственных (round-robin)`;
+}
+
+// Сводка цепочки: «N шагов: первое сразу → через 1 ч → через 1 день».
+// Сразу видно расписание касаний без клика «открыть редактор».
+function buildMessagesSummary(messages: Message[]): string {
+  if (messages.length === 0) return "Цепочка пуста";
+  const delays = messages.map((m, i) =>
+    i === 0
+      ? "первое сразу"
+      : `через ${m.delay.value} ${shortDelay(m.delay.period)}`,
   );
+  return `${messages.length} ${pluralize(messages.length, "шаг", "шага", "шагов")}: ${delays.join(" → ")}`;
 }
 
 function pctOf(num: number, denom: number): number | null {
