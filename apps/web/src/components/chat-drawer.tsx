@@ -6,12 +6,19 @@ import {
   Check,
   CheckCheck,
   MessageCircle,
+  Pin,
   Send,
+  Users,
   X,
 } from "lucide-react";
 import type { Contact } from "@repo/core";
 import { api } from "../lib/api";
-import { formatDateTime, formatHHMM, formatRelative } from "../lib/date-utils";
+import {
+  formatDateTime,
+  formatHHMM,
+  formatPastRelative,
+  formatRelative,
+} from "../lib/date-utils";
 import { errorMessage } from "../lib/errors";
 import { useEventSourceEvent } from "../lib/hooks";
 import {
@@ -97,6 +104,26 @@ export function ChatDrawer(props: {
       return data!.activeProjects;
     },
     staleTime: 30_000,
+  });
+
+  const stickyMut = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.PATCH(
+        "/v1/workspaces/{wsId}/contacts/{id}/sticky",
+        {
+          params: { path: { wsId: props.wsId, id: props.contact.id } },
+          body: { accountId: props.accountId },
+        },
+      );
+      if (error) throw error;
+      return data!;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({
+        queryKey: ["contact", props.wsId, props.contact.id],
+      });
+      qc.invalidateQueries({ queryKey: ["contacts"] });
+    },
   });
 
   const [composeText, setComposeText] = useState("");
@@ -298,6 +325,24 @@ export function ChatDrawer(props: {
 
   const chatAccounts = props.contact.chatAccounts;
 
+  // Свежее MAX(lastInboundAt, lastOutboundAt) среди других аккаунтов:
+  // если коллега общался с peer'ом позже, чем мы на текущем — показываем
+  // плашку. Antidublе-сигнал «коллега в коммуникации, не дёргай повторно».
+  const myMax = maxChatActivity(
+    chatAccounts.find((ca) => ca.accountId === props.accountId),
+  );
+  const fresherColleague = chatAccounts
+    .filter((ca) => ca.accountId !== props.accountId)
+    .map((ca) => ({ accountId: ca.accountId, at: maxChatActivity(ca) }))
+    .filter((c) => c.at != null && (myMax == null || c.at > myMax))
+    .sort((a, b) => (a.at! > b.at! ? -1 : 1))[0];
+  const colleagueLabel = fresherColleague
+    ? (() => {
+        const acc = accountById.get(fresherColleague.accountId);
+        return acc ? formatAccount(acc) : fresherColleague.accountId;
+      })()
+    : null;
+
   return (
     <>
       <div
@@ -313,6 +358,18 @@ export function ChatDrawer(props: {
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            {props.contact.primaryAccountId !== props.accountId && (
+              <button
+                type="button"
+                disabled={stickyMut.isPending}
+                onClick={() => stickyMut.mutate()}
+                title="Закрепить контакт за этим аккаунтом — следующие касания пойдут через него"
+                className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-medium text-zinc-700 ring-1 ring-zinc-300 hover:bg-zinc-50 disabled:opacity-50"
+              >
+                <Pin size={12} />
+                Закрепить за аккаунтом
+              </button>
+            )}
             {peerLink && (
               <Link
                 to="/w/$wsId/outreach/chat"
@@ -334,6 +391,20 @@ export function ChatDrawer(props: {
             </button>
           </div>
         </div>
+        {fresherColleague && (
+          <button
+            type="button"
+            onClick={() => props.onSelectAccount(fresherColleague.accountId)}
+            className="flex w-full items-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-left text-xs text-amber-900 hover:bg-amber-100"
+            title="Открыть переписку коллеги"
+          >
+            <Users size={14} className="shrink-0" />
+            <span>
+              Коллега <span className="font-medium">{colleagueLabel}</span> писал
+              этому контакту {formatPastRelative(fresherColleague.at!)}
+            </span>
+          </button>
+        )}
         {chatAccounts.length > 1 && (
           <div className="flex gap-1 overflow-x-auto border-b border-zinc-200 px-3 py-2">
             {chatAccounts.map((ca) => {
@@ -514,6 +585,20 @@ function ComposeFooter(props: {
       )}
     </div>
   );
+}
+
+// MAX(lastInboundAt, lastOutboundAt) для одной записи chatAccounts.
+// null если undefined (аккаунта нет в массиве) или у него нет ни одной даты.
+function maxChatActivity(
+  ca: Contact["chatAccounts"][number] | undefined,
+): string | null {
+  if (!ca) return null;
+  if (ca.lastInboundAt && ca.lastOutboundAt) {
+    return ca.lastInboundAt > ca.lastOutboundAt
+      ? ca.lastInboundAt
+      : ca.lastOutboundAt;
+  }
+  return ca.lastInboundAt ?? ca.lastOutboundAt ?? null;
 }
 
 // Сравнение message.id <= lastReadOutboxId через BigInt — TG-message-id

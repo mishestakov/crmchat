@@ -928,6 +928,47 @@ app.openapi(
   },
 );
 
+// Удаление лида из проекта. Разрешено только в draft — на этом этапе
+// scheduled_messages ещё не созданы, ни одна отправка не ушла. После активации
+// (active/paused/done) удаление запрещено: лид мог получить первое сообщение,
+// и удалить его молча — потерять историю операции.
+app.openapi(
+  createRoute({
+    method: "delete",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/items/{itemId}",
+    tags: ["outreach"],
+    middleware: [assertRole("admin")] as const,
+    request: {
+      params: WsProjectParam.extend({
+        itemId: z.string().min(1).max(64),
+      }),
+    },
+    responses: { 204: { description: "Deleted" } },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const { projectId, itemId } = c.req.valid("param");
+    const project = await assertProjectAccess(projectId, wsId, userId, role);
+    if (project.status !== "draft") {
+      throw new HTTPException(400, {
+        message: "Удалять лидов можно только в черновом проекте",
+      });
+    }
+    const result = await db
+      .delete(projectItems)
+      .where(
+        and(eq(projectItems.id, itemId), eq(projectItems.projectId, projectId)),
+      )
+      .returning({ id: projectItems.id });
+    if (result.length === 0) {
+      throw new HTTPException(404, { message: "item not found" });
+    }
+    return c.body(null, 204);
+  },
+);
+
 // Sequence analytics: агрегаты sent/read/replied + timeseries.
 //
 // `period`: окно (дни). Влияет только на timeseries; total-метрики — за всё время.

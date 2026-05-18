@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
@@ -7,6 +7,7 @@ import {
   CheckCheck,
   MessageCircleReply,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 import type { paths } from "@repo/api-client";
 import { api } from "../../../../../../lib/api";
@@ -174,6 +175,21 @@ function LeadsPage() {
     ).length ?? 0;
   const isDraft = seq.data?.status === "draft";
 
+  const deleteLeadMut = useMutation({
+    mutationFn: async (itemId: string) => {
+      const { error } = await api.DELETE(
+        "/v1/workspaces/{wsId}/projects/{projectId}/items/{itemId}",
+        { params: { path: { wsId, projectId, itemId } } },
+      );
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({
+        queryKey: OUTREACH_QK.projectLeads(wsId, projectId),
+      });
+    },
+  });
+
   return (
     <div className="space-y-3">
       <ProjectTabs wsId={wsId} projectId={projectId} />
@@ -300,6 +316,7 @@ function LeadsPage() {
                       {i === 0 ? "Первое" : `Сообщение ${i + 1}`}
                     </th>
                   ))}
+                  {isDraft && <th className="w-8 px-2 py-2" />}
                 </tr>
               </thead>
               <tbody>
@@ -349,6 +366,30 @@ function LeadsPage() {
                         </td>
                       );
                     })}
+                    {isDraft && (
+                      <td className="px-2 py-2 align-top">
+                        <button
+                          type="button"
+                          disabled={deleteLeadMut.isPending}
+                          title="Удалить лида из проекта"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (
+                              window.confirm(
+                                `Удалить лида ${
+                                  l.username ? "@" + l.username : ""
+                                } из проекта?`,
+                              )
+                            ) {
+                              deleteLeadMut.mutate(l.id);
+                            }
+                          }}
+                          className="rounded p-1 text-zinc-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

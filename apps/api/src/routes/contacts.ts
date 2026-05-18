@@ -338,6 +338,64 @@ app.openapi(
   },
 );
 
+// Ручное переопределение sticky-закрепления контакта за аккаунтом. В отличие от
+// авто-логики (listener / backfill пишут только когда NULL), здесь
+// перетираем существующее значение — менеджер берёт коммуникацию на себя.
+//
+// TODO(11.5 RBAC): валидировать, что accountId принадлежит вызывающему
+// member'у (или делегирован ему). Сейчас любой member ws может закрепить
+// любой контакт за чужим аккаунтом.
+app.openapi(
+  createRoute({
+    method: "patch",
+    path: "/v1/workspaces/{wsId}/contacts/{id}/sticky",
+    tags: ["contacts"],
+    request: {
+      params: WsIdParam,
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({
+              accountId: z.string().min(1).max(64),
+            }),
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: { "application/json": { schema: ContactSchema } },
+        description: "Sticky updated",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const { id } = c.req.valid("param");
+    const { accountId } = c.req.valid("json");
+    await assertContactAccess(id, wsId);
+    const [acc] = await db
+      .select({ id: outreachAccounts.id })
+      .from(outreachAccounts)
+      .where(
+        and(
+          eq(outreachAccounts.id, accountId),
+          eq(outreachAccounts.workspaceId, wsId),
+        ),
+      )
+      .limit(1);
+    if (!acc) throw new HTTPException(404, { message: "account not found" });
+    await db
+      .update(contacts)
+      .set({ primaryAccountId: accountId, updatedAt: new Date() })
+      .where(and(eq(contacts.id, id), eq(contacts.workspaceId, wsId)));
+    const row = await selectOne(wsId, id);
+    if (!row) throw new HTTPException(404, { message: "contact not found" });
+    return c.json(serialize(row));
+  },
+);
+
 app.openapi(
   createRoute({
     method: "delete",

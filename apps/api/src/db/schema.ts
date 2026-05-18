@@ -354,9 +354,10 @@ export const outreachAccounts = pgTable(
     firstName: text("first_name"),
     hasPremium: boolean("has_premium").notNull().default(false),
     // Лимит исходящих сообщений в сутки на этот аккаунт. Worker (фаза 3b)
-    // считает sent-за-сегодня и пропускает аккаунт когда упёрлись. Дефолт 30 —
-    // безопасно для не-Premium аккаунта без warmup. Юзер может крутить.
-    newLeadsDailyLimit: integer("new_leads_daily_limit").notNull().default(30),
+    // считает sent-за-сегодня и пропускает аккаунт когда упёрлись. Дефолт 15 —
+    // консервативный уровень из касдева Юли (10 безопасно, 15 ещё ОК, выше
+    // растёт риск жалобы → блок). Юзер может крутить.
+    newLeadsDailyLimit: integer("new_leads_daily_limit").notNull().default(15),
     // FloodWait cooldown — аккаунт молчит до этой даты. Заполняется worker'ом
     // и quick-send'ом при FloodWaitError. Сохраняется в БД (а не in-memory),
     // чтобы переживало рестарт API и показывалось менеджеру в UI («аккаунт
