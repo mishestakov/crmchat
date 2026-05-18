@@ -7,9 +7,8 @@ import {
 } from "../db/schema.ts";
 
 // Preset-properties, которые сидятся в каждый workspace при его создании.
-// 1:1 структура с donor (за вычетом avatarUrl) — см. PROPERTY_METADATA в
-// reconstructed/src/lib/properties.ts и getDefaultPropertiesConfig в
-// reconstructed/src/routes/.../onboarding/$stepId.tsx.
+// Структура взята 1:1 с донор-сервиса (за вычетом avatarUrl) на момент
+// реверс-инжиниринга в апреле 2026.
 type PresetSpec = {
   key: string;
   name: string;
