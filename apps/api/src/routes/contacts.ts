@@ -52,8 +52,12 @@ import { assertRole, type WorkspaceVars } from "../middleware/assert-member.ts";
 
 // Subquery: ближайший открытый reminder для контакта. Тащим в каждый GET — чтобы
 // kanban-карточки могли показывать NextStep без N+1 запросов. Возвращает null,
-// если у контакта нет открытых напоминаний с датой.
-const nextStepSql = sql<{
+// если у контакта нет открытых напоминаний с датой. Экспортируется — используется
+// также в /leads endpoint'е (карточка лида на канбане проекта).
+//
+// NB: correlated к `contacts.id` — работает только в SELECT'е, где `contacts`
+// есть во FROM или JOIN'ах.
+export const nextStepSql = sql<{
   date: string;
   text: string;
   repeat: "none" | "daily" | "weekly" | "monthly";

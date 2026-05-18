@@ -9,6 +9,7 @@ import { BackButton } from "../../../../../../components/back-button";
 import { ProjectTabs } from "../../../../../../components/project-tabs";
 import { TruncationBanner } from "../../../../../../components/truncation-banner";
 import { LeadChatDrawer } from "../../../../../../components/lead-chat-drawer";
+import { NextStepLine } from "../../../../../../components/next-step-line";
 import { UnreadBadge } from "../../../../../../components/unread-badge";
 import { useEventSourceEvent } from "../../../../../../lib/hooks";
 import {
@@ -379,6 +380,11 @@ function LeadCard(props: {
       {tg && (
         <div className="mt-0.5 flex items-center gap-1 text-xs text-zinc-500">
           <Send size={11} className="text-sky-500" />@{tg}
+        </div>
+      )}
+      {lead.nextStep && (
+        <div className="mt-1">
+          <NextStepLine next={lead.nextStep} />
         </div>
       )}
     </div>

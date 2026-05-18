@@ -7,6 +7,7 @@ import {
   ChatDrawer,
   formatAccount,
 } from "../../../../../components/chat-drawer";
+import { NextStepLine } from "../../../../../components/next-step-line";
 import { SearchInput } from "../../../../../components/search-input";
 import { UnreadBadge } from "../../../../../components/unread-badge";
 import { api } from "../../../../../lib/api";
@@ -190,6 +191,7 @@ const TableView = memo(function TableView(props: {
           <tr>
             <th className="px-3 py-2 font-medium">Имя</th>
             <th className="px-3 py-2 font-medium">@username</th>
+            <th className="px-3 py-2 font-medium">Напомнить</th>
             <th className="px-3 py-2 font-medium">Последнее сообщение</th>
             <th className="px-3 py-2 font-medium">Закреплён за</th>
             <th className="px-3 py-2 font-medium">Кто общался</th>
@@ -257,6 +259,13 @@ const TableView = memo(function TableView(props: {
                 </td>
                 <td className="px-3 py-2 text-zinc-600">
                   {username ? `@${username}` : "—"}
+                </td>
+                <td className="px-3 py-2">
+                  {c.nextStep ? (
+                    <NextStepLine next={c.nextStep} />
+                  ) : (
+                    <span className="text-zinc-400">—</span>
+                  )}
                 </td>
                 <td className="px-3 py-2 text-zinc-600">
                   {c.lastMessageAt ? formatRelative(c.lastMessageAt) : "—"}

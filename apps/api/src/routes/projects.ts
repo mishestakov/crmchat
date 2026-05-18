@@ -34,6 +34,7 @@ import {
   resolveWarmTgUserIds,
 } from "../lib/project-scheduling.ts";
 import { assertRole, type WorkspaceVars } from "../middleware/assert-member.ts";
+import { nextStepSql } from "./contacts.ts";
 
 // Outreach-проект: рассылка по одному списку с N сообщениями и задержками.
 // Активация = pre-schedule всех scheduled_messages с round-robin аккаунтом и
@@ -181,6 +182,17 @@ const LeadProgressSchema = z
     // Для лидов без contactId всегда 0. Бэйдж на канбане; синхронизация через
     // contact-stream SSE — листенер на /kanban апдейтит лидов с этим contactId.
     unreadCount: z.number().int(),
+    // Ближайший открытый reminder контакта. Рендерится на канбан-карточке как
+    // Bell-иконка + дата (Сегодня / DD.MM, красным если просрочен). Берётся
+    // через nextStepSql subquery с привязанного contact'а; для лидов без
+    // contactId всегда null.
+    nextStep: z
+      .object({
+        date: z.iso.datetime(),
+        text: z.string(),
+        repeat: z.enum(["none", "daily", "weekly", "monthly"]),
+      })
+      .nullable(),
     // Текущая стадия канбана (id из project.stages[*].id). null = «без
     // стадии» — карточка не на канбане.
     stageId: z.string().nullable(),
@@ -222,11 +234,15 @@ app.openapi(
             WHERE sm.item_id = pi.id
               AND sm.account_id IN ${myAccountIdsSql(wsId, userId)}
           )`;
+    // projects.id внутри correlated subquery — голым SQL, не через
+    // ${projects.id}. Drizzle на колоночном binding'е выводит просто "id"
+    // без префикса таблицы, и postgres путается с алиасом `pi.id` →
+    // «column reference "id" is ambiguous».
     const unreadSql = sql<number>`COALESCE((
       SELECT SUM(c.unread_count)::int
       FROM project_items pi
       JOIN contacts c ON c.id = pi.contact_id
-      WHERE pi.project_id = ${projects.id}
+      WHERE pi.project_id = projects.id
         AND c.unread_count > 0
         AND ${memberFilter}
     ), 0)`;
@@ -778,6 +794,7 @@ app.openapi(
           repliedAt: projectItems.repliedAt,
           contactId: projectItems.contactId,
           unreadCount: sql<number>`coalesce(${contacts.unreadCount}, 0)::int`,
+          nextStep: nextStepSql,
           stageId: projectItems.stageId,
           importId: projectItems.importId,
           total: sql<number>`count(*) OVER ()::int`,
@@ -897,6 +914,7 @@ app.openapi(
           repliedAt: l.repliedAt?.toISOString() ?? null,
           contactId: l.contactId,
           unreadCount: l.unreadCount,
+          nextStep: l.nextStep,
           stageId: l.stageId,
           importId: l.importId,
         };
