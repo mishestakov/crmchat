@@ -87,6 +87,11 @@ const ProjectSchema = z
     activatedAt: z.iso.datetime().nullable(),
     completedAt: z.iso.datetime().nullable(),
     createdAt: z.iso.datetime(),
+    // SUM(contacts.unread_count) по всем лидам проекта с фильтром по доступным
+    // member'у аккаунтам. Считается только в GET /projects (list). Для single-
+    // project ответов (POST/PATCH/activate/...) всегда 0 — фронт инвалидирует
+    // список и подтянет свежий sum.
+    unreadCount: z.number().int(),
   })
   .openapi("Project");
 
@@ -204,8 +209,33 @@ app.openapi(
     const wsId = c.get("workspaceId");
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
+
+    // SUM непрочитанных по лидам проекта с фильтром RBAC: member видит unread
+    // только по лидам, привязанным к его аккаунтам (через scheduled_messages).
+    // Без фильтра в /leads такой лид и так не показался бы, а в бейдже всплыло
+    // бы число которого «нигде нет».
+    const memberFilter =
+      role === "admin"
+        ? sql`true`
+        : sql`EXISTS (
+            SELECT 1 FROM scheduled_messages sm
+            WHERE sm.item_id = pi.id
+              AND sm.account_id IN ${myAccountIdsSql(wsId, userId)}
+          )`;
+    const unreadSql = sql<number>`COALESCE((
+      SELECT SUM(c.unread_count)::int
+      FROM project_items pi
+      JOIN contacts c ON c.id = pi.contact_id
+      WHERE pi.project_id = ${projects.id}
+        AND c.unread_count > 0
+        AND ${memberFilter}
+    ), 0)`;
+
     const rows = await db
-      .select()
+      .select({
+        row: projects,
+        unread: unreadSql.as("unread_count"),
+      })
       .from(projects)
       .where(
         and(
@@ -214,7 +244,7 @@ app.openapi(
         ),
       )
       .orderBy(asc(projects.createdAt));
-    return c.json(rows.map(serializeProject));
+    return c.json(rows.map((r) => serializeProject(r.row, r.unread)));
   },
 );
 
@@ -1327,7 +1357,10 @@ app.openapi(
   },
 );
 
-function serializeProject(row: typeof projects.$inferSelect) {
+function serializeProject(
+  row: typeof projects.$inferSelect,
+  unreadCount = 0,
+) {
   return {
     id: row.id,
     trackId: row.trackId,
@@ -1343,6 +1376,7 @@ function serializeProject(row: typeof projects.$inferSelect) {
     activatedAt: row.activatedAt?.toISOString() ?? null,
     completedAt: row.completedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
+    unreadCount,
   };
 }
 

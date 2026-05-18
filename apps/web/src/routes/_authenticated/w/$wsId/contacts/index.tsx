@@ -8,6 +8,7 @@ import {
   formatAccount,
 } from "../../../../../components/chat-drawer";
 import { SearchInput } from "../../../../../components/search-input";
+import { UnreadBadge } from "../../../../../components/unread-badge";
 import { api } from "../../../../../lib/api";
 import { formatRelative } from "../../../../../lib/date-utils";
 import { errorMessage } from "../../../../../lib/errors";
@@ -251,11 +252,7 @@ const TableView = memo(function TableView(props: {
                     <span className="block max-w-[280px] truncate" title={name}>
                       {name}
                     </span>
-                    {c.unreadCount > 0 && (
-                      <span className="shrink-0 rounded-full bg-emerald-500 px-1.5 text-xs font-semibold leading-5 text-white">
-                        {c.unreadCount > 99 ? "99+" : c.unreadCount}
-                      </span>
-                    )}
+                    <UnreadBadge count={c.unreadCount} />
                   </a>
                 </td>
                 <td className="px-3 py-2 text-zinc-600">

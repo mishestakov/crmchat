@@ -5,11 +5,12 @@ import {
   useLocation,
 } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Briefcase, ChevronDown, ChevronRight, FolderPlus, Plus, Search } from "lucide-react";
+import { UnreadBadge } from "../../../../../components/unread-badge";
 import { api } from "../../../../../lib/api";
 import { errorMessage } from "../../../../../lib/errors";
-import { useMyRole } from "../../../../../lib/hooks";
+import { useEventSourceEvent, useMyRole } from "../../../../../lib/hooks";
 import { getLastProjectView } from "../../../../../lib/last-project-view";
 import { OUTREACH_QK } from "../../../../../lib/query-keys";
 
@@ -84,6 +85,31 @@ function ProjectsLayout() {
       return data;
     },
   });
+
+  // Debounced invalidate /projects на любое contact-событие (input/read/delete).
+  // Без дебаунса пачка inbound'ов от worker'а ударит 50 refetch'ей подряд.
+  const invalidateTimerRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (invalidateTimerRef.current !== null) {
+        window.clearTimeout(invalidateTimerRef.current);
+      }
+    },
+    [],
+  );
+  useEventSourceEvent(
+    `/v1/workspaces/${wsId}/contact-stream`,
+    "contact",
+    () => {
+      if (invalidateTimerRef.current !== null) {
+        window.clearTimeout(invalidateTimerRef.current);
+      }
+      invalidateTimerRef.current = window.setTimeout(() => {
+        qc.invalidateQueries({ queryKey: OUTREACH_QK.projects(wsId) });
+        invalidateTimerRef.current = null;
+      }, 500);
+    },
+  );
 
   // Активный projectId из URL: /w/$wsId/projects/$projectId/...
   const activeProjectId = useMemo(() => {
@@ -220,6 +246,15 @@ function ProjectsLayout() {
                           }
                         />
                         <span className="truncate">{p.name}</span>
+                        {(p.status === "active" || p.status === "paused") &&
+                          p.unreadCount > 0 && (
+                            <span
+                              className="ml-auto"
+                              title={`${p.unreadCount} непрочитанных`}
+                            >
+                              <UnreadBadge count={p.unreadCount} />
+                            </span>
+                          )}
                       </Link>
                     ))}
                     {isAdmin && (

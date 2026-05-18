@@ -9,6 +9,7 @@ import { BackButton } from "../../../../../../components/back-button";
 import { ProjectTabs } from "../../../../../../components/project-tabs";
 import { TruncationBanner } from "../../../../../../components/truncation-banner";
 import { LeadChatDrawer } from "../../../../../../components/lead-chat-drawer";
+import { UnreadBadge } from "../../../../../../components/unread-badge";
 import { useEventSourceEvent } from "../../../../../../lib/hooks";
 import {
   useOutreachAccounts,
@@ -368,10 +369,10 @@ function LeadCard(props: {
               e.stopPropagation();
               props.onOpenChat();
             }}
-            className="shrink-0 rounded-full bg-emerald-500 px-1.5 text-xs font-semibold leading-5 text-white hover:bg-emerald-600"
             title={`${unread} непрочитанных — открыть чат`}
+            className="hover:opacity-80"
           >
-            {unread > 99 ? "99+" : unread}
+            <UnreadBadge count={unread} />
           </button>
         )}
       </div>
