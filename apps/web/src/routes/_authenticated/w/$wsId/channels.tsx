@@ -4,7 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 import type { Channel, ImportChannelsMapping } from "@repo/core";
 import { api } from "../../../../lib/api";
-import { ChannelCard, formatMembers } from "../../../../components/channel-card";
+import { formatMembers } from "../../../../components/channel-card";
+import { ChannelDrawer } from "../../../../components/channel-drawer";
 import { SearchInput } from "../../../../components/search-input";
 import { TruncationBanner } from "../../../../components/truncation-banner";
 import { parseCsv, type ParsedCsv } from "../../../../lib/csv";
@@ -133,13 +134,7 @@ function ChannelsPage() {
     placeholderData: (prev) => prev,
   });
 
-  // Drawer админов выбранного канала. Источник истины — channelsQ.data, чтобы
-  // при PATCH'е каналов drawer всегда показывал свежий admins[].
   const [openChannelId, setOpenChannelId] = useState<string | null>(null);
-  const openChannel =
-    openChannelId
-      ? channelsQ.data?.find((c) => c.id === openChannelId) ?? null
-      : null;
 
   const accountsQ = useOutreachAccounts(wsId);
   const accountById = new Map(
@@ -323,52 +318,14 @@ function ChannelsPage() {
         </div>
       )}
 
-      {openChannel && (
+      {openChannelId && (
         <ChannelDrawer
           wsId={wsId}
-          channel={openChannel}
+          channelId={openChannelId}
           onClose={() => setOpenChannelId(null)}
         />
       )}
     </div>
-  );
-}
-
-// Drawer на 560px справа: top-bar с close + ChannelCard на остаток высоты.
-// Карточка сама рендерит hero/meta/admins/posts; drawer'у остался только
-// чрейм и Esc-handler.
-function ChannelDrawer(props: {
-  wsId: string;
-  channel: Channel;
-  onClose: () => void;
-}) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") props.onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [props]);
-
-  return (
-    <>
-      <div
-        className="fixed inset-0 z-40 bg-zinc-900/20"
-        onClick={props.onClose}
-      />
-      <aside className="fixed bottom-0 right-0 top-0 z-50 flex w-[560px] max-w-[95vw] flex-col bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-2 text-xs">
-          <button
-            type="button"
-            onClick={props.onClose}
-            className="text-zinc-500 hover:text-zinc-700"
-          >
-            ← Закрыть
-          </button>
-        </div>
-        <ChannelCard wsId={props.wsId} channel={props.channel} />
-      </aside>
-    </>
   );
 }
 

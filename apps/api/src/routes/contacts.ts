@@ -97,9 +97,33 @@ const chatAccountsSql = sql<ChatAccountRow[]>`(
 )`.as("chat_accounts");
 
 // Subquery: каналы, в которых контакт записан админом (m:n channel_admins).
-type ChannelRow = { id: string; title: string };
+// Минимум для table-row на карточке контакта; полный Channel — отдельным
+// GET /channels/{id} из ChannelDrawer.
+type ChannelRow = {
+  id: string;
+  title: string;
+  username: string | null;
+  memberCount: number | null;
+  lastMessageAt: string | null;
+  hasDm: boolean;
+  unavailableSince: string | null;
+};
 const channelsSql = sql<ChannelRow[]>`(
-  SELECT COALESCE(json_agg(json_build_object('id', ch.id, 'title', ch.title) ORDER BY ch.title), '[]'::json)
+  SELECT COALESCE(
+    json_agg(
+      json_build_object(
+        'id', ch.id,
+        'title', ch.title,
+        'username', ch.username,
+        'memberCount', ch.member_count,
+        'lastMessageAt', ch.last_message_at,
+        'hasDm', COALESCE((ch.meta->>'has_dm')::boolean, false),
+        'unavailableSince', ch.unavailable_since
+      )
+      ORDER BY ch.last_message_at DESC NULLS LAST, ch.title
+    ),
+    '[]'::json
+  )
   FROM channel_admins ca
   JOIN channels ch ON ch.id = ca.channel_id
   WHERE ca.contact_id = contacts.id

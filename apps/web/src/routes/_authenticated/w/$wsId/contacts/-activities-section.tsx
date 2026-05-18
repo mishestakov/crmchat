@@ -16,7 +16,141 @@ const REPEAT_LABELS: Record<ActivityRepeat, string> = {
 const activitiesKey = (wsId: string, contactId: string) =>
   ["activities", wsId, contactId] as const;
 
-export function ActivitiesList(props: { wsId: string; contactId: string }) {
+export function ActivitySection(props: { wsId: string; contactId: string }) {
+  return (
+    <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
+      <ActivityComposer wsId={props.wsId} contactId={props.contactId} />
+      <ActivitiesList wsId={props.wsId} contactId={props.contactId} />
+    </div>
+  );
+}
+
+// Без даты = note, с датой = reminder; type выбирается из isReminder, текст
+// поля держится тот же. Модалки [[note-modal]] / [[reminder-modal]] остались
+// для редактирования.
+function ActivityComposer(props: { wsId: string; contactId: string }) {
+  const qc = useQueryClient();
+  const [text, setText] = useState("");
+  const [isReminder, setIsReminder] = useState(false);
+  const [date, setDate] = useState("");
+  const [repeat, setRepeat] = useState<ActivityRepeat>("none");
+
+  const reset = () => {
+    setText("");
+    setIsReminder(false);
+    setDate("");
+    setRepeat("none");
+  };
+
+  const create = useMutation({
+    mutationFn: async () => {
+      const body = isReminder
+        ? {
+            type: "reminder" as const,
+            text,
+            date: new Date(date).toISOString(),
+            ...(repeat !== "none" ? { repeat } : {}),
+          }
+        : { type: "note" as const, text };
+      const { error } = await api.POST(
+        "/v1/workspaces/{wsId}/contacts/{contactId}/activities",
+        {
+          params: { path: { wsId: props.wsId, contactId: props.contactId } },
+          body,
+        },
+      );
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({
+        queryKey: activitiesKey(props.wsId, props.contactId),
+      });
+      reset();
+    },
+  });
+
+  const canSave =
+    text.trim().length > 0 && (!isReminder || date !== "") && !create.isPending;
+
+  return (
+    <form
+      className="space-y-3 bg-zinc-50 p-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (canSave) create.mutate();
+      }}
+    >
+      <textarea
+        rows={2}
+        placeholder="Что зафиксировать или о чём напомнить?"
+        className="w-full resize-none rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && canSave) {
+            e.preventDefault();
+            create.mutate();
+          }
+        }}
+      />
+      {isReminder && (
+        <div className="grid grid-cols-2 gap-2">
+          <input
+            type="datetime-local"
+            className={fieldInputClass}
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            autoFocus
+          />
+          <select
+            value={repeat}
+            onChange={(e) => setRepeat(e.target.value as ActivityRepeat)}
+            className={fieldInputClass + " bg-white"}
+          >
+            {(Object.keys(REPEAT_LABELS) as ActivityRepeat[]).map((r) => (
+              <option key={r} value={r}>
+                {REPEAT_LABELS[r]}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      {create.error && (
+        <p className="text-sm text-red-600">{errorMessage(create.error)}</p>
+      )}
+      <div className="flex items-center justify-between gap-3">
+        <button
+          type="button"
+          onClick={() => {
+            setIsReminder((s) => !s);
+            if (isReminder) {
+              setDate("");
+              setRepeat("none");
+            }
+          }}
+          className={
+            "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors " +
+            (isReminder
+              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+              : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50")
+          }
+        >
+          <Bell size={13} />
+          {isReminder ? "С напоминанием" : "Напомнить"}
+        </button>
+        <button
+          type="submit"
+          disabled={!canSave}
+          className="rounded-lg bg-emerald-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
+        >
+          {create.isPending ? "Создаём…" : "Создать"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function ActivitiesList(props: { wsId: string; contactId: string }) {
   const { wsId, contactId } = props;
   const qc = useQueryClient();
   const queryKey = activitiesKey(wsId, contactId);
@@ -68,11 +202,17 @@ export function ActivitiesList(props: { wsId: string; contactId: string }) {
   });
 
   if (list.isLoading) {
-    return <p className="px-1 text-sm text-zinc-500">Загрузка…</p>;
+    return (
+      <p className="border-t border-zinc-100 px-4 py-3 text-sm text-zinc-500">
+        Загрузка…
+      </p>
+    );
   }
   if (list.error) {
     return (
-      <p className="px-1 text-sm text-red-600">{errorMessage(list.error)}</p>
+      <p className="border-t border-zinc-100 px-4 py-3 text-sm text-red-600">
+        {errorMessage(list.error)}
+      </p>
     );
   }
   if (!list.data || list.data.length === 0) {
@@ -81,7 +221,7 @@ export function ActivitiesList(props: { wsId: string; contactId: string }) {
 
   return (
     <>
-      <div className="space-y-2">
+      <div>
         {list.data.map((a) => (
           <ActivityCard
             key={a.id}
@@ -132,7 +272,7 @@ function ActivityCard(props: {
   const completed = a.status === "completed";
 
   return (
-    <div className="rounded-2xl bg-white px-4 py-3 shadow-sm">
+    <div className="border-t border-zinc-100 px-4 py-3">
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
           <div

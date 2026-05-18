@@ -38,12 +38,17 @@ export const ContactSchema = z.object({
     }),
   ),
   // Каналы, в которых этот контакт записан админом (m:n через
-  // channel_admins). Источник — JOIN channels через channel_admins.
-  // Используется секцией «Каналы» на карточке контакта (11.4).
+  // channel_admins). Минимум для table-row на карточке контакта; полный
+  // Channel догружается отдельным GET /channels/{id}.
   channels: z.array(
     z.object({
       id: z.string(),
       title: z.string(),
+      username: z.string().nullable(),
+      memberCount: z.number().int().nullable(),
+      lastMessageAt: z.iso.datetime().nullable(),
+      hasDm: z.boolean(),
+      unavailableSince: z.iso.datetime().nullable(),
     }),
   ),
   createdBy: z.string().min(1).max(64),

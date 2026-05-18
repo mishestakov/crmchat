@@ -1,30 +1,31 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
-  Bell,
   ChevronDown,
+  Globe,
   Hash,
+  Mail,
   MessageCircle,
   MoreHorizontal,
+  Phone,
+  Pin,
   Plus,
   Send,
-  StickyNote,
   X,
 } from "lucide-react";
 import type { Contact, Property } from "@repo/core";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
+import { formatRelative } from "../../../../../../lib/date-utils";
 import { useClickOutside } from "../../../../../../lib/hooks";
 import { BackButton } from "../../../../../../components/back-button";
-import {
-  ActivitiesList,
-  NoteModal,
-  ReminderModal,
-} from "../-activities-section";
+import { ActivitySection } from "../-activities-section";
 import { ChatDrawer } from "../../../../../../components/chat-drawer";
 import { useOutreachAccounts } from "../../../../../../lib/outreach-queries";
-import { ChannelCard } from "../../../../../../components/channel-card";
+import { ChannelDrawer } from "../../../../../../components/channel-drawer";
+import { formatMembers } from "../../../../../../components/channel-card";
 
 export const Route = createFileRoute("/_authenticated/w/$wsId/contacts/$id/")({
   component: ContactDetail,
@@ -40,6 +41,10 @@ const IDENTITY_KEYS = new Set([
   "phone",
   "url",
   "telegram_username",
+  // tg_user_id рендерить негде: в шапку не идёт (это не идентичность для
+  // юзера, а внутренний привязочный id), в таблицу «Связь» тоже — там есть
+  // только @username. Прячем из общего списка custom-properties.
+  "tg_user_id",
 ]);
 
 function ContactDetail() {
@@ -87,7 +92,6 @@ function ContactDetail() {
     },
   });
 
-  const [adding, setAdding] = useState<"note" | "reminder" | null>(null);
   const accountsQ = useOutreachAccounts(wsId);
   const accounts = accountsQ.data ?? [];
 
@@ -168,15 +172,19 @@ function ContactDetail() {
             if (confirm("Удалить контакт?")) remove.mutate();
           }}
           onPatch={(key, value) => patchProperty.mutate({ key, value })}
-          onAddNote={() => setAdding("note")}
-          onAddReminder={() => setAdding("reminder")}
+          onOpenChat={() => setDrawerAccountId(defaultDrawerAccountId)}
+          canOpenChat={canOpenChat}
+        />
+
+        <ContactReachSection
+          values={contact.data.properties as Record<string, unknown>}
           onOpenChat={() => setDrawerAccountId(defaultDrawerAccountId)}
           canOpenChat={canOpenChat}
         />
 
         <ChannelsSection wsId={wsId} contact={contact.data} />
 
-        <ActivitiesList wsId={wsId} contactId={id} />
+        <ActivitySection wsId={wsId} contactId={id} />
       </div>
 
       {drawerAccountId && contact.data && (
@@ -189,21 +197,6 @@ function ContactDetail() {
           onClose={() => setDrawerAccountId(null)}
         />
       )}
-
-      {adding === "note" && (
-        <NoteModal
-          wsId={wsId}
-          contactId={id}
-          onClose={() => setAdding(null)}
-        />
-      )}
-      {adding === "reminder" && (
-        <ReminderModal
-          wsId={wsId}
-          contactId={id}
-          onClose={() => setAdding(null)}
-        />
-      )}
     </div>
   );
 }
@@ -214,8 +207,6 @@ function ContactView(props: {
   onEdit: () => void;
   onDelete: () => void;
   onPatch: (key: string, value: unknown) => void;
-  onAddNote: () => void;
-  onAddReminder: () => void;
   onOpenChat: () => void;
   canOpenChat: boolean;
 }) {
@@ -231,14 +222,17 @@ function ContactView(props: {
         <div className="absolute right-3 top-3">
           <CardMenu onEdit={props.onEdit} onDelete={props.onDelete} />
         </div>
-        <div className="flex flex-col items-center text-center">
+        <div className="flex flex-col items-center">
           <h1 className="text-xl font-semibold">{fullName || "Без имени"}</h1>
-          {description && (
-            <p className="mt-1 whitespace-pre-wrap text-sm text-zinc-500">
-              {description}
-            </p>
-          )}
-          <SocialRow values={values} />
+          <InlineDescription
+            value={description}
+            onCommit={(v) => props.onPatch("description", v)}
+          />
+          <ActionsRow
+            values={values}
+            onOpenChat={props.onOpenChat}
+            canOpenChat={props.canOpenChat}
+          />
         </div>
       </div>
 
@@ -266,88 +260,220 @@ function ContactView(props: {
           ))}
         </div>
       )}
-
-      <div className="grid grid-cols-3 divide-x divide-zinc-100 overflow-hidden rounded-2xl bg-white shadow-sm">
-        <ActionButton
-          icon={<StickyNote size={20} />}
-          label="Добавить заметку"
-          onClick={props.onAddNote}
-        />
-        <ActionButton
-          icon={<Bell size={20} />}
-          label="Добавить напоминание"
-          onClick={props.onAddReminder}
-        />
-        <ActionButton
-          icon={<MessageCircle size={20} />}
-          label="Открыть чат"
-          disabled={
-            !props.canOpenChat
-            || (!values.telegram_username && !values.tg_user_id)
-          }
-          onClick={props.onOpenChat}
-        />
-      </div>
     </>
   );
 }
 
-function SocialRow({ values }: { values: Record<string, unknown> }) {
-  const links: { href: string; icon: React.ReactNode; bg: string }[] = [];
-  const tg = stringValue(values.telegram_username);
+// Сидит на properties.description, UX-смысл — «памятка для коллег». Бэк
+// удаляет ключ при "" — кнопка-крестик использует это для one-click clear.
+function InlineDescription(props: {
+  value: string;
+  onCommit: (v: string) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const editing = draft !== null;
 
-  if (tg) {
-    const u = tg.replace(/^@/, "");
-    links.push({
-      href: `https://t.me/${u}`,
-      icon: <Send size={14} />,
-      bg: "bg-sky-500",
-    });
-  }
-  if (links.length === 0) return null;
-  return (
-    <div className="mt-3 flex justify-center gap-2">
-      {links.map((l, i) => (
-        <a
-          key={i}
-          href={l.href}
-          target="_blank"
-          rel="noreferrer"
-          className={
-            "inline-flex h-7 w-7 items-center justify-center rounded-full text-white hover:opacity-90 " +
-            l.bg
+  const commit = () => {
+    if (draft === null) return;
+    const next = draft;
+    setDraft(null);
+    if (next !== props.value) props.onCommit(next);
+  };
+
+  if (editing) {
+    return (
+      <textarea
+        autoFocus
+        rows={3}
+        value={draft ?? ""}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") setDraft(null);
+          if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+            (e.target as HTMLTextAreaElement).blur();
           }
-        >
-          {l.icon}
-        </a>
-      ))}
+        }}
+        placeholder="Памятка для коллег — например, «не беспокоить до января»"
+        className="mt-3 w-full resize-none rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-left text-sm text-zinc-800 focus:border-amber-500 focus:outline-none"
+      />
+    );
+  }
+
+  if (!props.value) {
+    return (
+      <button
+        type="button"
+        onClick={() => setDraft("")}
+        className="mt-3 inline-flex w-full items-center gap-2 rounded-lg border border-dashed border-zinc-300 px-3 py-2 text-left text-xs text-zinc-400 hover:border-amber-300 hover:bg-amber-50 hover:text-zinc-600"
+      >
+        <Pin size={12} />
+        Памятка для коллег — например, «не беспокоить до января»
+      </button>
+    );
+  }
+
+  return (
+    <div className="mt-3 flex w-full items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-zinc-800">
+      <Pin size={12} className="mt-1 shrink-0 text-amber-600" />
+      <button
+        type="button"
+        onClick={() => setDraft(props.value)}
+        title="Изменить памятку"
+        className="flex-1 whitespace-pre-wrap text-left"
+      >
+        {props.value}
+      </button>
+      <button
+        type="button"
+        onClick={() => props.onCommit("")}
+        title="Удалить памятку"
+        aria-label="Удалить памятку"
+        className="shrink-0 rounded p-0.5 text-amber-600/70 hover:bg-amber-100 hover:text-zinc-700"
+      >
+        <X size={12} />
+      </button>
     </div>
   );
 }
 
-function ActionButton(props: {
-  icon: React.ReactNode;
-  label: string;
-  onClick?: () => void;
-  disabled?: boolean;
+function ActionsRow(props: {
+  values: Record<string, unknown>;
+  onOpenChat: () => void;
+  canOpenChat: boolean;
 }) {
+  const hasTgIdentity =
+    !!stringValue(props.values.telegram_username) ||
+    !!stringValue(props.values.tg_user_id);
+  const chatDisabled = !props.canOpenChat || !hasTgIdentity;
+
   return (
-    <button
-      type="button"
-      onClick={props.onClick}
-      disabled={props.disabled}
-      className={
-        "flex flex-col items-center justify-center gap-1.5 px-3 py-4 text-center text-xs leading-tight " +
-        (props.disabled
-          ? "cursor-not-allowed text-zinc-400"
-          : "text-zinc-700 hover:bg-zinc-50")
-      }
-    >
-      <span className={props.disabled ? "text-zinc-300" : "text-emerald-600"}>
-        {props.icon}
-      </span>
-      {props.label}
-    </button>
+    <div className="mt-4 flex justify-center">
+      <button
+        type="button"
+        onClick={props.onOpenChat}
+        disabled={chatDisabled}
+        title={chatDisabled ? "Нет TG-идентификатора" : "Открыть чат"}
+        className={
+          "inline-flex items-center gap-2 rounded-lg px-5 py-2 text-sm font-medium " +
+          (chatDisabled
+            ? "cursor-not-allowed bg-zinc-100 text-zinc-400"
+            : "bg-emerald-600 text-white hover:bg-emerald-700")
+        }
+      >
+        <MessageCircle size={15} />
+        {chatDisabled ? "Нет TG-аккаунта" : "Написать"}
+      </button>
+    </div>
+  );
+}
+
+// Каналы связи; клик по строке = primary action: TG → наш chat drawer,
+// остальное — нативные mailto:/tel:/external.
+type ReachRow = {
+  kind: "telegram" | "email" | "phone" | "url";
+  icon: React.ComponentType<{ size?: number; className?: string }>;
+  label: string;
+  value: string;
+  onClick: () => void;
+  disabled?: boolean;
+};
+
+function ContactReachSection(props: {
+  values: Record<string, unknown>;
+  onOpenChat: () => void;
+  canOpenChat: boolean;
+}) {
+  const { values } = props;
+  const rows: ReachRow[] = [];
+
+  const tgUsername = stringValue(values.telegram_username);
+  if (tgUsername) {
+    rows.push({
+      kind: "telegram",
+      icon: Send,
+      label: "Telegram",
+      value: `@${tgUsername.replace(/^@/, "")}`,
+      onClick: props.onOpenChat,
+      disabled: !props.canOpenChat,
+    });
+  }
+  const email = stringValue(values.email);
+  if (email) {
+    rows.push({
+      kind: "email",
+      icon: Mail,
+      label: "Email",
+      value: email,
+      onClick: () => {
+        window.location.href = `mailto:${email}`;
+      },
+    });
+  }
+  const phone = stringValue(values.phone);
+  if (phone) {
+    const tel = phone.replace(/[^\d+]/g, "");
+    rows.push({
+      kind: "phone",
+      icon: Phone,
+      label: "Телефон",
+      value: phone,
+      onClick: () => {
+        window.location.href = `tel:${tel}`;
+      },
+    });
+  }
+  const url = stringValue(values.url);
+  if (url) {
+    const href = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+    rows.push({
+      kind: "url",
+      icon: Globe,
+      label: "Сайт",
+      value: url,
+      onClick: () => {
+        window.open(href, "_blank", "noopener,noreferrer");
+      },
+    });
+  }
+
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
+      <div className="border-b border-zinc-100 px-5 py-3 text-sm font-medium text-zinc-700">
+        Связь
+      </div>
+      <table className="w-full text-sm">
+        <tbody>
+          {rows.map((r) => {
+            const Icon = r.icon;
+            return (
+              <tr
+                key={r.kind}
+                onClick={r.disabled ? undefined : r.onClick}
+                className={
+                  "border-t border-zinc-100 first:border-t-0 " +
+                  (r.disabled
+                    ? "cursor-not-allowed text-zinc-400"
+                    : "cursor-pointer hover:bg-zinc-50")
+                }
+              >
+                <td className="px-5 py-2 text-zinc-500">
+                  <span className="inline-flex items-center gap-2">
+                    <Icon size={14} className="text-zinc-400" />
+                    {r.label}
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-right text-zinc-900">
+                  {r.value}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -556,26 +682,13 @@ function InlineInput(props: {
   );
 }
 
-// Секция «Каналы» на карточке контакта. Источник табов — contact.channels[]
-// (subquery в /contacts/{id}, только {id, title}). Выбранный таб подгружает
-// полный Channel через GET /channels/{id} и рендерит ChannelCard (header +
-// история plain-text). Привязка/отвязка через POST/DELETE /channels/{id}/admins.
+// Каналы где контакт записан админом. Источник — contact.channels (subquery
+// в /contacts/{id}); полный Channel догружается ChannelDrawer'ом по клику.
 function ChannelsSection(props: { wsId: string; contact: Contact }) {
   const { wsId, contact } = props;
   const qc = useQueryClient();
   const [adding, setAdding] = useState(false);
-  // Selected канал — первый из списка по умолчанию. При remove обновляем,
-  // если удалили текущий выбранный.
-  const [selectedId, setSelectedId] = useState<string | null>(
-    contact.channels[0]?.id ?? null,
-  );
-  // contact.channels приходит из /contacts/{id} subquery; синхронизируемся
-  // если список изменился (привязали/отвязали).
-  useEffect(() => {
-    if (!contact.channels.find((ch) => ch.id === selectedId)) {
-      setSelectedId(contact.channels[0]?.id ?? null);
-    }
-  }, [contact.channels, selectedId]);
+  const [openChannelId, setOpenChannelId] = useState<string | null>(null);
 
   const removeMut = useMutation({
     mutationFn: async (channelId: string) => {
@@ -614,161 +727,202 @@ function ChannelsSection(props: { wsId: string; contact: Contact }) {
   });
 
   return (
-    <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
-      <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-3">
-        <span className="flex items-center gap-2 text-sm font-medium text-zinc-700">
-          <Hash size={14} className="text-zinc-400" />
-          Каналы ({contact.channels.length})
-        </span>
-        {!adding && (
-          <button
-            type="button"
-            onClick={() => setAdding(true)}
-            className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-700"
-          >
-            <Plus size={12} />
-            Привязать
-          </button>
+    <>
+      <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
+        <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-3">
+          <span className="flex items-center gap-2 text-sm font-medium text-zinc-700">
+            <Hash size={14} className="text-zinc-400" />
+            Каналы ({contact.channels.length})
+          </span>
+          {!adding && (
+            <button
+              type="button"
+              onClick={() => setAdding(true)}
+              className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-700"
+            >
+              <Plus size={12} />
+              Привязать
+            </button>
+          )}
+        </div>
+
+        {contact.channels.length === 0 && !adding && (
+          <p className="px-5 py-3 text-sm text-zinc-400">
+            Контакт не записан админом ни одного канала
+          </p>
+        )}
+
+        {contact.channels.length > 0 && (
+          <table className="w-full text-sm">
+            <thead className="bg-zinc-50 text-left text-[10px] uppercase tracking-wider text-zinc-500">
+              <tr>
+                <th className="px-5 py-2 font-medium">Канал</th>
+                <th className="px-3 py-2 text-right font-medium">
+                  Подписчики
+                </th>
+                <th className="px-3 py-2 font-medium">Последний пост</th>
+                <th className="w-8 px-2 py-2" />
+              </tr>
+            </thead>
+            <tbody>
+              {contact.channels.map((ch) => (
+                <tr
+                  key={ch.id}
+                  onClick={() => setOpenChannelId(ch.id)}
+                  className="cursor-pointer border-t border-zinc-100 hover:bg-zinc-50"
+                >
+                  <td className="px-5 py-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-zinc-900">
+                        {ch.title}
+                      </span>
+                      {ch.hasDm && (
+                        <span
+                          title="Канал принимает прямые сообщения в личку"
+                          className="inline-flex items-center rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-700 ring-1 ring-emerald-200"
+                        >
+                          DM
+                        </span>
+                      )}
+                      {ch.unavailableSince && (
+                        <span
+                          title="Telegram не отдаёт этот канал"
+                          className="inline-flex items-center rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-zinc-500 ring-1 ring-zinc-200"
+                        >
+                          Недоступен
+                        </span>
+                      )}
+                    </div>
+                    {ch.username && (
+                      <span className="text-xs text-zinc-500">
+                        @{ch.username}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-zinc-700">
+                    {formatMembers(ch.memberCount)}
+                  </td>
+                  <td className="px-3 py-2 text-zinc-600">
+                    {ch.lastMessageAt ? formatRelative(ch.lastMessageAt) : "—"}
+                  </td>
+                  <td className="px-2 py-2">
+                    <ChannelRowMenu
+                      onUnlink={() => {
+                        if (
+                          confirm(
+                            `Отвязать канал «${ch.title}» от контакта?`,
+                          )
+                        ) {
+                          removeMut.mutate(ch.id);
+                        }
+                      }}
+                      disabled={removeMut.isPending}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {adding && (
+          <div className="px-5 py-3">
+            <ChannelPicker
+              wsId={wsId}
+              excludeIds={new Set(contact.channels.map((ch) => ch.id))}
+              onPick={(id) => addMut.mutate(id)}
+              onCancel={() => setAdding(false)}
+              loading={addMut.isPending}
+            />
+          </div>
         )}
       </div>
 
-      {contact.channels.length === 0 && !adding && (
-        <p className="px-5 py-3 text-sm text-zinc-400">
-          Контакт не записан админом ни одного канала
-        </p>
+      {openChannelId && (
+        <ChannelDrawer
+          wsId={wsId}
+          channelId={openChannelId}
+          onClose={() => setOpenChannelId(null)}
+        />
       )}
-
-      {contact.channels.length > 0 && (
-        <>
-          {/* Табы. Когда канал один — таб не рисуем, просто карточка ниже.
-              Активный таб подчёркнут (без bg-chip-вида, чтобы не выглядел как
-              удаляемый тег). Крестик отвязки виден только на hover у
-              неактивных — у активного отвязывается через шапку ChannelCard
-              ниже (там есть кнопка управления). */}
-          {contact.channels.length > 1 && (
-            <div className="flex flex-wrap gap-3 border-b border-zinc-100 px-5">
-              {contact.channels.map((ch) => {
-                const active = ch.id === selectedId;
-                return (
-                  <span
-                    key={ch.id}
-                    className="group relative inline-flex items-center py-2 text-xs"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setSelectedId(ch.id)}
-                      title={ch.title}
-                      className={
-                        "max-w-[200px] truncate border-b-2 pb-1 " +
-                        (active
-                          ? "border-emerald-600 font-medium text-zinc-900"
-                          : "border-transparent text-zinc-500 hover:text-zinc-900")
-                      }
-                    >
-                      {ch.title}
-                    </button>
-                    {!active && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (
-                            confirm(
-                              `Отвязать канал «${ch.title}» от контакта?`,
-                            )
-                          ) {
-                            removeMut.mutate(ch.id);
-                          }
-                        }}
-                        disabled={removeMut.isPending}
-                        aria-label="Отвязать канал"
-                        title="Отвязать канал от контакта"
-                        className="ml-1 rounded p-0.5 text-zinc-400 opacity-0 transition-opacity hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 disabled:opacity-50"
-                      >
-                        <X size={11} />
-                      </button>
-                    )}
-                  </span>
-                );
-              })}
-            </div>
-          )}
-          {selectedId && (
-            <ChannelCardLoader
-              wsId={wsId}
-              channelId={selectedId}
-              onUnlink={
-                contact.channels.length === 1
-                  ? () => removeMut.mutate(selectedId)
-                  : undefined
-              }
-            />
-          )}
-        </>
-      )}
-
-      {adding && (
-        <div className="px-5 py-3">
-          <ChannelPicker
-            wsId={wsId}
-            excludeIds={new Set(contact.channels.map((ch) => ch.id))}
-            onPick={(id) => addMut.mutate(id)}
-            onCancel={() => setAdding(false)}
-            loading={addMut.isPending}
-          />
-        </div>
-      )}
-    </div>
+    </>
   );
 }
 
-// Подгружает полный Channel (с meta, thumbnail, syncedAt) и рендерит
-// ChannelCard. Высота фиксированная — секция в карточке контакта не должна
-// «съезжать» при разной длине истории, юзер сам скроллит ленту внутри.
-function ChannelCardLoader(props: {
-  wsId: string;
-  channelId: string;
-  onUnlink?: () => void;
-}) {
-  const channelQ = useQuery({
-    queryKey: ["channel", props.wsId, props.channelId] as const,
-    queryFn: async () => {
-      const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/channels/{id}",
-        { params: { path: { wsId: props.wsId, id: props.channelId } } },
-      );
-      if (error) throw error;
-      return data;
-    },
-    // Циклирование табов канала не должно ре-fetch'ить — sync-mutation в
-    // ChannelCard сам инвалидирует этот ключ когда обновляются TG-данные.
-    staleTime: 5 * 60 * 1000,
-  });
-  if (channelQ.isLoading) {
-    return <p className="px-5 py-3 text-sm text-zinc-400">Загрузка канала…</p>;
-  }
-  if (channelQ.error || !channelQ.data) {
-    return (
-      <p className="px-5 py-3 text-sm text-red-600">
-        {channelQ.error ? errorMessage(channelQ.error) : "Канал не найден"}
-      </p>
-    );
-  }
+// Меню действий для строки канала. Portal с position:fixed — обёртка таблицы
+// имеет overflow-hidden (нужен для скруглённых углов), он клипал бы обычный
+// absolute-popover. Stop-propagation на triggere — без него клик по кнопке
+// всплыл бы на <tr> и открыл drawer.
+function ChannelRowMenu(props: { onUnlink: () => void; disabled?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [anchor, setAnchor] = useState<{ top: number; right: number } | null>(
+    null,
+  );
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (menuRef.current?.contains(t)) return;
+      if (btnRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    const onScroll = () => setOpen(false);
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onScroll);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, [open]);
+
+  const toggle = () => {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    const r = btnRef.current?.getBoundingClientRect();
+    if (!r) return;
+    setAnchor({ top: r.bottom + 4, right: window.innerWidth - r.right });
+    setOpen(true);
+  };
+
   return (
-    <div className="flex h-[600px] flex-col">
-      {props.onUnlink && (
-        <div className="flex justify-end px-4 py-1">
-          <button
-            type="button"
-            onClick={props.onUnlink}
-            className="text-xs text-zinc-400 hover:text-red-600"
+    <div className="relative" onClick={(e) => e.stopPropagation()}>
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={toggle}
+        disabled={props.disabled}
+        aria-label="Действия с каналом"
+        className="flex h-7 w-7 items-center justify-center rounded-md text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 disabled:opacity-50"
+      >
+        <MoreHorizontal size={16} />
+      </button>
+      {open && anchor &&
+        createPortal(
+          <div
+            ref={menuRef}
+            style={{ top: anchor.top, right: anchor.right }}
+            className="fixed z-50 w-44 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-lg"
           >
-            Отвязать канал
-          </button>
-        </div>
-      )}
-      <div className="min-h-0 flex-1">
-        <ChannelCard wsId={props.wsId} channel={channelQ.data} />
-      </div>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                props.onUnlink();
+              }}
+              className="block w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-zinc-50"
+            >
+              Отвязать от контакта
+            </button>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
