@@ -38,13 +38,33 @@ tg.tgdesk.su {
     }
 }
 
-dc1.tgdesk.su  { import tgdc zws1.web.telegram.org }
-dc1d.tgdesk.su { import tgdc zws1-1.web.telegram.org }
-dc2.tgdesk.su  { import tgdc zws2.web.telegram.org }
-dc2d.tgdesk.su { import tgdc zws2-1.web.telegram.org }
-dc3.tgdesk.su  { import tgdc zws3.web.telegram.org }
-dc3d.tgdesk.su { import tgdc zws3-1.web.telegram.org }
-dc4.tgdesk.su  { import tgdc zws4.web.telegram.org }
-dc4d.tgdesk.su { import tgdc zws4-1.web.telegram.org }
-dc5.tgdesk.su  { import tgdc zws5.web.telegram.org }
-dc5d.tgdesk.su { import tgdc zws5-1.web.telegram.org }
+dc1.tgdesk.su {
+    import tgdc zws1.web.telegram.org
+}
+dc1d.tgdesk.su {
+    import tgdc zws1-1.web.telegram.org
+}
+dc2.tgdesk.su {
+    import tgdc zws2.web.telegram.org
+}
+dc2d.tgdesk.su {
+    import tgdc zws2-1.web.telegram.org
+}
+dc3.tgdesk.su {
+    import tgdc zws3.web.telegram.org
+}
+dc3d.tgdesk.su {
+    import tgdc zws3-1.web.telegram.org
+}
+dc4.tgdesk.su {
+    import tgdc zws4.web.telegram.org
+}
+dc4d.tgdesk.su {
+    import tgdc zws4-1.web.telegram.org
+}
+dc5.tgdesk.su {
+    import tgdc zws5.web.telegram.org
+}
+dc5d.tgdesk.su {
+    import tgdc zws5-1.web.telegram.org
+}
