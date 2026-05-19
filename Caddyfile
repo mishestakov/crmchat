@@ -21,3 +21,30 @@ tg.tgdesk.su {
     encode zstd gzip
     reverse_proxy 127.0.0.1:8082
 }
+
+# ---- TG MTProto DC reverse-proxy (см. apps/tg-client/src/lib/gramjs/Utils.ts) -----
+# TWA-iframe ходит ТОЛЬКО на dc*.tgdesk.su; Caddy резолвит zws*.web.telegram.org
+# из US-IP VPS, где RKN-фильтр SNI не действует. tls_server_name + Host + Origin
+# подменяются под то, что ждёт TG-сервер.
+
+(tgdc) {
+    reverse_proxy https://{args[0]} {
+        transport http {
+            tls
+            tls_server_name {args[0]}
+        }
+        header_up Host {args[0]}
+        header_up Origin https://web.telegram.org
+    }
+}
+
+dc1.tgdesk.su  { import tgdc zws1.web.telegram.org }
+dc1d.tgdesk.su { import tgdc zws1-1.web.telegram.org }
+dc2.tgdesk.su  { import tgdc zws2.web.telegram.org }
+dc2d.tgdesk.su { import tgdc zws2-1.web.telegram.org }
+dc3.tgdesk.su  { import tgdc zws3.web.telegram.org }
+dc3d.tgdesk.su { import tgdc zws3-1.web.telegram.org }
+dc4.tgdesk.su  { import tgdc zws4.web.telegram.org }
+dc4d.tgdesk.su { import tgdc zws4-1.web.telegram.org }
+dc5.tgdesk.su  { import tgdc zws5.web.telegram.org }
+dc5d.tgdesk.su { import tgdc zws5-1.web.telegram.org }

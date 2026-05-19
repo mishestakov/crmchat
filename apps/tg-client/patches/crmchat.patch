@@ -646,3 +646,72 @@ diff (CRMchat patch)
    const currentTs = getTs();
  
    const { canRedirect, ts } = JSON.parse(localStorage.getItem(WEBSYNC_KEY) || '{}');
+diff (CRMchat patch)
+--- a/src/lib/gramjs/Utils.ts	2026-05-19 16:38:04.342574224 +0300
++++ b/src/lib/gramjs/Utils.ts	2026-05-19 16:36:52.444184999 +0300
+@@ -184,41 +184,19 @@
+  * @return {{port: number, ipAddress: string, id: number}}
+  */
+ export function getDC(dcId: number, downloadDC = false) {
+-  // TODO Move to external config
+-  switch (dcId) {
+-    case 1:
+-      return {
+-        id: 1,
+-        ipAddress: `zws1${downloadDC ? '-1' : ''}.web.telegram.org`,
+-        port: 443,
+-      };
+-    case 2:
+-      return {
+-        id: 2,
+-        ipAddress: `zws2${downloadDC ? '-1' : ''}.web.telegram.org`,
+-        port: 443,
+-      };
+-    case 3:
+-      return {
+-        id: 3,
+-        ipAddress: `zws3${downloadDC ? '-1' : ''}.web.telegram.org`,
+-        port: 443,
+-      };
+-    case 4:
+-      return {
+-        id: 4,
+-        ipAddress: `zws4${downloadDC ? '-1' : ''}.web.telegram.org`,
+-        port: 443,
+-      };
+-    case 5:
+-      return {
+-        id: 5,
+-        ipAddress: `zws5${downloadDC ? '-1' : ''}.web.telegram.org`,
+-        port: 443,
+-      };
+-    default:
+-      throw new Error(`Cannot find the DC with the ID of ${dcId}`);
++  // [CRMchat] Все DC проксируются через наш Caddy на dc{N}{d?}.tgdesk.su.
++  // Браузер коннектится только на наш домен — Caddy reverse-proxy
++  // ходит к zws{N}{-1?}.web.telegram.org с правильным SNI. Обходит
++  // RKN-фильтрацию SNI на storage-DC (zws3-5), которая без этого не
++  // даёт TWA пройти initial sync.
++  if (dcId < 1 || dcId > 5) {
++    throw new Error(`Cannot find the DC with the ID of ${dcId}`);
+   }
++  return {
++    id: dcId,
++    ipAddress: `dc${dcId}${downloadDC ? 'd' : ''}.tgdesk.su`,
++    port: 443,
++  };
+   // TODO chose based on current connection method
+   /*
+     if (!this._config) {
+diff (CRMchat patch)
+--- a/webpack.config.ts	2026-05-19 16:50:54.937937496 +0300
++++ b/webpack.config.ts	2026-05-19 16:48:37.810406749 +0300
+@@ -40,7 +40,7 @@
+ 
+ const CSP = `
+   default-src 'self';
+-  connect-src 'self' wss://*.web.telegram.org blob: http: https: ${APP_ENV === 'development' ? 'wss: ipc:' : ''};
++  connect-src 'self' wss://*.web.telegram.org wss://*.tgdesk.su blob: http: https: ${APP_ENV === 'development' ? 'wss: ipc:' : ''};
+   script-src 'self' 'wasm-unsafe-eval' https://t.me/_websync_ https://telegram.me/_websync_;
+   style-src 'self' 'unsafe-inline';
+   img-src 'self' data: blob: https://ss3.4sqi.net/img/categories_v2/;
