@@ -36,10 +36,33 @@ export type CreateTdClientOptions = {
   deviceModel?: string;
 };
 
+// Парсим MTProto-прокси-URL из @MTProxybot — поддерживаем оба формата,
+// в которые TG приложение даёт «Share»: tg://proxy?... и https://t.me/proxy?...
+// Включаем только когда заданы все три параметра.
+function parseProxyUrl(
+  raw: string | undefined | null,
+): { server: string; port: number; secret: string } | null {
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    const isProxy =
+      (u.protocol === "tg:" && u.host === "proxy") ||
+      (u.host === "t.me" && u.pathname === "/proxy");
+    if (!isProxy) return null;
+    const server = u.searchParams.get("server") ?? "";
+    const port = Number(u.searchParams.get("port") ?? "");
+    const secret = u.searchParams.get("secret") ?? "";
+    if (!server || !port || !secret) return null;
+    return { server, port, secret };
+  } catch {
+    return null;
+  }
+}
+
 export function createTdClient(opts: CreateTdClientOptions): TdClient {
   ensureTdlConfigured();
   const dbDir = tdAccountDir(opts.key);
-  return tdl.createClient({
+  const client = tdl.createClient({
     apiId: tgApiId,
     apiHash: tgApiHash,
     databaseDirectory: dbDir,
@@ -58,6 +81,26 @@ export function createTdClient(opts: CreateTdClientOptions): TdClient {
       application_version: "0.1.0",
     },
   });
+
+  // MTProto-прокси: addProxy идемпотентен (TDLib хранит в binlog), enable:true
+  // переключает live-соединение. Fire-and-forget — addProxy не блокирует
+  // authorization flow, а ошибка прокси не должна валить весь client.
+  const proxy = parseProxyUrl(process.env.TG_PROXY_URL);
+  if (proxy) {
+    client
+      .invoke({
+        _: "addProxy",
+        server: proxy.server,
+        port: proxy.port,
+        enable: true,
+        type: { _: "proxyTypeMtproto", secret: proxy.secret },
+      })
+      .catch((e: unknown) =>
+        console.error("[tdlib] addProxy failed:", e),
+      );
+  }
+
+  return client;
 }
 
 // Закрытие через `client.close()` ждёт authorizationStateClosed. logOut

@@ -51,6 +51,7 @@ services:
       TELEGRAM_API_ID: ${TELEGRAM_API_ID}
       TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
       ENCRYPTION_SECRET: ${ENCRYPTION_SECRET}
+      TG_PROXY_URL: ${TG_PROXY_URL:-}
       TDLIB_DATA_DIR: /data/td
     volumes:
       - tdlib-data:/data/td
