@@ -31,12 +31,21 @@ setInterval(() => {
   }
 }, 60_000).unref();
 
-export function issueAuthToken(): { token: string; deepLink: string } {
+export function issueAuthToken(): {
+  token: string;
+  deepLink: string;
+  webLink: string;
+} {
   const token = randomBytes(24).toString("base64url");
   authStore.set(token, { status: "pending", createdAt: Date.now() });
   return {
     token,
-    deepLink: `https://t.me/${BOT_USERNAME}?start=${token}`,
+    // tg://-scheme отдаётся ОС прямо в TG-приложение, минуя t.me-страницу
+    // (которая может быть RKN-чувствительна на некоторых провайдерах).
+    deepLink: `tg://resolve?domain=${BOT_USERNAME}&start=${token}`,
+    // Fallback на t.me для тех, у кого TG не установлен или браузер не
+    // поддержал tg:// scheme.
+    webLink: `https://t.me/${BOT_USERNAME}?start=${token}`,
   };
 }
 

@@ -33,6 +33,7 @@ function Login() {
 
   const [stage, setStage] = useState<Stage>("idle");
   const [deepLink, setDeepLink] = useState<string>("");
+  const [webLink, setWebLink] = useState<string>("");
   const cancelRef = useRef(false);
 
   useEffect(() => () => { cancelRef.current = true; }, []);
@@ -45,9 +46,16 @@ function Login() {
         credentials: "include",
       });
       if (!res.ok) throw new Error(`start ${res.status}`);
-      const data = (await res.json()) as { token: string; deepLink: string };
+      const data = (await res.json()) as {
+        token: string;
+        deepLink: string;
+        webLink: string;
+      };
       setDeepLink(data.deepLink);
-      window.open(data.deepLink, "_blank", "noopener,noreferrer");
+      setWebLink(data.webLink);
+      // Не window.open(tg://) — это открывает пустую вкладку. Пусть юзер
+      // сам кликает по <a href="tg://..."> ниже: браузер инициирует
+      // app-handoff, страница остаётся, polling крутится.
       void pollLoop(data.token);
     } catch (e) {
       console.error("[login] start failed:", e);
@@ -107,18 +115,29 @@ function Login() {
 
       {stage === "waiting" && (
         <div className="space-y-3 rounded-xl bg-zinc-50 p-4 text-sm">
-          <p className="text-zinc-700">Открылся Telegram. Нажмите Start у бота и подтвердите вход.</p>
+          <p className="text-zinc-700">
+            Откройте Telegram, нажмите Start у бота и подтвердите вход.
+          </p>
           {deepLink && (
             <a
               href={deepLink}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-block text-sky-600 hover:underline"
+              className="flex w-full items-center justify-center gap-3 rounded-xl bg-sky-500 px-4 py-3 text-sm font-medium text-white hover:bg-sky-600"
             >
-              Открыть Telegram ещё раз
+              <Send size={18} />
+              Открыть в Telegram
             </a>
           )}
-          <p className="text-xs text-zinc-500">Ждём подтверждения…</p>
+          {webLink && (
+            <a
+              href={webLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block text-center text-xs text-zinc-500 hover:underline"
+            >
+              Не открылось? Открыть через t.me
+            </a>
+          )}
+          <p className="text-xs text-zinc-500 text-center">Ждём подтверждения…</p>
         </div>
       )}
 
