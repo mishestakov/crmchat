@@ -1,0 +1,23 @@
+# Caddy на хосте VPS — /etc/caddy/Caddyfile.
+# TLS-сертификаты Let's Encrypt получает автоматически при первом запросе.
+# Перечитать конфиг после правки: sudo systemctl reload caddy
+
+tgdesk.su, www.tgdesk.su {
+    encode zstd gzip
+
+    # API под /v1/* — отдаём в api-контейнер
+    @api path /v1/* /openapi.json
+    handle @api {
+        reverse_proxy 127.0.0.1:3000
+    }
+
+    # Всё остальное — web SPA
+    handle {
+        reverse_proxy 127.0.0.1:8081
+    }
+}
+
+tg.tgdesk.su {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8082
+}
