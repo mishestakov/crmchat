@@ -29,7 +29,7 @@ RUN printf "NODE_ENV=production\nTELEGRAM_API_ID=%s\nTELEGRAM_API_HASH=%s\nBASE_
 
 WORKDIR /build/tg-client
 RUN npm ci --no-audit --no-fund
-RUN npm run build
+RUN npm run build:production
 
 # =============================================================================
 # Stage 2 — статика через nginx-alpine.
