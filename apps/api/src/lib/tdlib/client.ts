@@ -82,25 +82,53 @@ export function createTdClient(opts: CreateTdClientOptions): TdClient {
     },
   });
 
-  // MTProto-прокси: addProxy идемпотентен (TDLib хранит в binlog), enable:true
-  // переключает live-соединение. Fire-and-forget — addProxy не блокирует
-  // authorization flow, а ошибка прокси не должна валить весь client.
+  // MTProto-прокси: TDLib хранит список proxies в binlog между рестартами.
+  // На каждый старт сверяем: если URL уже зарегистрирован — только включаем,
+  // если новый — добавляем. addProxy на duplicate ругается «Proxy must be
+  // non-empty», поэтому защищаемся getProxies-проверкой.
   const proxy = parseProxyUrl(process.env.TG_PROXY_URL);
   if (proxy) {
-    client
-      .invoke({
-        _: "addProxy",
-        server: proxy.server,
-        port: proxy.port,
-        enable: true,
-        type: { _: "proxyTypeMtproto", secret: proxy.secret },
-      })
-      .catch((e: unknown) =>
-        console.error("[tdlib] addProxy failed:", e),
-      );
+    void syncProxy(client, proxy).catch((e: unknown) =>
+      console.error("[tdlib] proxy sync failed:", e),
+    );
   }
 
   return client;
+}
+
+async function syncProxy(
+  client: TdlClient,
+  proxy: { server: string; port: number; secret: string },
+): Promise<void> {
+  const { proxies } = (await client.invoke({ _: "getProxies" })) as {
+    proxies: Array<{
+      id: number;
+      server: string;
+      port: number;
+      is_enabled: boolean;
+      type: { _: string; secret?: string };
+    }>;
+  };
+  const match = proxies.find(
+    (p) =>
+      p.server === proxy.server &&
+      p.port === proxy.port &&
+      p.type._ === "proxyTypeMtproto" &&
+      p.type.secret === proxy.secret,
+  );
+  if (match) {
+    if (!match.is_enabled) {
+      await client.invoke({ _: "enableProxy", proxy_id: match.id });
+    }
+    return;
+  }
+  await client.invoke({
+    _: "addProxy",
+    server: proxy.server,
+    port: proxy.port,
+    enable: true,
+    type: { _: "proxyTypeMtproto", secret: proxy.secret },
+  });
 }
 
 // Закрытие через `client.close()` ждёт authorizationStateClosed. logOut
