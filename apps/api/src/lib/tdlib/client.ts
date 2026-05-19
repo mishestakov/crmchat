@@ -84,8 +84,7 @@ export function createTdClient(opts: CreateTdClientOptions): TdClient {
 
   // MTProto-прокси: TDLib хранит список proxies в binlog между рестартами.
   // На каждый старт сверяем: если URL уже зарегистрирован — только включаем,
-  // если новый — добавляем. addProxy на duplicate ругается «Proxy must be
-  // non-empty», поэтому защищаемся getProxies-проверкой.
+  // если новый — добавляем.
   const proxy = parseProxyUrl(process.env.TG_PROXY_URL);
   if (proxy) {
     void syncProxy(client, proxy).catch((e: unknown) =>
@@ -100,10 +99,6 @@ async function syncProxy(
   client: TdlClient,
   proxy: { server: string; port: number; secret: string },
 ): Promise<void> {
-  console.log(
-    `[tdlib] proxy parsed: server=${JSON.stringify(proxy.server)} port=${proxy.port} secretLen=${proxy.secret.length}`,
-  );
-
   const list = (await client.invoke({ _: "getProxies" })) as {
     proxies: Array<{
       id: number;
@@ -113,18 +108,6 @@ async function syncProxy(
       type: { _: string; secret?: string };
     }>;
   };
-  console.log(
-    `[tdlib] existing proxies: ${JSON.stringify(
-      list.proxies.map((p) => ({
-        id: p.id,
-        server: p.server,
-        port: p.port,
-        is_enabled: p.is_enabled,
-        type: p.type._,
-      })),
-    )}`,
-  );
-
   const match = list.proxies.find(
     (p) =>
       p.server === proxy.server &&
@@ -138,15 +121,19 @@ async function syncProxy(
     }
     return;
   }
-  const addArgs = {
-    _: "addProxy" as const,
-    server: proxy.server,
-    port: proxy.port,
+  // TDLib master сменил сигнатуру addProxy: теперь принимает proxy:proxy
+  // объект вместо плоских server/port/type. Без вложенности TDLib
+  // отвечает «Proxy must be non-empty».
+  await client.invoke({
+    _: "addProxy",
+    proxy: {
+      _: "proxy",
+      server: proxy.server,
+      port: proxy.port,
+      type: { _: "proxyTypeMtproto", secret: proxy.secret },
+    },
     enable: true,
-    type: { _: "proxyTypeMtproto" as const, secret: proxy.secret },
-  };
-  console.log(`[tdlib] addProxy invoke: ${JSON.stringify(addArgs)}`);
-  await client.invoke(addArgs);
+  });
 }
 
 // Закрытие через `client.close()` ждёт authorizationStateClosed. logOut
