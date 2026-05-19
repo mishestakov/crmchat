@@ -96,3 +96,11 @@ services:
 volumes:
   postgres-data:
   tdlib-data:
+
+# Без enable_ipv6:false контейнеры предпочитают IPv6 при getaddrinfo (gai.conf
+# default), а IPv6-egress в docker-сети ломанный → fetch на api.telegram.org
+# зависает 10 секунд до AbortSignal. Отключаем IPv6 на bridge — IPv6-connect
+# мгновенно фейлится, fallback на IPv4 без задержки.
+networks:
+  default:
+    enable_ipv6: false
