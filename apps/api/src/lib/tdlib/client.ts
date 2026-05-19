@@ -100,7 +100,11 @@ async function syncProxy(
   client: TdlClient,
   proxy: { server: string; port: number; secret: string },
 ): Promise<void> {
-  const { proxies } = (await client.invoke({ _: "getProxies" })) as {
+  console.log(
+    `[tdlib] proxy parsed: server=${JSON.stringify(proxy.server)} port=${proxy.port} secretLen=${proxy.secret.length}`,
+  );
+
+  const list = (await client.invoke({ _: "getProxies" })) as {
     proxies: Array<{
       id: number;
       server: string;
@@ -109,7 +113,19 @@ async function syncProxy(
       type: { _: string; secret?: string };
     }>;
   };
-  const match = proxies.find(
+  console.log(
+    `[tdlib] existing proxies: ${JSON.stringify(
+      list.proxies.map((p) => ({
+        id: p.id,
+        server: p.server,
+        port: p.port,
+        is_enabled: p.is_enabled,
+        type: p.type._,
+      })),
+    )}`,
+  );
+
+  const match = list.proxies.find(
     (p) =>
       p.server === proxy.server &&
       p.port === proxy.port &&
@@ -122,13 +138,15 @@ async function syncProxy(
     }
     return;
   }
-  await client.invoke({
-    _: "addProxy",
+  const addArgs = {
+    _: "addProxy" as const,
     server: proxy.server,
     port: proxy.port,
     enable: true,
-    type: { _: "proxyTypeMtproto", secret: proxy.secret },
-  });
+    type: { _: "proxyTypeMtproto" as const, secret: proxy.secret },
+  };
+  console.log(`[tdlib] addProxy invoke: ${JSON.stringify(addArgs)}`);
+  await client.invoke(addArgs);
 }
 
 // Закрытие через `client.close()` ждёт authorizationStateClosed. logOut
