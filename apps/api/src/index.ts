@@ -3,6 +3,7 @@ import { serve } from "@hono/node-server";
 import { app } from "./app.ts";
 import { startOutreachWorker } from "./lib/outreach-worker.ts";
 import { syncPresetsForAllWorkspaces } from "./lib/workspace-presets.ts";
+import { setupWebhook } from "./lib/tg-bot.ts";
 
 const port = Number(process.env.PORT ?? 3000);
 
@@ -13,6 +14,9 @@ const port = Number(process.env.PORT ?? 3000);
 if (process.env.NODE_ENV !== "test") {
   startOutreachWorker();
   void syncPresetsForAllWorkspaces();
+  void setupWebhook().catch((e: unknown) =>
+    console.error("[tg-bot] setupWebhook failed:", e),
+  );
 }
 
 // serve() возвращает union Server | Http2Server; HTTP/2 не включаем, так что

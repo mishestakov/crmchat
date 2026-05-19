@@ -13,6 +13,14 @@ import {
   makeState,
 } from "../lib/tg-oidc.ts";
 import { issueBridgeToken, consumeBridgeToken } from "../lib/bridge-tokens.ts";
+import {
+  issueAuthToken,
+  checkAuthToken,
+  handleUpdate,
+  getWebhookSecret,
+  isBotConfigured,
+  type TgUpdate,
+} from "../lib/tg-bot.ts";
 
 const app = new OpenAPIHono();
 
@@ -178,6 +186,46 @@ if (isDevAuthEnabled) {
     },
   );
 }
+
+// === Telegram Bot deep-link auth flow ============================================
+// Альтернатива OIDC (/v1/auth/telegram/*) — обходит RKN-блокировку oauth.telegram.org.
+// SPA вызывает /start → получает token + t.me-ссылку → опрашивает /poll каждые
+// несколько секунд → когда юзер подтвердил в TG-боте, /poll возвращает bridge-token,
+// SPA дальше идёт обычным путём через /v1/auth/finish.
+
+app.post("/v1/auth/tg-bot/start", async (c) => {
+  if (!isBotConfigured()) {
+    throw new HTTPException(503, { message: "tg bot not configured" });
+  }
+  const { token, deepLink } = issueAuthToken();
+  return c.json({ token, deepLink });
+});
+
+app.get("/v1/auth/tg-bot/poll", async (c) => {
+  const token = c.req.query("token") ?? "";
+  if (!token) throw new HTTPException(400, { message: "token required" });
+  const result = checkAuthToken(token);
+  return c.json(result);
+});
+
+// Webhook от Telegram Bot API. Защищён secret_token, который TG ставит в
+// X-Telegram-Bot-Api-Secret-Token (см. setWebhook params).
+app.post("/v1/webhooks/tg-bot", async (c) => {
+  // Если secret в env пустой — ручка глобально закрыта (защита от случайной
+  // публикации webhook'а без anti-spoof, где `provided === ""` иначе матчил бы).
+  const secret = getWebhookSecret();
+  const provided = c.req.header("X-Telegram-Bot-Api-Secret-Token");
+  if (!secret || !provided || provided !== secret) {
+    return c.body(null, 403);
+  }
+  const update = (await c.req.json()) as TgUpdate;
+  try {
+    await handleUpdate(update);
+  } catch (e) {
+    console.error("[tg-bot] handleUpdate failed:", e);
+  }
+  return c.body(null, 200);
+});
 
 app.openapi(
   createRoute({
