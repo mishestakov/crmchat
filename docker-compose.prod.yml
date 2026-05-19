@@ -60,6 +60,12 @@ services:
       ENCRYPTION_SECRET: ${ENCRYPTION_SECRET}
       TG_PROXY_URL: ${TG_PROXY_URL:-}
       TDLIB_DATA_DIR: /data/td
+    sysctls:
+      # enable_ipv6:false на bridge оставляет ::1 loopback в контейнере, и
+      # glibc AI_ADDRCONFIG всё равно возвращает AAAA → fetch висит.
+      # Жёстко отключаем IPv6 на уровне kernel в этом контейнере.
+      - net.ipv6.conf.all.disable_ipv6=1
+      - net.ipv6.conf.default.disable_ipv6=1
     volumes:
       - tdlib-data:/data/td
     ports:
