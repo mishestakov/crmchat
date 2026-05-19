@@ -28,6 +28,13 @@ RUN printf "NODE_ENV=production\nTELEGRAM_API_ID=%s\nTELEGRAM_API_HASH=%s\nBASE_
       > /build/tg-client/.env
 
 WORKDIR /build/tg-client
+# webpack telegram-tt подкидывает git-revision-webpack-plugin → требует .git.
+# setup.sh удаляет upstream-овский .git; делаем пустой repo с одним commit'ом
+# чтобы git rev-parse --abbrev-ref HEAD не падал.
+RUN git init -q -b main \
+ && git -c user.email=build@crmchat -c user.name=build add -A \
+ && git -c user.email=build@crmchat -c user.name=build commit -q -m build
+
 RUN npm ci --no-audit --no-fund
 RUN npm run build:production
 
