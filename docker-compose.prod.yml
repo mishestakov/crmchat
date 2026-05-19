@@ -43,6 +43,10 @@ services:
     environment:
       NODE_ENV: production
       PORT: "3000"
+      # В docker-сети IPv6 часто кривой/выключен, а Node 24 fetch по умолчанию
+      # резолвит AAAA первым → 10-секундный hang на api.telegram.org. Форсим
+      # IPv4-first.
+      NODE_OPTIONS: --dns-result-order=ipv4first
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       WEB_ORIGIN: ${WEB_ORIGIN}
       TELEGRAM_LOGIN_CLIENT_ID: ${TELEGRAM_LOGIN_CLIENT_ID:-}
