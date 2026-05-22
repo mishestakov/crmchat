@@ -10,7 +10,7 @@ import { Briefcase, ChevronDown, ChevronRight, FolderPlus, Plus, Search } from "
 import { UnreadBadge } from "../../../../../components/unread-badge";
 import { api } from "../../../../../lib/api";
 import { errorMessage } from "../../../../../lib/errors";
-import { useEventSourceEvent, useMyRole } from "../../../../../lib/hooks";
+import { useEventSourceEvent } from "../../../../../lib/hooks";
 import { getLastProjectView } from "../../../../../lib/last-project-view";
 import { OUTREACH_QK } from "../../../../../lib/query-keys";
 
@@ -32,7 +32,6 @@ const STATUS_COLORS: Record<string, string> = {
 
 function ProjectsLayout() {
   const { wsId } = Route.useParams();
-  const isAdmin = useMyRole(wsId) === "admin";
   const location = useLocation();
   const qc = useQueryClient();
   const [query, setQuery] = useState("");
@@ -173,17 +172,15 @@ function ProjectsLayout() {
         <div className="flex-1 overflow-y-auto px-2 py-2">
           <div className="mb-1 flex items-center justify-between px-2 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
             <span>Папки</span>
-            {isAdmin && (
-              <button
-                type="button"
-                onClick={handleNewTrack}
-                disabled={createTrack.isPending}
-                className="flex items-center gap-0.5 normal-case tracking-normal text-zinc-500 hover:text-zinc-900 disabled:opacity-50"
-                title="Новая папка"
-              >
-                <FolderPlus size={11} /> папка
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={handleNewTrack}
+              disabled={createTrack.isPending}
+              className="flex items-center gap-0.5 normal-case tracking-normal text-zinc-500 hover:text-zinc-900 disabled:opacity-50"
+              title="Новая папка"
+            >
+              <FolderPlus size={11} /> папка
+            </button>
           </div>
 
           {tracksQ.isLoading && (
@@ -192,7 +189,7 @@ function ProjectsLayout() {
 
           {!tracksQ.isLoading && tracks.length === 0 && (
             <div className="px-2 py-1 text-xs text-zinc-500">
-              Нет папок. {isAdmin && "Создай первую кнопкой «папка» вверху."}
+              Нет папок. Создай первую кнопкой «папка» вверху.
             </div>
           )}
 
@@ -257,16 +254,14 @@ function ProjectsLayout() {
                           )}
                       </Link>
                     ))}
-                    {isAdmin && (
-                      <Link
-                        to="/w/$wsId/projects/new"
-                        params={{ wsId }}
-                        search={{ trackId: track.id }}
-                        className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-50 hover:text-emerald-700"
-                      >
-                        <Plus size={11} /> Новый проект
-                      </Link>
-                    )}
+                    <Link
+                      to="/w/$wsId/projects/new"
+                      params={{ wsId }}
+                      search={{ trackId: track.id }}
+                      className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-50 hover:text-emerald-700"
+                    >
+                      <Plus size={11} /> Новый проект
+                    </Link>
                   </div>
                 )}
               </div>

@@ -33,7 +33,7 @@ import {
   resolveStickyByTgUserIds,
   resolveWarmTgUserIds,
 } from "../lib/project-scheduling.ts";
-import { assertRole, type WorkspaceVars } from "../middleware/assert-member.ts";
+import { type WorkspaceVars } from "../middleware/assert-member.ts";
 import { nextStepSql } from "./contacts.ts";
 
 // Outreach-проект: рассылка по одному списку с N сообщениями и задержками.
@@ -269,7 +269,6 @@ app.openapi(
     method: "post",
     path: "/v1/workspaces/{wsId}/projects",
     tags: ["outreach"],
-    middleware: [assertRole("admin")] as const,
     request: {
       params: WsParam,
       body: {
@@ -376,7 +375,6 @@ app.openapi(
     method: "patch",
     path: "/v1/workspaces/{wsId}/projects/{projectId}",
     tags: ["outreach"],
-    middleware: [assertRole("admin")] as const,
     request: {
       params: WsProjectParam,
       body: {
@@ -442,7 +440,6 @@ app.openapi(
     method: "delete",
     path: "/v1/workspaces/{wsId}/projects/{projectId}",
     tags: ["outreach"],
-    middleware: [assertRole("admin")] as const,
     request: { params: WsProjectParam },
     responses: { 204: { description: "Deleted" } },
   }),
@@ -470,7 +467,6 @@ app.openapi(
     method: "post",
     path: "/v1/workspaces/{wsId}/projects/{projectId}/activate",
     tags: ["outreach"],
-    middleware: [assertRole("admin")] as const,
     request: { params: WsProjectParam },
     responses: {
       200: {
@@ -569,7 +565,6 @@ app.openapi(
     method: "post",
     path: "/v1/workspaces/{wsId}/projects/{projectId}/pause",
     tags: ["outreach"],
-    middleware: [assertRole("admin")] as const,
     request: { params: WsProjectParam },
     responses: {
       200: {
@@ -606,7 +601,6 @@ app.openapi(
     method: "post",
     path: "/v1/workspaces/{wsId}/projects/{projectId}/resume",
     tags: ["outreach"],
-    middleware: [assertRole("admin")] as const,
     request: { params: WsProjectParam },
     responses: {
       200: {
@@ -643,7 +637,6 @@ app.openapi(
     method: "post",
     path: "/v1/workspaces/{wsId}/projects/{projectId}/complete",
     tags: ["outreach"],
-    middleware: [assertRole("admin")] as const,
     request: { params: WsProjectParam },
     responses: {
       200: {
@@ -695,7 +688,6 @@ app.openapi(
     method: "post",
     path: "/v1/workspaces/{wsId}/projects/{projectId}/archive",
     tags: ["outreach"],
-    middleware: [assertRole("admin")] as const,
     request: { params: WsProjectParam },
     responses: {
       200: {
@@ -985,7 +977,6 @@ app.openapi(
     method: "delete",
     path: "/v1/workspaces/{wsId}/projects/{projectId}/items/{itemId}",
     tags: ["outreach"],
-    middleware: [assertRole("admin")] as const,
     request: {
       params: WsProjectParam.extend({
         itemId: z.string().min(1).max(64),

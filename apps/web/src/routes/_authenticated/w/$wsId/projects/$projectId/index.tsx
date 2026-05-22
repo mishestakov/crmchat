@@ -29,7 +29,7 @@ import {
 } from "../../../../../../components/section";
 import { StagesEditModal } from "../../../../../../components/stages-edit-modal";
 import { pluralize } from "../../../../../../lib/date-utils";
-import { useEventSourceEvent, useMyRole } from "../../../../../../lib/hooks";
+import { useEventSourceEvent } from "../../../../../../lib/hooks";
 import {
   useOutreachAccounts,
   useProject,
@@ -54,7 +54,6 @@ function SequenceDetailPage() {
   const { wsId, projectId } = Route.useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const isAdmin = useMyRole(wsId) === "admin";
 
   const seq = useProject(wsId, projectId);
   const accountsQ = useOutreachAccounts(wsId);
@@ -300,80 +299,78 @@ function SequenceDetailPage() {
              Primary action слева (Запустить/Возобновить/Пауза/Архивировать),
              терминал-link справа (Удалить для draft, Завершить для active|paused).
              Status уже видно в шапке-плашке — здесь только actions. */}
-        {isAdmin && (
-          <div className="flex items-center gap-3 rounded-2xl bg-white p-4 shadow-sm">
-            {isDraft && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => activate.mutate()}
-                  disabled={activate.isPending || messages.length === 0}
-                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-                >
-                  <Play size={14} />
-                  {activate.isPending ? "Запускаем…" : "Запустить рассылку"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowDelete(true)}
-                  className="ml-auto text-sm text-red-600 hover:text-red-700 hover:underline"
-                >
-                  Удалить проект
-                </button>
-              </>
-            )}
-            {isActive && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => pause.mutate()}
-                  disabled={pause.isPending}
-                  className="inline-flex items-center gap-2 rounded-lg border border-zinc-300 px-4 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
-                >
-                  <Pause size={14} /> Пауза
-                </button>
-                <button
-                  type="button"
-                  onClick={confirmComplete}
-                  disabled={complete.isPending}
-                  className="ml-auto text-sm text-zinc-600 hover:text-zinc-900 hover:underline disabled:opacity-50"
-                >
-                  {complete.isPending ? "Завершаем…" : "Завершить проект"}
-                </button>
-              </>
-            )}
-            {isPaused && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => resume.mutate()}
-                  disabled={resume.isPending}
-                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-                >
-                  <Play size={14} /> Возобновить
-                </button>
-                <button
-                  type="button"
-                  onClick={confirmComplete}
-                  disabled={complete.isPending}
-                  className="ml-auto text-sm text-zinc-600 hover:text-zinc-900 hover:underline disabled:opacity-50"
-                >
-                  {complete.isPending ? "Завершаем…" : "Завершить проект"}
-                </button>
-              </>
-            )}
-            {isDone && (
+        <div className="flex items-center gap-3 rounded-2xl bg-white p-4 shadow-sm">
+          {isDraft && (
+            <>
               <button
                 type="button"
-                onClick={() => archive.mutate()}
-                disabled={archive.isPending}
+                onClick={() => activate.mutate()}
+                disabled={activate.isPending || messages.length === 0}
+                className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+              >
+                <Play size={14} />
+                {activate.isPending ? "Запускаем…" : "Запустить рассылку"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowDelete(true)}
+                className="ml-auto text-sm text-red-600 hover:text-red-700 hover:underline"
+              >
+                Удалить проект
+              </button>
+            </>
+          )}
+          {isActive && (
+            <>
+              <button
+                type="button"
+                onClick={() => pause.mutate()}
+                disabled={pause.isPending}
                 className="inline-flex items-center gap-2 rounded-lg border border-zinc-300 px-4 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
               >
-                {archive.isPending ? "Архивируем…" : "Архивировать проект"}
+                <Pause size={14} /> Пауза
               </button>
-            )}
-          </div>
-        )}
+              <button
+                type="button"
+                onClick={confirmComplete}
+                disabled={complete.isPending}
+                className="ml-auto text-sm text-zinc-600 hover:text-zinc-900 hover:underline disabled:opacity-50"
+              >
+                {complete.isPending ? "Завершаем…" : "Завершить проект"}
+              </button>
+            </>
+          )}
+          {isPaused && (
+            <>
+              <button
+                type="button"
+                onClick={() => resume.mutate()}
+                disabled={resume.isPending}
+                className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+              >
+                <Play size={14} /> Возобновить
+              </button>
+              <button
+                type="button"
+                onClick={confirmComplete}
+                disabled={complete.isPending}
+                className="ml-auto text-sm text-zinc-600 hover:text-zinc-900 hover:underline disabled:opacity-50"
+              >
+                {complete.isPending ? "Завершаем…" : "Завершить проект"}
+              </button>
+            </>
+          )}
+          {isDone && (
+            <button
+              type="button"
+              onClick={() => archive.mutate()}
+              disabled={archive.isPending}
+              className="inline-flex items-center gap-2 rounded-lg border border-zinc-300 px-4 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
+            >
+              {archive.isPending ? "Архивируем…" : "Архивировать проект"}
+            </button>
+          )}
+        </div>
 
         {/* === 2. Конфигурация — что внутри проекта, видно сразу === */}
         <Section header="Конфигурация">

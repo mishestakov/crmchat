@@ -4,7 +4,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import { trackKind, tracks } from "../db/schema.ts";
 import { pickDefined } from "../lib/pick-defined.ts";
-import { assertRole, type WorkspaceVars } from "../middleware/assert-member.ts";
+import { type WorkspaceVars } from "../middleware/assert-member.ts";
 
 // Track — папка проектов в workspace. Для BD-команды (kind='program'):
 // «Привлечение/Удержание/Отток/Ad-hoc». Для агентства (kind='client'):
@@ -75,7 +75,6 @@ app.openapi(
     method: "post",
     path: "/v1/workspaces/{wsId}/tracks",
     tags: ["tracks"],
-    middleware: [assertRole("admin")] as const,
     request: {
       params: WsParam,
       body: {
@@ -113,7 +112,6 @@ app.openapi(
     method: "patch",
     path: "/v1/workspaces/{wsId}/tracks/{trackId}",
     tags: ["tracks"],
-    middleware: [assertRole("admin")] as const,
     request: {
       params: WsTrackParam,
       body: {
@@ -151,7 +149,6 @@ app.openapi(
     method: "delete",
     path: "/v1/workspaces/{wsId}/tracks/{trackId}",
     tags: ["tracks"],
-    middleware: [assertRole("admin")] as const,
     request: { params: WsTrackParam },
     responses: { 204: { description: "Deleted" } },
   }),
