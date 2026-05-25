@@ -55,9 +55,9 @@ function CreateWorkspacePage() {
   const existingWs = wsListQ.data?.[0];
 
   const create = useMutation({
-    mutationFn: async (name: string) => {
+    mutationFn: async (input: { name: string; mode: "bd" | "agency" }) => {
       const { data, error } = await api.POST("/v1/workspaces", {
-        body: { name },
+        body: input,
       });
       if (error) throw error;
       return data!;
@@ -69,7 +69,10 @@ function CreateWorkspacePage() {
   });
 
   const [name, setName] = useState("");
-  const canSubmit = name.trim().length > 0 && !create.isPending;
+  // mode выбирается явно при создании, дефолта нет — это первичный продуктовый
+  // тумблер (bd vs agency). Менять mode после создания нельзя.
+  const [mode, setMode] = useState<"bd" | "agency" | null>(null);
+  const canSubmit = name.trim().length > 0 && mode !== null && !create.isPending;
 
   return (
     <div className="mx-auto max-w-md p-8 space-y-6">
@@ -90,10 +93,10 @@ function CreateWorkspacePage() {
       )}
       <h1 className="text-2xl font-semibold">Создать workspace</h1>
       <form
-        className="space-y-3"
+        className="space-y-4"
         onSubmit={(e) => {
           e.preventDefault();
-          if (canSubmit) create.mutate(name.trim());
+          if (canSubmit && mode) create.mutate({ name: name.trim(), mode });
         }}
       >
         <input
@@ -103,6 +106,53 @@ function CreateWorkspacePage() {
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
+        <fieldset className="space-y-2">
+          <legend className="text-sm font-medium text-zinc-700">
+            Режим работы
+          </legend>
+          <label
+            className={`block rounded-lg border px-3 py-3 cursor-pointer ${
+              mode === "bd"
+                ? "border-emerald-600 bg-emerald-50"
+                : "border-zinc-300 hover:border-zinc-400"
+            }`}
+          >
+            <input
+              type="radio"
+              name="mode"
+              value="bd"
+              checked={mode === "bd"}
+              onChange={() => setMode("bd")}
+              className="sr-only"
+            />
+            <div className="font-medium text-sm">BD-команда / Биржа</div>
+            <div className="text-xs text-zinc-600 mt-1">
+              Массовый аутрич по своей базе блогеров без внешнего клиента.
+              Воронка/канбан, цепочки автосообщений.
+            </div>
+          </label>
+          <label
+            className={`block rounded-lg border px-3 py-3 cursor-pointer ${
+              mode === "agency"
+                ? "border-emerald-600 bg-emerald-50"
+                : "border-zinc-300 hover:border-zinc-400"
+            }`}
+          >
+            <input
+              type="radio"
+              name="mode"
+              value="agency"
+              checked={mode === "agency"}
+              onChange={() => setMode("agency")}
+              className="sr-only"
+            />
+            <div className="font-medium text-sm">Агентство</div>
+            <div className="text-xs text-zinc-600 mt-1">
+              Работа на клиента-рекла: клиенты, кампании, медиаплан,
+              согласование, отчёт по magic-link.
+            </div>
+          </label>
+        </fieldset>
         <button
           type="submit"
           disabled={!canSubmit}

@@ -40,6 +40,7 @@ app.openapi(listRoute, async (c) => {
     .select({
       id: workspaces.id,
       name: workspaces.name,
+      mode: workspaces.mode,
       createdBy: workspaces.createdBy,
       createdAt: workspaces.createdAt,
     })
@@ -72,11 +73,11 @@ const createRouteDef = createRoute({
 
 app.openapi(createRouteDef, async (c) => {
   const userId = c.get("userId");
-  const { name } = c.req.valid("json");
+  const { name, mode } = c.req.valid("json");
   const row = await db.transaction(async (tx) => {
     const [ws] = await tx
       .insert(workspaces)
-      .values({ name, createdBy: userId })
+      .values({ name, mode, createdBy: userId })
       .returning();
     // Создатель — admin. Это единственная точка автогенерации admin'а; все
     // остальные admin'ы появляются через ручную смену роли (US-4) или через
@@ -242,12 +243,14 @@ app.openapi(
 function serialize(row: {
   id: string;
   name: string;
+  mode: "bd" | "agency";
   createdBy: string;
   createdAt: Date;
 }) {
   return {
     id: row.id,
     name: row.name,
+    mode: row.mode,
     createdBy: row.createdBy,
     createdAt: row.createdAt.toISOString(),
   };

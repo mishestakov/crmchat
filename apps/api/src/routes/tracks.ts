@@ -23,10 +23,12 @@ const TrackSchema = z
   })
   .openapi("Track");
 
+// kind не принимается от юзера — проставляется автоматом из workspace.mode
+// при insert'е (см. ниже). Это правило «mode — первичный тумблер, kind следует
+// за ним» зафиксировано в db/schema.ts рядом с trackKind/projectKind/projectItemKind.
 const CreateTrackBody = z
   .object({
     name: z.string().min(1).max(200),
-    kind: TrackKindSchema.default("generic"),
     properties: z.record(z.string(), z.unknown()).optional(),
   })
   .openapi("CreateTrack");
@@ -92,13 +94,15 @@ app.openapi(
   async (c) => {
     const wsId = c.get("workspaceId");
     const userId = c.get("userId");
+    const mode = c.get("workspaceMode");
     const body = c.req.valid("json");
+    const kind = mode === "agency" ? "client" : "program";
     const [row] = await db
       .insert(tracks)
       .values({
         workspaceId: wsId,
         name: body.name,
-        kind: body.kind,
+        kind,
         properties: body.properties ?? {},
         createdBy: userId,
       })

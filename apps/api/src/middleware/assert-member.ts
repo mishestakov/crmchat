@@ -2,14 +2,16 @@ import type { MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db/client.ts";
-import { workspaceMembers } from "../db/schema.ts";
+import { workspaceMembers, workspaces } from "../db/schema.ts";
 import type { SessionVars } from "./require-session.ts";
 
 export type WorkspaceRole = "admin" | "member";
+export type WorkspaceMode = "bd" | "agency";
 
 export type WorkspaceVars = SessionVars & {
   workspaceId: string;
   workspaceRole: WorkspaceRole;
+  workspaceMode: WorkspaceMode;
 };
 
 // Гарант workspace-tenancy: handler гарантированно работает только с workspace,
@@ -27,8 +29,9 @@ export const assertMember: MiddlewareHandler<{ Variables: WorkspaceVars }> =
     const wsId = c.req.param("wsId");
     if (!wsId) throw new HTTPException(400, { message: "wsId required" });
     const [row] = await db
-      .select({ role: workspaceMembers.role })
+      .select({ role: workspaceMembers.role, mode: workspaces.mode })
       .from(workspaceMembers)
+      .innerJoin(workspaces, eq(workspaces.id, workspaceMembers.workspaceId))
       .where(
         and(
           eq(workspaceMembers.workspaceId, wsId),
@@ -39,6 +42,7 @@ export const assertMember: MiddlewareHandler<{ Variables: WorkspaceVars }> =
     if (!row) throw new HTTPException(403, { message: "not a member" });
     c.set("workspaceId", wsId);
     c.set("workspaceRole", row.role as WorkspaceRole);
+    c.set("workspaceMode", row.mode as WorkspaceMode);
     await next();
   };
 

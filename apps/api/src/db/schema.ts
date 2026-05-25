@@ -76,9 +76,21 @@ export const DEFAULT_OUTREACH_SCHEDULE: OutreachSchedule = {
   },
 };
 
+// Workspace.mode — единственный продуктовый тумблер «какой сценарий ведёт
+// этот воркспейс». Влияет на дефолтный kind для треков/проектов/айтемов и
+// на UI-лейблы конкретных страниц (не на доступность endpoint'ов).
+// - bd: BD/биржевой сценарий (Саша, Perfluence, telega.in) — массовый
+//   аутрич без внешнего клиента-рекла. Воронка/канбан, цепочки.
+// - agency: агентский сценарий — есть клиент-рекл, медиаплан, согласование,
+//   артефакты, отчёт. Outreach к блогерам — изнутри размещения.
+// Default 'bd' нужен только для backfill существующих ws при db:push; в API
+// CreateWorkspaceSchema требует mode явно (юзер выбирает radio при создании).
+export const workspaceMode = pgEnum("workspace_mode", ["bd", "agency"]);
+
 export const workspaces = pgTable("workspaces", {
   id: text("id").primaryKey().$defaultFn(shortId),
   name: text("name").notNull(),
+  mode: workspaceMode("mode").notNull().default("bd"),
   outreachSchedule: jsonb("outreach_schedule")
     .$type<OutreachSchedule>()
     .notNull()
@@ -444,7 +456,14 @@ export const contactCreationTrigger = pgEnum("contact_creation_trigger", [
 //     Project=инстанс программы за период, Item=лид.
 // (2) Агентство: Track=клиент (Coca-Cola), Project=кампания (Q4 Holiday),
 //     Item=размещение (channel × project × date).
-// `kind` discriminator определяет UI-лейблы и какие табы/поля видны.
+// `kind` discriminator — производный от workspace.mode при создании сущности,
+// юзеру в UI не виден и не выбирается. Первичный тумблер «какой сценарий» —
+// это workspace.mode. kind оставлен как поле в схеме на случай, если завтра
+// в одном workspace потребуются разнотипные сущности (например, отдельные
+// outreach-операции для лонг-листа внутри agency-воркспейса).
+// Соответствие: mode='bd' → program/outreach/lead;
+//                mode='agency' → client/agency/placement.
+// 'generic' — техническое значение, в продуктовых сценариях не используется.
 
 export const trackKind = pgEnum("track_kind", [
   "program",
