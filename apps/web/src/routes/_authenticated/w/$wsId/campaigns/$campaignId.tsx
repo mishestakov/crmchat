@@ -819,7 +819,7 @@ function ShareAccessBlock({
   );
 }
 
-// ── Фаза 4: Финальный оффер (bulk-send по шортлисту) ────────────────────────
+// ── Фаза 4: Подтверждение (bulk-send по шортлисту) ──────────────────────────
 function ShortlistPhase({
   wsId,
   campaign,
@@ -873,7 +873,7 @@ function ShortlistPhase({
       <div className="rounded-2xl bg-white p-5 shadow-sm space-y-3">
         <div>
           <h2 className="text-sm font-semibold text-zinc-900">
-            Финальный оффер шортлисту
+            Подтверждение блогерам
           </h2>
           <p className="text-xs text-zinc-500">
             Одобренным клиентом блогерам — одно сообщение «вы выбраны».
@@ -919,7 +919,7 @@ function ShortlistPhase({
           <thead className="bg-zinc-50 text-xs text-zinc-500">
             <tr>
               <Th>Канал</Th>
-              <Th>Финальный оффер</Th>
+              <Th>Подтверждение</Th>
             </tr>
           </thead>
           <tbody>
@@ -946,7 +946,7 @@ function ShortlistPhase({
   );
 }
 
-// ── Фаза 5: Производство (pipeline-матрица) ─────────────────────────────────
+// ── Фаза 5: Запуск (pipeline-матрица) ───────────────────────────────────────
 function ProductionPhase({
   wsId,
   campaign,
@@ -976,7 +976,7 @@ function ProductionPhase({
     <div className="space-y-4">
       {rows.length === 0 ? (
         <div className="rounded-2xl bg-white p-6 text-sm text-zinc-500 shadow-sm">
-          Нет одобренных размещений. Производство стартует после согласования
+          Нет одобренных размещений. Запуск стартует после согласования
           клиентом.
         </div>
       ) : (
@@ -1141,7 +1141,7 @@ function WrapupPhase({ wsId, campaign }: { wsId: string; campaign: Campaign }) {
       {rows.length === 0 ? (
         <div className="rounded-2xl bg-white p-6 text-sm text-zinc-500 shadow-sm">
           Нет вышедших постов. Отчёт собирается после публикации размещений
-          (фаза «Производство» → ссылка на пост).
+          (фаза «Запуск» → ссылка на пост).
         </div>
       ) : (
         <>

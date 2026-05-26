@@ -16,8 +16,8 @@ export const CAMPAIGN_PHASES = [
   { key: "briefing", label: "Бриф" },
   { key: "longlist", label: "Лонглист" },
   { key: "review", label: "Согласование" },
-  { key: "shortlist", label: "Финальный оффер" },
-  { key: "production", label: "Производство" },
+  { key: "shortlist", label: "Подтверждение" },
+  { key: "production", label: "Запуск" },
   { key: "wrapup", label: "Отчёт" },
 ] as const;
 
