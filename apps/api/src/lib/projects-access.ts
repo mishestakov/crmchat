@@ -25,10 +25,16 @@ export function projectAccessClause(
   const wsClause = eq(projects.workspaceId, workspaceId);
   if (role === "admin") return wsClause;
   const myAccounts = myAccountIdsSql(workspaceId, userId);
+  // agency-проекты (kind='agency') видны всем member'ам ws — это общий ресурс
+  // агентства (как контакты/каналы), доступ не привязан к outreach-аккаунтам.
+  // Без этого member без подключённого аккаунта залочен во всей agency-фиче
+  // (пустое дерево кампаний + 404 на всех endpoint'ах). Owner-based RBAC
+  // (спека §7, видимость по ответственному менеджеру) — отдельный шаг.
   return and(
     wsClause,
     sql`(
-      (${projects.accountsMode} = 'selected'
+      ${projects.kind} = 'agency'
+      OR (${projects.accountsMode} = 'selected'
         AND EXISTS (
           SELECT 1 FROM jsonb_array_elements_text(${projects.accountsSelected}) sel(id)
           WHERE sel.id IN ${myAccounts}

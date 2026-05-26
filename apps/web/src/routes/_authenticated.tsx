@@ -32,6 +32,18 @@ function AuthLayout() {
   const params = useParams({ strict: false }) as { wsId?: string };
   const wsId = params.wsId;
 
+  // mode текущего ws — для sidebar-сплита bd/agency. Берём из того же
+  // списка воркспейсов, что грузит WorkspaceSwitcher (общий кеш).
+  const wsList = useQuery({
+    queryKey: ["workspaces"],
+    queryFn: async () => {
+      const { data, error } = await api.GET("/v1/workspaces");
+      if (error) throw error;
+      return data;
+    },
+  });
+  const mode = wsList.data?.find((w) => w.id === wsId)?.mode;
+
   return (
     <div className="flex h-screen bg-zinc-100">
       <aside className="flex w-60 shrink-0 flex-col border-r border-zinc-200 bg-white">
@@ -48,9 +60,18 @@ function AuthLayout() {
                 </SidebarLink>
               </SidebarGroup>
               <SidebarGroup title="Работа">
-                <SidebarLink to="/w/$wsId/projects" wsId={wsId}>
-                  Проекты
-                </SidebarLink>
+                {/* Sidebar-сплит по workspace.mode: agency → «Кампании»
+                    (медиаплан-визард), bd → «Проекты» (канбан-аутрич).
+                    Один проект не должен иметь два входа с разным UI. */}
+                {mode === "agency" ? (
+                  <SidebarLink to="/w/$wsId/campaigns" wsId={wsId}>
+                    Кампании
+                  </SidebarLink>
+                ) : (
+                  <SidebarLink to="/w/$wsId/projects" wsId={wsId}>
+                    Проекты
+                  </SidebarLink>
+                )}
                 <SidebarLink to="/w/$wsId/outreach/chat" wsId={wsId}>
                   Чат
                 </SidebarLink>
@@ -145,6 +166,7 @@ function SidebarLink(props: {
     | "/w/$wsId/settings"
     | "/w/$wsId/outreach/accounts"
     | "/w/$wsId/projects"
+    | "/w/$wsId/campaigns"
     | "/w/$wsId/outreach/chat"
     | "/w/$wsId/outreach/schedule";
   wsId: string;

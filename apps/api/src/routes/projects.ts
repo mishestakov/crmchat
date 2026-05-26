@@ -12,6 +12,7 @@ import {
   outreachAccountsMode,
   projectItems,
   projects,
+  projectPhase,
   stageTemplates,
   tracks,
   projectStatus,
@@ -63,6 +64,7 @@ const MessageSchema = z.object({
 });
 
 const ProjectStatusSchema = z.enum(projectStatus.enumValues);
+const PhaseSchema = z.enum(projectPhase.enumValues);
 const AccountsModeSchema = z.enum(outreachAccountsMode.enumValues);
 const ContactCreationTriggerSchema = z.enum(contactCreationTrigger.enumValues);
 
@@ -78,6 +80,17 @@ const ProjectSchema = z
     trackId: z.string(),
     name: z.string(),
     status: ProjectStatusSchema,
+    // agency-поля (kind='agency'). Для bd-проектов phase='briefing' и brief-*
+    // null — UI их не показывает.
+    phase: PhaseSchema,
+    brief: z.string().nullable(),
+    budgetAmount: z.number().nullable(),
+    budgetCurrency: z.string(),
+    periodStart: z.iso.datetime().nullable(),
+    periodEnd: z.iso.datetime().nullable(),
+    kpi: z.string().nullable(),
+    tov: z.string().nullable(),
+    constraints: z.string().nullable(),
     stages: z.array(StageSchema),
     accountsMode: AccountsModeSchema,
     accountsSelected: z.array(z.string()),
@@ -107,6 +120,15 @@ const CreateProjectBody = z
     // projects.messages. Не передан → проект создаётся с пустой цепочкой,
     // юзер её набьёт руками в редакторе.
     messageTemplateId: z.string().min(1).max(64).optional(),
+    // agency: бриф можно заполнить сразу при создании кампании (§5.2) либо
+    // позже через PATCH. Для bd-проектов игнорируются.
+    brief: z.string().max(10000).optional(),
+    budgetAmount: z.number().nonnegative().optional(),
+    periodStart: z.iso.datetime().optional(),
+    periodEnd: z.iso.datetime().optional(),
+    kpi: z.string().max(2000).optional(),
+    tov: z.string().max(2000).optional(),
+    constraints: z.string().max(2000).optional(),
   })
   .openapi("CreateProject");
 
@@ -120,6 +142,16 @@ const UpdateProjectBody = z
     contactCreationTrigger: ContactCreationTriggerSchema.optional(),
     contactDefaultOwnerIds: z.array(z.string()).optional(),
     contactDefaults: z.record(z.string(), z.unknown()).optional(),
+    // agency: фаза и бриф правятся в любом статусе (не snapshot-поля).
+    // phase — свободная навигация по визарду, brief-* — данные кампании.
+    phase: PhaseSchema.optional(),
+    brief: z.string().max(10000).nullable().optional(),
+    budgetAmount: z.number().nonnegative().nullable().optional(),
+    periodStart: z.iso.datetime().nullable().optional(),
+    periodEnd: z.iso.datetime().nullable().optional(),
+    kpi: z.string().max(2000).nullable().optional(),
+    tov: z.string().max(2000).nullable().optional(),
+    constraints: z.string().max(2000).nullable().optional(),
   })
   .openapi("UpdateProject");
 
@@ -345,6 +377,15 @@ app.openapi(
         kind,
         stages: initialStages,
         messages: initialMessages,
+        // agency brief-поля (для bd остаются null/default). numeric → string,
+        // ISO-даты → Date.
+        brief: body.brief ?? null,
+        budgetAmount: body.budgetAmount != null ? String(body.budgetAmount) : null,
+        periodStart: body.periodStart ? new Date(body.periodStart) : null,
+        periodEnd: body.periodEnd ? new Date(body.periodEnd) : null,
+        kpi: body.kpi ?? null,
+        tov: body.tov ?? null,
+        constraints: body.constraints ?? null,
         createdBy: userId,
       })
       .returning();
@@ -431,7 +472,24 @@ app.openapi(
           "contactCreationTrigger",
           "contactDefaultOwnerIds",
           "contactDefaults",
+          // agency text/enum-поля — прямое копирование (null валиден).
+          "phase",
+          "brief",
+          "kpi",
+          "tov",
+          "constraints",
         ]),
+        // numeric/timestamp требуют конверсии — pickDefined не годится.
+        ...(body.budgetAmount !== undefined && {
+          budgetAmount:
+            body.budgetAmount === null ? null : String(body.budgetAmount),
+        }),
+        ...(body.periodStart !== undefined && {
+          periodStart: body.periodStart ? new Date(body.periodStart) : null,
+        }),
+        ...(body.periodEnd !== undefined && {
+          periodEnd: body.periodEnd ? new Date(body.periodEnd) : null,
+        }),
         updatedAt: new Date(),
       })
       .where(eq(projects.id, projectId))
@@ -1380,6 +1438,15 @@ function serializeProject(
     trackId: row.trackId,
     name: row.name,
     status: row.status,
+    phase: row.phase,
+    brief: row.brief,
+    budgetAmount: row.budgetAmount === null ? null : Number(row.budgetAmount),
+    budgetCurrency: row.budgetCurrency,
+    periodStart: row.periodStart?.toISOString() ?? null,
+    periodEnd: row.periodEnd?.toISOString() ?? null,
+    kpi: row.kpi,
+    tov: row.tov,
+    constraints: row.constraints,
     stages: row.stages,
     accountsMode: row.accountsMode,
     accountsSelected: row.accountsSelected,

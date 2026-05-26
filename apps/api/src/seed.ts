@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { eq, inArray } from "drizzle-orm";
 import { db, sql } from "./db/client.ts";
 import {
   channelAdmins,
@@ -863,6 +864,142 @@ console.log(
 const cppChannels = await seedRealChannels(CPP_WS, ZHENYA_ID);
 console.log(
   `[ws_cpp] seeded real channels=${cppChannels.channels}, admin-contacts=${cppChannels.admins}`,
+);
+
+// === Workspace 3: ws_agency "Agency Demo" (mode=agency, медиаплан-флоу) ====
+// Отдельный agency-ws под новый бриф+лонглист-флоу. ws_cpp выше остаётся
+// bd-режимным канбан-demo. Здесь: клиент с реквизитами + draft-кампания с
+// заготовленным лонглистом (каналы в разных статусах подбора) + цепочка,
+// готовая к запуску рассылки.
+const AGENCY_WS = "ws_agency";
+
+await db
+  .insert(workspaces)
+  .values({
+    id: AGENCY_WS,
+    name: "Agency Demo",
+    mode: "agency",
+    createdBy: ZHENYA_ID,
+  })
+  .onConflictDoNothing({ target: workspaces.id });
+
+await db
+  .insert(workspaceMembers)
+  .values([
+    { workspaceId: AGENCY_WS, userId: ZHENYA_ID, role: "admin" },
+    { workspaceId: AGENCY_WS, userId: BORIS_ID, role: "member" },
+  ])
+  .onConflictDoNothing();
+
+await seedDefaultProperties(AGENCY_WS);
+
+await db
+  .insert(tracks)
+  .values([
+    {
+      id: "trk_ag_coke",
+      workspaceId: AGENCY_WS,
+      name: "Coca-Cola",
+      kind: "client",
+      properties: {
+        legal_entity: "ООО «Кока-Кола»",
+        inn: "7707049388",
+        accountant_contact: "buh@coca-cola.example",
+      },
+      createdBy: ZHENYA_ID,
+    },
+    {
+      id: "trk_ag_beeline",
+      workspaceId: AGENCY_WS,
+      name: "Beeline",
+      kind: "client",
+      properties: { inn: "7713076301" },
+      createdBy: ZHENYA_ID,
+    },
+  ])
+  .onConflictDoNothing({ target: tracks.id });
+
+await db
+  .insert(projects)
+  .values({
+    id: "prj_ag_q4",
+    workspaceId: AGENCY_WS,
+    trackId: "trk_ag_coke",
+    name: "Q4 Holiday B2B",
+    kind: "agency",
+    status: "draft",
+    phase: "longlist",
+    brief:
+      "Новогодняя кампания Coca-Cola Zero для аудитории 25-40. Нативные интеграции в нишах lifestyle / авто / технологии. Акцент «праздник без сахара».",
+    budgetAmount: "1500000",
+    kpi: "CPV ≤ 1,2 ₽, суммарный охват ≥ 800k",
+    tov: "Тёплый, праздничный, без пафоса.",
+    constraints: "Без алкоголя в кадре. Не упоминать конкурентов.",
+    messages: CPP_OFFER_MESSAGES,
+    createdBy: ZHENYA_ID,
+  })
+  .onConflictDoNothing({ target: projects.id });
+
+const agChannels = await seedRealChannels(AGENCY_WS, ZHENYA_ID);
+
+// Лонглист: первые 7 каналов + их админы, разные статусы подбора (для демо
+// таблицы). chainStatus выводится из repliedAt/sentExists — пока 'not_sent'
+// (кампания в draft, рассылку не запускали), кроме отказа (available=false).
+const agChannelIds = Array.from(
+  { length: 7 },
+  (_, i) => `ch_${AGENCY_WS}_${String(i).padStart(3, "0")}`,
+);
+const agAdmins = await db
+  .select({
+    channelId: channelAdmins.channelId,
+    contactId: channelAdmins.contactId,
+    props: contacts.properties,
+  })
+  .from(channelAdmins)
+  .innerJoin(contacts, eq(contacts.id, channelAdmins.contactId))
+  .where(inArray(channelAdmins.channelId, agChannelIds));
+const agAdminByChannel = new Map(agAdmins.map((a) => [a.channelId, a]));
+
+const PLACEMENT_SEED: Array<{
+  available: boolean | null;
+  priceAmount: string | null;
+  forecastViews: number | null;
+  forecastErr: string | null;
+}> = [
+  { available: true, priceAmount: "80000", forecastViews: 120000, forecastErr: "4.20" },
+  { available: true, priceAmount: "150000", forecastViews: 250000, forecastErr: "3.80" },
+  { available: true, priceAmount: "95000", forecastViews: 180000, forecastErr: "5.10" },
+  { available: false, priceAmount: null, forecastViews: null, forecastErr: null },
+  { available: null, priceAmount: null, forecastViews: 90000, forecastErr: null },
+  { available: null, priceAmount: null, forecastViews: 300000, forecastErr: null },
+  { available: true, priceAmount: "120000", forecastViews: 200000, forecastErr: "2.40" },
+];
+
+const placementRows = agChannelIds.map((channelId, i) => {
+  const admin = agAdminByChannel.get(channelId);
+  const props = (admin?.props ?? {}) as Record<string, unknown>;
+  const s = PLACEMENT_SEED[i]!;
+  return {
+    id: `pli_ag_${String(i).padStart(3, "0")}`,
+    workspaceId: AGENCY_WS,
+    projectId: "prj_ag_q4",
+    kind: "placement" as const,
+    channelId,
+    contactId: admin?.contactId ?? null,
+    username: (props.telegram_username as string | undefined) ?? null,
+    available: s.available,
+    priceAmount: s.priceAmount,
+    forecastViews: s.forecastViews,
+    forecastErr: s.forecastErr,
+  };
+});
+await db
+  .insert(projectItems)
+  .values(placementRows)
+  .onConflictDoNothing({ target: projectItems.id });
+
+console.log(
+  `[ws_agency] seeded: clients=2, campaign=1 (draft longlist), placements=${placementRows.length}, channels=${agChannels.channels}`,
 );
 
 console.log("done — full demo seed complete");

@@ -11,6 +11,7 @@ import {
 } from "./middleware/assert-member.ts";
 import activities from "./routes/activities.ts";
 import auth from "./routes/auth.ts";
+import campaigns from "./routes/campaigns.ts";
 import channels from "./routes/channels.ts";
 import contactViews from "./routes/contact-views.ts";
 import contacts from "./routes/contacts.ts";
@@ -24,6 +25,8 @@ import outreachSchedule from "./routes/outreach-schedule.ts";
 import projectImports from "./routes/project-imports.ts";
 import projects from "./routes/projects.ts";
 import quickSend from "./routes/quick-send.ts";
+import shareClient from "./routes/share-client.ts";
+import shares from "./routes/shares.ts";
 import stageTemplates from "./routes/stage-templates.ts";
 import tracks from "./routes/tracks.ts";
 import properties from "./routes/properties.ts";
@@ -38,6 +41,10 @@ app.use(
 
 // public: dev login + logout (no session needed)
 app.route("/", auth);
+// public: клиентский magic-link доступ (auth по токену внутри роутера, не
+// session). Монтируется ДО protectedApp, чтобы /v1/share/* не попало под
+// requireSession.
+app.route("/", shareClient);
 
 // everything below requires a session
 const protectedApp = new OpenAPIHono<{ Variables: SessionVars }>();
@@ -59,6 +66,8 @@ wsApp.route("/", activities);
 wsApp.route("/", outreachAccounts);
 wsApp.route("/", outreachAccountDelegations);
 wsApp.route("/", projects);
+wsApp.route("/", campaigns);
+wsApp.route("/", shares);
 wsApp.route("/", projectImports);
 wsApp.route("/", quickSend);
 wsApp.route("/", tracks);

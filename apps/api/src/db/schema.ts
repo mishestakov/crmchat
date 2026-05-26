@@ -4,6 +4,7 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgEnum,
   pgTable,
   primaryKey,
@@ -493,6 +494,47 @@ export const projectItemKind = pgEnum("project_item_kind", [
   "placement",
 ]);
 
+// Фаза agency-кампании — стадия воронки в визарде (бриф → лонглист →
+// согласование → финальный оффер → производство → отчёт). Свободная
+// навигация: phase — это «где основная работа сейчас» + дефолтный экран и
+// бейдж в списке, НЕ машина состояний (экраны доступны в любом порядке).
+// Для bd-проектов поле не используется (остаётся 'briefing' по дефолту).
+export const projectPhase = pgEnum("project_phase", [
+  "briefing",
+  "longlist",
+  "review",
+  "shortlist",
+  "production",
+  "wrapup",
+]);
+
+// Решение клиента по строке медиаплана (project_items kind='placement').
+// Проставляется клиентом через magic-link (этап согласования, отдельный PR);
+// в лонглист-PR колонка заводится со значением 'pending' и пока не меняется.
+export const placementClientStatus = pgEnum("placement_client_status", [
+  "pending",
+  "approved",
+  "rejected",
+  "replace",
+]);
+
+// Этапы производства размещения (фаза 5, drawer-stepper). Проставляются
+// менеджером вручную; файлы-артефакты (placement_files) — отдельный этап.
+export const placementContractStatus = pgEnum("placement_contract_status", [
+  "none", // не отправлен
+  "sent", // отправлен блогеру
+  "revising", // блогер вносит правки
+  "signed", // подписан с двух сторон
+]);
+export const placementCreativeStatus = pgEnum("placement_creative_status", [
+  "none",
+  "awaiting", // ждём драфт от блогера
+  "internal_review", // агентство проверяет на соответствие ТЗ
+  "client_review", // отправлено клиенту на ОК
+  "revising", // правки
+  "approved", // клиент одобрил
+]);
+
 // Track — родительская «папка» проектов. У BD-команды: «Привлечение»,
 // «Удержание», «Отток», «Ad-hoc». У агентства: «Coca-Cola», «Beeline».
 // Спец-поля типа ИНН/договора (для клиента-агентства) живут в `properties`.
@@ -630,6 +672,21 @@ export const projects = pgTable(
       .notNull()
       .default([]),
 
+    // === agency-specific (kind='agency') ===================================
+    // Используются только в agency-визарде (медиаплан). В bd-проектах остаются
+    // дефолтными и не отображаются. Все brief-поля nullable — заполняются по
+    // мере того как менеджер разбирается с кампанией (спека §3.2).
+
+    phase: projectPhase("phase").notNull().default("briefing"),
+    brief: text("brief"),
+    budgetAmount: numeric("budget_amount", { precision: 12, scale: 2 }),
+    budgetCurrency: text("budget_currency").notNull().default("RUB"),
+    periodStart: timestamp("period_start", { withTimezone: true }),
+    periodEnd: timestamp("period_end", { withTimezone: true }),
+    kpi: text("kpi"),
+    tov: text("tov"),
+    constraints: text("constraints"),
+
     // === outreach-specific =================================================
 
     accountsMode: outreachAccountsMode("accounts_mode").notNull().default("all"),
@@ -759,10 +816,58 @@ export const projectItems = pgTable(
       .notNull()
       .default({}),
 
+    // === placement-specific (kind='placement') =============================
+    // Строка медиаплана = «выход поста у одного блогера в кампании». Аутрич по
+    // лонглисту переиспользует lead-поля выше (username/tg_user_id/contact_id
+    // резолвятся от админа канала), а эти поля держат данные размещения.
+    // Поля публикации/метрик/ЕРИД (published_at, actual_*, erid) добавятся в
+    // PR производства — не часть data shape лонглиста.
+    channelId: text("channel_id").references(() => channels.id, {
+      onDelete: "cascade",
+    }),
+    // Результат лонглист-аутрича: блогер готов сотрудничать? Заполняется
+    // менеджером по ответу (null = ещё не знаем, true/false = готов/отказ).
+    // По нему рекл шортлистит на согласовании.
+    available: boolean("available"),
+    priceAmount: numeric("price_amount", { precision: 12, scale: 2 }),
+    priceCurrency: text("price_currency").notNull().default("RUB"),
+    forecastViews: integer("forecast_views"),
+    forecastErr: numeric("forecast_err", { precision: 5, scale: 2 }),
+    clientStatus: placementClientStatus("client_status")
+      .notNull()
+      .default("pending"),
+    // Комментарий клиента к решению (обязателен для reject/replace) + когда
+    // проставил. Заполняются из клиентского magic-link view.
+    clientStatusComment: text("client_status_comment"),
+    clientStatusAt: timestamp("client_status_at", { withTimezone: true }),
+    // Когда менеджер добавил размещение в шортлист (явная кнопка «В шортлист»).
+    // null = ещё в лонглисте-опросе; not null = собран, ушёл в шортлист
+    // (показывается клиенту, виден на фазе согласования).
+    shortlistedAt: timestamp("shortlisted_at", { withTimezone: true }),
+
+    // === production (фаза 5) ===============================================
+    // Когда отправлен финальный оффер «вы выбраны» (bulk-send по шортлисту).
+    finalOfferSentAt: timestamp("final_offer_sent_at", { withTimezone: true }),
+    contractStatus: placementContractStatus("contract_status")
+      .notNull()
+      .default("none"),
+    creativeStatus: placementCreativeStatus("creative_status")
+      .notNull()
+      .default("none"),
+    creativeRound: integer("creative_round").notNull().default(0),
+    scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
+    erid: text("erid"),
+    eridAdvertiserData: text("erid_advertiser_data"),
+    postUrl: text("post_url"),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    actReceivedAt: timestamp("act_received_at", { withTimezone: true }),
+
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index("project_items_project_id_idx").on(t.projectId),
+    // Под медиаплан-лукап и историю цен по каналу (kind='placement').
+    index("project_items_channel_id_idx").on(t.channelId),
     index("project_items_workspace_id_idx").on(t.workspaceId),
     // Под inbound-listener: lookup `WHERE workspace_id = ? AND tg_user_id = ?`.
     index("project_items_workspace_tg_user_id_idx").on(
@@ -1100,4 +1205,35 @@ export const tgUsers = pgTable(
     // Под lookup «найти юзера по @username» (заменяет searchPublicChat).
     index("tg_users_username_lower_idx").on(sql`lower(${t.username})`),
   ],
+);
+
+// Magic-link для клиента-рекла: уникальная ссылка на шортлист кампании без
+// регистрации. Доступ = знание токена (как Google Docs «по ссылке»). Без
+// email — менеджер генерит ссылку и отправляет реклу как угодно. Токен
+// валиден пока revoked_at IS NULL и (expires_at IS NULL OR expires_at > now()).
+export const projectShares = pgTable(
+  "project_shares",
+  {
+    id: text("id").primaryKey().$defaultFn(shortId),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    // 32 байта URL-safe random (≈256 бит) — не угадывается.
+    token: text("token").notNull().unique(),
+    // Опциональная пометка «кому выдали» (вместо email): «Иван, бренд-менеджер».
+    label: text("label"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    // Обновляется при каждом открытии клиентом — менеджер видит «открыто N назад».
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    // Soft-delete: агентство отозвало доступ. Дальнейшие запросы → 401.
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("project_shares_project_id_idx").on(t.projectId)],
 );

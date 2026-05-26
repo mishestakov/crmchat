@@ -1,7 +1,7 @@
 import createClient from "openapi-fetch";
 import type { paths } from "./schema.ts";
 
-export type { paths } from "./schema.ts";
+export type { paths, components } from "./schema.ts";
 
 // credentials: "include" — чтобы session cookie летели и при cross-origin baseUrl
 // (api.crmchat.ai из app.crmchat.ai). CORS настроен с credentials:true в apps/api/src/app.ts.
