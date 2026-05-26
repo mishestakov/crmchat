@@ -10,6 +10,7 @@ import {
 } from "@repo/core";
 import { db, sql as sqlClient } from "../db/client.ts";
 import { contactUsernameLowerSql } from "../lib/contact-sql.ts";
+import { extractUsername } from "../lib/tg-username.ts";
 import { errMsg } from "../lib/errors.ts";
 import {
   type TdContent,
@@ -194,9 +195,18 @@ const WsIdContactParam = z.object({
   contactId: z.string().min(1).max(64),
 });
 
-const AddAdminsBody = z.object({
-  contactIds: z.array(z.string().min(1).max(64)).min(1).max(50),
-});
+// Привязать админов можно двумя способами: contactIds — выбрать существующие
+// контакты; usernames — добавить по @username (find-or-create stub-контакт, как
+// при CSV-импорте). Это закрывает «контакта админа нет — добавить прямо здесь».
+const AddAdminsBody = z
+  .object({
+    contactIds: z.array(z.string().min(1).max(64)).max(50).optional(),
+    usernames: z.array(z.string().min(1).max(64)).max(50).optional(),
+  })
+  .refine(
+    (b) => (b.contactIds?.length ?? 0) + (b.usernames?.length ?? 0) > 0,
+    { message: "укажите contactIds или usernames" },
+  );
 
 const app = new OpenAPIHono<{ Variables: WorkspaceVars }>();
 
@@ -364,32 +374,67 @@ app.openapi(
   }),
   async (c) => {
     const { wsId, id } = c.req.valid("param");
-    const { contactIds } = c.req.valid("json");
+    const userId = c.get("userId");
+    const { contactIds = [], usernames = [] } = c.req.valid("json");
 
     const channel = await assertChannelAccess(id, wsId);
 
     // Проверяем, что все contactIds доступны юзеру (а не просто принадлежат
     // workspace'у): member не должен прилинковать к каналу контакт коллеги,
     // которого сам видеть не вправе.
-    const valid = await db
-      .select({ id: contacts.id })
-      .from(contacts)
-      .where(
-        and(
-          contactAccessClause(wsId),
-          inArray(contacts.id, contactIds),
-        ),
-      );
-    if (valid.length !== contactIds.length) {
-      throw new HTTPException(400, {
-        message: "some contacts are not accessible",
-      });
+    if (contactIds.length > 0) {
+      const valid = await db
+        .select({ id: contacts.id })
+        .from(contacts)
+        .where(and(contactAccessClause(wsId), inArray(contacts.id, contactIds)));
+      if (valid.length !== contactIds.length) {
+        throw new HTTPException(400, {
+          message: "some contacts are not accessible",
+        });
+      }
     }
 
-    await db
-      .insert(channelAdmins)
-      .values(contactIds.map((contactId) => ({ channelId: id, contactId })))
-      .onConflictDoNothing();
+    // usernames → find-or-create stub-контакт. extractUsername нормализует и
+    // отбрасывает мусор (URL/«foo bar»/точки) — иначе в telegram_username
+    // попадёт битый хэндл, который аутрич не зарезолвит. full_name = «@username»
+    // до первого синка/трафика.
+    const linkIds = [...contactIds];
+    const norm = [
+      ...new Set(
+        usernames
+          .map((u) => extractUsername(u))
+          .filter((u): u is string => u !== null),
+      ),
+    ];
+    if (norm.length > 0) {
+      await db
+        .insert(contacts)
+        .values(
+          norm.map((u) => ({
+            workspaceId: wsId,
+            properties: { telegram_username: u, full_name: `@${u}` },
+            createdBy: userId,
+          })),
+        )
+        .onConflictDoNothing();
+      const found = await db
+        .select({ id: contacts.id })
+        .from(contacts)
+        .where(
+          and(
+            eq(contacts.workspaceId, wsId),
+            inArray(contactUsernameLowerSql, norm),
+          ),
+        );
+      linkIds.push(...found.map((f) => f.id));
+    }
+
+    if (linkIds.length > 0) {
+      await db
+        .insert(channelAdmins)
+        .values(linkIds.map((contactId) => ({ channelId: id, contactId })))
+        .onConflictDoNothing();
+    }
 
     const [serialized] = await joinAdmins([channel]);
     return c.json(serialized!);

@@ -10,6 +10,8 @@ export function ContactPicker(props: {
   wsId: string;
   excludeIds: Set<string>;
   onPick: (contactId: string) => void;
+  // Если задан — при пустом поиске показываем «создать по @username».
+  onCreateByUsername?: (username: string) => void;
   onCancel: () => void;
   loading: boolean;
 }) {
@@ -67,7 +69,24 @@ export function ContactPicker(props: {
         <p className="text-xs text-zinc-500">Поиск…</p>
       )}
       {debounced.length > 0 && contactsQ.data && results.length === 0 && (
-        <p className="text-xs text-zinc-500">Ничего не найдено</p>
+        <div className="space-y-2">
+          <p className="text-xs text-zinc-500">Ничего не найдено</p>
+          {props.onCreateByUsername &&
+            (() => {
+              const uname = debounced.replace(/^@/, "").trim();
+              if (!uname) return null;
+              return (
+                <button
+                  type="button"
+                  onClick={() => props.onCreateByUsername!(uname)}
+                  disabled={props.loading}
+                  className="w-full rounded-md bg-emerald-600 px-2 py-1.5 text-left text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  + Создать контакт @{uname}
+                </button>
+              );
+            })()}
+        </div>
       )}
       {results.length > 0 && (
         <ul className="max-h-64 space-y-1 overflow-y-auto">

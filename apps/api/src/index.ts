@@ -2,6 +2,7 @@ import type { Server as HttpServer } from "node:http";
 import { serve } from "@hono/node-server";
 import { app } from "./app.ts";
 import { startOutreachWorker } from "./lib/outreach-worker.ts";
+import { startMetricsWorker } from "./lib/metrics-worker.ts";
 import { syncPresetsForAllWorkspaces } from "./lib/workspace-presets.ts";
 import { setupWebhook } from "./lib/tg-bot.ts";
 
@@ -13,6 +14,7 @@ const port = Number(process.env.PORT ?? 3000);
 // чтобы две реплики не выбирали одни и те же scheduled_messages.
 if (process.env.NODE_ENV !== "test") {
   startOutreachWorker();
+  startMetricsWorker();
   void syncPresetsForAllWorkspaces();
   void setupWebhook().catch((e: unknown) =>
     console.error("[tg-bot] setupWebhook failed:", e),

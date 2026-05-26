@@ -535,6 +535,16 @@ export const placementCreativeStatus = pgEnum("placement_creative_status", [
   "approved", // клиент одобрил
 ]);
 
+// Снятие метрик опубликованного поста (фаза «Отчёт»). Менеджер жмёт «снять
+// статистику» → размещение уходит в pending → metrics-worker разбирает
+// очередь (троттл) и проставляет done/error. idle = ещё не снимали.
+export const placementMetricsStatus = pgEnum("placement_metrics_status", [
+  "idle",
+  "pending",
+  "done",
+  "error",
+]);
+
 // Track — родительская «папка» проектов. У BD-команды: «Привлечение»,
 // «Удержание», «Отток», «Ad-hoc». У агентства: «Coca-Cola», «Beeline».
 // Спец-поля типа ИНН/договора (для клиента-агентства) живут в `properties`.
@@ -861,6 +871,24 @@ export const projectItems = pgTable(
     postUrl: text("post_url"),
     publishedAt: timestamp("published_at", { withTimezone: true }),
     actReceivedAt: timestamp("act_received_at", { withTimezone: true }),
+
+    // Фаза «Отчёт»: снимок поста, снятый metrics-worker'ом через TDLib.
+    // postSnapshot — текст + минитамбнейл (base64 jpeg из payload, без
+    // downloadFile), используется как «карточка поста» в отчёте.
+    metricsStatus: placementMetricsStatus("metrics_status")
+      .notNull()
+      .default("idle"),
+    metricsViews: integer("metrics_views"),
+    metricsForwards: integer("metrics_forwards"),
+    metricsReactions: integer("metrics_reactions"),
+    metricsCollectedAt: timestamp("metrics_collected_at", { withTimezone: true }),
+    metricsError: text("metrics_error"),
+    postSnapshot: jsonb("post_snapshot").$type<{
+      text: string;
+      thumbB64: string | null;
+      thumbW: number | null;
+      thumbH: number | null;
+    }>(),
 
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

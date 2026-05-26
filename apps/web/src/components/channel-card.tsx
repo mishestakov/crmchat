@@ -459,12 +459,12 @@ function AdminsSection(props: { wsId: string; channel: Channel }) {
   });
 
   const addMut = useMutation({
-    mutationFn: async (contactId: string) => {
+    mutationFn: async (body: { contactIds?: string[]; usernames?: string[] }) => {
       const { data, error } = await api.POST(
         "/v1/workspaces/{wsId}/channels/{id}/admins",
         {
           params: { path: { wsId: props.wsId, id: props.channel.id } },
-          body: { contactIds: [contactId] },
+          body,
         },
       );
       if (error) throw error;
@@ -546,7 +546,8 @@ function AdminsSection(props: { wsId: string; channel: Channel }) {
         <ContactPicker
           wsId={props.wsId}
           excludeIds={new Set(admins.map((a) => a.contactId))}
-          onPick={(contactId) => addMut.mutate(contactId)}
+          onPick={(contactId) => addMut.mutate({ contactIds: [contactId] })}
+          onCreateByUsername={(username) => addMut.mutate({ usernames: [username] })}
           onCancel={() => setAdding(false)}
           loading={addMut.isPending}
         />

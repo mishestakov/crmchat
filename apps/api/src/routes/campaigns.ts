@@ -10,6 +10,7 @@ import {
   placementClientStatus,
   placementContractStatus,
   placementCreativeStatus,
+  placementMetricsStatus,
   projectItems,
   projects,
   scheduledMessages,
@@ -21,6 +22,7 @@ import {
 } from "../lib/project-scheduling.ts";
 import { substituteVariables } from "../lib/substitute-variables.ts";
 import { pickDefined } from "../lib/pick-defined.ts";
+import { extractUsername } from "../lib/tg-username.ts";
 import { type WorkspaceVars } from "../middleware/assert-member.ts";
 
 // Agency-кампания переиспользует projects (kind='agency') + project_items
@@ -101,6 +103,21 @@ const PlacementSchema = z
     postUrl: z.string().nullable(),
     publishedAt: z.iso.datetime().nullable(),
     actReceivedAt: z.iso.datetime().nullable(),
+    // отчёт (фаза 6) — снимок метрик поста через TDLib
+    metricsStatus: z.enum(placementMetricsStatus.enumValues),
+    metricsViews: z.number().int().nullable(),
+    metricsForwards: z.number().int().nullable(),
+    metricsReactions: z.number().int().nullable(),
+    metricsCollectedAt: z.iso.datetime().nullable(),
+    metricsError: z.string().nullable(),
+    postSnapshot: z
+      .object({
+        text: z.string(),
+        thumbB64: z.string().nullable(),
+        thumbW: z.number().int().nullable(),
+        thumbH: z.number().int().nullable(),
+      })
+      .nullable(),
     createdAt: z.iso.datetime(),
   })
   .openapi("Placement");
@@ -284,21 +301,7 @@ app.openapi(
       .limit(1);
     if (!channel) throw new HTTPException(404, { message: "channel not found" });
 
-    // Резолвим админа канала — получателя аутрича. Берём первого. Нет админа →
-    // размещение без получателя: цепочку не запустить, пока не привязан контакт.
-    const [admin] = await db
-      .select({
-        contactId: channelAdmins.contactId,
-        props: contacts.properties,
-      })
-      .from(channelAdmins)
-      .innerJoin(contacts, eq(contacts.id, channelAdmins.contactId))
-      .where(eq(channelAdmins.channelId, channelId))
-      .limit(1);
-    const adminProps = (admin?.props ?? {}) as Record<string, unknown>;
-    const username = (adminProps.telegram_username as string | undefined) ?? null;
-    const tgUserId = (adminProps.tg_user_id as string | undefined) ?? null;
-
+    const admin = await resolveAdminRecipient(channelId);
     const [row] = await db
       .insert(projectItems)
       .values({
@@ -306,14 +309,147 @@ app.openapi(
         projectId,
         kind: "placement",
         channelId,
-        contactId: admin?.contactId ?? null,
-        username,
-        tgUserId,
+        contactId: admin.contactId,
+        username: admin.username,
+        tgUserId: admin.tgUserId,
       })
       .returning();
 
     const placement = await loadPlacement(row!.id);
     return c.json(placement!, 201);
+  },
+);
+
+// Массовое добавление: по одному URL/@username на строку. Канал, которого нет
+// в базе, заводим болванкой (title=@username) — реальные title/подписчики
+// подтянет ленивый sync при первом открытии ChannelDrawer. Получателя
+// (контакт админа) резолвим, если он уже привязан; нет — размещение без
+// получателя (привязать можно в сайдбаре канала).
+const BulkPlacementsBody = z
+  .object({
+    identifiers: z.array(z.string().min(1).max(200)).min(1).max(300),
+  })
+  .openapi("BulkPlacements");
+
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/placements/bulk",
+    tags: ["campaigns"],
+    request: {
+      params: WsProjectParam,
+      body: {
+        content: { "application/json": { schema: BulkPlacementsBody } },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({
+              added: z.number().int(),
+              channelsCreated: z.number().int(),
+              skippedInvalid: z.number().int(),
+              skippedDuplicate: z.number().int(),
+            }),
+          },
+        },
+        description: "Bulk add result",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const { projectId } = c.req.valid("param");
+    const { identifiers } = c.req.valid("json");
+    await assertProjectAccess(projectId, wsId, userId, role);
+
+    const parsed = identifiers.map(extractUsername);
+    const skippedInvalid = parsed.filter((u) => u === null).length;
+    const usernames = [...new Set(parsed.filter((u): u is string => u !== null))];
+
+    let added = 0;
+    let channelsCreated = 0;
+    let skippedDuplicate = 0;
+
+    for (const uname of usernames) {
+      // find-or-create канал (username unique по ws+platform, case-insensitive).
+      let [ch] = await db
+        .select({ id: channels.id })
+        .from(channels)
+        .where(
+          and(
+            eq(channels.workspaceId, wsId),
+            eq(channels.platform, "telegram"),
+            sql`lower(${channels.username}) = ${uname}`,
+          ),
+        )
+        .limit(1);
+      if (!ch) {
+        const [created] = await db
+          .insert(channels)
+          .values({
+            workspaceId: wsId,
+            title: `@${uname}`,
+            username: uname,
+            platform: "telegram",
+            createdBy: userId,
+          })
+          .onConflictDoNothing()
+          .returning({ id: channels.id });
+        if (created) {
+          ch = created;
+          channelsCreated++;
+        } else {
+          // Параллельная вставка тем же username — берём существующий.
+          [ch] = await db
+            .select({ id: channels.id })
+            .from(channels)
+            .where(
+              and(
+                eq(channels.workspaceId, wsId),
+                eq(channels.platform, "telegram"),
+                sql`lower(${channels.username}) = ${uname}`,
+              ),
+            )
+            .limit(1);
+        }
+      }
+      if (!ch) continue;
+
+      const [existing] = await db
+        .select({ id: projectItems.id })
+        .from(projectItems)
+        .where(
+          and(
+            eq(projectItems.projectId, projectId),
+            eq(projectItems.channelId, ch.id),
+            eq(projectItems.kind, "placement"),
+          ),
+        )
+        .limit(1);
+      if (existing) {
+        skippedDuplicate++;
+        continue;
+      }
+
+      const admin = await resolveAdminRecipient(ch.id);
+      await db.insert(projectItems).values({
+        workspaceId: wsId,
+        projectId,
+        kind: "placement",
+        channelId: ch.id,
+        contactId: admin.contactId,
+        username: admin.username,
+        tgUserId: admin.tgUserId,
+      });
+      added++;
+    }
+
+    return c.json({ added, channelsCreated, skippedInvalid, skippedDuplicate });
   },
 );
 
@@ -572,6 +708,76 @@ app.openapi(
   },
 );
 
+// Фаза «Отчёт»: ставит в очередь снятие метрик для всех опубликованных
+// размещений (есть post_url). metrics-worker разбирает pending по 1 за tick
+// (троттл 10с/100 в час) — TDLib openChat+viewMessages, не bulk-pull.
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/collect-metrics",
+    tags: ["campaigns"],
+    request: { params: WsProjectParam },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({ queued: z.number().int() }),
+          },
+        },
+        description: "Queued for metrics-worker",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const { projectId } = c.req.valid("param");
+    await assertProjectAccess(projectId, wsId, userId, role);
+
+    // Только одобренный шортлист с постом — ровно то, что показывает экран
+    // отчёта. Без этого фильтра воркер жёг бы часовой лимит на размещения,
+    // которых в отчёте не видно (не-approved / не-shortlist с post_url).
+    const queued = await db
+      .update(projectItems)
+      .set({ metricsStatus: "pending", metricsError: null })
+      .where(
+        and(
+          eq(projectItems.projectId, projectId),
+          eq(projectItems.kind, "placement"),
+          eq(projectItems.clientStatus, "approved"),
+          isNotNull(projectItems.shortlistedAt),
+          isNotNull(projectItems.postUrl),
+        ),
+      )
+      .returning({ id: projectItems.id });
+    if (queued.length === 0) {
+      throw new HTTPException(400, {
+        message: "Нет опубликованных постов для снятия статистики",
+      });
+    }
+    return c.json({ queued: queued.length });
+  },
+);
+
+// Получатель аутрича по каналу = первый привязанный админ-контакт. Нет
+// админа → размещение без получателя (цепочку не запустить, пока контакт не
+// привязан в сайдбаре канала).
+async function resolveAdminRecipient(channelId: string) {
+  const [admin] = await db
+    .select({ contactId: channelAdmins.contactId, props: contacts.properties })
+    .from(channelAdmins)
+    .innerJoin(contacts, eq(contacts.id, channelAdmins.contactId))
+    .where(eq(channelAdmins.channelId, channelId))
+    .limit(1);
+  const p = (admin?.props ?? {}) as Record<string, unknown>;
+  return {
+    contactId: admin?.contactId ?? null,
+    username: (p.telegram_username as string | undefined) ?? null,
+    tgUserId: (p.tg_user_id as string | undefined) ?? null,
+  };
+}
+
 // Колонки placement-строки (общие для list/load).
 function placementColumns() {
   return {
@@ -594,6 +800,13 @@ function placementColumns() {
     postUrl: projectItems.postUrl,
     publishedAt: projectItems.publishedAt,
     actReceivedAt: projectItems.actReceivedAt,
+    metricsStatus: projectItems.metricsStatus,
+    metricsViews: projectItems.metricsViews,
+    metricsForwards: projectItems.metricsForwards,
+    metricsReactions: projectItems.metricsReactions,
+    metricsCollectedAt: projectItems.metricsCollectedAt,
+    metricsError: projectItems.metricsError,
+    postSnapshot: projectItems.postSnapshot,
     createdAt: projectItems.createdAt,
     contactId: projectItems.contactId,
     username: projectItems.username,
@@ -664,6 +877,18 @@ function serializePlacement(
     postUrl: string | null;
     publishedAt: Date | null;
     actReceivedAt: Date | null;
+    metricsStatus: (typeof placementMetricsStatus.enumValues)[number];
+    metricsViews: number | null;
+    metricsForwards: number | null;
+    metricsReactions: number | null;
+    metricsCollectedAt: Date | null;
+    metricsError: string | null;
+    postSnapshot: {
+      text: string;
+      thumbB64: string | null;
+      thumbW: number | null;
+      thumbH: number | null;
+    } | null;
     createdAt: Date;
     contactId: string | null;
     username: string | null;
@@ -726,6 +951,13 @@ function serializePlacement(
     postUrl: row.postUrl,
     publishedAt: row.publishedAt?.toISOString() ?? null,
     actReceivedAt: row.actReceivedAt?.toISOString() ?? null,
+    metricsStatus: row.metricsStatus,
+    metricsViews: row.metricsViews,
+    metricsForwards: row.metricsForwards,
+    metricsReactions: row.metricsReactions,
+    metricsCollectedAt: row.metricsCollectedAt?.toISOString() ?? null,
+    metricsError: row.metricsError,
+    postSnapshot: row.postSnapshot,
     createdAt: row.createdAt.toISOString(),
   };
 }

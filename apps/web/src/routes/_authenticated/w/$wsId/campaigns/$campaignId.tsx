@@ -14,6 +14,10 @@ import {
   Pause,
   Play,
   CheckCircle2,
+  RefreshCw,
+  Eye,
+  Repeat2,
+  Heart,
 } from "lucide-react";
 import { BackButton } from "../../../../../components/back-button";
 import { Modal } from "../../../../../components/modal";
@@ -44,6 +48,7 @@ import {
   creativeView,
 } from "./-ui";
 import { PlacementDrawer, ProductionDrawer } from "./-placement-drawer";
+import { ChannelDrawer } from "../../../../../components/channel-drawer";
 
 export const Route = createFileRoute(
   "/_authenticated/w/$wsId/campaigns/$campaignId",
@@ -169,7 +174,7 @@ function CampaignPage() {
             onNext={() => pickPhase("wrapup")}
           />
         )}
-        {phase === "wrapup" && <StubPhase />}
+        {phase === "wrapup" && <WrapupPhase wsId={wsId} campaign={campaign} />}
       </div>
     </div>
   );
@@ -291,17 +296,21 @@ function BriefPhase({
   onNext: () => void;
 }) {
   const qc = useQueryClient();
+  // Даты храним как YYYY-MM-DD (формат <input type=date>); в API уходит ISO.
+  const toDateInput = (iso: string | null) => (iso ? iso.slice(0, 10) : "");
   const [draft, setDraft] = useState(() => ({
     brief: campaign.brief ?? "",
     budgetAmount: campaign.budgetAmount?.toString() ?? "",
-    kpi: campaign.kpi ?? "",
+    periodStart: toDateInput(campaign.periodStart),
+    periodEnd: toDateInput(campaign.periodEnd),
     tov: campaign.tov ?? "",
     constraints: campaign.constraints ?? "",
   }));
   const server = {
     brief: campaign.brief ?? "",
     budgetAmount: campaign.budgetAmount?.toString() ?? "",
-    kpi: campaign.kpi ?? "",
+    periodStart: toDateInput(campaign.periodStart),
+    periodEnd: toDateInput(campaign.periodEnd),
     tov: campaign.tov ?? "",
     constraints: campaign.constraints ?? "",
   };
@@ -318,7 +327,12 @@ function BriefPhase({
             budgetAmount: draft.budgetAmount.trim()
               ? Number(draft.budgetAmount)
               : null,
-            kpi: draft.kpi || null,
+            periodStart: draft.periodStart
+              ? new Date(draft.periodStart).toISOString()
+              : null,
+            periodEnd: draft.periodEnd
+              ? new Date(draft.periodEnd).toISOString()
+              : null,
             tov: draft.tov || null,
             constraints: draft.constraints || null,
           },
@@ -342,32 +356,47 @@ function BriefPhase({
             className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
           />
         </BriefField>
-        <BriefField label="Бюджет, ₽">
-          <input
-            inputMode="numeric"
-            value={draft.budgetAmount}
-            onChange={(e) =>
-              setDraft((d) => ({ ...d, budgetAmount: e.target.value }))
-            }
-            className="w-48 rounded-md border border-zinc-300 px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
-          />
-        </BriefField>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <BriefField label="KPI">
+        <div className="grid gap-4 sm:grid-cols-3">
+          <BriefField label="Бюджет, ₽">
             <input
-              value={draft.kpi}
-              onChange={(e) => setDraft((d) => ({ ...d, kpi: e.target.value }))}
+              inputMode="numeric"
+              value={draft.budgetAmount}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, budgetAmount: e.target.value }))
+              }
               className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
             />
           </BriefField>
-          <BriefField label="Tone of voice">
+          <BriefField label="Старт кампании">
             <input
-              value={draft.tov}
-              onChange={(e) => setDraft((d) => ({ ...d, tov: e.target.value }))}
+              type="date"
+              value={draft.periodStart}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, periodStart: e.target.value }))
+              }
+              className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+            />
+          </BriefField>
+          <BriefField label="Финиш кампании">
+            <input
+              type="date"
+              value={draft.periodEnd}
+              min={draft.periodStart || undefined}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, periodEnd: e.target.value }))
+              }
               className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
             />
           </BriefField>
         </div>
+        <BriefField label="Tone of voice">
+          <textarea
+            rows={3}
+            value={draft.tov}
+            onChange={(e) => setDraft((d) => ({ ...d, tov: e.target.value }))}
+            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
+          />
+        </BriefField>
         <BriefField label="Ограничения">
           <textarea
             rows={2}
@@ -1034,16 +1063,211 @@ function ProductionPhase({
   );
 }
 
-// ── Заглушка для оставшихся фаз (отдельные PR) ──────────────────────────────
-function StubPhase() {
+// ── Фаза 6: Отчёт ───────────────────────────────────────────────────────────
+// Метрики вышедших постов снимаются metrics-worker'ом через TDLib (openChat +
+// viewMessages, не bulk-pull). Кнопка ставит размещения в pending; пока есть
+// pending — поллим. Снимок поста (текст + минитамбнейл) показываем как карточку.
+function WrapupPhase({ wsId, campaign }: { wsId: string; campaign: Campaign }) {
+  const projectId = campaign.id;
+  const qc = useQueryClient();
+  const rowsQ = useQuery({
+    queryKey: ["placements", wsId, projectId, "shortlist"] as const,
+    queryFn: async () => {
+      const { data, error } = await api.GET(
+        "/v1/workspaces/{wsId}/projects/{projectId}/placements",
+        { params: { path: { wsId, projectId }, query: { stage: "shortlist" } } },
+      );
+      if (error) throw error;
+      return data;
+    },
+    // Пока worker разбирает очередь — поллим. Условие по тому же набору, что
+    // видимые строки (approved+postUrl), иначе поллинг и pendingCount
+    // рассинхронятся: спиннер крутится вечно либо не появляется вовсе.
+    refetchInterval: (q) =>
+      (q.state.data ?? []).some(
+        (p) =>
+          p.clientStatus === "approved" &&
+          p.postUrl &&
+          p.metricsStatus === "pending",
+      )
+        ? 3000
+        : false,
+  });
+
+  // Отчёт — про вышедшие посты: одобренные клиентом размещения с post_url.
+  const rows = (rowsQ.data ?? []).filter(
+    (p) => p.clientStatus === "approved" && p.postUrl,
+  );
+  const pendingCount = rows.filter((p) => p.metricsStatus === "pending").length;
+
+  const collect = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.POST(
+        "/v1/workspaces/{wsId}/projects/{projectId}/collect-metrics",
+        { params: { path: { wsId, projectId } } },
+      );
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () =>
+      qc.invalidateQueries({
+        queryKey: ["placements", wsId, projectId, "shortlist"],
+      }),
+  });
+
+  const totalBudget = rows.reduce((s, p) => s + (p.priceAmount ?? 0), 0);
+  // Средний CPV считаем по строкам с реально снятыми просмотрами: иначе бюджет
+  // ещё-не-снятых попадёт в числитель при нуле в знаменателе → CPV завышается
+  // в разы и «прыгает» вниз по мере добора метрик.
+  const measured = rows.filter((p) => p.metricsViews !== null);
+  const measuredViews = measured.reduce((s, p) => s + (p.metricsViews ?? 0), 0);
+  const measuredBudget = measured.reduce((s, p) => s + (p.priceAmount ?? 0), 0);
+
   return (
-    <div className="rounded-2xl bg-white p-10 text-center shadow-sm">
-      <p className="text-sm text-zinc-500">
-        Эта фаза в разработке — согласование клиентом, финальный оффер,
-        производство и отчёт появятся следующими шагами.
-      </p>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-base font-semibold">Отчёт по кампании</h2>
+        <button
+          type="button"
+          onClick={() => collect.mutate()}
+          disabled={collect.isPending || pendingCount > 0 || rows.length === 0}
+          className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+        >
+          <RefreshCw size={15} className={pendingCount > 0 ? "animate-spin" : ""} />
+          {pendingCount > 0 ? `Снимаем… ${pendingCount}` : "Снять статистику со всех"}
+        </button>
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="rounded-2xl bg-white p-6 text-sm text-zinc-500 shadow-sm">
+          Нет вышедших постов. Отчёт собирается после публикации размещений
+          (фаза «Производство» → ссылка на пост).
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Stat label="Постов вышло" value={String(rows.length)} />
+            <Stat label="Σ просмотров" value={formatViews(measuredViews)} />
+            <Stat label="Σ бюджет" value={formatRub(totalBudget)} />
+            <Stat
+              label="Средний CPV"
+              value={
+                measured.length > 0 ? cpv(measuredBudget, measuredViews) : "—"
+              }
+            />
+          </div>
+
+          <TableCard>
+            <thead className="bg-zinc-50 text-xs text-zinc-500">
+              <tr>
+                <Th>Канал</Th>
+                <Th>Пост</Th>
+                <Th className="text-right">
+                  <Eye size={13} className="inline" />
+                </Th>
+                <Th className="text-right">
+                  <Repeat2 size={13} className="inline" />
+                </Th>
+                <Th className="text-right">
+                  <Heart size={13} className="inline" />
+                </Th>
+                <Th className="text-right">CPV</Th>
+                <Th>Снято</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((p) => (
+                <tr key={p.id} className="border-t border-zinc-100">
+                  <td className="px-4 py-2.5">
+                    <ChannelCell placement={p} />
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <PostSnapshotCell placement={p} />
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums text-zinc-700">
+                    {p.metricsViews === null ? "—" : formatViews(p.metricsViews)}
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums text-zinc-700">
+                    {p.metricsForwards ?? "—"}
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums text-zinc-700">
+                    {p.metricsReactions ?? "—"}
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums text-zinc-700">
+                    {cpv(p.priceAmount, p.metricsViews)}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <MetricsStatusCell placement={p} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </TableCard>
+        </>
+      )}
     </div>
   );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl bg-white p-4 shadow-sm">
+      <div className="text-xs text-zinc-400">{label}</div>
+      <div className="mt-1 text-xl font-semibold text-zinc-900">{value}</div>
+    </div>
+  );
+}
+
+// Карточка вышедшего поста: минитамбнейл (base64 jpeg из TDLib payload) + текст.
+function PostSnapshotCell({ placement }: { placement: Placement }) {
+  const snap = placement.postSnapshot;
+  return (
+    <div className="flex items-start gap-2">
+      {snap?.thumbB64 ? (
+        <img
+          src={`data:image/jpeg;base64,${snap.thumbB64}`}
+          alt=""
+          className="h-10 w-10 shrink-0 rounded object-cover"
+        />
+      ) : null}
+      <div className="min-w-0 max-w-xs">
+        {snap?.text ? (
+          <p className="line-clamp-2 text-xs text-zinc-600">{snap.text}</p>
+        ) : (
+          <span className="text-xs text-zinc-400">—</span>
+        )}
+        {placement.postUrl ? (
+          <a
+            href={placement.postUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs text-emerald-600 hover:underline"
+          >
+            открыть пост
+          </a>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function MetricsStatusCell({ placement }: { placement: Placement }) {
+  const p = placement;
+  if (p.metricsStatus === "pending")
+    return <Chip tone="amber">снимаем…</Chip>;
+  if (p.metricsStatus === "error")
+    return (
+      <span title={p.metricsError ?? undefined}>
+        <Chip tone="red">ошибка</Chip>
+      </span>
+    );
+  if (p.metricsCollectedAt)
+    return (
+      <span className="text-xs text-zinc-500">
+        {formatPastRelative(p.metricsCollectedAt)}
+      </span>
+    );
+  return <span className="text-xs text-zinc-400">—</span>;
 }
 
 // ── Модалка: добавить канал в лонглист ──────────────────────────────────────
@@ -1059,7 +1283,9 @@ function AddChannelModal({
   onClose: () => void;
 }) {
   const qc = useQueryClient();
+  const [tab, setTab] = useState<"bulk" | "one">("bulk");
   const [q, setQ] = useState("");
+  const [bulkText, setBulkText] = useState("");
   const channelsQ = useQuery({
     queryKey: ["channels", wsId] as const,
     queryFn: async () => {
@@ -1082,6 +1308,28 @@ function AddChannelModal({
       qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] }),
   });
 
+  // Массовое: по одному URL/@username на строку → один запрос, бэк делает
+  // find-or-create канала и заводит размещения. Результат показываем сводкой.
+  const bulkLines = bulkText
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const bulk = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.POST(
+        "/v1/workspaces/{wsId}/projects/{projectId}/placements/bulk",
+        { params: { path: { wsId, projectId } }, body: { identifiers: bulkLines } },
+      );
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      setBulkText("");
+      qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] });
+      qc.invalidateQueries({ queryKey: ["channels", wsId] });
+    },
+  });
+
   const existingIds = new Set(
     existing.map((p) => p.channel?.id).filter(Boolean),
   );
@@ -1097,58 +1345,142 @@ function AddChannelModal({
 
   return (
     <Modal onClose={onClose} size="md">
-      <h2 className="mb-3 text-base font-semibold">Добавить блогера в лонглист</h2>
-      <div className="relative mb-3">
-        <Search size={14} className="absolute left-2.5 top-2.5 text-zinc-400" />
-        <input
-          autoFocus
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Поиск по названию или @username"
-          className="w-full rounded-md border border-zinc-300 bg-white pl-8 pr-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
-        />
+      <h2 className="mb-3 text-base font-semibold">Добавить блогеров в лонглист</h2>
+      <div className="mb-3 flex gap-1 rounded-lg bg-zinc-100 p-1 text-sm">
+        <TabBtn active={tab === "bulk"} onClick={() => setTab("bulk")}>
+          Несколько
+        </TabBtn>
+        <TabBtn active={tab === "one"} onClick={() => setTab("one")}>
+          Один
+        </TabBtn>
       </div>
-      <div className="max-h-80 space-y-1 overflow-y-auto">
-        {list.length === 0 && (
-          <p className="px-1 py-2 text-sm text-zinc-500">
-            {channelsQ.isLoading ? "Загрузка…" : "Ничего не найдено."}
-          </p>
-        )}
-        {list.map((c) => (
-          <button
-            key={c.id}
-            type="button"
-            disabled={add.isPending}
-            onClick={() => add.mutate(c.id)}
-            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left hover:bg-zinc-50 disabled:opacity-50"
-          >
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-500">
-              <Users size={14} />
+
+      {tab === "bulk" ? (
+        <div className="space-y-3">
+          <textarea
+            autoFocus
+            rows={8}
+            value={bulkText}
+            onChange={(e) => setBulkText(e.target.value)}
+            placeholder={"По одной ссылке или @username на строку:\nhttps://t.me/durov\n@telegram\ndurov"}
+            className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 font-mono text-sm focus:border-emerald-500 focus:outline-none"
+          />
+          {bulk.data && (
+            <p className="text-sm text-emerald-700">
+              Добавлено {bulk.data.added} · новых каналов{" "}
+              {bulk.data.channelsCreated}
+              {bulk.data.skippedDuplicate > 0 &&
+                ` · уже в списке: ${bulk.data.skippedDuplicate}`}
+              {bulk.data.skippedInvalid > 0 &&
+                ` · не распознано: ${bulk.data.skippedInvalid}`}
+            </p>
+          )}
+          {bulk.error && (
+            <p className="text-sm text-red-600">{errorMessage(bulk.error)}</p>
+          )}
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-zinc-500">
+              {bulkLines.length} строк
             </span>
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-medium text-zinc-900">
-                {c.title}
-              </div>
-              <div className="truncate text-xs text-zinc-400">
-                {c.username ? `@${c.username}` : "—"}
-                {c.memberCount != null &&
-                  ` · ${formatViews(c.memberCount)} подписчиков`}
-              </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-xl border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+              >
+                Готово
+              </button>
+              <button
+                type="button"
+                disabled={bulk.isPending || bulkLines.length === 0}
+                onClick={() => bulk.mutate()}
+                className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {bulk.isPending ? "Добавляем…" : `Добавить ${bulkLines.length}`}
+              </button>
             </div>
-            <Plus size={15} className="shrink-0 text-emerald-600" />
-          </button>
-        ))}
-      </div>
-      <div className="mt-4 flex justify-end">
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-xl border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
-        >
-          Готово
-        </button>
-      </div>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="relative mb-3">
+            <Search size={14} className="absolute left-2.5 top-2.5 text-zinc-400" />
+            <input
+              autoFocus
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Поиск по названию или @username"
+              className="w-full rounded-md border border-zinc-300 bg-white pl-8 pr-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+            />
+          </div>
+          <div className="max-h-80 space-y-1 overflow-y-auto">
+            {list.length === 0 && (
+              <p className="px-1 py-2 text-sm text-zinc-500">
+                {channelsQ.isLoading ? "Загрузка…" : "Ничего не найдено."}
+              </p>
+            )}
+            {list.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                disabled={add.isPending}
+                onClick={() => add.mutate(c.id)}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left hover:bg-zinc-50 disabled:opacity-50"
+              >
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-500">
+                  <Users size={14} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium text-zinc-900">
+                    {c.title}
+                  </div>
+                  <div className="truncate text-xs text-zinc-400">
+                    {c.username ? `@${c.username}` : "—"}
+                    {c.memberCount != null &&
+                      ` · ${formatViews(c.memberCount)} подписчиков`}
+                  </div>
+                </div>
+                <Plus size={15} className="shrink-0 text-emerald-600" />
+              </button>
+            ))}
+          </div>
+          <div className="mt-4 flex justify-end">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+            >
+              Готово
+            </button>
+          </div>
+        </>
+      )}
     </Modal>
+  );
+}
+
+function TabBtn({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        "flex-1 rounded-md px-3 py-1.5 font-medium transition-colors " +
+        (active
+          ? "bg-white text-zinc-900 shadow-sm"
+          : "text-zinc-500 hover:text-zinc-700")
+      }
+    >
+      {children}
+    </button>
   );
 }
 
@@ -1263,22 +1595,45 @@ function AccountCell({ account }: { account: Placement["account"] }) {
   );
 }
 
+// Клик по каналу открывает общий ChannelDrawer (лента постов, авто-синк
+// статистики «открыл-актуализировалось», админы) — переиспользуем со страницы
+// Каналов. stopPropagation, чтобы не сработал row-click (drawer размещения).
 function ChannelCell({ placement }: { placement: Placement }) {
+  const { wsId } = Route.useParams();
+  const [open, setOpen] = useState(false);
   const ch = placement.channel;
   return (
-    <div className="flex items-center gap-2.5">
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-500">
-        <Users size={14} />
-      </span>
-      <div className="min-w-0">
-        <div className="truncate text-sm font-medium text-zinc-900">
-          {ch?.title ?? "Канал удалён"}
+    <>
+      <button
+        type="button"
+        disabled={!ch}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (ch) setOpen(true);
+        }}
+        title={ch ? "Открыть канал: лента, статистика, админы" : undefined}
+        className="-mx-1 flex items-center gap-2.5 rounded px-1 py-0.5 text-left hover:bg-zinc-100 disabled:hover:bg-transparent"
+      >
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-500">
+          <Users size={14} />
+        </span>
+        <div className="min-w-0">
+          <div className="truncate text-sm font-medium text-zinc-900">
+            {ch?.title ?? "Канал удалён"}
+          </div>
+          <div className="truncate text-xs text-zinc-400">
+            {ch?.username ? `@${ch.username}` : "—"}
+          </div>
         </div>
-        <div className="truncate text-xs text-zinc-400">
-          {ch?.username ? `@${ch.username}` : "—"}
-        </div>
-      </div>
-    </div>
+      </button>
+      {open && ch && (
+        <ChannelDrawer
+          wsId={wsId}
+          channelId={ch.id}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
   );
 }
 

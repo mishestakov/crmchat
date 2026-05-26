@@ -69,6 +69,21 @@ export async function clearAccountCooldown(accountId: string): Promise<void> {
     .where(eq(outreachAccounts.id, accountId));
 }
 
+// Парсер FLOOD_WAIT/SLOWMODE из текста ошибки TDLib. Общий для всех, кто
+// дёргает аккаунт (рассылка И снятие метрик) — rate-budget у аккаунта один,
+// FloodWait прилетает на любой метод, поэтому парсер живёт здесь, не в воркере.
+export function parseFloodWaitSeconds(msg: string): number | null {
+  // TDLib переписывает MTProto FLOOD_WAIT в "Too Many Requests: retry after N",
+  // но для некоторых методов оставляет MTProto-style текст.
+  const m1 = msg.match(/retry after (\d+)/i);
+  if (m1) return Number(m1[1]);
+  const m2 = msg.match(/FLOOD_WAIT_(\d+)/);
+  if (m2) return Number(m2[1]);
+  const m3 = msg.match(/SLOWMODE_WAIT_(\d+)/);
+  if (m3) return Number(m3[1]);
+  return null;
+}
+
 function pendingStoreFor(workspaceId: string): PendingStore {
   let s = pendingStores.get(workspaceId);
   if (!s) {

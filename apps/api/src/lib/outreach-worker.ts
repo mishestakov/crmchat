@@ -13,6 +13,7 @@ import {
   clearAccountCooldown,
   evictWorkerClient,
   getOutreachWorkerClient,
+  parseFloodWaitSeconds,
   setAccountCooldown,
 } from "./outreach-account-client.ts";
 import { emitProjectChanged } from "./events.ts";
@@ -547,18 +548,6 @@ async function resolveAndCheckNotBot(
 
 function stripAt(s: string): string {
   return s.startsWith("@") ? s.slice(1) : s;
-}
-
-function parseFloodWaitSeconds(msg: string): number | null {
-  // TDLib переписывает MTProto FLOOD_WAIT в "Too Many Requests: retry after N",
-  // но для некоторых методов оставляет MTProto-style текст.
-  const m1 = msg.match(/retry after (\d+)/i);
-  if (m1) return Number(m1[1]);
-  const m2 = msg.match(/FLOOD_WAIT_(\d+)/);
-  if (m2) return Number(m2[1]);
-  const m3 = msg.match(/SLOWMODE_WAIT_(\d+)/);
-  if (m3) return Number(m3[1]);
-  return null;
 }
 
 function isPermanentSendError(msg: string): boolean {
