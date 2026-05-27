@@ -1,12 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { Contact } from "@repo/core";
 import { api } from "../lib/api";
-import { type AccountRow, ChatDrawer } from "./chat-drawer";
+import { type AccountRow, ChatDrawer, ChatPanel } from "./chat-drawer";
 
-// Обёртка над ChatDrawer для входа из проекта (канбан + таблица лидов).
-// После 5A лид всегда указывает на contact (создаётся при импорте), поэтому
-// тут только режим contact с историей через /contacts/{id}/chat-history.
+// Обёртка над ChatDrawer/ChatPanel для входа из проекта (канбан + таблица
+// лидов + лонглист кампаний). После 5A лид всегда указывает на contact
+// (создаётся при импорте), поэтому тут только режим contact с историей через
+// /contacts/{id}/chat-history.
 
 type LeadShape = {
   id: string;
@@ -14,12 +15,9 @@ type LeadShape = {
   account: { id: string } | null;
 };
 
-export function LeadChatDrawer(props: {
-  wsId: string;
-  lead: LeadShape;
-  accounts: AccountRow[];
-  onClose: () => void;
-}) {
+// Резолв contact + выбор аккаунта — общая часть drawer- и panel-режима.
+// null, пока контакт не готов (нет id / грузится / не нашёлся).
+function useLeadChat(props: { wsId: string; lead: LeadShape; accounts: AccountRow[] }) {
   const contactQ = useQuery({
     queryKey: ["contact", props.wsId, props.lead.contactId ?? ""] as const,
     enabled: !!props.lead.contactId,
@@ -38,19 +36,61 @@ export function LeadChatDrawer(props: {
   const initialAccountId =
     props.lead.account?.id ?? props.accounts[0]?.id ?? null;
   const [accountId, setAccountId] = useState<string | null>(initialAccountId);
-  if (!accountId) return null;
-  if (!props.lead.contactId) return null;
-  if (contactQ.isLoading) return null;
-  if (!contactQ.data) return null;
 
+  // На первом рендере аккаунты могут быть ещё не загружены → accountId залипает
+  // в null. Подставляем первый, как только они приедут (fix #7).
+  useEffect(() => {
+    if (accountId) return;
+    const fallback = props.lead.account?.id ?? props.accounts[0]?.id ?? null;
+    if (fallback) setAccountId(fallback);
+  }, [props.accounts, props.lead.account?.id, accountId]);
+
+  if (!accountId || !props.lead.contactId || !contactQ.data) return null;
+  return { contact: contactQ.data, accountId, setAccountId };
+}
+
+export function LeadChatDrawer(props: {
+  wsId: string;
+  lead: LeadShape;
+  accounts: AccountRow[];
+  onClose: () => void;
+}) {
+  const chat = useLeadChat(props);
+  if (!chat) return null;
   return (
     <ChatDrawer
       wsId={props.wsId}
-      contact={contactQ.data}
-      accountId={accountId}
+      contact={chat.contact}
+      accountId={chat.accountId}
       accounts={props.accounts}
-      onSelectAccount={setAccountId}
+      onSelectAccount={chat.setAccountId}
       onClose={props.onClose}
+    />
+  );
+}
+
+// Встроенный режим (без оверлея): для side-by-side рядом с карточкой подбора.
+// Закрытие — на родителе, X в шапке скрыт.
+export function LeadChatPanel(props: {
+  wsId: string;
+  lead: LeadShape;
+  accounts: AccountRow[];
+}) {
+  const chat = useLeadChat(props);
+  if (!chat) {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-zinc-400">
+        Загрузка переписки…
+      </div>
+    );
+  }
+  return (
+    <ChatPanel
+      wsId={props.wsId}
+      contact={chat.contact}
+      accountId={chat.accountId}
+      accounts={props.accounts}
+      onSelectAccount={chat.setAccountId}
     />
   );
 }

@@ -1,13 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   Plus,
-  Settings2,
   Send,
   Users,
-  ChevronRight,
-  Search,
   Check,
   CheckCheck,
   MessageCircleReply,
@@ -19,7 +16,6 @@ import {
   Repeat2,
   Heart,
 } from "lucide-react";
-import { BackButton } from "../../../../../components/back-button";
 import { Modal } from "../../../../../components/modal";
 import {
   MessagesEditor,
@@ -28,7 +24,6 @@ import {
 } from "../../../../../components/messages-editor";
 import { api } from "../../../../../lib/api";
 import { errorMessage } from "../../../../../lib/errors";
-import { useOutreachAccounts } from "../../../../../lib/outreach-queries";
 import { useEventSourceEvent } from "../../../../../lib/hooks";
 import { formatPastRelative } from "../../../../../lib/date-utils";
 import {
@@ -42,12 +37,11 @@ import {
 import {
   Chip,
   PhaseStepper,
-  availableView,
   clientView,
   contractView,
   creativeView,
 } from "./-ui";
-import { PlacementDrawer, ProductionDrawer } from "./-placement-drawer";
+import { PlacementPane, ProductionDrawer } from "./-placement-drawer";
 import { ChannelDrawer } from "../../../../../components/channel-drawer";
 
 export const Route = createFileRoute(
@@ -116,20 +110,19 @@ function CampaignPage() {
     tracksQ.data?.find((t) => t.id === campaign.trackId)?.name ?? "—";
 
   return (
-    <div className="min-h-full">
-      <div className="border-b border-zinc-200 bg-white">
+    <div className="flex h-full flex-col">
+      <div className="shrink-0 border-b border-zinc-200 bg-white">
         <div className="mx-auto max-w-6xl px-6 py-3">
           <div className="flex items-center gap-3">
-            <BackButton />
             <div className="min-w-0">
               <div className="text-xs font-medium uppercase tracking-wide text-zinc-400">
                 {clientName}
               </div>
               <h1 className="truncate text-lg font-semibold">{campaign.name}</h1>
             </div>
-            <div className="ml-auto flex items-center gap-4 text-sm">
+            <StatusControls wsId={wsId} campaign={campaign} />
+            <div className="ml-auto text-sm">
               <Meta label="Бюджет" value={formatRub(campaign.budgetAmount)} />
-              <StatusControls wsId={wsId} campaign={campaign} />
             </div>
           </div>
         </div>
@@ -138,44 +131,29 @@ function CampaignPage() {
         </div>
       </div>
 
-      <div className="mx-auto max-w-6xl px-6 py-5">
-        {phase === "briefing" && (
-          <BriefPhase
-            wsId={wsId}
-            campaign={campaign}
-            onNext={() => pickPhase("longlist")}
-          />
-        )}
-        {phase === "longlist" && (
-          <LonglistPhase
-            wsId={wsId}
-            campaign={campaign}
-            onNext={() => pickPhase("review")}
-          />
-        )}
-        {phase === "review" && (
-          <ReviewPhase
-            wsId={wsId}
-            campaign={campaign}
-            onNext={() => pickPhase("shortlist")}
-          />
-        )}
-        {phase === "shortlist" && (
-          <ShortlistPhase
-            wsId={wsId}
-            campaign={campaign}
-            onNext={() => pickPhase("production")}
-          />
-        )}
-        {phase === "production" && (
-          <ProductionPhase
-            wsId={wsId}
-            campaign={campaign}
-            onNext={() => pickPhase("wrapup")}
-          />
-        )}
-        {phase === "wrapup" && <WrapupPhase wsId={wsId} campaign={campaign} />}
-      </div>
+      {/* Лонглист — инбокс на всю ширину и высоту (вне max-w-6xl, от края до
+          края). Остальные фазы — в центрированной прокручиваемой колонке. */}
+      {phase === "longlist" ? (
+        <div className="min-h-0 flex-1">
+          <LonglistPhase wsId={wsId} campaign={campaign} />
+        </div>
+      ) : (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto max-w-6xl px-6 py-5">
+            {phase === "briefing" && (
+              <BriefPhase wsId={wsId} campaign={campaign} />
+            )}
+            {phase === "review" && <ReviewPhase wsId={wsId} campaign={campaign} />}
+            {phase === "shortlist" && (
+              <ShortlistPhase wsId={wsId} campaign={campaign} />
+            )}
+            {phase === "production" && (
+              <ProductionPhase wsId={wsId} campaign={campaign} />
+            )}
+            {phase === "wrapup" && <WrapupPhase wsId={wsId} campaign={campaign} />}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -264,36 +242,13 @@ function CtlBtn({
   );
 }
 
-function NextBar({
-  children,
-  onClick,
-}: {
-  children: React.ReactNode;
-  onClick: () => void;
-}) {
-  return (
-    <div className="flex items-center justify-end gap-3 border-t border-zinc-200 pt-4">
-      <button
-        type="button"
-        onClick={onClick}
-        className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
-      >
-        {children}
-        <ChevronRight size={16} />
-      </button>
-    </div>
-  );
-}
-
 // ── Фаза 1: Бриф ──────────────────────────────────────────────────────────
 function BriefPhase({
   wsId,
   campaign,
-  onNext,
 }: {
   wsId: string;
   campaign: Campaign;
-  onNext: () => void;
 }) {
   const qc = useQueryClient();
   // Даты храним как YYYY-MM-DD (формат <input type=date>); в API уходит ISO.
@@ -421,7 +376,6 @@ function BriefPhase({
           <p className="text-sm text-red-600">{errorMessage(save.error)}</p>
         )}
       </div>
-      <NextBar onClick={onNext}>К лонглисту</NextBar>
     </div>
   );
 }
@@ -443,22 +397,19 @@ function BriefField({
   );
 }
 
-// ── Фаза 2: Лонглист + аутрич ──────────────────────────────────────────────
+// ── Фаза 2: Лонглист + аутрич — инбокс: список блогеров слева, чат с админом
+//    справа, данные подбора компактной строкой над чатом ─────────────────────
 function LonglistPhase({
   wsId,
   campaign,
-  onNext,
 }: {
   wsId: string;
   campaign: Campaign;
-  onNext: () => void;
 }) {
   const qc = useQueryClient();
   const projectId = campaign.id;
-  const [openId, setOpenId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
-  const [chainOpen, setChainOpen] = useState(false);
-  const accountsQ = useOutreachAccounts(wsId);
+  const [launchOpen, setLaunchOpen] = useState(false);
 
   // stage=longlist — только те, кого ещё опрашиваем (выбывшие «в шортлист» не
   // показываются здесь, они на фазе согласования).
@@ -485,144 +436,484 @@ function LonglistPhase({
     },
   );
 
-  const activate = useMutation({
-    mutationFn: async () => {
-      const { error } = await api.POST(
-        "/v1/workspaces/{wsId}/projects/{projectId}/activate",
-        { params: { path: { wsId, projectId } } },
-      );
-      if (error) throw error;
-    },
-    onSuccess: () =>
-      qc.invalidateQueries({ queryKey: ["campaign", wsId, projectId] }),
-  });
-
   const placements = placementsQ.data ?? [];
-  const open = placements.find((p) => p.id === openId) ?? null;
   const replied = placements.filter((p) => p.chainStatus === "replied").length;
+  const total = placements.length;
+  const ready = placements.filter((p) => p.contactReady).length;
+  const unready = total - ready;
+  const pct = total > 0 ? Math.round((ready / total) * 100) : 0;
   const isDraft = campaign.status === "draft";
-  const canLaunch =
-    isDraft && campaign.messages.length > 0 && placements.length > 0;
+
+  // Сколько ещё каналов у того же админа — для хинта «+N» в строке (этап 16.8).
+  const adminCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of placements) {
+      if (p.adminContactId) {
+        m.set(p.adminContactId, (m.get(p.adminContactId) ?? 0) + 1);
+      }
+    }
+    return m;
+  }, [placements]);
 
   return (
-    <div className="space-y-4">
-      <Toolbar>
-        <PrimaryBtn icon={<Plus size={15} />} onClick={() => setAddOpen(true)}>
-          Добавить блогера
-        </PrimaryBtn>
-        <GhostBtn icon={<Settings2 size={15} />} onClick={() => setChainOpen(true)}>
-          Настроить цепочку ({campaign.messages.length})
-        </GhostBtn>
-        {isDraft ? (
-          <GhostBtn
-            icon={<Send size={15} />}
-            disabled={!canLaunch || activate.isPending}
-            onClick={() => activate.mutate()}
-            title={
-              canLaunch
-                ? "Запустить массовый аутрич по лонглисту"
-                : "Нужна непустая цепочка и хотя бы один блогер"
-            }
-          >
-            Запустить рассылку
-          </GhostBtn>
-        ) : (
-          <Chip tone="emerald">рассылка идёт</Chip>
-        )}
-        <div className="ml-auto text-xs text-zinc-500">
-          {placements.length} в лонглисте · {replied} ответили
+    <div className="flex h-full flex-col">
+      {/* Тулбар: прогресс готовности контактов + добавить/запустить (этап 16.8). */}
+      <div className="shrink-0 border-b border-zinc-200 bg-white px-4 py-2.5">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <div className="flex items-center gap-2">
+            <div className="h-1.5 w-32 overflow-hidden rounded-full bg-zinc-200">
+              <div
+                className={
+                  "h-full rounded-full " +
+                  (unready === 0 && total > 0 ? "bg-emerald-500" : "bg-amber-400")
+                }
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            <span className="text-xs text-zinc-600">
+              Контакты {ready}/{total}
+              {unready > 0 && (
+                <span className="font-medium text-amber-600">
+                  {" · "}
+                  {unready} без контакта
+                </span>
+              )}
+            </span>
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setAddOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+            >
+              <Plus size={15} /> Добавить блогеров
+            </button>
+            {isDraft && (
+              <button
+                type="button"
+                onClick={() => setLaunchOpen(true)}
+                disabled={total === 0 || unready > 0}
+                title={
+                  unready > 0
+                    ? `${unready} каналов без контакта — найдите контакт или уберите из лонглиста`
+                    : total === 0
+                      ? "Добавьте блогеров"
+                      : undefined
+                }
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-zinc-300"
+              >
+                <Send size={15} /> Запустить аутрич
+                {total > 0 ? ` (${total})` : ""}
+              </button>
+            )}
+          </div>
         </div>
-      </Toolbar>
+      </div>
 
-      {activate.error && (
-        <p className="text-sm text-red-600">{errorMessage(activate.error)}</p>
-      )}
-
-      {placements.length === 0 ? (
-        <div className="rounded-2xl bg-white p-6 text-sm text-zinc-500 shadow-sm">
-          Лонглист пуст. Добавьте блогеров кнопкой «Добавить блогера».
-        </div>
-      ) : (
-        <TableCard>
-          <thead className="bg-zinc-50 text-xs text-zinc-500">
-            <tr>
-              <Th>Канал</Th>
-              <Th>Аутрич</Th>
-              <Th>Аккаунт</Th>
-              <Th>Готов?</Th>
-              <Th className="text-right">Цена</Th>
-              <Th className="text-right">Прогноз ПДП</Th>
-              <Th className="text-right">ERR</Th>
-              <Th className="text-right">CPV</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {placements.map((p) => {
-              const av = availableView(p.available);
-              return (
-                <tr
-                  key={p.id}
-                  onClick={() => setOpenId(p.id)}
-                  className="cursor-pointer border-t border-zinc-100 hover:bg-zinc-50"
-                >
-                  <td className="px-4 py-2.5">
-                    <ChannelCell placement={p} />
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <OutreachStatus p={p} />
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <AccountCell account={p.account} />
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <Chip tone={av.tone}>{av.label}</Chip>
-                  </td>
-                  <td className="px-4 py-2.5 text-right tabular-nums text-zinc-700">
-                    {formatRub(p.priceAmount)}
-                  </td>
-                  <td className="px-4 py-2.5 text-right tabular-nums text-zinc-700">
-                    {formatViews(p.forecastViews)}
-                  </td>
-                  <td className="px-4 py-2.5 text-right tabular-nums text-zinc-700">
-                    {p.forecastErr !== null ? p.forecastErr + "%" : "—"}
-                  </td>
-                  <td className="px-4 py-2.5 text-right tabular-nums text-zinc-700">
-                    {cpv(p.priceAmount, p.forecastViews)}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </TableCard>
-      )}
-
-      <NextBar onClick={onNext}>Отправить клиенту на согласование</NextBar>
-
-      {open && (
-        <PlacementDrawer
-          wsId={wsId}
-          projectId={projectId}
-          placement={open}
-          onClose={() => setOpenId(null)}
+      <div className="min-h-0 flex-1">
+        <InboxShell
+          items={placements}
+          getId={(p) => p.id}
+          headerRight={`${total} в лонглисте · ${replied} ответили`}
+          emptyHint="Лонглист пуст. Нажмите «Добавить блогеров», чтобы импортировать каналы — они сразу просканируются."
+          renderRow={(p, selected, onSelect) => (
+            <BloggerRow
+              p={p}
+              selected={selected}
+              onSelect={onSelect}
+              siblingCount={
+                p.adminContactId
+                  ? (adminCounts.get(p.adminContactId) ?? 1) - 1
+                  : 0
+              }
+            />
+          )}
+          renderPane={(p) => (
+            <PlacementPane
+              wsId={wsId}
+              projectId={projectId}
+              placement={p}
+              onRemoved={() => {}}
+            />
+          )}
         />
-      )}
+      </div>
+
       {addOpen && (
-        <AddChannelModal
+        <AddChannelsModal
           wsId={wsId}
           projectId={projectId}
-          existing={placements}
           onClose={() => setAddOpen(false)}
         />
       )}
-      {chainOpen && (
-        <ChainModal
+      {launchOpen && (
+        <LaunchModal
           wsId={wsId}
-          projectId={projectId}
-          initial={campaign.messages}
-          onClose={() => setChainOpen(false)}
+          campaign={campaign}
+          onClose={() => setLaunchOpen(false)}
         />
       )}
     </div>
+  );
+}
+
+// Инбокс: левый список + правая панель выбранного. Переиспользуется фазами
+// (Лонглист сейчас, Запуск — следующим проходом): наполнение строки/панели
+// задаёт фаза через renderRow/renderPane, каркас общий — выбор, «держим
+// валидный выбор», круглый «+», пустое состояние, высота от края до края.
+function InboxShell<T>({
+  items,
+  getId,
+  renderRow,
+  renderPane,
+  emptyHint,
+  onAdd,
+  addTitle,
+  headerRight,
+}: {
+  items: T[];
+  getId: (item: T) => string;
+  renderRow: (
+    item: T,
+    selected: boolean,
+    onSelect: () => void,
+  ) => React.ReactNode;
+  renderPane: (item: T) => React.ReactNode;
+  emptyHint: React.ReactNode;
+  onAdd?: () => void;
+  addTitle?: string;
+  headerRight?: React.ReactNode;
+}) {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = items.find((i) => getId(i) === selectedId) ?? null;
+
+  // Держим валидный выбор: по умолчанию первый; выбывшего (ушёл/удалён)
+  // заменяем на следующего, чтобы не утыкаться в пустую панель.
+  useEffect(() => {
+    const first = items[0];
+    if (!first) {
+      if (selectedId !== null) setSelectedId(null);
+      return;
+    }
+    if (!selectedId || !items.some((i) => getId(i) === selectedId)) {
+      setSelectedId(getId(first));
+    }
+  }, [items, selectedId, getId]);
+
+  return (
+    <div className="flex h-full min-h-[440px] overflow-hidden border-y border-zinc-200 bg-white">
+      <div className="flex w-[280px] shrink-0 flex-col border-r border-zinc-100">
+        {(onAdd || headerRight) && (
+          <div className="flex items-center gap-2 border-b border-zinc-100 px-3 py-2">
+            {onAdd && (
+              <button
+                type="button"
+                onClick={onAdd}
+                title={addTitle}
+                aria-label={addTitle}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white shadow-sm transition-colors hover:bg-emerald-700"
+              >
+                <Plus size={18} />
+              </button>
+            )}
+            {headerRight != null && (
+              <div className="min-w-0 flex-1 truncate text-xs text-zinc-500">
+                {headerRight}
+              </div>
+            )}
+          </div>
+        )}
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {items.length === 0 ? (
+            <div className="px-4 py-6 text-sm text-zinc-500">{emptyHint}</div>
+          ) : (
+            items.map((item) => {
+              const id = getId(item);
+              return (
+                <Fragment key={id}>
+                  {renderRow(item, id === selectedId, () => setSelectedId(id))}
+                </Fragment>
+              );
+            })
+          )}
+        </div>
+      </div>
+      <div className="min-w-0 flex-1">
+        {selected ? (
+          // key — пересоздать панель при смене выбранного (re-init draft'а).
+          <Fragment key={getId(selected)}>{renderPane(selected)}</Fragment>
+        ) : (
+          <div className="flex h-full items-center justify-center px-6 text-center text-sm text-zinc-400">
+            {items.length === 0 ? "" : "Выберите слева"}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Добавить блогеров в лонглист (этап 16.8): только импорт каналов, без запуска
+// рассылки. Каналы сразу сканируются (метрики/описание) и сопоставляются с
+// базой. В активной кампании доливку планирует бэк (контактные — в аутрич).
+function AddChannelsModal({
+  wsId,
+  projectId,
+  onClose,
+}: {
+  wsId: string;
+  projectId: string;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const [bulkText, setBulkText] = useState("");
+  const bulkLines = bulkText
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const add = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.POST(
+        "/v1/workspaces/{wsId}/projects/{projectId}/placements/bulk",
+        {
+          params: { path: { wsId, projectId } },
+          body: { identifiers: bulkLines },
+        },
+      );
+      if (error) throw error;
+      return data!;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] });
+      qc.invalidateQueries({ queryKey: ["campaign", wsId, projectId] });
+      qc.invalidateQueries({ queryKey: ["channels", wsId] });
+      // Не закрываем сразу — показываем итог (fix #9), особенно когда часть строк
+      // пропущена. Чистый импорт без пропусков можно сразу закрыть.
+    },
+  });
+
+  const res = add.data;
+
+  return (
+    <Modal onClose={onClose} size="lg">
+      <h2 className="mb-1 text-base font-semibold">
+        Добавить блогеров в лонглист
+      </h2>
+      {res ? (
+        <div className="mt-3">
+          <p className="text-sm text-zinc-700">
+            Добавлено: <b>{res.added}</b>
+            {res.channelsCreated > 0 && ` · создано каналов: ${res.channelsCreated}`}
+            {res.skippedDuplicate > 0 && ` · уже были: ${res.skippedDuplicate}`}
+            {res.skippedInvalid > 0 && ` · не распознано: ${res.skippedInvalid}`}
+          </p>
+          <div className="mt-4 flex justify-end">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+            >
+              Готово
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <p className="mb-4 text-xs text-zinc-500">
+            По одной ссылке или @username на строку. Каналы сразу просканируются
+            (подписчики, описание, личка) и сопоставятся с базой контактов.
+            Рассылка не запускается — это отдельная кнопка «Запустить аутрич».
+          </p>
+          <textarea
+            autoFocus
+            rows={7}
+            value={bulkText}
+            onChange={(e) => setBulkText(e.target.value)}
+            placeholder={
+              "По одной ссылке или @username на строку:\nhttps://t.me/durov\n@telegram\ndurov"
+            }
+            className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 font-mono text-sm focus:border-emerald-500 focus:outline-none"
+          />
+          {add.error && (
+            <p className="mt-2 text-sm text-red-600">{errorMessage(add.error)}</p>
+          )}
+          <div className="mt-4 flex items-center justify-between">
+            <span className="text-xs text-zinc-500">
+              {bulkLines.length} блогеров
+            </span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-xl border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                disabled={bulkLines.length === 0 || add.isPending}
+                onClick={() => add.mutate()}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+              >
+                <Plus size={15} />
+                {add.isPending ? "Добавляем…" : `Добавить (${bulkLines.length})`}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+// Запустить аутрич (этап 16.8): доступно в draft, когда у всех каналов есть
+// контакт (жёсткий гейт; бэк тоже проверяет и вернёт 400). Правим цепочку и
+// активируем. Опенер один на админа; {{каналы}} → перечень его каналов.
+function LaunchModal({
+  wsId,
+  campaign,
+  onClose,
+}: {
+  wsId: string;
+  campaign: Campaign;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const projectId = campaign.id;
+  const [messages, setMessages] = useState<Message[]>(() =>
+    campaign.messages.length > 0 ? campaign.messages : [newMessage()],
+  );
+  const chainDirty =
+    JSON.stringify(messages) !== JSON.stringify(campaign.messages);
+  const chainEmpty =
+    messages.length === 0 || messages.every((m) => !m.text.trim());
+
+  const launch = useMutation({
+    mutationFn: async () => {
+      if (chainDirty) {
+        const { error } = await api.PATCH(
+          "/v1/workspaces/{wsId}/projects/{projectId}",
+          { params: { path: { wsId, projectId } }, body: { messages } },
+        );
+        if (error) throw error;
+      }
+      const { error: actErr } = await api.POST(
+        "/v1/workspaces/{wsId}/projects/{projectId}/activate",
+        { params: { path: { wsId, projectId } } },
+      );
+      if (actErr) throw actErr;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] });
+      qc.invalidateQueries({ queryKey: ["campaign", wsId, projectId] });
+      onClose();
+    },
+  });
+
+  return (
+    <Modal onClose={onClose} size="lg">
+      <h2 className="mb-1 text-base font-semibold">Запустить аутрич</h2>
+      <p className="mb-4 text-xs text-zinc-500">
+        Первое сообщение уйдёт админам лонглиста через ваши Telegram-аккаунты в
+        человеческом темпе. Один опенер на админа — если у него несколько
+        каналов, перечислите их через{" "}
+        <code className="rounded bg-zinc-100 px-1">{"{{каналы}}"}</code>.
+      </p>
+      <MessagesEditor value={messages} onChange={setMessages} />
+      {launch.error && (
+        <p className="mt-2 text-sm text-red-600">{errorMessage(launch.error)}</p>
+      )}
+      <div className="mt-4 flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-xl border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+        >
+          Отмена
+        </button>
+        <button
+          type="button"
+          disabled={chainEmpty || launch.isPending}
+          onClick={() => launch.mutate()}
+          title={chainEmpty ? "Сначала задайте цепочку сообщений" : undefined}
+          className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+        >
+          <Send size={15} />
+          {launch.isPending ? "Запускаем…" : "Запустить аутрич"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+// Строка списка блогеров в лонглисте: канал + статус контакта (готов/нет) +
+// хинт «ещё N у этого админа» + статус аутрича/цена. Клик выбирает блогера.
+function BloggerRow({
+  p,
+  selected,
+  onSelect,
+  siblingCount,
+}: {
+  p: Placement;
+  selected: boolean;
+  onSelect: () => void;
+  siblingCount: number;
+}) {
+  const ch = p.channel;
+  const dmFree = !!ch?.hasDm && ch.dmStarCost === 0;
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={
+        "flex w-full items-start gap-2.5 border-b border-zinc-100 px-3 py-2.5 text-left " +
+        (selected ? "bg-emerald-50" : "hover:bg-zinc-50")
+      }
+    >
+      <span
+        className={
+          "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full " +
+          (p.contactReady
+            ? "bg-emerald-100 text-emerald-600"
+            : "bg-zinc-100 text-zinc-400")
+        }
+      >
+        <Users size={14} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-medium text-zinc-900">
+          {ch?.title ?? "Канал удалён"}
+        </div>
+        <div className="truncate text-xs text-zinc-400">
+          {ch?.username ? `@${ch.username}` : "—"}
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+          {p.contactReady ? (
+            <span className="text-[11px] text-emerald-600">контакт есть</span>
+          ) : (
+            <span className="text-[11px] font-medium text-amber-600">
+              нет контакта
+            </span>
+          )}
+          {dmFree && !p.adminContactId && (
+            <span className="text-[11px] text-zinc-400">личка бесплатно</span>
+          )}
+          {siblingCount > 0 && (
+            <span className="text-[11px] text-zinc-400">
+              ещё {siblingCount} у этого админа
+            </span>
+          )}
+        </div>
+        <div className="mt-1 flex items-center gap-2">
+          <OutreachStatus p={p} />
+          {p.priceAmount !== null && (
+            <span className="text-xs font-medium text-zinc-600">
+              {formatRub(p.priceAmount)}
+            </span>
+          )}
+        </div>
+      </div>
+    </button>
   );
 }
 
@@ -630,11 +921,9 @@ function LonglistPhase({
 function ReviewPhase({
   wsId,
   campaign,
-  onNext,
 }: {
   wsId: string;
   campaign: Campaign;
-  onNext: () => void;
 }) {
   const projectId = campaign.id;
   const shortlistQ = useQuery({
@@ -708,7 +997,6 @@ function ReviewPhase({
         </>
       )}
 
-      <NextBar onClick={onNext}>К финальному офферу</NextBar>
     </div>
   );
 }
@@ -823,11 +1111,9 @@ function ShareAccessBlock({
 function ShortlistPhase({
   wsId,
   campaign,
-  onNext,
 }: {
   wsId: string;
   campaign: Campaign;
-  onNext: () => void;
 }) {
   const projectId = campaign.id;
   const qc = useQueryClient();
@@ -941,7 +1227,6 @@ function ShortlistPhase({
         </TableCard>
       )}
 
-      <NextBar onClick={onNext}>К производству</NextBar>
     </div>
   );
 }
@@ -950,11 +1235,9 @@ function ShortlistPhase({
 function ProductionPhase({
   wsId,
   campaign,
-  onNext,
 }: {
   wsId: string;
   campaign: Campaign;
-  onNext: () => void;
 }) {
   const projectId = campaign.id;
   const [openId, setOpenId] = useState<string | null>(null);
@@ -1048,8 +1331,6 @@ function ProductionPhase({
           </tbody>
         </TableCard>
       )}
-
-      <NextBar onClick={onNext}>К отчёту</NextBar>
 
       {open && (
         <ProductionDrawer
@@ -1270,285 +1551,6 @@ function MetricsStatusCell({ placement }: { placement: Placement }) {
   return <span className="text-xs text-zinc-400">—</span>;
 }
 
-// ── Модалка: добавить канал в лонглист ──────────────────────────────────────
-function AddChannelModal({
-  wsId,
-  projectId,
-  existing,
-  onClose,
-}: {
-  wsId: string;
-  projectId: string;
-  existing: Placement[];
-  onClose: () => void;
-}) {
-  const qc = useQueryClient();
-  const [tab, setTab] = useState<"bulk" | "one">("bulk");
-  const [q, setQ] = useState("");
-  const [bulkText, setBulkText] = useState("");
-  const channelsQ = useQuery({
-    queryKey: ["channels", wsId] as const,
-    queryFn: async () => {
-      const { data, error } = await api.GET("/v1/workspaces/{wsId}/channels", {
-        params: { path: { wsId } },
-      });
-      if (error) throw error;
-      return data;
-    },
-  });
-  const add = useMutation({
-    mutationFn: async (channelId: string) => {
-      const { error } = await api.POST(
-        "/v1/workspaces/{wsId}/projects/{projectId}/placements",
-        { params: { path: { wsId, projectId } }, body: { channelId } },
-      );
-      if (error) throw error;
-    },
-    onSuccess: () =>
-      qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] }),
-  });
-
-  // Массовое: по одному URL/@username на строку → один запрос, бэк делает
-  // find-or-create канала и заводит размещения. Результат показываем сводкой.
-  const bulkLines = bulkText
-    .split("\n")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const bulk = useMutation({
-    mutationFn: async () => {
-      const { data, error } = await api.POST(
-        "/v1/workspaces/{wsId}/projects/{projectId}/placements/bulk",
-        { params: { path: { wsId, projectId } }, body: { identifiers: bulkLines } },
-      );
-      if (error) throw error;
-      return data;
-    },
-    onSuccess: () => {
-      setBulkText("");
-      qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] });
-      qc.invalidateQueries({ queryKey: ["channels", wsId] });
-    },
-  });
-
-  const existingIds = new Set(
-    existing.map((p) => p.channel?.id).filter(Boolean),
-  );
-  const term = q.trim().toLowerCase();
-  const list = (channelsQ.data ?? []).filter((c) => {
-    if (existingIds.has(c.id)) return false;
-    if (!term) return true;
-    return (
-      c.title.toLowerCase().includes(term) ||
-      (c.username ?? "").toLowerCase().includes(term)
-    );
-  });
-
-  return (
-    <Modal onClose={onClose} size="md">
-      <h2 className="mb-3 text-base font-semibold">Добавить блогеров в лонглист</h2>
-      <div className="mb-3 flex gap-1 rounded-lg bg-zinc-100 p-1 text-sm">
-        <TabBtn active={tab === "bulk"} onClick={() => setTab("bulk")}>
-          Несколько
-        </TabBtn>
-        <TabBtn active={tab === "one"} onClick={() => setTab("one")}>
-          Один
-        </TabBtn>
-      </div>
-
-      {tab === "bulk" ? (
-        <div className="space-y-3">
-          <textarea
-            autoFocus
-            rows={8}
-            value={bulkText}
-            onChange={(e) => setBulkText(e.target.value)}
-            placeholder={"По одной ссылке или @username на строку:\nhttps://t.me/durov\n@telegram\ndurov"}
-            className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 font-mono text-sm focus:border-emerald-500 focus:outline-none"
-          />
-          {bulk.data && (
-            <p className="text-sm text-emerald-700">
-              Добавлено {bulk.data.added} · новых каналов{" "}
-              {bulk.data.channelsCreated}
-              {bulk.data.skippedDuplicate > 0 &&
-                ` · уже в списке: ${bulk.data.skippedDuplicate}`}
-              {bulk.data.skippedInvalid > 0 &&
-                ` · не распознано: ${bulk.data.skippedInvalid}`}
-            </p>
-          )}
-          {bulk.error && (
-            <p className="text-sm text-red-600">{errorMessage(bulk.error)}</p>
-          )}
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-zinc-500">
-              {bulkLines.length} строк
-            </span>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="rounded-xl border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
-              >
-                Готово
-              </button>
-              <button
-                type="button"
-                disabled={bulk.isPending || bulkLines.length === 0}
-                onClick={() => bulk.mutate()}
-                className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-              >
-                {bulk.isPending ? "Добавляем…" : `Добавить ${bulkLines.length}`}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <>
-          <div className="relative mb-3">
-            <Search size={14} className="absolute left-2.5 top-2.5 text-zinc-400" />
-            <input
-              autoFocus
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Поиск по названию или @username"
-              className="w-full rounded-md border border-zinc-300 bg-white pl-8 pr-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
-            />
-          </div>
-          <div className="max-h-80 space-y-1 overflow-y-auto">
-            {list.length === 0 && (
-              <p className="px-1 py-2 text-sm text-zinc-500">
-                {channelsQ.isLoading ? "Загрузка…" : "Ничего не найдено."}
-              </p>
-            )}
-            {list.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                disabled={add.isPending}
-                onClick={() => add.mutate(c.id)}
-                className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left hover:bg-zinc-50 disabled:opacity-50"
-              >
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-500">
-                  <Users size={14} />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium text-zinc-900">
-                    {c.title}
-                  </div>
-                  <div className="truncate text-xs text-zinc-400">
-                    {c.username ? `@${c.username}` : "—"}
-                    {c.memberCount != null &&
-                      ` · ${formatViews(c.memberCount)} подписчиков`}
-                  </div>
-                </div>
-                <Plus size={15} className="shrink-0 text-emerald-600" />
-              </button>
-            ))}
-          </div>
-          <div className="mt-4 flex justify-end">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-xl border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
-            >
-              Готово
-            </button>
-          </div>
-        </>
-      )}
-    </Modal>
-  );
-}
-
-function TabBtn({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={
-        "flex-1 rounded-md px-3 py-1.5 font-medium transition-colors " +
-        (active
-          ? "bg-white text-zinc-900 shadow-sm"
-          : "text-zinc-500 hover:text-zinc-700")
-      }
-    >
-      {children}
-    </button>
-  );
-}
-
-// ── Модалка: настроить цепочку аутрича ──────────────────────────────────────
-function ChainModal({
-  wsId,
-  projectId,
-  initial,
-  onClose,
-}: {
-  wsId: string;
-  projectId: string;
-  initial: Message[];
-  onClose: () => void;
-}) {
-  const qc = useQueryClient();
-  const [messages, setMessages] = useState<Message[]>(() =>
-    initial.length > 0 ? initial : [newMessage()],
-  );
-  const save = useMutation({
-    mutationFn: async () => {
-      const { error } = await api.PATCH(
-        "/v1/workspaces/{wsId}/projects/{projectId}",
-        {
-          params: { path: { wsId, projectId } },
-          body: { messages },
-        },
-      );
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["campaign", wsId, projectId] });
-      onClose();
-    },
-  });
-
-  return (
-    <Modal onClose={onClose} size="lg">
-      <h2 className="mb-1 text-base font-semibold">Цепочка аутрича по лонглисту</h2>
-      <p className="mb-3 text-xs text-zinc-500">
-        Первое сообщение + пинги. «Готов сотрудничать? По какой цене?». После
-        запуска рассылки worker отправит их через ваши Telegram-аккаунты.
-      </p>
-      <MessagesEditor value={messages} onChange={setMessages} />
-      <div className="mt-4 flex justify-end gap-2">
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-xl border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
-        >
-          Отмена
-        </button>
-        <button
-          type="button"
-          onClick={() => save.mutate()}
-          disabled={save.isPending}
-          className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-        >
-          {save.isPending ? "Сохраняем…" : "Сохранить"}
-        </button>
-      </div>
-      {save.error && (
-        <p className="mt-2 text-sm text-red-600">{errorMessage(save.error)}</p>
-      )}
-    </Modal>
-  );
-}
-
 // ── Общие мелочи ────────────────────────────────────────────────────────────
 
 // Один компактный столбец аутрич-статуса (вместо колонки-на-сообщение):
@@ -1581,18 +1583,6 @@ function OutreachStatus({ p }: { p: Placement }) {
     );
   }
   return <span className="text-xs text-zinc-400">не писали</span>;
-}
-
-function AccountCell({ account }: { account: Placement["account"] }) {
-  if (!account) return <span className="text-xs text-zinc-400">—</span>;
-  return (
-    <div className="text-xs">
-      <div className="font-medium text-zinc-700">{account.firstName ?? "—"}</div>
-      {account.tgUsername && (
-        <div className="text-zinc-400">@{account.tgUsername}</div>
-      )}
-    </div>
-  );
 }
 
 // Клик по каналу открывает общий ChannelDrawer (лента постов, авто-синк
@@ -1637,14 +1627,6 @@ function ChannelCell({ placement }: { placement: Placement }) {
   );
 }
 
-function Toolbar({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-white p-2.5 shadow-sm">
-      {children}
-    </div>
-  );
-}
-
 function TableCard({ children }: { children: React.ReactNode }) {
   return (
     <div className="overflow-x-auto rounded-2xl bg-white shadow-sm">
@@ -1686,29 +1668,3 @@ function PrimaryBtn({
   );
 }
 
-function GhostBtn({
-  icon,
-  children,
-  onClick,
-  disabled,
-  title,
-}: {
-  icon: React.ReactNode;
-  children: React.ReactNode;
-  onClick: () => void;
-  disabled?: boolean;
-  title?: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
-    >
-      {icon}
-      {children}
-    </button>
-  );
-}

@@ -7,7 +7,8 @@ import {
   useParams,
 } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { api } from "../lib/api";
 
 const meQueryOptions = {
@@ -28,9 +29,22 @@ export const Route = createFileRoute("/_authenticated")({
   component: AuthLayout,
 });
 
+// Свёрнутость глобального сайдбара. Состояние общее для всех страниц (паттерн
+// collapsible sidebar) и переживает переходы — храним в localStorage.
+function useSidebarCollapsed() {
+  const [collapsed, setCollapsed] = useState(
+    () => localStorage.getItem("sidebar-collapsed") === "1",
+  );
+  useEffect(() => {
+    localStorage.setItem("sidebar-collapsed", collapsed ? "1" : "0");
+  }, [collapsed]);
+  return [collapsed, setCollapsed] as const;
+}
+
 function AuthLayout() {
   const params = useParams({ strict: false }) as { wsId?: string };
   const wsId = params.wsId;
+  const [collapsed, setCollapsed] = useSidebarCollapsed();
 
   // mode текущего ws — для sidebar-сплита bd/agency. Берём из того же
   // списка воркспейсов, что грузит WorkspaceSwitcher (общий кеш).
@@ -46,7 +60,30 @@ function AuthLayout() {
 
   return (
     <div className="flex h-screen bg-zinc-100">
-      <aside className="flex w-60 shrink-0 flex-col border-r border-zinc-200 bg-white">
+      <aside
+        className={
+          "flex shrink-0 flex-col border-r border-zinc-200 bg-white transition-[width] duration-200 " +
+          (collapsed ? "w-14" : "w-60")
+        }
+      >
+        <div
+          className={
+            "flex items-center border-b border-zinc-200 p-2 " +
+            (collapsed ? "justify-center" : "justify-end")
+          }
+        >
+          <button
+            type="button"
+            onClick={() => setCollapsed((v) => !v)}
+            title={collapsed ? "Развернуть меню" : "Свернуть меню"}
+            aria-label={collapsed ? "Развернуть меню" : "Свернуть меню"}
+            className="rounded-lg p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
+          >
+            {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+          </button>
+        </div>
+        {collapsed ? null : (
+          <>
         <WorkspaceSwitcher currentWsId={wsId} />
         <nav className="flex-1 space-y-4 overflow-y-auto p-3 text-sm">
           {wsId && (
@@ -91,6 +128,8 @@ function AuthLayout() {
           )}
         </nav>
         <SidebarFooter />
+          </>
+        )}
       </aside>
       <main className="min-w-0 flex-1 overflow-y-auto">
         <Outlet />

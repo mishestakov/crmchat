@@ -61,6 +61,9 @@ type ChatMessage = {
   mediaThumb: MessageThumb | null;
 };
 
+// Оверлей-обёртка: backdrop + правый aside вокруг ChatPanel. Esc / клик по
+// фону закрывают. Используется из контактов / лидов / канбана (drawer-режим).
+// Для side-by-side (лонглист) панель встраивается напрямую через ChatPanel.
 export function ChatDrawer(props: {
   wsId: string;
   contact: Contact;
@@ -68,6 +71,39 @@ export function ChatDrawer(props: {
   accounts: AccountRow[];
   onSelectAccount: (accountId: string) => void;
   onClose: () => void;
+}) {
+  // Esc → закрыть. Живёт в обёртке, не в ChatPanel: встроенная панель не должна
+  // перехватывать Esc у родительского drawer'а (лонглист).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") props.onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [props]);
+  return (
+    <>
+      <div
+        className="fixed inset-0 z-40 bg-zinc-900/20"
+        onClick={props.onClose}
+      />
+      <aside className="fixed bottom-0 right-0 top-0 z-50 flex w-[480px] max-w-[90vw] flex-col bg-white shadow-2xl">
+        <ChatPanel {...props} />
+      </aside>
+    </>
+  );
+}
+
+// Начинка чата без позиционирования: шапка + лента + composer как flex-колонка.
+// onClose опционален — в drawer-режиме рисует X в шапке; во встроенном (рядом с
+// карточкой подбора) X скрыт, закрывает родитель.
+export function ChatPanel(props: {
+  wsId: string;
+  contact: Contact;
+  accountId: string;
+  accounts: AccountRow[];
+  onSelectAccount: (accountId: string) => void;
+  onClose?: () => void;
 }) {
   const qc = useQueryClient();
   const accountById = new Map(props.accounts.map((a) => [a.id, a]));
@@ -155,15 +191,6 @@ export function ChatDrawer(props: {
       });
     },
   });
-
-  // Esc → закрыть.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") props.onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [props]);
 
   const initialQ = useQuery({
     queryKey: [
@@ -344,12 +371,7 @@ export function ChatDrawer(props: {
     : null;
 
   return (
-    <>
-      <div
-        className="fixed inset-0 z-40 bg-zinc-900/20"
-        onClick={props.onClose}
-      />
-      <aside className="fixed bottom-0 right-0 top-0 z-50 flex w-[480px] max-w-[90vw] flex-col bg-white shadow-2xl">
+    <div className="flex h-full flex-col bg-white">
         <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3">
           <div className="min-w-0">
             <div className="truncate font-medium">{displayName}</div>
@@ -382,13 +404,15 @@ export function ChatDrawer(props: {
                 Открыть в чате
               </Link>
             )}
-            <button
-              type="button"
-              onClick={props.onClose}
-              className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-            >
-              <X size={18} />
-            </button>
+            {props.onClose && (
+              <button
+                type="button"
+                onClick={props.onClose}
+                className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+              >
+                <X size={18} />
+              </button>
+            )}
           </div>
         </div>
         {fresherColleague && (
@@ -525,8 +549,7 @@ export function ChatDrawer(props: {
           sending={sendMut.isPending}
           error={sendMut.error ? errorMessage(sendMut.error) : null}
         />
-      </aside>
-    </>
+    </div>
   );
 }
 

@@ -1,6 +1,7 @@
-import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
+  channels,
   contacts,
   outreachAccounts,
   projectItems,
@@ -150,6 +151,71 @@ export function buildScheduledRows(opts: {
       };
     });
   });
+}
+
+// Подготовка лидов агентского аутрича (этап 16.8). Один опенер на админа:
+// дедуп по lower(username); подстановка {{каналы}} = все каналы этого админа
+// в проекте (по неотобранным в шортлист размещениям); пропуск размещений без
+// @username (личка/телефон — авто-опенер не адресуем, менеджер пишет вручную).
+// skipContacted=true (доливка в активную кампанию) дополнительно опускает
+// админов, с кем тред в проекте уже начат — повторный опенер не шлём.
+export async function prepareAgencyLeads(opts: {
+  projectId: string;
+  leads: SchedulingLead[];
+  skipContacted: boolean;
+}): Promise<SchedulingLead[]> {
+  const titleRows = await db
+    .select({ username: projectItems.username, title: channels.title })
+    .from(projectItems)
+    .leftJoin(channels, eq(channels.id, projectItems.channelId))
+    .where(
+      and(
+        eq(projectItems.projectId, opts.projectId),
+        eq(projectItems.kind, "placement"),
+        isNull(projectItems.shortlistedAt),
+      ),
+    );
+  const canals = new Map<string, string[]>();
+  for (const r of titleRows) {
+    if (!r.username) continue;
+    const key = r.username.toLowerCase();
+    const list = canals.get(key) ?? [];
+    list.push(r.title ?? "канал");
+    canals.set(key, list);
+  }
+
+  let contacted = new Set<string>();
+  if (opts.skipContacted) {
+    const rows = await db
+      .selectDistinct({ u: sql<string>`lower(${projectItems.username})` })
+      .from(scheduledMessages)
+      .innerJoin(projectItems, eq(projectItems.id, scheduledMessages.itemId))
+      .where(
+        and(
+          eq(scheduledMessages.projectId, opts.projectId),
+          isNotNull(projectItems.username),
+        ),
+      );
+    contacted = new Set(rows.map((r) => r.u));
+  }
+
+  const seen = new Set<string>();
+  const out: SchedulingLead[] = [];
+  for (const l of opts.leads) {
+    if (!l.username) continue;
+    const key = l.username.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (opts.skipContacted && contacted.has(key)) continue;
+    const list = canals.get(key);
+    out.push({
+      ...l,
+      properties: list
+        ? { ...l.properties, каналы: list.join(", ") }
+        : l.properties,
+    });
+  }
+  return out;
 }
 
 // Список аккаунтов, которые видит проект на момент активации/доливки:

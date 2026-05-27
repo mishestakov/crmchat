@@ -18,11 +18,17 @@ import {
 import { assertProjectAccess } from "../lib/projects-access.ts";
 import {
   resolveStickyByTgUserIds,
+  resolveWarmTgUserIds,
   resolveProjectAccountIds,
+  buildScheduledRows,
+  prepareAgencyLeads,
+  type SchedulingLead,
 } from "../lib/project-scheduling.ts";
 import { substituteVariables } from "../lib/substitute-variables.ts";
 import { pickDefined } from "../lib/pick-defined.ts";
 import { extractUsername } from "../lib/tg-username.ts";
+import { resolveAdminRecipient } from "../lib/placement-recipient.ts";
+import { scanChannelsInBackground } from "./channels.ts";
 import { type WorkspaceVars } from "../middleware/assert-member.ts";
 
 // Agency-кампания переиспользует projects (kind='agency') + project_items
@@ -63,11 +69,23 @@ const PlacementSchema = z
         title: z.string(),
         username: z.string().nullable(),
         memberCount: z.number().int().nullable(),
+        // DM-путь канала (этап 16.8): есть ли личка и сколько звёзд стоит
+        // отправка. dmStarCost === 0 → бесплатно (засчитывается готовым
+        // контактом для гейта); >0 → менеджер пишет руками; null → ещё не
+        // синкали. Источник — channels.meta (sync пишет
+        // has_dm / outgoing_paid_message_star_count).
+        hasDm: z.boolean(),
+        dmStarCost: z.number().int().nullable(),
       })
       .nullable(),
     adminContactId: z.string().nullable(),
     adminUsername: z.string().nullable(),
     hasRecipient: z.boolean(),
+    // Готовность контакта для гейта запуска (этап 16.8): у канала есть
+    // привязанный админ (живой channel_admins, не снапшот item.contact_id) ИЛИ
+    // доступна бесплатная личка (hasDm && dmStarCost===0). Жёсткий гейт
+    // требует contactReady=true у всех размещений лонглиста.
+    contactReady: z.boolean(),
     // Аккаунт, через который идёт аутрич этому блогеру (после активации).
     account: z
       .object({
@@ -267,6 +285,96 @@ app.openapi(
   },
 );
 
+// ── Доливка размещений в активную кампанию ──────────────────────────────────
+// Если кампания уже active/paused, новые размещения должны сразу пойти в аутрич
+// по общей цепочке (project.messages), независимо от уже запущенных волн —
+// offset'ы цепочки считаются от now(). Это та же доливка, что в BD (этап 12.5
+// project-imports): переиспользуем общие хелперы project-scheduling.
+//
+// dolivkaAccountsOrThrow вызывается ДО вставки размещений: если кампания активна,
+// но слать нечем (нет цепочки/аккаунтов) — 400 без частичного состояния. Для
+// draft возвращает null (доливки нет, /activate запланирует всех разом).
+async function dolivkaAccountsOrThrow(
+  wsId: string,
+  project: typeof projects.$inferSelect,
+): Promise<string[] | null> {
+  if (project.status !== "active" && project.status !== "paused") return null;
+  if (project.messages.length === 0) {
+    throw new HTTPException(400, {
+      message: "У кампании нет цепочки сообщений — нечего слать новым блогерам",
+    });
+  }
+  const accountIds = await resolveProjectAccountIds(wsId, project);
+  if (accountIds.length === 0) {
+    throw new HTTPException(400, {
+      message: "Нет активных Telegram-аккаунтов для доливки",
+    });
+  }
+  return accountIds;
+}
+
+type InsertedPlacement = {
+  id: string;
+  channelId: string | null;
+  username: string | null;
+  tgUserId: string | null;
+  properties: unknown;
+};
+
+async function scheduleDolivka(opts: {
+  wsId: string;
+  project: typeof projects.$inferSelect;
+  accountIds: string[];
+  inserted: InsertedPlacement[];
+}) {
+  // Agency: один опенер на админа + {{каналы}} + пропуск админов с уже начатым
+  // тредом (этап 16.8). BD: только размещения с адресатом (без получателя
+  // аутрич некуда слать — менеджер привяжет позже).
+  let leads: SchedulingLead[];
+  if (opts.project.kind === "agency") {
+    leads = await prepareAgencyLeads({
+      projectId: opts.project.id,
+      leads: opts.inserted.map((p) => ({
+        id: p.id,
+        username: p.username,
+        tgUserId: p.tgUserId,
+        properties: (p.properties ?? {}) as Record<string, unknown>,
+      })),
+      skipContacted: true,
+    });
+  } else {
+    leads = opts.inserted
+      .filter((p) => p.tgUserId !== null || p.username !== null)
+      .map((p) => ({
+        id: p.id,
+        username: p.username,
+        tgUserId: p.tgUserId,
+        properties: (p.properties ?? {}) as Record<string, unknown>,
+      }));
+  }
+  if (leads.length === 0) return;
+
+  const tgUserIds = leads
+    .map((l) => l.tgUserId)
+    .filter((x): x is string => x !== null);
+  const priorByTgUserId = await resolveStickyByTgUserIds(opts.wsId, tgUserIds);
+  const warmTgUserIds = await resolveWarmTgUserIds(opts.wsId, tgUserIds);
+
+  const rows = buildScheduledRows({
+    wsId: opts.wsId,
+    project: opts.project,
+    accountIds: opts.accountIds,
+    leads,
+    baseTime: new Date(),
+    priorByTgUserId,
+    warmTgUserIds,
+  });
+  const CHUNK = 1000;
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    await db.insert(scheduledMessages).values(rows.slice(i, i + CHUNK));
+  }
+}
+
 app.openapi(
   createRoute({
     method: "post",
@@ -292,7 +400,9 @@ app.openapi(
     const role = c.get("workspaceRole");
     const { projectId } = c.req.valid("param");
     const { channelId } = c.req.valid("json");
-    await assertProjectAccess(projectId, wsId, userId, role);
+    const project = await assertProjectAccess(projectId, wsId, userId, role);
+    // До вставки: на активной кампании проверяем, что доливку есть чем слать.
+    const dolivkaAccounts = await dolivkaAccountsOrThrow(wsId, project);
 
     const [channel] = await db
       .select({ id: channels.id })
@@ -314,6 +424,15 @@ app.openapi(
         tgUserId: admin.tgUserId,
       })
       .returning();
+
+    if (dolivkaAccounts && row) {
+      await scheduleDolivka({
+        wsId,
+        project,
+        accountIds: dolivkaAccounts,
+        inserted: [row],
+      });
+    }
 
     const placement = await loadPlacement(row!.id);
     return c.json(placement!, 201);
@@ -365,7 +484,9 @@ app.openapi(
     const role = c.get("workspaceRole");
     const { projectId } = c.req.valid("param");
     const { identifiers } = c.req.valid("json");
-    await assertProjectAccess(projectId, wsId, userId, role);
+    const project = await assertProjectAccess(projectId, wsId, userId, role);
+    // До вставки: на активной кампании проверяем, что доливку есть чем слать.
+    const dolivkaAccounts = await dolivkaAccountsOrThrow(wsId, project);
 
     const parsed = identifiers.map(extractUsername);
     const skippedInvalid = parsed.filter((u) => u === null).length;
@@ -374,6 +495,7 @@ app.openapi(
     let added = 0;
     let channelsCreated = 0;
     let skippedDuplicate = 0;
+    const insertedItems: InsertedPlacement[] = [];
 
     for (const uname of usernames) {
       // find-or-create канал (username unique по ws+platform, case-insensitive).
@@ -437,17 +559,43 @@ app.openapi(
       }
 
       const admin = await resolveAdminRecipient(ch.id);
-      await db.insert(projectItems).values({
-        workspaceId: wsId,
-        projectId,
-        kind: "placement",
-        channelId: ch.id,
-        contactId: admin.contactId,
-        username: admin.username,
-        tgUserId: admin.tgUserId,
-      });
+      const [ins] = await db
+        .insert(projectItems)
+        .values({
+          workspaceId: wsId,
+          projectId,
+          kind: "placement",
+          channelId: ch.id,
+          contactId: admin.contactId,
+          username: admin.username,
+          tgUserId: admin.tgUserId,
+        })
+        .returning();
+      if (ins) insertedItems.push(ins);
       added++;
     }
+
+    // Доливка: новые размещения на активной кампании сразу уходят в аутрич.
+    if (dolivkaAccounts) {
+      await scheduleDolivka({
+        wsId,
+        project,
+        accountIds: dolivkaAccounts,
+        inserted: insertedItems,
+      });
+    }
+
+    // Эагерный скан добавленных каналов (этап 16.8): тянем метрики/описание
+    // сразу, не дожидаясь открытия drawer'а. Fire-and-forget — ответ не
+    // блокируем, ошибки глотаются внутри.
+    void scanChannelsInBackground(
+      wsId,
+      insertedItems
+        .map((i) => i.channelId)
+        .filter((id): id is string => id !== null),
+      userId,
+      role,
+    ).catch(() => {});
 
     return c.json({ added, channelsCreated, skippedInvalid, skippedDuplicate });
   },
@@ -760,24 +908,6 @@ app.openapi(
   },
 );
 
-// Получатель аутрича по каналу = первый привязанный админ-контакт. Нет
-// админа → размещение без получателя (цепочку не запустить, пока контакт не
-// привязан в сайдбаре канала).
-async function resolveAdminRecipient(channelId: string) {
-  const [admin] = await db
-    .select({ contactId: channelAdmins.contactId, props: contacts.properties })
-    .from(channelAdmins)
-    .innerJoin(contacts, eq(contacts.id, channelAdmins.contactId))
-    .where(eq(channelAdmins.channelId, channelId))
-    .limit(1);
-  const p = (admin?.props ?? {}) as Record<string, unknown>;
-  return {
-    contactId: admin?.contactId ?? null,
-    username: (p.telegram_username as string | undefined) ?? null,
-    tgUserId: (p.tg_user_id as string | undefined) ?? null,
-  };
-}
-
 // Колонки placement-строки (общие для list/load).
 function placementColumns() {
   return {
@@ -815,6 +945,15 @@ function placementColumns() {
     channelTitle: channels.title,
     channelUsername: channels.username,
     channelMembers: channels.memberCount,
+    // Бесплатная личка канала: есть DM-группа (direct_messages_chat_id кладёт
+    // сам sync) — НЕ has_dm, который пишет репликатор асинхронно (этап 16.8).
+    channelHasDm: sql<boolean>`coalesce(${channels.meta} ->> 'direct_messages_chat_id', '0') <> '0'`,
+    channelDmStarCost: sql<
+      number | null
+    >`(${channels.meta} ->> 'outgoing_paid_message_star_count')::int`,
+    // Живой признак «у канала есть привязанный админ» — не зависит от снапшота
+    // item.contact_id (админа могли привязать уже после создания размещения).
+    channelHasAdmin: sql<boolean>`exists (select 1 from ${channelAdmins} where ${channelAdmins.channelId} = ${channels.id})`,
     adminUsername: sql<
       string | null
     >`${contacts.properties} ->> 'telegram_username'`,
@@ -897,6 +1036,9 @@ function serializePlacement(
     channelTitle: string | null;
     channelUsername: string | null;
     channelMembers: number | null;
+    channelHasDm: boolean;
+    channelDmStarCost: number | null;
+    channelHasAdmin: boolean;
     adminUsername: string | null;
   },
   outreachMap: Awaited<ReturnType<typeof outreachByItem>>,
@@ -918,6 +1060,8 @@ function serializePlacement(
           title: row.channelTitle ?? "—",
           username: row.channelUsername,
           memberCount: row.channelMembers,
+          hasDm: row.channelHasDm,
+          dmStarCost: row.channelDmStarCost,
         }
       : null,
     adminContactId: row.contactId,
@@ -925,6 +1069,10 @@ function serializePlacement(
     // Есть кого адресовать аутричем/оффером (worker резолвит username→tgUserId
     // лениво) — UI считает получателей по этому флагу, как и backend.
     hasRecipient: row.username !== null || row.tgUserId !== null,
+    // Готовность для гейта: привязан админ ИЛИ бесплатная личка канала.
+    contactReady:
+      row.channelHasAdmin ||
+      (row.channelHasDm && row.channelDmStarCost === 0),
     account,
     chainStatus: chainStatus(row.repliedAt, row.available, o.sentCount, o.read),
     outreach: {

@@ -12,7 +12,9 @@ export function ContactPicker(props: {
   onPick: (contactId: string) => void;
   // Если задан — при пустом поиске показываем «создать по @username».
   onCreateByUsername?: (username: string) => void;
-  onCancel: () => void;
+  // Если задан — рисуем крестик-отмену (для inline-add). В постоянно открытом
+  // пикере (резолвер лонглиста) отмена не нужна — крестик не показываем.
+  onCancel?: () => void;
   loading: boolean;
 }) {
   const [q, setQ] = useState("");
@@ -54,13 +56,15 @@ export function ContactPicker(props: {
           placeholder="Поиск контакта по имени или @"
           className="flex-1 rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm focus:border-emerald-500 focus:outline-none"
         />
-        <button
-          type="button"
-          onClick={props.onCancel}
-          className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-        >
-          <X size={14} />
-        </button>
+        {props.onCancel && (
+          <button
+            type="button"
+            onClick={props.onCancel}
+            className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+          >
+            <X size={14} />
+          </button>
+        )}
       </div>
       {debounced.length === 0 && (
         <p className="text-xs text-zinc-500">Введите запрос для поиска</p>

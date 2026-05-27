@@ -1,9 +1,11 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { streamSSE } from "hono/streaming";
-import { and, asc, eq, gte, inArray, isNotNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
+  channelAdmins,
+  channels,
   contactCreationTrigger,
   contacts,
   DEFAULT_OUTREACH_STAGES,
@@ -30,9 +32,11 @@ import {
 } from "../lib/projects-access.ts";
 import {
   buildScheduledRows,
+  prepareAgencyLeads,
   resolveProjectAccountIds,
   resolveStickyByTgUserIds,
   resolveWarmTgUserIds,
+  type SchedulingLead,
 } from "../lib/project-scheduling.ts";
 import { type WorkspaceVars } from "../middleware/assert-member.ts";
 import { nextStepSql } from "./contacts.ts";
@@ -568,15 +572,76 @@ app.openapi(
     if (allLeads.length === 0) {
       throw new HTTPException(400, { message: "List has no leads" });
     }
-    // Defense-in-depth: identity-приоритет по lower(username). Один и тот же
-    // TG-юзер не должен получить N сообщений из-за разного регистра @-handle.
-    const seen = new Set<string>();
-    const leads: typeof allLeads = [];
-    for (const l of allLeads) {
-      const key = l.username ? `u:${l.username.toLowerCase()}` : null;
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      leads.push(l);
+
+    // Agency: жёсткий гейт готовности контактов (этап 16.8). Скоуп — только
+    // лонглист (shortlistedAt IS NULL): отобранные в шортлист уже прошли аутрич
+    // и не считаются/не получают повторный опенер (совпадает с тем, что видит
+    // экран). BD-проекты не трогаем.
+    if (project.kind === "agency") {
+      const placements = await db
+        .select({
+          hasAdmin: sql<boolean>`exists (select 1 from ${channelAdmins} where ${channelAdmins.channelId} = ${channels.id})`,
+          // Бесплатная личка канала: есть DM-группа (синкается на скане) и
+          // отправка бесплатна. has_dm НЕ используем — его пишет репликатор
+          // асинхронно, а direct_messages_chat_id кладёт сам sync.
+          hasDm: sql<boolean>`coalesce(${channels.meta} ->> 'direct_messages_chat_id', '0') <> '0'`,
+          dmStar: sql<
+            number | null
+          >`(${channels.meta} ->> 'outgoing_paid_message_star_count')::int`,
+        })
+        .from(projectItems)
+        .leftJoin(channels, eq(channels.id, projectItems.channelId))
+        .where(
+          and(
+            eq(projectItems.projectId, project.id),
+            eq(projectItems.kind, "placement"),
+            isNull(projectItems.shortlistedAt),
+          ),
+        );
+      // Готовность = совпадает с Placement.contactReady (см. campaigns.ts):
+      // привязан админ ИЛИ бесплатная личка канала.
+      const unready = placements.filter(
+        (p) => !(p.hasAdmin || (p.hasDm && p.dmStar === 0)),
+      ).length;
+      if (unready > 0) {
+        throw new HTTPException(400, {
+          message: `Нельзя запустить аутрич: каналов без контакта — ${unready}. Найдите контакт или уберите их из лонглиста.`,
+        });
+      }
+    }
+
+    // Список лидов в рассылку. Agency: prepareAgencyLeads (дедуп по админу +
+    // {{каналы}} + только лонглист, без already-contacted на первом запуске).
+    // BD: identity-дедуп по lower(username) (defense-in-depth от дублей).
+    let leads: SchedulingLead[];
+    if (project.kind === "agency") {
+      const longlist = allLeads
+        .filter((l) => l.shortlistedAt === null)
+        .map((l) => ({
+          id: l.id,
+          username: l.username,
+          tgUserId: l.tgUserId,
+          properties: (l.properties ?? {}) as Record<string, unknown>,
+        }));
+      leads = await prepareAgencyLeads({
+        projectId: project.id,
+        leads: longlist,
+        skipContacted: false,
+      });
+    } else {
+      const seen = new Set<string>();
+      leads = [];
+      for (const l of allLeads) {
+        const key = l.username ? `u:${l.username.toLowerCase()}` : null;
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        leads.push({
+          id: l.id,
+          username: l.username,
+          tgUserId: l.tgUserId,
+          properties: (l.properties ?? {}) as Record<string, unknown>,
+        });
+      }
     }
 
     const tgUserIds = leads
@@ -590,12 +655,7 @@ app.openapi(
       wsId,
       project,
       accountIds,
-      leads: leads.map((l) => ({
-        id: l.id,
-        username: l.username,
-        tgUserId: l.tgUserId,
-        properties: (l.properties ?? {}) as Record<string, unknown>,
-      })),
+      leads,
       baseTime: activatedAt,
       priorByTgUserId,
       warmTgUserIds,

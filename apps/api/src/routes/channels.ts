@@ -34,6 +34,10 @@ import {
 } from "../lib/channels-access.ts";
 import { contactAccessClause } from "../lib/contacts-access.ts";
 import { getOutreachWorkerClient } from "../lib/outreach-account-client.ts";
+import {
+  clearPlacementRecipients,
+  healPlacementRecipients,
+} from "../lib/placement-recipient.ts";
 import { accountAccessClause } from "../lib/outreach-access.ts";
 import {
   assertRole,
@@ -434,6 +438,9 @@ app.openapi(
         .insert(channelAdmins)
         .values(linkIds.map((contactId) => ({ channelId: id, contactId })))
         .onConflictDoNothing();
+      // Залечиваем осиротевшие размещения этого канала (этап 16.8): теперь у
+      // них есть админ-получатель → чат и аутрич сразу заработают.
+      await healPlacementRecipients(id);
     }
 
     const [serialized] = await joinAdmins([channel]);
@@ -465,6 +472,281 @@ app.openapi(
     return c.body(null, 204);
   },
 );
+
+// Сменить способ связи канала (этап 16.8 / п.1) — глобально по каналу: один
+// админ-получатель. Тело — ровно одно из: contactId (существующий контакт),
+// username (контакт-stub по @), dm:true (личка канала, персону снимаем).
+// Заменяет channel_admins и перенаводит ВСЕ размещения канала (см. scope-решение:
+// «кто ведёт канал» — факт о канале, не о кампании).
+const SetAdminBody = z
+  .object({
+    contactId: z.string().min(1).max(64).optional(),
+    username: z.string().min(1).max(64).optional(),
+    dm: z.boolean().optional(),
+  })
+  .refine(
+    (b) =>
+      [b.contactId, b.username, b.dm].filter((v) => v != null && v !== false)
+        .length === 1,
+    { message: "укажите ровно одно: contactId, username или dm:true" },
+  );
+
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/channels/{id}/set-admin",
+    tags: ["channels"],
+    request: {
+      params: WsIdParam,
+      body: {
+        content: { "application/json": { schema: SetAdminBody } },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: { "application/json": { schema: ChannelSchema } },
+        description: "Admin/contact-method set",
+      },
+    },
+  }),
+  async (c) => {
+    const { wsId, id } = c.req.valid("param");
+    const userId = c.get("userId");
+    const body = c.req.valid("json");
+    const channel = await assertChannelAccess(id, wsId);
+
+    if (body.dm) {
+      // Способ связи = личка канала: снимаем персону-админа и обнуляем
+      // получателя у всех размещений (готовность держится на бесплатном DM).
+      await db.delete(channelAdmins).where(eq(channelAdmins.channelId, id));
+      await clearPlacementRecipients(id);
+      const [serialized] = await joinAdmins([channel]);
+      return c.json(serialized!);
+    }
+
+    // Резолвим целевой контакт: существующий по id или stub по @username.
+    let contactId = body.contactId ?? null;
+    if (!contactId && body.username) {
+      const uname = extractUsername(body.username);
+      if (!uname) {
+        throw new HTTPException(400, { message: "невалидный @username" });
+      }
+      await db
+        .insert(contacts)
+        .values({
+          workspaceId: wsId,
+          properties: { telegram_username: uname, full_name: `@${uname}` },
+          createdBy: userId,
+        })
+        .onConflictDoNothing();
+      const [found] = await db
+        .select({ id: contacts.id })
+        .from(contacts)
+        .where(
+          and(
+            eq(contacts.workspaceId, wsId),
+            inArray(contactUsernameLowerSql, [uname]),
+          ),
+        )
+        .limit(1);
+      contactId = found?.id ?? null;
+    }
+    if (!contactId) {
+      throw new HTTPException(404, { message: "контакт не найден" });
+    }
+    // Tenancy: контакт принадлежит этому воркспейсу.
+    const [ct] = await db
+      .select({ id: contacts.id })
+      .from(contacts)
+      .where(and(eq(contacts.id, contactId), eq(contacts.workspaceId, wsId)))
+      .limit(1);
+    if (!ct) {
+      throw new HTTPException(404, {
+        message: "контакт не найден в воркспейсе",
+      });
+    }
+
+    // Глобально по каналу: один админ-получатель (заменяем) + перенаводим все
+    // размещения канала (override).
+    await db.delete(channelAdmins).where(eq(channelAdmins.channelId, id));
+    await db
+      .insert(channelAdmins)
+      .values({ channelId: id, contactId })
+      .onConflictDoNothing();
+    await healPlacementRecipients(id, { override: true });
+
+    const [serialized] = await joinAdmins([channel]);
+    return c.json(serialized!);
+  },
+);
+
+// Ядро sync'а карточки канала из TG: резолв (searchPublicChat/getChat →
+// getSupergroupFullInfo) + запись типизированных колонок и meta. Вынесено из
+// HTTP-хендлера ради переиспользования фоновым сканом на добавлении в лонглист
+// (см. scanChannelsInBackground, этап 16.8). Бросает при TDLib-провале
+// (permanent → помечает канал unavailable). Возвращает обновлённую raw-строку
+// channels (без joinAdmins-сериализации — это забота вызывающего).
+async function syncChannelFromTg(
+  channel: typeof channels.$inferSelect,
+  tdClient: TdClient,
+): Promise<typeof channels.$inferSelect> {
+  const id = channel.id;
+  type TdChat = {
+    id: number;
+    title: string;
+    type: { _: string; supergroup_id?: number; is_channel?: boolean };
+    photo?: { minithumbnail?: { data: string } };
+  };
+  type TdSupergroupFullInfo = {
+    description: string;
+    member_count: number;
+    linked_chat_id: number;
+    direct_messages_chat_id: number;
+    gift_count: number;
+    outgoing_paid_message_star_count: number;
+    photo?: { minithumbnail?: { data: string } };
+  };
+
+  // searchPublicChat — единственный способ зарегистрировать публичный чат в
+  // TDLib-state без подписки. Только после него getSupergroupFullInfo и
+  // getChatHistory получают chat (см. td_api.tl §searchPublicChat, §getChat —
+  // offline-only). getChat(externalId) — fallback для каналов без @username.
+  let tdChat: TdChat;
+  try {
+    tdChat = channel.username
+      ? ((await tdClient.invoke({
+          _: "searchPublicChat",
+          username: channel.username,
+        } as never)) as TdChat)
+      : ((await tdClient.invoke({
+          _: "getChat",
+          chat_id: Number(channel.externalId),
+        } as never)) as TdChat);
+  } catch (e) {
+    const cls = classifyResolveError(e);
+    if (cls.permanent) await markChannelUnavailable(id, cls.reason);
+    throw new HTTPException(404, {
+      message: `Telegram lookup failed: ${errMsg(e)}`,
+    });
+  }
+
+  if (tdChat.type._ !== "chatTypeSupergroup" || !tdChat.type.supergroup_id) {
+    throw new HTTPException(400, {
+      message: `chat ${tdChat.id} is not a supergroup (got ${tdChat.type._})`,
+    });
+  }
+
+  const supergroupId = tdChat.type.supergroup_id;
+  // Race-fix: searchPublicChat выше эмитит updateSupergroup, replicator кладёт
+  // patch в channelMetaBuf и взводит flush на 500ms. Если getSupergroupFullInfo
+  // затянется и flush выстрелит до финального UPDATE — flush не найдёт row по
+  // meta->>'supergroup_id'. Кладём supergroup_id заранее, чтобы flush попал.
+  await db
+    .update(channels)
+    .set({
+      meta: sql`${channels.meta} || ${JSON.stringify({ supergroup_id: String(supergroupId) })}::jsonb`,
+    })
+    .where(eq(channels.id, id));
+
+  // getSupergroup НЕ вызываем — его поля (boost_level, has_dm, …) прилетают как
+  // updateSupergroup в tg-replicator.ts. FullInfo без явного invoke не приходит.
+  let tdFull: TdSupergroupFullInfo;
+  try {
+    tdFull = (await tdClient.invoke({
+      _: "getSupergroupFullInfo",
+      supergroup_id: supergroupId,
+    } as never)) as TdSupergroupFullInfo;
+  } catch (e) {
+    const cls = classifyResolveError(e);
+    if (cls.permanent) await markChannelUnavailable(id, cls.reason);
+    throw new HTTPException(404, {
+      message: `Telegram lookup failed: ${errMsg(e)}`,
+    });
+  }
+
+  // Только свои поля; nice-to-have от updateSupergroup доедут merge'ем.
+  const metaPatch: Record<string, unknown> = {
+    supergroup_id: String(supergroupId),
+    linked_chat_id: tdFull.linked_chat_id || null,
+    direct_messages_chat_id: tdFull.direct_messages_chat_id || null,
+    gift_count: tdFull.gift_count,
+    outgoing_paid_message_star_count: tdFull.outgoing_paid_message_star_count,
+  };
+
+  const description = tdFull.description || null;
+  const externalIdNew = String(tdChat.id);
+
+  // Thumbnail: chat.photo.minithumbnail.data приходит как base64-строка. Нет
+  // аватара — поле photo отсутствует, прежний кеш не сносим.
+  const minithumb =
+    tdChat.photo?.minithumbnail?.data ?? tdFull.photo?.minithumbnail?.data;
+  const [[updated]] = await Promise.all([
+    db
+      .update(channels)
+      .set({
+        externalId: externalIdNew,
+        title: tdChat.title || channel.title,
+        description,
+        memberCount: tdFull.member_count,
+        meta: sql`${channels.meta} || ${JSON.stringify(metaPatch)}::jsonb`,
+        syncedAt: new Date(),
+        updatedAt: new Date(),
+        unavailableSince: null,
+        unavailableLastCheckAt: null,
+        unavailableReason: null,
+      })
+      .where(eq(channels.id, id))
+      .returning(),
+    minithumb
+      ? db
+          .insert(channelThumbnails)
+          .values({ channelId: id, b64: minithumb })
+          .onConflictDoUpdate({
+            target: channelThumbnails.channelId,
+            set: { b64: minithumb, updatedAt: new Date() },
+          })
+      : Promise.resolve(),
+  ]);
+  return updated!;
+}
+
+// Фоновый скан каналов сразу при добавлении в лонглист (этап 16.8): тянем
+// свежую карточку, чтобы при переключении строк метрики уже были на месте.
+// In-process fire-and-forget с троттлом; ошибки глотаем поштучно (ленивый sync
+// при открытии drawer'а подстрахует). Нет active-аккаунта — молча выходим.
+const BG_SCAN_THROTTLE_MS = 400;
+const BG_SCAN_TTL_MS = 24 * 60 * 60 * 1000;
+
+export async function scanChannelsInBackground(
+  wsId: string,
+  channelIds: string[],
+  userId: string,
+  role: WorkspaceRole,
+): Promise<void> {
+  const ids = [...new Set(channelIds)];
+  if (ids.length === 0) return;
+  const picked = await pickOutreachClient(wsId, userId, role);
+  if (!picked) return;
+  for (const cid of ids) {
+    try {
+      const [ch] = await db
+        .select()
+        .from(channels)
+        .where(eq(channels.id, cid))
+        .limit(1);
+      if (!ch || ch.platform !== "telegram") continue;
+      if (!ch.externalId && !ch.username) continue;
+      const fresh =
+        !!ch.syncedAt && Date.now() - ch.syncedAt.getTime() < BG_SCAN_TTL_MS;
+      if (fresh || isInUnavailableCooldown(ch)) continue;
+      await syncChannelFromTg(ch, picked.client);
+    } catch {
+      // ленивый sync подхватит при открытии drawer'а
+    }
+    await new Promise((r) => setTimeout(r, BG_SCAN_THROTTLE_MS));
+  }
+}
 
 // Pull свежей карточки канала из TG. Lazy: фронт дёргает при открытии
 // drawer'а если synced_at IS NULL или > 24h.
@@ -529,130 +811,8 @@ app.openapi(
     }
     const tdClient = picked.client;
 
-    type TdChat = {
-      id: number;
-      title: string;
-      type: { _: string; supergroup_id?: number; is_channel?: boolean };
-      photo?: { minithumbnail?: { data: string } };
-    };
-    type TdSupergroupFullInfo = {
-      description: string;
-      member_count: number;
-      linked_chat_id: number;
-      direct_messages_chat_id: number;
-      gift_count: number;
-      outgoing_paid_message_star_count: number;
-      photo?: { minithumbnail?: { data: string } };
-    };
-
-    // searchPublicChat — единственный способ зарегистрировать публичный чат
-    // в TDLib-state без подписки. Только после него getSupergroupFullInfo
-    // и getChatHistory получают chat (см. td_api.tl §searchPublicChat,
-    // §getChat — offline-only). getChat(externalId) — fallback для каналов
-    // без @username; в холодной сессии скорее всего тоже упадёт, но другого
-    // выхода нет.
-    let tdChat: TdChat;
-    try {
-      tdChat = channel.username
-        ? ((await tdClient.invoke({
-            _: "searchPublicChat",
-            username: channel.username,
-          } as never)) as TdChat)
-        : ((await tdClient.invoke({
-            _: "getChat",
-            chat_id: Number(channel.externalId),
-          } as never)) as TdChat);
-    } catch (e) {
-      const cls = classifyResolveError(e);
-      if (cls.permanent) await markChannelUnavailable(id, cls.reason);
-      throw new HTTPException(404, {
-        message: `Telegram lookup failed: ${errMsg(e)}`,
-      });
-    }
-
-    if (tdChat.type._ !== "chatTypeSupergroup" || !tdChat.type.supergroup_id) {
-      throw new HTTPException(400, {
-        message: `chat ${tdChat.id} is not a supergroup (got ${tdChat.type._})`,
-      });
-    }
-
-    const supergroupId = tdChat.type.supergroup_id;
-    // Race-fix: searchPublicChat выше эмитит updateSupergroup, replicator
-    // handler кладёт patch в channelMetaBuf и взводит flush на 500ms.
-    // Если getSupergroupFullInfo (~200-1000ms RPC) затянется и flush
-    // выстрелит до финального UPDATE — flush не найдёт row по
-    // meta->>'supergroup_id' и patch потеряется до следующего sync.
-    // Кладём supergroup_id в meta заранее, чтобы flush точно попал.
-    await db
-      .update(channels)
-      .set({
-        meta: sql`${channels.meta} || ${JSON.stringify({ supergroup_id: String(supergroupId) })}::jsonb`,
-      })
-      .where(eq(channels.id, id));
-
-    // getSupergroup НЕ вызываем — его поля (boost_level, verification, has_dm,
-    // is_channel, …) прилетают как updateSupergroup и пишутся в meta фоновым
-    // handler'ом в tg-replicator.ts. FullInfo же без явного invoke'а update'ом
-    // не приходит (cached for up to 1 minute, см. td_api.tl §getSupergroupFullInfo).
-    let tdFull: TdSupergroupFullInfo;
-    try {
-      tdFull = (await tdClient.invoke({
-        _: "getSupergroupFullInfo",
-        supergroup_id: supergroupId,
-      } as never)) as TdSupergroupFullInfo;
-    } catch (e) {
-      const cls = classifyResolveError(e);
-      if (cls.permanent) await markChannelUnavailable(id, cls.reason);
-      throw new HTTPException(404, {
-        message: `Telegram lookup failed: ${errMsg(e)}`,
-      });
-    }
-
-    // Только свои поля; nice-to-have от updateSupergroup доедут merge'ем.
-    const metaPatch: Record<string, unknown> = {
-      supergroup_id: String(supergroupId),
-      linked_chat_id: tdFull.linked_chat_id || null,
-      direct_messages_chat_id: tdFull.direct_messages_chat_id || null,
-      gift_count: tdFull.gift_count,
-      outgoing_paid_message_star_count: tdFull.outgoing_paid_message_star_count,
-    };
-
-    const description = tdFull.description || null;
-    const externalIdNew = String(tdChat.id);
-
-    // Thumbnail: chat.photo.minithumbnail.data приходит как base64-строка
-    // (TDLib bytes-поля в JSON — base64). Если у канала нет аватара — поле
-    // photo отсутствует, прежний кеш не сносим.
-    const minithumb =
-      tdChat.photo?.minithumbnail?.data ?? tdFull.photo?.minithumbnail?.data;
-    const [[updated]] = await Promise.all([
-      db
-        .update(channels)
-        .set({
-          externalId: externalIdNew,
-          title: tdChat.title || channel.title,
-          description,
-          memberCount: tdFull.member_count,
-          meta: sql`${channels.meta} || ${JSON.stringify(metaPatch)}::jsonb`,
-          syncedAt: new Date(),
-          updatedAt: new Date(),
-          unavailableSince: null,
-          unavailableLastCheckAt: null,
-          unavailableReason: null,
-        })
-        .where(eq(channels.id, id))
-        .returning(),
-      minithumb
-        ? db
-            .insert(channelThumbnails)
-            .values({ channelId: id, b64: minithumb })
-            .onConflictDoUpdate({
-              target: channelThumbnails.channelId,
-              set: { b64: minithumb, updatedAt: new Date() },
-            })
-        : Promise.resolve(),
-    ]);
-    const [serialized] = await joinAdmins([updated!]);
+    const updated = await syncChannelFromTg(channel, tdClient);
+    const [serialized] = await joinAdmins([updated]);
     return c.json(serialized!);
   },
 );

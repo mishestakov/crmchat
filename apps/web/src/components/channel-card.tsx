@@ -340,7 +340,15 @@ function Stat(props: {
 function MetaBadges({ channel }: { channel: Channel }) {
   const meta = channel.meta as Record<string, unknown>;
   const props = channel.properties as Record<string, unknown>;
-  const hasDm = meta?.has_dm === true;
+  // Личка канала по direct_messages_chat_id (надёжно кладёт sync), не по has_dm
+  // (репликатор пишет асинхронно). Стоимость: 0 → бесплатно (готовый контакт),
+  // >0 → менеджер пишет руками, null → ещё не синкали.
+  const dmChatId = meta?.direct_messages_chat_id;
+  const hasDmGroup = dmChatId != null && String(dmChatId) !== "0";
+  const dmStarCost =
+    typeof meta?.outgoing_paid_message_star_count === "number"
+      ? meta.outgoing_paid_message_star_count
+      : null;
   const hasLinkedChat = meta?.has_linked_chat === true;
   const giftCount =
     typeof meta?.gift_count === "number" ? meta.gift_count : 0;
@@ -356,14 +364,23 @@ function MetaBadges({ channel }: { channel: Channel }) {
   );
 
   const badges: { key: string; node: React.ReactNode }[] = [];
-  if (hasDm) {
+  if (hasDmGroup) {
     badges.push({
       key: "dm",
-      node: (
-        <Badge tone="emerald" icon={Send}>
-          Можно в личку
-        </Badge>
-      ),
+      node:
+        dmStarCost === 0 ? (
+          <Badge tone="emerald" icon={Send}>
+            Можно в личку
+          </Badge>
+        ) : dmStarCost != null && dmStarCost > 0 ? (
+          <Badge tone="amber" icon={Send}>
+            В личку: {dmStarCost}⭐/сообщ
+          </Badge>
+        ) : (
+          <Badge tone="zinc" icon={Send}>
+            Личка канала
+          </Badge>
+        ),
     });
   }
   if (hasLinkedChat) {
