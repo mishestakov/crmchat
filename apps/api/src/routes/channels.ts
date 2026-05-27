@@ -33,12 +33,19 @@ import {
   channelAccessClause,
 } from "../lib/channels-access.ts";
 import { contactAccessClause } from "../lib/contacts-access.ts";
-import { getOutreachWorkerClient } from "../lib/outreach-account-client.ts";
+import {
+  getOutreachWorkerClient,
+  parseFloodWaitSeconds,
+  setAccountCooldown,
+} from "../lib/outreach-account-client.ts";
 import {
   clearPlacementRecipients,
   healPlacementRecipients,
 } from "../lib/placement-recipient.ts";
-import { accountAccessClause } from "../lib/outreach-access.ts";
+import {
+  accountAccessClause,
+  assertAccountAccess,
+} from "../lib/outreach-access.ts";
 import {
   assertRole,
   type WorkspaceRole,
@@ -483,12 +490,21 @@ const SetAdminBody = z
     contactId: z.string().min(1).max(64).optional(),
     username: z.string().min(1).max(64).optional(),
     dm: z.boolean().optional(),
+    // Способ связи = группа аккаунта (этап 16.9): chat_id группы + аккаунт-
+    // участник (через него потом читаем/пишем).
+    group: z
+      .object({
+        chatId: z.string().min(1).max(64),
+        accountId: z.string().min(1).max(64),
+      })
+      .optional(),
   })
   .refine(
     (b) =>
-      [b.contactId, b.username, b.dm].filter((v) => v != null && v !== false)
-        .length === 1,
-    { message: "укажите ровно одно: contactId, username или dm:true" },
+      [b.contactId, b.username, b.dm, b.group].filter(
+        (v) => v != null && v !== false,
+      ).length === 1,
+    { message: "укажите ровно одно: contactId, username, dm:true или group" },
   );
 
 app.openapi(
@@ -513,15 +529,64 @@ app.openapi(
   async (c) => {
     const { wsId, id } = c.req.valid("param");
     const userId = c.get("userId");
+    const role = c.get("workspaceRole");
     const body = c.req.valid("json");
-    const channel = await assertChannelAccess(id, wsId);
+    await assertChannelAccess(id, wsId);
 
-    if (body.dm) {
-      // Способ связи = личка канала: снимаем персону-админа и обнуляем
-      // получателя у всех размещений (готовность держится на бесплатном DM).
+    if (body.group) {
+      // Способ связи = группа: снимаем персону-получателя, в meta пишем chat_id
+      // группы + аккаунт-участника (для чтения/отправки в G3). Готовность —
+      // через contact_method.kind='group'.
+      // Tenancy: аккаунт принадлежит воркспейсу и доступен пользователю (иначе
+      // через него можно было бы читать/писать в чужие группы).
+      await assertAccountAccess(body.group.accountId, wsId, userId, role);
+      // Группа реально доступна аккаунту и это именно группа (не канал/привата) —
+      // live getChat (offline для юзера). Нельзя привязать произвольный chat_id.
+      const grpClient = await getOutreachWorkerClient({
+        id: body.group.accountId,
+        workspaceId: wsId,
+      });
+      if (!grpClient) {
+        throw new HTTPException(503, { message: "tg client unavailable" });
+      }
+      if (!(await isAccessibleGroup(grpClient, Number(body.group.chatId)))) {
+        throw new HTTPException(404, {
+          message: "группа недоступна через этот аккаунт",
+        });
+      }
       await db.delete(channelAdmins).where(eq(channelAdmins.channelId, id));
       await clearPlacementRecipients(id);
-      const [serialized] = await joinAdmins([channel]);
+      await db
+        .update(channels)
+        .set({
+          meta: sql`${channels.meta} || ${JSON.stringify({
+            contact_method: {
+              kind: "group",
+              chat_id: body.group.chatId,
+              account_id: body.group.accountId,
+            },
+          })}::jsonb`,
+        })
+        .where(eq(channels.id, id));
+      const [serialized] = await joinAdmins([await assertChannelAccess(id, wsId)]);
+      return c.json(serialized!);
+    }
+
+    if (body.dm) {
+      // Способ связи = личка канала (этап 16.9): снимаем персону, помечаем
+      // метод channel_dm — канал готов при любой цене (бесплатно → авто-логика,
+      // платно → вручную). chat_id личка-группы берём из meta при отправке.
+      await db.delete(channelAdmins).where(eq(channelAdmins.channelId, id));
+      await clearPlacementRecipients(id);
+      await db
+        .update(channels)
+        .set({
+          meta: sql`${channels.meta} || ${JSON.stringify({
+            contact_method: { kind: "channel_dm" },
+          })}::jsonb`,
+        })
+        .where(eq(channels.id, id));
+      const [serialized] = await joinAdmins([await assertChannelAccess(id, wsId)]);
       return c.json(serialized!);
     }
 
@@ -575,9 +640,138 @@ app.openapi(
       .values({ channelId: id, contactId })
       .onConflictDoNothing();
     await healPlacementRecipients(id, { override: true });
+    // Сбрасываем contact_method (теперь способ связи — человек/бот, не группа).
+    await db
+      .update(channels)
+      .set({ meta: sql`${channels.meta} - 'contact_method'` })
+      .where(eq(channels.id, id));
 
-    const [serialized] = await joinAdmins([channel]);
+    const [serialized] = await joinAdmins([await assertChannelAccess(id, wsId)]);
     return c.json(serialized!);
+  },
+);
+
+// TDLib chat object (нужные поля) для live-листинга групп.
+type TdChatLite = {
+  id: number;
+  title: string;
+  type: { _: string; is_channel?: boolean };
+};
+
+function isGroupChatType(t: TdChatLite["type"] | undefined): boolean {
+  if (!t) return false;
+  // Группа = basicGroup или supergroup-не-канал. Broadcast-канал (is_channel=
+  // true), привата, секретные — не группы.
+  return (
+    t._ === "chatTypeBasicGroup" ||
+    (t._ === "chatTypeSupergroup" && t.is_channel === false)
+  );
+}
+
+// Проверка «chat_id — доступная аккаунту группа» (для валидации привязки).
+// getChat — offline для юзер-аккаунта (td_api.tl §getChat), один in-memory вызов.
+async function isAccessibleGroup(
+  client: TdClient,
+  chatId: number,
+): Promise<boolean> {
+  try {
+    const ch = (await client.invoke({
+      _: "getChat",
+      chat_id: chatId,
+    } as never)) as TdChatLite;
+    return isGroupChatType(ch.type);
+  } catch {
+    return false;
+  }
+}
+
+// Live-листинг групп аккаунта (этап 16.9 ревизия): без реплики в БД.
+// searchChats — offline, ищет по title/username известных чатов в порядке
+// main-list (пустой query → недавние; td_api.tl §searchChats). Затем getChat
+// (offline для юзера) на каждый id — тип+title из памяти TDLib. Всё offline,
+// без сетевых round-trip'ов, данные актуальные.
+async function listAccountGroups(
+  client: TdClient,
+  query: string,
+): Promise<{ chatId: string; title: string }[]> {
+  const res = (await client.invoke({
+    _: "searchChats",
+    query,
+    limit: 50,
+  } as never)) as { chat_ids?: number[] };
+  const ids = res.chat_ids ?? [];
+  const chats = await Promise.all(
+    ids.map((cid) =>
+      client
+        .invoke({ _: "getChat", chat_id: cid } as never)
+        .then((ch: unknown) => ch as TdChatLite)
+        .catch(() => null),
+    ),
+  );
+  const out: { chatId: string; title: string }[] = [];
+  for (const ch of chats) {
+    if (ch && isGroupChatType(ch.type)) {
+      out.push({ chatId: String(ch.id), title: ch.title || "Без названия" });
+    }
+  }
+  return out;
+}
+
+// Группы, в которых состоят доступные пользователю аккаунты (этап 16.9) —
+// источник для пикера «привязать группу как способ связи». Читается LIVE
+// через TDLib (без таблицы tg_groups): порядок main-list сохраняем, дедуп по
+// chat_id (первый аккаунт-участник в порядке перебора).
+const AccountGroupSchema = z
+  .object({
+    chatId: z.string(),
+    title: z.string().nullable(),
+    accountId: z.string(),
+  })
+  .openapi("AccountGroup");
+
+app.openapi(
+  createRoute({
+    method: "get",
+    path: "/v1/workspaces/{wsId}/account-groups",
+    tags: ["channels"],
+    request: {
+      params: WsParam,
+      query: z.object({ q: z.string().max(128).optional() }),
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": { schema: z.array(AccountGroupSchema) },
+        },
+        description: "Groups the workspace accounts are members of",
+      },
+    },
+  }),
+  async (c) => {
+    const { wsId } = c.req.valid("param");
+    const { q } = c.req.valid("query");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const accts = await db
+      .select({ id: outreachAccounts.id })
+      .from(outreachAccounts)
+      .where(accountAccessClause(wsId, userId, role))
+      .orderBy(outreachAccounts.createdAt);
+
+    const seen = new Set<string>();
+    const out: { chatId: string; title: string; accountId: string }[] = [];
+    for (const a of accts) {
+      if (out.length >= 50) break;
+      const client = await getOutreachWorkerClient({ id: a.id, workspaceId: wsId });
+      if (!client) continue;
+      const groups = await listAccountGroups(client, q ?? "").catch(() => []);
+      for (const g of groups) {
+        if (seen.has(g.chatId)) continue;
+        seen.add(g.chatId);
+        out.push({ chatId: g.chatId, title: g.title, accountId: a.id });
+      }
+    }
+    return c.json(out.slice(0, 50));
   },
 );
 
@@ -1333,6 +1527,242 @@ app.openapi(
     }
 
     return c.json({ messages: items });
+  },
+);
+
+// Чат группы как способа связи (этап 16.9, G3): читаем/пишем историю группы
+// (chat_id из meta.contact_method) через аккаунт-участника (account_id оттуда же).
+// В отличие от /history (broadcast-канал) — групповые сообщения от разных
+// участников, поэтому возвращаем senderName на каждом.
+function groupMethodOrThrow(channel: typeof channels.$inferSelect): {
+  chatId: number;
+  accountId: string;
+} {
+  const cm = (channel.meta as Record<string, unknown>)?.contact_method as
+    | { kind?: string; chat_id?: string | number; account_id?: string }
+    | undefined;
+  if (cm?.kind !== "group" || cm.chat_id == null || !cm.account_id) {
+    throw new HTTPException(400, {
+      message: "у канала не выбрана группа как способ связи",
+    });
+  }
+  return { chatId: Number(cm.chat_id), accountId: cm.account_id };
+}
+
+const GroupHistoryItem = z.object({
+  id: z.string(),
+  date: z.iso.datetime(),
+  text: z.string(),
+  isOutgoing: z.boolean(),
+  senderName: z.string(),
+});
+const GroupHistoryResponse = z.object({
+  messages: z.array(GroupHistoryItem),
+});
+
+app.openapi(
+  createRoute({
+    method: "get",
+    path: "/v1/workspaces/{wsId}/channels/{id}/group-history",
+    tags: ["channels"],
+    request: {
+      params: WsIdParam,
+      query: z.object({
+        limit: z.coerce.number().int().min(1).max(100).default(50),
+        fromMessageId: z.coerce.number().int().nonnegative().optional(),
+      }),
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": { schema: GroupHistoryResponse },
+        },
+        description: "Group history with per-message sender",
+      },
+    },
+  }),
+  async (c) => {
+    const { wsId, id } = c.req.valid("param");
+    const { limit, fromMessageId } = c.req.valid("query");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const channel = await assertChannelAccess(id, wsId);
+    const { chatId, accountId } = groupMethodOrThrow(channel);
+    // Tenancy: аккаунт-участник из meta доступен пользователю (404 иначе —
+    // нельзя читать чужую группу через чужой аккаунт).
+    await assertAccountAccess(accountId, wsId, userId, role);
+    const client = await getOutreachWorkerClient({ id: accountId, workspaceId: wsId });
+    if (!client) {
+      throw new HTTPException(503, { message: "tg client unavailable" });
+    }
+
+    type TdMsg = {
+      id: number;
+      date: number;
+      is_outgoing: boolean;
+      content: TdContent;
+      sender_id: { _: string; user_id?: number; chat_id?: number };
+      // Подпись анонимного админа группы (td_api.tl §message.author_signature).
+      author_signature?: string;
+    };
+
+    let opened = false;
+    let aggregated: TdMsg[] = [];
+    try {
+      await client.invoke({ _: "openChat", chat_id: chatId } as never);
+      opened = true;
+      let from = fromMessageId ?? 0;
+      for (let i = 0; i < 5; i++) {
+        const r = (await client.invoke({
+          _: "getChatHistory",
+          chat_id: chatId,
+          from_message_id: from,
+          offset: 0,
+          limit: limit - aggregated.length,
+          only_local: false,
+        } as never)) as { messages: TdMsg[] };
+        if (!r.messages?.length) break;
+        aggregated = [...aggregated, ...r.messages];
+        if (aggregated.length >= limit) break;
+        from = Number(r.messages[r.messages.length - 1]!.id);
+      }
+    } catch (e) {
+      throw new HTTPException(404, {
+        message: `group history failed: ${errMsg(e)}`,
+      });
+    } finally {
+      if (opened) {
+        await client
+          .invoke({ _: "closeChat", chat_id: chatId } as never)
+          .catch(() => {});
+      }
+    }
+
+    // Имена отправителей-юзеров: getUser — offline для юзер-аккаунтов
+    // (td_api.tl §getUser), участники уже в TDLib-кэше после openChat. Кэш на
+    // запрос: один getUser на уникального отправителя, не на сообщение.
+    const nameCache = new Map<number, string>();
+    const resolveUserName = async (uid: number): Promise<string> => {
+      const cached = nameCache.get(uid);
+      if (cached) return cached;
+      let name = `Участник ${uid}`;
+      try {
+        const u = (await client.invoke({
+          _: "getUser",
+          user_id: uid,
+        } as never)) as {
+          first_name?: string;
+          last_name?: string;
+          usernames?: { active_usernames?: string[] };
+        };
+        const full = [u.first_name, u.last_name].filter(Boolean).join(" ");
+        name =
+          full ||
+          (u.usernames?.active_usernames?.[0]
+            ? `@${u.usernames.active_usernames[0]}`
+            : name);
+      } catch {
+        // offline-miss → fallback на «Участник {id}»
+      }
+      nameCache.set(uid, name);
+      return name;
+    };
+
+    const messages = [];
+    for (const m of aggregated) {
+      const { text } = extractFormattedText(m.content);
+      // Отправитель: свой → «Вы»; юзер → имя (getUser); анонимный админ
+      // (messageSenderChat) → author_signature или общая метка.
+      const senderName = m.is_outgoing
+        ? "Вы"
+        : m.sender_id._ === "messageSenderUser" && m.sender_id.user_id != null
+          ? await resolveUserName(m.sender_id.user_id)
+          : m.author_signature || "Админ группы";
+      messages.push({
+        id: String(m.id),
+        date: new Date(m.date * 1000).toISOString(),
+        text: text || "[медиа]",
+        isOutgoing: !!m.is_outgoing,
+        senderName,
+      });
+    }
+    return c.json({ messages });
+  },
+);
+
+const GroupSendBody = z.object({ text: z.string().min(1).max(4096) });
+
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/channels/{id}/group-send",
+    tags: ["channels"],
+    request: {
+      params: WsIdParam,
+      body: {
+        content: { "application/json": { schema: GroupSendBody } },
+        required: true,
+      },
+    },
+    responses: { 204: { description: "Sent to group" } },
+  }),
+  async (c) => {
+    const { wsId, id } = c.req.valid("param");
+    const { text } = c.req.valid("json");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const channel = await assertChannelAccess(id, wsId);
+    const { chatId, accountId } = groupMethodOrThrow(channel);
+    // Tenancy: аккаунт-участник доступен пользователю.
+    await assertAccountAccess(accountId, wsId, userId, role);
+    const client = await getOutreachWorkerClient({ id: accountId, workspaceId: wsId });
+    if (!client) {
+      throw new HTTPException(503, { message: "tg client unavailable" });
+    }
+    try {
+      // sendMessage оптимистичен (возвращает Message сразу). Проверяем
+      // sending_state на синхронный отказ — платная группа/write-forbidden
+      // (td_api.tl: messageSendingStateFailed.required_paid_message_star_count).
+      // Async-отказ (slow-mode и т.п.) ловит updateMessageSendFailed-листенер,
+      // как и у quick-send — полного подтверждения ручных отправок нет.
+      const sent = (await client.invoke({
+        _: "sendMessage",
+        chat_id: chatId,
+        input_message_content: {
+          _: "inputMessageText",
+          text: { _: "formattedText", text, entities: [] },
+          link_preview_options: { _: "linkPreviewOptions", is_disabled: true },
+          clear_draft: false,
+        },
+      } as never)) as {
+        sending_state?: {
+          _: string;
+          error?: { message?: string };
+          required_paid_message_star_count?: number;
+        };
+      };
+      if (sent.sending_state?._ === "messageSendingStateFailed") {
+        const st = sent.sending_state;
+        const paid = st.required_paid_message_star_count;
+        throw new HTTPException(400, {
+          message: paid
+            ? `Группа требует ${paid}⭐ за сообщение — отправьте вручную`
+            : `Telegram отклонил отправку: ${st.error?.message ?? "send failed"}`,
+        });
+      }
+    } catch (e) {
+      if (e instanceof HTTPException) throw e;
+      const msg = errMsg(e);
+      const flood = parseFloodWaitSeconds(msg);
+      if (flood !== null) {
+        await setAccountCooldown(accountId, Date.now() + (flood + 5) * 1000, `FloodWait ${flood}s`);
+        throw new HTTPException(429, {
+          message: `Telegram FloodWait — аккаунт замолчал на ${flood} сек`,
+        });
+      }
+      throw new HTTPException(400, { message: msg });
+    }
+    return c.body(null, 204);
   },
 );
 

@@ -1202,9 +1202,15 @@ export const tgChats = pgTable(
   ],
 );
 
-// tg_users — глобальный словарь TG-собеседников. Реплицируем не-ботов
-// (Regular + Deleted/Unknown). Боты — out of scope (защита от bot-trap'а
-// делается отдельно по суффиксу @username).
+// Группы НЕ реплицируем (этап 16.9 ревизия): они личные и эфемерные, в нашу БД
+// не оседают. Пикер привязки группы читает их live через TDLib (searchChats +
+// getChat, offline), чат группы тоже идёт live. Приватнее и без рассинхрона.
+
+// tg_users — глобальный словарь TG-собеседников. Реплицируем Regular + Bot
+// (этап 16.9: бот = способ связи, ~25% контактов) + Deleted/Unknown.
+// is_bot — авторитетный флаг (userTypeBot), по нему авто-рассылка пропускает
+// ботов и worker не шлёт им опенер. Суффикс @username больше не используем
+// (резал живых @talbot/@robot).
 //
 // is_deleted=true для userTypeDeleted/Unknown — TG отозвал юзера или потерял
 // к нему доступ. Строку НЕ удаляем чтобы при повторном импорте CSV не идти
@@ -1220,6 +1226,7 @@ export const tgUsers = pgTable(
     username: text("username"),
     fullName: text("full_name"),
     isDeleted: boolean("is_deleted").notNull().default(false),
+    isBot: boolean("is_bot").notNull().default(false),
     // Presence: peer сейчас в сети (userStatusOnline) или был последний раз
     // онлайн в lastSeenAt (userStatusOffline). recently/lastWeek/lastMonth
     // мапим в isOnline=false + lastSeenAt=null — UI рисует «был недавно».

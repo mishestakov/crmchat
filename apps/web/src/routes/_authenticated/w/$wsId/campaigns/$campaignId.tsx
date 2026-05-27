@@ -916,6 +916,14 @@ function BloggerRow({
               нет контакта
             </span>
           )}
+          {p.teamKnowsAdmin && (
+            <span
+              title="Кто-то из аккаунтов команды уже в личном диалоге с этим админом"
+              className="shrink-0 rounded-full bg-teal-100 px-1.5 py-0.5 text-[11px] font-medium text-teal-700"
+            >
+              🤝 знакомы
+            </span>
+          )}
         </div>
       </div>
     </button>

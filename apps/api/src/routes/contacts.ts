@@ -556,6 +556,22 @@ const historyFetched = new Set<string>();
 const historyKey = (accountId: string, chatId: string) =>
   `${accountId}:${chatId}`;
 
+// Кнопки бота (этап 16.9). Нормализуем TDLib reply_markup в плоскую модель,
+// которую фронт рендерит без знания TDLib-типов:
+//   - url        → ссылка (inlineKeyboardButtonTypeUrl);
+//   - send_text  → нажатие отправляет text кнопки (replyMarkupShowKeyboard);
+//   - unsupported→ показываем серой, нажать нельзя (callback/webapp/оплата/…
+//     не делаем в MVP, см. AskUserQuestion «Только reply-клавиатура»).
+const ReplyButtonSchema = z.object({
+  text: z.string(),
+  action: z.enum(["url", "send_text", "unsupported"]),
+  url: z.string().optional(),
+});
+const ReplyMarkupSchema = z.object({
+  kind: z.enum(["inline", "keyboard"]),
+  rows: z.array(z.array(ReplyButtonSchema)),
+});
+
 const ChatMessageSchema = z.object({
   id: z.string(),
   date: z.iso.datetime(),
@@ -563,6 +579,7 @@ const ChatMessageSchema = z.object({
   text: z.string(),
   entities: z.array(TdMessageEntitySchema),
   mediaThumb: TdMediaThumbSchema.nullable(),
+  replyMarkup: ReplyMarkupSchema.nullable(),
 });
 
 const PeerStatusSchema = z.object({
@@ -593,6 +610,9 @@ app.openapi(
               messages: z.array(ChatMessageSchema),
               lastReadOutboxId: z.string().nullable(),
               peerStatus: PeerStatusSchema.nullable(),
+              // Контакт — бот (этап 16.9): фронт показывает «Запустить бота»
+              // при пустом диалоге и трактует reply_markup как бот-кнопки.
+              peerIsBot: z.boolean(),
             }),
           },
         },
@@ -656,7 +676,11 @@ app.openapi(
         )
         .limit(1),
       db
-        .select({ isOnline: tgUsers.isOnline, lastSeenAt: tgUsers.lastSeenAt })
+        .select({
+          isOnline: tgUsers.isOnline,
+          lastSeenAt: tgUsers.lastSeenAt,
+          isBot: tgUsers.isBot,
+        })
         .from(tgUsers)
         .where(eq(tgUsers.userId, tgUserId))
         .limit(1),
@@ -667,8 +691,14 @@ app.openapi(
           lastSeenAt: peerStatusRow.lastSeenAt?.toISOString() ?? null,
         }
       : null;
+    const peerIsBot = peerStatusRow?.isBot ?? false;
     if (!chatRow) {
-      return c.json({ messages: [], lastReadOutboxId: null, peerStatus });
+      return c.json({
+        messages: [],
+        lastReadOutboxId: null,
+        peerStatus,
+        peerIsBot,
+      });
     }
 
     const fromMessageId = before ? Number(before) : 0;
@@ -729,6 +759,7 @@ app.openapi(
       messages: result.messages.map(mapMessage),
       lastReadOutboxId: chatRow.lastReadOutboxId,
       peerStatus,
+      peerIsBot,
     });
   },
 );
@@ -792,6 +823,77 @@ app.openapi(
   },
 );
 
+// Старт бота (этап 16.9): если диалога с ботом ещё нет, первое действие —
+// /start (sendBotStartMessage). Для приватного бот-чата chat_id == bot_user_id.
+// После успеха фронт перетягивает chat-history — бот пришлёт меню/приветствие.
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/contacts/{id}/bot-start",
+    tags: ["contacts"],
+    request: {
+      params: WsIdParam,
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({ accountId: z.string().min(1).max(64) }),
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: { "application/json": { schema: z.object({ ok: z.boolean() }) } },
+        description: "Bot started",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const { id } = c.req.valid("param");
+    const { accountId } = c.req.valid("json");
+    const contact = await assertContactAccess(id, wsId);
+
+    const [acc] = await db
+      .select({ id: outreachAccounts.id })
+      .from(outreachAccounts)
+      .where(
+        and(
+          eq(outreachAccounts.id, accountId),
+          eq(outreachAccounts.workspaceId, wsId),
+        ),
+      )
+      .limit(1);
+    if (!acc) throw new HTTPException(404, { message: "account not found" });
+
+    const client = await getOutreachWorkerClient({ id: acc.id, workspaceId: wsId });
+    if (!client) {
+      throw new HTTPException(503, { message: "tg client unavailable" });
+    }
+    const tgUserId = await ensureContactTgUserId({
+      workspaceId: wsId,
+      contactId: id,
+      properties: contact.properties as Record<string, unknown>,
+      client,
+    });
+    if (!tgUserId) {
+      throw new HTTPException(400, { message: "не нашли бота в Telegram" });
+    }
+    try {
+      await client.invoke({
+        _: "sendBotStartMessage",
+        bot_user_id: Number(tgUserId),
+        chat_id: Number(tgUserId),
+        parameter: "",
+      } as never);
+    } catch (e) {
+      throw new HTTPException(400, { message: errMsg(e) });
+    }
+    return c.json({ ok: true });
+  },
+);
+
 async function backfillInboundOutbound(
   accountId: string,
   chatId: string,
@@ -848,12 +950,53 @@ async function backfillInboundOutbound(
     );
 }
 
+type TdInlineButton = {
+  text: string;
+  type: { _: string; url?: string };
+};
+type TdKeyboardButton = { text: string; type: { _: string } };
+type TdReplyMarkup = {
+  _: string;
+  rows?: (TdInlineButton[] | TdKeyboardButton[])[];
+};
 type TdMessage = {
   id: number | string;
   date: number;
   is_outgoing: boolean;
   content: TdContent;
+  reply_markup?: TdReplyMarkup;
 };
+
+// TDLib reply_markup → нормализованная модель (см. ReplyMarkupSchema).
+function mapReplyMarkup(
+  rm: TdReplyMarkup | undefined,
+): z.infer<typeof ReplyMarkupSchema> | null {
+  if (!rm) return null;
+  if (rm._ === "replyMarkupInlineKeyboard") {
+    const rows = (rm.rows ?? []).map((row) =>
+      (row as TdInlineButton[]).map((b) =>
+        b.type._ === "inlineKeyboardButtonTypeUrl" && b.type.url
+          ? { text: b.text, action: "url" as const, url: b.type.url }
+          : { text: b.text, action: "unsupported" as const },
+      ),
+    );
+    return { kind: "inline", rows };
+  }
+  if (rm._ === "replyMarkupShowKeyboard") {
+    const rows = (rm.rows ?? []).map((row) =>
+      (row as TdKeyboardButton[]).map((b) =>
+        // Обычная текст-кнопка → нажатие шлёт её текст. Спец-кнопки (запрос
+        // контакта/локации/webapp) — серым, в MVP не обрабатываем.
+        b.type._ === "keyboardButtonTypeText"
+          ? { text: b.text, action: "send_text" as const }
+          : { text: b.text, action: "unsupported" as const },
+      ),
+    );
+    return { kind: "keyboard", rows };
+  }
+  // replyMarkupRemoveKeyboard / replyMarkupForceReply — рендерить нечего.
+  return null;
+}
 
 function mapMessage(m: TdMessage): z.infer<typeof ChatMessageSchema> {
   const { text, entities } = extractFormattedText(m.content);
@@ -867,6 +1010,7 @@ function mapMessage(m: TdMessage): z.infer<typeof ChatMessageSchema> {
     text: text || (mediaThumb ? "" : fallbackLabel(m.content._)),
     entities,
     mediaThumb,
+    replyMarkup: mapReplyMarkup(m.reply_markup),
   };
 }
 

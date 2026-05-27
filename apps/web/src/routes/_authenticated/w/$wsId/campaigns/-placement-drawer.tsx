@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   X,
   MessageCircle,
+  Send,
   Trash2,
   FileText,
   Image as ImageIcon,
@@ -90,6 +91,17 @@ export function PlacementPane({
   const cMeta = (channelQ.data?.meta ?? {}) as Record<string, unknown>;
   const avgReach = typeof cMeta.avg_reach === "number" ? cMeta.avg_reach : null;
   const cErr = typeof cMeta.err === "number" ? cMeta.err : null;
+  // Бот (@…bot) — ручной способ связи (этап 16.9): авто-цепочка его пропускает.
+  const isBot = !!placement.adminUsername?.toLowerCase().endsWith("bot");
+  // Способ связи канала (этап 16.9): человек/бот (adminContactId) ИЛИ
+  // группа/личка-канала (meta.contact_method). null → способ ещё не выбран.
+  const contactMethod = (cMeta.contact_method ?? null) as {
+    kind?: string;
+  } | null;
+  const methodKind = placement.adminContactId
+    ? "person"
+    : (contactMethod?.kind ?? null);
+  const hasMethod = methodKind !== null;
 
   const invalidate = () =>
     qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] });
@@ -168,10 +180,10 @@ export function PlacementPane({
         )}
       </div>
 
-      {/* Правый рельс (50/50 с каналом): сделка+переписка если есть контакт,
-          иначе резолвер. */}
+      {/* Правый рельс (50/50): сделка + переписка/чат-по-способу, если способ
+          связи выбран (человек/бот/группа/личка), иначе резолвер. */}
       <div className="flex min-w-0 flex-1 flex-col bg-white">
-        {placement.adminContactId && !changing ? (
+        {hasMethod && !changing ? (
           <>
             <div
               onBlur={(e) => {
@@ -181,6 +193,11 @@ export function PlacementPane({
               }}
               className="border-b border-zinc-200 px-4 py-3"
             >
+              {isBot && (
+                <div className="mb-2 rounded-md bg-zinc-100 px-2 py-1 text-[11px] text-zinc-600">
+                  Бот — авторассылка сюда не идёт, напишите вручную в чате ниже.
+                </div>
+              )}
               {(avgReach !== null || cErr !== null) && (
                 <div className="mb-2 flex items-baseline gap-4 text-xs text-zinc-500">
                   {avgReach !== null && (
@@ -235,21 +252,47 @@ export function PlacementPane({
                 />
               </div>
             </div>
-            <ContactHeader
-              placement={placement}
-              onChange={() => setChanging(true)}
-            />
-            <div className="min-h-0 flex-1">
-              <LeadChatPanel
-                wsId={wsId}
-                lead={{
-                  id: placement.id,
-                  contactId: placement.adminContactId,
-                  account: null,
-                }}
-                accounts={accountsQ.data ?? []}
-              />
-            </div>
+            {placement.adminContactId ? (
+              <>
+                <ContactHeader
+                  placement={placement}
+                  onChange={() => setChanging(true)}
+                />
+                <div className="min-h-0 flex-1">
+                  <LeadChatPanel
+                    wsId={wsId}
+                    lead={{
+                      id: placement.id,
+                      contactId: placement.adminContactId,
+                      account: null,
+                    }}
+                    accounts={accountsQ.data ?? []}
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <MethodHeader
+                  label={
+                    methodKind === "group" ? "Группа обсуждения" : "Личка канала"
+                  }
+                  onChange={() => setChanging(true)}
+                />
+                {methodKind === "group" && placement.channel ? (
+                  <div className="min-h-0 flex-1">
+                    <GroupChatPanel
+                      wsId={wsId}
+                      channelId={placement.channel.id}
+                    />
+                  </div>
+                ) : (
+                  <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-sm text-zinc-400">
+                    Личка канала — пишите в Telegram (чат в приложении добавим
+                    позже).
+                  </div>
+                )}
+              </>
+            )}
           </>
         ) : (
           <Resolver
@@ -258,9 +301,7 @@ export function PlacementPane({
             placement={placement}
             channel={channelQ.data ?? null}
             onRemoved={onRemoved}
-            onClose={
-              placement.adminContactId ? () => setChanging(false) : undefined
-            }
+            onClose={hasMethod ? () => setChanging(false) : undefined}
           />
         )}
       </div>
@@ -359,6 +400,28 @@ function ContactHeader({
   );
 }
 
+// Шапка способа связи группа/личка (этап 16.9): что выбрано + «сменить».
+function MethodHeader({
+  label,
+  onChange,
+}: {
+  label: string;
+  onChange: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2 border-b border-zinc-100 px-4 py-1.5 text-xs">
+      <span className="min-w-0 truncate text-zinc-500">Способ связи: {label}</span>
+      <button
+        type="button"
+        onClick={onChange}
+        className="shrink-0 font-medium text-emerald-700 hover:text-emerald-800"
+      >
+        сменить
+      </button>
+    </div>
+  );
+}
+
 // Резолвер / смена способа связи (этап 16.8): правый рельс для канала без
 // контакта, либо режим «сменить» (onClose задан → есть «← к переписке»).
 // Суджест-чипы @ из описания, поиск/создание контакта, «в личку (0⭐)»,
@@ -386,6 +449,7 @@ function Resolver({
       contactId?: string;
       username?: string;
       dm?: boolean;
+      group?: { chatId: string; accountId: string };
     }) => {
       const { error } = await api.POST(
         "/v1/workspaces/{wsId}/channels/{id}/set-admin",
@@ -439,25 +503,57 @@ function Resolver({
       </div>
 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3">
-        {hasDmGroup && dmStar === 0 && (
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
-            <p>У канала открыта личка — писать можно бесплатно.</p>
-            <button
-              type="button"
-              onClick={() => setAdmin.mutate({ dm: true })}
-              disabled={setAdmin.isPending}
-              className="mt-1.5 rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-            >
-              Использовать личку канала
-            </button>
+        {/* Личка канала — всегда видна с ценой (этап 16.9). Бесплатно → авто;
+            платно → вручную. Неизвестна (не синкали) → сначала открой ленту. */}
+        {hasDmGroup && (
+          <div
+            className={
+              "rounded-lg border px-3 py-2 text-xs " +
+              (dmStar === 0
+                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                : "border-amber-200 bg-amber-50 text-amber-800")
+            }
+          >
+            <p>
+              {dmStar === 0
+                ? "У канала открыта личка — писать можно бесплатно."
+                : dmStar !== null
+                  ? `В личку канала: ${dmStar}⭐ за сообщение (авторассылка не идёт, вручную).`
+                  : "У канала есть личка — стоимость уточняется (откройте ленту канала)."}
+            </p>
+            {dmStar !== null && (
+              <button
+                type="button"
+                onClick={() => setAdmin.mutate({ dm: true })}
+                disabled={setAdmin.isPending}
+                className={
+                  "mt-1.5 rounded-md px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50 " +
+                  (dmStar === 0
+                    ? "bg-emerald-600 hover:bg-emerald-700"
+                    : "bg-amber-600 hover:bg-amber-700")
+                }
+              >
+                {dmStar === 0
+                  ? "Использовать личку канала"
+                  : "Использовать личку (вручную)"}
+              </button>
+            )}
           </div>
         )}
-        {hasDmGroup && dmStar !== null && dmStar > 0 && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-            В личку канала: {dmStar}⭐ за сообщение. Авторассылка сюда не идёт —
-            напишите вручную или найдите контакт админа.
+
+        {/* Группа аккаунта (этап 16.9): из диалогов подключённых аккаунтов. */}
+        <div>
+          <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
+            Группа аккаунта
           </div>
-        )}
+          <GroupPicker
+            wsId={wsId}
+            loading={setAdmin.isPending}
+            onPick={(chatId, accountId) =>
+              setAdmin.mutate({ group: { chatId, accountId } })
+            }
+          />
+        </div>
 
         {suggestions.length > 0 && (
           <div>
@@ -513,6 +609,185 @@ function Resolver({
   );
 }
 
+// Чат группы (этап 16.9, G3): история с отправителями + отправка через
+// аккаунт-участника. В отличие от 1:1-переписки — видно, кто из участников
+// пишет (senderName на входящих).
+function GroupChatPanel({
+  wsId,
+  channelId,
+}: {
+  wsId: string;
+  channelId: string;
+}) {
+  const qc = useQueryClient();
+  const [text, setText] = useState("");
+  const historyQ = useQuery({
+    queryKey: ["group-history", wsId, channelId] as const,
+    queryFn: async () => {
+      const { data, error } = await api.GET(
+        "/v1/workspaces/{wsId}/channels/{id}/group-history",
+        { params: { path: { wsId, id: channelId }, query: { limit: 50 } } },
+      );
+      if (error) throw error;
+      return data.messages;
+    },
+    staleTime: 60 * 1000,
+  });
+  const send = useMutation({
+    mutationFn: async () => {
+      const { error } = await api.POST(
+        "/v1/workspaces/{wsId}/channels/{id}/group-send",
+        { params: { path: { wsId, id: channelId } }, body: { text: text.trim() } },
+      );
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      setText("");
+      qc.invalidateQueries({ queryKey: ["group-history", wsId, channelId] });
+    },
+  });
+  // TDLib отдаёт newest-first → разворачиваем в oldest-first для рендера.
+  const ordered = [...(historyQ.data ?? [])].reverse();
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto bg-zinc-50 px-3 py-3">
+        {historyQ.isLoading ? (
+          <p className="text-center text-sm text-zinc-400">Загрузка…</p>
+        ) : historyQ.error ? (
+          <div className="px-2 py-4 text-center text-sm text-red-600">
+            <p>Группа недоступна через привязанный аккаунт.</p>
+            <p className="mt-1 text-xs text-zinc-500">
+              Возможно, аккаунт вышел из группы — перепривяжите группу или
+              выберите другой способ связи.
+            </p>
+            <p className="mt-1 text-[11px] text-zinc-400">
+              {errorMessage(historyQ.error)}
+            </p>
+          </div>
+        ) : ordered.length === 0 ? (
+          <p className="text-center text-sm text-zinc-400">Сообщений нет</p>
+        ) : (
+          ordered.map((m) => (
+            <div
+              key={m.id}
+              className={"flex " + (m.isOutgoing ? "justify-end" : "justify-start")}
+            >
+              <div
+                className={
+                  "max-w-[80%] rounded-2xl px-3 py-1.5 text-sm " +
+                  (m.isOutgoing
+                    ? "bg-emerald-100 text-zinc-900"
+                    : "bg-white ring-1 ring-zinc-200")
+                }
+              >
+                {!m.isOutgoing && (
+                  <div className="text-[11px] font-medium text-emerald-700">
+                    {m.senderName}
+                  </div>
+                )}
+                <div className="whitespace-pre-wrap break-words">{m.text}</div>
+                <div className="mt-0.5 text-right text-[10px] text-zinc-400">
+                  {new Date(m.date).toLocaleString("ru-RU", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+      <div className="flex items-end gap-2 border-t border-zinc-200 p-2">
+        <textarea
+          rows={1}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Сообщение в группу…"
+          className="min-h-0 flex-1 resize-none rounded-lg border border-zinc-300 px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+        />
+        <button
+          type="button"
+          onClick={() => send.mutate()}
+          disabled={!text.trim() || send.isPending}
+          className="rounded-lg bg-emerald-600 p-2 text-white hover:bg-emerald-700 disabled:opacity-50"
+        >
+          <Send size={16} />
+        </button>
+      </div>
+      {send.error && (
+        <p className="px-2 pb-1 text-xs text-red-600">
+          {errorMessage(send.error)}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// Пикер групп аккаунта (этап 16.9): поиск по группам, в которых состоят
+// аккаунты воркспейса (tg_groups). Выбор → привязка группы как способа связи;
+// account_id нужен, чтобы потом читать/писать через аккаунт-участника (G3).
+function GroupPicker({
+  wsId,
+  onPick,
+  loading,
+}: {
+  wsId: string;
+  onPick: (chatId: string, accountId: string) => void;
+  loading: boolean;
+}) {
+  const [q, setQ] = useState("");
+  const [debounced, setDebounced] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(q.trim()), 400);
+    return () => clearTimeout(t);
+  }, [q]);
+  const groupsQ = useQuery({
+    queryKey: ["account-groups", wsId, debounced] as const,
+    queryFn: async () => {
+      const { data, error } = await api.GET(
+        "/v1/workspaces/{wsId}/account-groups",
+        { params: { path: { wsId }, query: { q: debounced || undefined } } },
+      );
+      if (error) throw error;
+      return data;
+    },
+  });
+  const groups = groupsQ.data ?? [];
+  return (
+    <div className="rounded-md border border-zinc-200 bg-zinc-50/40 p-2">
+      <input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="Поиск группы аккаунта"
+        className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm focus:border-emerald-500 focus:outline-none"
+      />
+      {groups.length === 0 ? (
+        <p className="mt-1.5 text-xs text-zinc-500">
+          {groupsQ.isLoading
+            ? "Загрузка…"
+            : "Группы не найдены — подтянутся по мере репликации аккаунта."}
+        </p>
+      ) : (
+        <ul className="mt-1.5 max-h-48 space-y-1 overflow-y-auto">
+          {groups.map((g) => (
+            <li key={g.chatId}>
+              <button
+                type="button"
+                onClick={() => onPick(g.chatId, g.accountId)}
+                disabled={loading}
+                className="w-full truncate rounded-md bg-white px-2 py-1.5 text-left text-sm hover:bg-emerald-100 disabled:opacity-50"
+              >
+                {g.title ?? "Без названия"}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 // Кандидаты-контакты из текста (описание канала): @username и t.me/username.
 // Только суджест — менеджер подтверждает кликом, молча в channel_admins не
 // пишем (ложные срабатывания: партнёрские каналы, упоминания).
@@ -542,8 +817,8 @@ function extractHandles(text: string, ownUsername: string | null): string[] {
   while ((m = re.exec(text)) !== null) {
     const h = m[1]!.toLowerCase();
     if (h === own) continue;
-    if (h.endsWith("bot")) continue; // боты — не личные контакты админа
     if (RESERVED_TME_PATHS.has(h)) continue; // служебные ссылки t.me
+    // Боты (@…bot) теперь валидный способ связи (ручной, этап 16.9) — предлагаем.
     out.add(h);
   }
   return [...out].slice(0, 8);

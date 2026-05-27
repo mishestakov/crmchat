@@ -21,7 +21,6 @@ function NewOutreachAccountPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [connectedId, setConnectedId] = useState<string | null>(null);
-  const [totalImported, setTotalImported] = useState(0);
   const [replicaSize, setReplicaSize] = useState(0);
   const [isImporting, setIsImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
@@ -47,7 +46,6 @@ function NewOutreachAccountPage() {
         );
         if (cancelled) return;
         if (error) throw error;
-        if (data!.imported > 0) setTotalImported((p) => p + data!.imported);
         setReplicaSize(data!.replicaSize);
         if (data!.replicaSize === prevReplicaSize) {
           stableTicks++;
@@ -104,8 +102,6 @@ function NewOutreachAccountPage() {
 
   const goToList = () =>
     navigate({ to: "/w/$wsId/outreach/accounts", params: { wsId } });
-  const goToContacts = () =>
-    navigate({ to: "/w/$wsId/contacts", params: { wsId } });
 
   if (!connectedId) {
     return (
@@ -115,11 +111,10 @@ function NewOutreachAccountPage() {
           <div className="mb-4 rounded-2xl bg-amber-50 px-5 py-4 text-sm text-amber-900">
             <div className="font-medium">После авторизации</div>
             <p className="mt-1 text-amber-900/80">
-              Заведём контакты в CRM на всех, с кем у этого аккаунта есть
-              личная переписка в Telegram. Это нужно, чтобы система понимала,
-              кто из ваших аккаунтов с кем уже общался — при загрузке нового
-              CSV знакомый блогер автоматически закрепится за тем же
-              аккаунтом, что и раньше.
+              Загрузим чат-лист аккаунта локально (на сервере), чтобы система
+              понимала, кто из ваших аккаунтов с кем уже общался — тогда при
+              импорте каналов/лидов знакомый блогер сам закрепится за нужным
+              аккаунтом. Личные переписки в общий список контактов не попадают.
             </p>
           </div>
         </div>
@@ -145,50 +140,28 @@ function NewOutreachAccountPage() {
           Аккаунт подключён
         </div>
         <div className="rounded-2xl bg-white p-5 shadow-sm space-y-3">
-          <div className="font-medium">Импорт собеседников</div>
+          <div className="font-medium">Загрузка диалогов аккаунта</div>
           {isImporting ? (
             <p className="text-sm text-zinc-600">
-              Загружаем диалоги из Telegram… подгружено {replicaSize}{" "}
-              собеседников.
+              Загружаем чат-лист из Telegram… {replicaSize} диалогов.
             </p>
           ) : importError ? (
             <p className="text-sm text-red-600">{importError}</p>
           ) : (
-            <div className="space-y-1">
-              <p className="text-sm text-emerald-700">
-                Готово. В CRM {totalImported} контактов.
-              </p>
-              {replicaSize - totalImported > 0 && (
-                <p className="text-xs text-zinc-500">
-                  Ещё {replicaSize - totalImported} уже были в CRM от других
-                  аккаунтов.
-                </p>
-              )}
-            </div>
+            <p className="text-sm text-emerald-700">
+              Готово — загружено {replicaSize} диалогов. Личные переписки в общий
+              список не попадают; контакты появятся при привязке админов и
+              импорте каналов.
+            </p>
           )}
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={importError ? goToList : goToContacts}
-              disabled={isImporting}
-              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-            >
-              {isImporting
-                ? "Подождите…"
-                : importError
-                  ? "К списку аккаунтов"
-                  : "Посмотреть контакты"}
-            </button>
-            {!isImporting && !importError && (
-              <button
-                type="button"
-                onClick={goToList}
-                className="rounded-lg border border-zinc-300 px-4 py-2 text-sm hover:bg-zinc-50"
-              >
-                К аккаунтам
-              </button>
-            )}
-          </div>
+          <button
+            type="button"
+            onClick={goToList}
+            disabled={isImporting}
+            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+          >
+            {isImporting ? "Подождите…" : "Готово"}
+          </button>
         </div>
       </div>
     </div>

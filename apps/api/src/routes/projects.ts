@@ -588,6 +588,7 @@ app.openapi(
           dmStar: sql<
             number | null
           >`(${channels.meta} ->> 'outgoing_paid_message_star_count')::int`,
+          methodSet: sql<boolean>`(${channels.meta} -> 'contact_method' ->> 'kind') is not null`,
         })
         .from(projectItems)
         .leftJoin(channels, eq(channels.id, projectItems.channelId))
@@ -603,7 +604,7 @@ app.openapi(
       // Готовность = совпадает с Placement.contactReady (см. campaigns.ts):
       // привязан админ ИЛИ бесплатная личка канала.
       const unready = placements.filter(
-        (p) => !(p.hasAdmin || (p.hasDm && p.dmStar === 0)),
+        (p) => !(p.hasAdmin || p.methodSet || (p.hasDm && p.dmStar === 0)),
       ).length;
       if (unready > 0) {
         throw new HTTPException(400, {

@@ -7,6 +7,7 @@ import {
   projectItems,
   scheduledMessages,
   tgChats,
+  tgUsers,
   type ProjectMessage,
   type projects,
 } from "../db/schema.ts";
@@ -39,17 +40,24 @@ export function delayToMs(delay: { period: string; value: number }): number {
 // показывает «после предыдущего» вместо «через 974 года».
 export const FOLLOWUP_PENDING_SENTINEL = new Date("2999-01-01T00:00:00Z");
 
-// Sticky-резолвер: для набора tg_user_id возвращает Map → primary_account_id
-// из contacts. Используется в /activate (резолв sticky перед round-robin) и
-// в /leads (sticky-предсказание для draft-sequence — UI должен совпадать с
-// фактическим распределением на activate).
+// Sticky-резолвер: для набора tg_user_id возвращает Map → аккаунт, за которым
+// «закреплён» этот peer. Используется в /activate (перед round-robin) и в
+// /leads (предсказание для draft-sequence — UI должен совпасть с activate).
+//
+// Два уровня (этап 16.9 ревизия — без зависимости от дампа контактов):
+//   1. Явный override — contacts.primary_account_id (ручное «закрепить» в чате
+//      / привязанные админы).
+//   2. Иначе — по РЕПЛИКЕ (воркспейс-wide): аккаунт с самым свежим диалогом с
+//      этим peer'ом (tg_chats). Так «знакомый блогер липнет к своему аккаунту»
+//      без материализации всех диалогов в контакты.
 export async function resolveStickyByTgUserIds(
   wsId: string,
   tgUserIds: string[],
 ): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   if (tgUserIds.length === 0) return map;
-  const rows = await db
+
+  const explicit = await db
     .select({
       tgUserId: contactTgUserIdSql,
       accountId: contacts.primaryAccountId,
@@ -62,8 +70,35 @@ export async function resolveStickyByTgUserIds(
         inArray(contactTgUserIdSql, tgUserIds),
       ),
     );
-  for (const r of rows) {
+  for (const r of explicit) {
     if (r.tgUserId && r.accountId) map.set(r.tgUserId, r.accountId);
+  }
+
+  const missing = tgUserIds.filter((u) => !map.has(u));
+  if (missing.length > 0) {
+    // DISTINCT ON (peer) → один аккаунт на peer'а: самый свежий диалог по
+    // greatest(last_message/inbound/outbound), затем account_id для детерминизма.
+    const rows = await db
+      .selectDistinctOn([tgChats.peerUserId], {
+        peerUserId: tgChats.peerUserId,
+        accountId: tgChats.accountId,
+      })
+      .from(tgChats)
+      .innerJoin(outreachAccounts, eq(tgChats.accountId, outreachAccounts.id))
+      .where(
+        and(
+          eq(outreachAccounts.workspaceId, wsId),
+          inArray(tgChats.peerUserId, missing),
+        ),
+      )
+      .orderBy(
+        tgChats.peerUserId,
+        sql`greatest(${tgChats.lastMessageAt}, ${tgChats.lastInboundAt}, ${tgChats.lastOutboundAt}) desc nulls last`,
+        tgChats.accountId,
+      );
+    for (const r of rows) {
+      if (!map.has(r.peerUserId)) map.set(r.peerUserId, r.accountId);
+    }
   }
   return map;
 }
@@ -201,11 +236,32 @@ export async function prepareAgencyLeads(opts: {
     contacted = new Set(rows.map((r) => r.u));
   }
 
+  // Боты — ручной способ связи (этап 16.9): авто-опенер им не шлём (старт +
+  // кнопки делает менеджер). Сигнал авторитетный — tg_users.is_bot, а не суффикс
+  // @username (он резал живых @talbot/@robot).
+  const leadKeys = opts.leads
+    .map((l) => l.username?.toLowerCase())
+    .filter((u): u is string => !!u);
+  let botUsernames = new Set<string>();
+  if (leadKeys.length > 0) {
+    const botRows = await db
+      .select({ u: sql<string>`lower(${tgUsers.username})` })
+      .from(tgUsers)
+      .where(
+        and(
+          eq(tgUsers.isBot, true),
+          inArray(sql`lower(${tgUsers.username})`, leadKeys),
+        ),
+      );
+    botUsernames = new Set(botRows.map((r) => r.u));
+  }
+
   const seen = new Set<string>();
   const out: SchedulingLead[] = [];
   for (const l of opts.leads) {
     if (!l.username) continue;
     const key = l.username.toLowerCase();
+    if (botUsernames.has(key)) continue;
     if (seen.has(key)) continue;
     seen.add(key);
     if (opts.skipContacted && contacted.has(key)) continue;

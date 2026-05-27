@@ -11,9 +11,7 @@ import {
   tgUsers,
   workspaceMembers,
 } from "../db/schema.ts";
-import { contactTgUserIdSql } from "../lib/contact-sql.ts";
 import { errMsg } from "../lib/errors.ts";
-import { resolveStickyByPeerIds } from "../lib/sticky.ts";
 import {
   clearPendingOutreachClient,
   deleteOutreachAccount,
@@ -469,16 +467,12 @@ app.openapi(
   },
 );
 
-// Перманентная передача аккаунта другому менеджеру (увольнение, реорг).
-// Импорт собеседников аккаунта в contacts. Источник — локальная реплика
-// (tg_chats × tg_users), поэтому offline и быстро. Дедуп через partial unique
-// index по (workspace_id, properties->>'tg_user_id'). Skip: Saved Messages
-// (peer == self) и удалённые TG-юзеры (is_deleted=true). Боты в реплику
-// не пишутся репликатором (см. tg-replicator.ts:botPeers), поэтому отдельной
-// фильтрации тут нет.
-//
-// Идемпотентно: повторный вызов докинет только новые DM. Фронт это эксплуатит
-// для polling'а во время bootstrap'а реплики на свежем аккаунте.
+// Прогресс bootstrap'а реплики (этап 16.9 ревизия — БЕЗ дампа в контакты).
+// Возвращает replicaSize = сколько личных диалогов аккаунта сейчас в tg_chats
+// (без Saved Messages и удалённых). Фронт поллит на онбординге: пока растёт —
+// чат-лист ещё догружается. Контакты из диалогов НЕ заводим (личное не утекает
+// в общий список) — они появляются осознанно: привязка админа/группы или матч
+// при CSV-импорте.
 app.openapi(
   createRoute({
     method: "post",
@@ -501,91 +495,24 @@ app.openapi(
     const { accountId } = c.req.valid("param");
     const acc = await assertAccountAccess(accountId, wsId, userId, role);
 
-    const baseFilter = and(
-      eq(tgChats.accountId, accountId),
-      eq(tgUsers.isDeleted, false),
-      sql`${tgChats.peerUserId} != ${acc.tgUserId}`,
-    );
-
-    // Без LIMIT: продуктовый потолок ~2k чатов на аккаунт; SELECT JOIN на
-    // эту шкалу — десятки KB ответ, INSERT'у contacts — единицы тысяч строк
-    // с десятком тысяч bind-параметров (под Postgres-лимитом 32k). Polling
-    // на фронте по стабилизации replicaSize безопасен против повторов.
-    const candidates = await db
-      .select({
-        peerUserId: tgChats.peerUserId,
-        fullName: tgUsers.fullName,
-        username: tgUsers.username,
-        lastMessageAt: tgChats.lastMessageAt,
-      })
+    // Дамп диалогов в общие контакты УБРАН (этап 16.9 ревизия): личные
+    // переписки менеджера больше не утекают в общий список воркспейса. Эндпоинт
+    // теперь только репортит размер реплики (прогресс bootstrap'а чат-листа для
+    // онбординга). Контакты заводятся ОСОЗНАННО — привязкой админа/группы или
+    // матчем при CSV-импорте; «кто с кем общался» читается из tg_chats live.
+    const [row] = await db
+      .select({ n: sql<number>`count(*)::int` })
       .from(tgChats)
       .innerJoin(tgUsers, eq(tgUsers.userId, tgChats.peerUserId))
-      .where(baseFilter)
-      .orderBy(sql`${tgChats.lastMessageAt} desc nulls last`);
+      .where(
+        and(
+          eq(tgChats.accountId, accountId),
+          eq(tgUsers.isDeleted, false),
+          sql`${tgChats.peerUserId} != ${acc.tgUserId}`,
+        ),
+      );
 
-    const replicaSize = candidates.length;
-
-    if (candidates.length === 0) {
-      return c.json({ imported: 0, skipped: 0, replicaSize });
-    }
-
-    const peerIds = candidates.map((c) => c.peerUserId);
-
-    // Sticky v2: двухуровневый резолвер (см. lib/sticky.ts). Уровень 1 —
-    // MAX(last_inbound_at), уровень 2 — fallback по has_inbound с MAX
-    // last_message_at. Если ни один уровень не сработал — sticky null,
-    // в задаче пойдёт через round-robin.
-    const winnerByPeer = await resolveStickyByPeerIds(wsId, peerIds);
-
-    // Стейдж не проставляем: контакт в базе ≠ лид-в-задаче.
-    const rows = candidates.map((cand) => {
-      const properties: Record<string, unknown> = {
-        tg_user_id: cand.peerUserId,
-        full_name: cand.fullName || cand.username || "Без имени",
-      };
-      if (cand.username) properties.telegram_username = cand.username;
-      return {
-        workspaceId: wsId,
-        createdBy: userId,
-        lastMessageAt: cand.lastMessageAt,
-        primaryAccountId: winnerByPeer.get(cand.peerUserId) ?? null,
-        properties,
-      };
-    });
-
-    const inserted = await db
-      .insert(contacts)
-      .values(rows)
-      .onConflictDoNothing()
-      .returning({ id: contacts.id });
-
-    // Существующим контактам с NULL-sticky проставляем winner'а
-    // (если таковой есть). Группируем peer'ов по аккаунту-победителю —
-    // один UPDATE на каждый аккаунт.
-    const byWinnerAccount = new Map<string, string[]>();
-    for (const [peer, acc] of winnerByPeer) {
-      const list = byWinnerAccount.get(acc) ?? [];
-      list.push(peer);
-      byWinnerAccount.set(acc, list);
-    }
-    for (const [acc, peers] of byWinnerAccount) {
-      await db
-        .update(contacts)
-        .set({ primaryAccountId: acc })
-        .where(
-          and(
-            eq(contacts.workspaceId, wsId),
-            isNull(contacts.primaryAccountId),
-            inArray(contactTgUserIdSql, peers),
-          ),
-        );
-    }
-
-    return c.json({
-      imported: inserted.length,
-      skipped: candidates.length - inserted.length,
-      replicaSize,
-    });
+    return c.json({ imported: 0, skipped: 0, replicaSize: row?.n ?? 0 });
   },
 );
 

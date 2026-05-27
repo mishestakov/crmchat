@@ -47,7 +47,9 @@ type Update = { _: string; [k: string]: unknown };
 // держим только bool-сигнал has_inbound.
 type ChatPayload = {
   id: number | string;
-  type: { _: string; user_id?: number };
+  // chatTypeSupergroup несёт is_channel (true=broadcast-канал, false=группа);
+  // chatTypeBasicGroup — всегда группа; chatTypePrivate — DM.
+  type: { _: string; user_id?: number; is_channel?: boolean };
   title: string;
   last_message?: { id: number | string; date: number; is_outgoing: boolean };
   unread_count?: number;
@@ -133,12 +135,9 @@ export function attachReplicator(
   // Если канала с таким sgId в БД нет (любой канал из подписок юзера) —
   // UPDATE 0 rows, дёшево.
   const channelMetaBuf = new Map<string, Record<string, unknown>>();
-  // botPeers — user_id'ы ботов. DM с ботами не реплицируем в tg_chats.
-  // TDLib гарантирует updateUser до updateNewChat для того же user_id —
-  // к моменту handleChat бот уже здесь. Set не персистится, но это ок:
-  // на рестарте TDLib пере-пушит updateUser → пере-наполнит set до
-  // обработки соответствующих updateNewChat.
-  const botPeers = new Set<string>();
+  // Группы НЕ реплицируем (этап 16.9 ревизия): пикер привязки читает их live
+  // через TDLib (searchChats+getChat, offline), чат группы тоже идёт live.
+  // Группы в нашей БД не оседают — приватнее и нет рассинхрона.
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
   function scheduleFlush(): void {
@@ -195,6 +194,7 @@ export function attachReplicator(
             username: sql`excluded.username`,
             fullName: sql`excluded.full_name`,
             isDeleted: sql`excluded.is_deleted`,
+            isBot: sql`excluded.is_bot`,
             isOnline: sql`excluded.is_online`,
             // GREATEST — see flush() для userStatusBuf, не откатываем
             // last_seen_at если новый payload без статуса.
@@ -264,11 +264,11 @@ export function attachReplicator(
   }
 
   function handleChat(chat: ChatPayload): void {
+    // Реплицируем только приватные DM (tg_chats). Группы и broadcast-каналы —
+    // мимо: группы читаются live через TDLib (см. /account-groups), каналы
+    // живут в channels. mapChat вернёт null для не-private.
     const row = mapChat(accountId, chat);
     if (!row) return;
-    // DM с ботом — не реплицируем (одно правило с tg_users: только
-    // реальные собеседники).
-    if (botPeers.has(row.peerUserId)) return;
     chatBuf.set(row.chatId, row);
     // Если был накоплен partial — full row его перекрывает.
     partialChat.delete(row.chatId);
@@ -285,10 +285,6 @@ export function attachReplicator(
 
   function handleUser(user: UserPayload): void {
     const userId = String(user.id);
-    if (user.type._ === "userTypeBot") {
-      botPeers.add(userId);
-      return;
-    }
     const row = mapUser(user);
     if (!row) return;
     const payloadStr = JSON.stringify(user);
@@ -506,19 +502,25 @@ function mapSupergroupMeta(sg: SupergroupPayload): Record<string, unknown> {
 }
 
 function mapUser(user: UserPayload): UserRow | null {
-  // Bot фильтруется снаружи (handleUser → botPeers), сюда уже не доходит.
-  // Regular — живой собеседник; Deleted/Unknown — мёртвый, помечаем флагом
-  // (см. tg_users.is_deleted в schema.ts), чтобы lookup'ы могли отсеивать
-  // без повторного searchPublicChat.
+  // Regular — живой собеседник; Bot — тоже храним (этап 16.9: бот = контакт,
+  // менеджер общается с админом через бота). Deleted/Unknown — мёртвый,
+  // помечаем флагом (tg_users.is_deleted), чтобы lookup'ы отсеивали без
+  // повторного searchPublicChat.
   const isDeleted =
     user.type._ === "userTypeDeleted" || user.type._ === "userTypeUnknown";
-  if (!isDeleted && user.type._ !== "userTypeRegular") return null;
+  if (
+    !isDeleted &&
+    user.type._ !== "userTypeRegular" &&
+    user.type._ !== "userTypeBot"
+  )
+    return null;
   const status = mapUserStatus(user.status);
   return {
     userId: String(user.id),
     username: extractActiveUsername(user),
     fullName: extractFullName(user),
     isDeleted,
+    isBot: user.type._ === "userTypeBot",
     ...(status
       ? { isOnline: status.isOnline, lastSeenAt: status.lastSeenAt }
       : {}),

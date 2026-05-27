@@ -14,6 +14,7 @@ import {
   projectItems,
   projects,
   scheduledMessages,
+  tgChats,
 } from "../db/schema.ts";
 import { assertProjectAccess } from "../lib/projects-access.ts";
 import {
@@ -88,6 +89,9 @@ const PlacementSchema = z
     // Непрочитанные в переписке с админом (этап 16.10): из contacts.unreadCount,
     // который репликатор держит live. У каналов одного админа — одинаковое.
     unread: z.number().int(),
+    // «Тёплый» канал (этап 16.9 п.5): кто-то из аккаунтов команды уже в личном
+    // диалоге с админом. Помогает в лонглисте отличить знакомых от холодных.
+    teamKnowsAdmin: z.boolean(),
     // Аккаунт, через который идёт аутрич этому блогеру (после активации).
     account: z
       .object({
@@ -946,10 +950,22 @@ function placementColumns() {
     // Живой признак «у канала есть привязанный админ» — не зависит от снапшота
     // item.contact_id (админа могли привязать уже после создания размещения).
     channelHasAdmin: sql<boolean>`exists (select 1 from ${channelAdmins} where ${channelAdmins.channelId} = ${channels.id})`,
+    // Явно выбранный способ связи (группа / личка-канала) в meta.contact_method
+    // (этап 16.9): тоже готовый контакт.
+    channelMethodSet: sql<boolean>`(${channels.meta} -> 'contact_method' ->> 'kind') is not null`,
     adminUsername: sql<
       string | null
     >`${contacts.properties} ->> 'telegram_username'`,
     unread: contacts.unreadCount,
+    // «Команда уже в контакте с этим админом» (этап 16.9 п.5): есть ли у любого
+    // аккаунта воркспейса личный диалог с tg_user'ом админа (реплика tg_chats,
+    // воркспейс-wide, lookup по ключу). Бейдж «тёплый» в лонглисте.
+    teamKnowsAdmin: sql<boolean>`exists (
+      select 1 from ${tgChats}
+      join ${outreachAccounts} on ${outreachAccounts.id} = ${tgChats.accountId}
+      where ${tgChats.peerUserId} = (${contacts.properties} ->> 'tg_user_id')
+        and ${outreachAccounts.workspaceId} = ${channels.workspaceId}
+    )`,
   };
 }
 
@@ -1032,8 +1048,10 @@ function serializePlacement(
     channelHasDm: boolean;
     channelDmStarCost: number | null;
     channelHasAdmin: boolean;
+    channelMethodSet: boolean;
     adminUsername: string | null;
     unread: number | null;
+    teamKnowsAdmin: boolean;
   },
   outreachMap: Awaited<ReturnType<typeof outreachByItem>>,
   accountMap: Awaited<ReturnType<typeof loadAccounts>>,
@@ -1066,8 +1084,10 @@ function serializePlacement(
     // Готовность для гейта: привязан админ ИЛИ бесплатная личка канала.
     contactReady:
       row.channelHasAdmin ||
+      row.channelMethodSet ||
       (row.channelHasDm && row.channelDmStarCost === 0),
     unread: row.unread ?? 0,
+    teamKnowsAdmin: row.teamKnowsAdmin,
     account,
     chainStatus: chainStatus(row.repliedAt, row.available, o.sentCount, o.read),
     outreach: {

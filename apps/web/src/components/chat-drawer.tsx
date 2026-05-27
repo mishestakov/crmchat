@@ -52,6 +52,13 @@ function contactFullName(contact: Contact): string {
   return typeof v.full_name === "string" ? v.full_name : "";
 }
 
+type ReplyButton = {
+  text: string;
+  action: "url" | "send_text" | "unsupported";
+  url?: string;
+};
+type ReplyMarkup = { kind: "inline" | "keyboard"; rows: ReplyButton[][] };
+
 type ChatMessage = {
   id: string;
   date: string;
@@ -59,6 +66,7 @@ type ChatMessage = {
   text: string;
   entities: MessageEntity[];
   mediaThumb: MessageThumb | null;
+  replyMarkup: ReplyMarkup | null;
 };
 
 // Оверлей-обёртка: backdrop + правый aside вокруг ChatPanel. Esc / клик по
@@ -164,8 +172,9 @@ export function ChatPanel(props: {
 
   const [composeText, setComposeText] = useState("");
   const sendMut = useMutation({
-    mutationFn: async () => {
-      const text = composeText.trim();
+    // Текст — параметр: composer шлёт черновик, reply-кнопка бота шлёт свой text.
+    mutationFn: async (raw: string) => {
+      const text = raw.trim();
       if (!text) throw new Error("Пустое сообщение");
       const { data, error } = await api.POST(
         "/v1/workspaces/{wsId}/quick-send",
@@ -188,6 +197,27 @@ export function ChatPanel(props: {
       });
       qc.invalidateQueries({
         queryKey: ["quick-send-preview", props.wsId, peerKey],
+      });
+    },
+  });
+
+  // Старт бота (этап 16.9): первое действие в пустом бот-диалоге. После — бот
+  // присылает меню/приветствие, перетягиваем историю.
+  const botStartMut = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.POST(
+        "/v1/workspaces/{wsId}/contacts/{id}/bot-start",
+        {
+          params: { path: { wsId: props.wsId, id: props.contact.id } },
+          body: { accountId: props.accountId },
+        },
+      );
+      if (error) throw error;
+      return data!;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({
+        queryKey: ["chat-history", props.wsId, props.contact.id],
       });
     },
   });
@@ -282,6 +312,7 @@ export function ChatPanel(props: {
     : olderPages;
   const lastReadOutboxId = initialQ.data?.lastReadOutboxId ?? null;
   const peerStatus = initialQ.data?.peerStatus ?? null;
+  const peerIsBot = initialQ.data?.peerIsBot ?? false;
 
   useEffect(() => {
     if (!initialQ.isSuccess) return;
@@ -467,9 +498,30 @@ export function ChatPanel(props: {
               </p>
             )}
             {initialQ.isSuccess && messages.length === 0 && (
-              <p className="text-sm text-zinc-400">
-                Сообщений нет — этот аккаунт ещё не общался с контактом.
-              </p>
+              peerIsBot ? (
+                <div className="flex flex-col items-center gap-2 py-6 text-center">
+                  <p className="text-sm text-zinc-400">
+                    Диалога с ботом ещё нет. Запустите его, чтобы получить меню.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={botStartMut.isPending}
+                    onClick={() => botStartMut.mutate()}
+                    className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                  >
+                    {botStartMut.isPending ? "Запускаем…" : "Запустить бота"}
+                  </button>
+                  {botStartMut.error != null && (
+                    <p className="text-xs text-red-600">
+                      {errorMessage(botStartMut.error)}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-zinc-400">
+                  Сообщений нет — этот аккаунт ещё не общался с контактом.
+                </p>
+              )
             )}
               {messages.length > 0 && (
                 <div className="flex flex-col gap-2">
@@ -495,40 +547,56 @@ export function ChatPanel(props: {
                       <div
                         key={m.id}
                         className={
-                          "max-w-[80%] overflow-hidden rounded-lg text-sm " +
+                          "flex max-w-[85%] flex-col gap-1 " +
                           (m.isOutgoing
-                            ? "ml-auto bg-emerald-600 text-white"
-                            : "mr-auto bg-white text-zinc-900 ring-1 ring-zinc-200")
+                            ? "ml-auto items-end"
+                            : "mr-auto items-start")
                         }
                       >
-                        {m.mediaThumb && (
-                          <MessageMediaThumb thumb={m.mediaThumb} />
-                        )}
-                        <div className="px-3 py-2">
-                          {m.text && (
-                            <div className="whitespace-pre-wrap break-words">
-                              {renderMessageEntities(m.text, m.entities)}
-                            </div>
+                        <div
+                          className={
+                            "overflow-hidden rounded-lg text-sm " +
+                            (m.isOutgoing
+                              ? "bg-emerald-600 text-white"
+                              : "bg-white text-zinc-900 ring-1 ring-zinc-200")
+                          }
+                        >
+                          {m.mediaThumb && (
+                            <MessageMediaThumb thumb={m.mediaThumb} />
                           )}
-                          <div
-                            className={
-                              (m.text ? "mt-1 " : "") +
-                              "flex items-center justify-end gap-0.5 text-[10px] " +
-                              (m.isOutgoing
-                                ? "text-emerald-100"
-                                : "text-zinc-400")
-                            }
-                            title={formatDateTime(m.date)}
-                          >
-                            <span>{formatHHMM(m.date)}</span>
-                            {m.isOutgoing &&
-                              (readByPeer ? (
-                                <CheckCheck size={12} />
-                              ) : (
-                                <Check size={12} />
-                              ))}
+                          <div className="px-3 py-2">
+                            {m.text && (
+                              <div className="whitespace-pre-wrap break-words">
+                                {renderMessageEntities(m.text, m.entities)}
+                              </div>
+                            )}
+                            <div
+                              className={
+                                (m.text ? "mt-1 " : "") +
+                                "flex items-center justify-end gap-0.5 text-[10px] " +
+                                (m.isOutgoing
+                                  ? "text-emerald-100"
+                                  : "text-zinc-400")
+                              }
+                              title={formatDateTime(m.date)}
+                            >
+                              <span>{formatHHMM(m.date)}</span>
+                              {m.isOutgoing &&
+                                (readByPeer ? (
+                                  <CheckCheck size={12} />
+                                ) : (
+                                  <Check size={12} />
+                                ))}
+                            </div>
                           </div>
                         </div>
+                        {m.replyMarkup && (
+                          <ReplyMarkupButtons
+                            markup={m.replyMarkup}
+                            onSendText={(t) => sendMut.mutate(t)}
+                            disabled={sendMut.isPending}
+                          />
+                        )}
                       </div>
                     );
                   })}
@@ -545,10 +613,69 @@ export function ChatPanel(props: {
           }
           text={composeText}
           onTextChange={setComposeText}
-          onSend={() => sendMut.mutate()}
+          onSend={() => sendMut.mutate(composeText)}
           sending={sendMut.isPending}
           error={sendMut.error ? errorMessage(sendMut.error) : null}
         />
+    </div>
+  );
+}
+
+// Бот-кнопки (этап 16.9): url → ссылка, send_text → нажатие шлёт текст,
+// unsupported (callback/webapp/оплата/…) → серым с подсказкой «только в
+// Telegram-приложении» (в MVP не обрабатываем, см. AskUserQuestion).
+function ReplyMarkupButtons(props: {
+  markup: ReplyMarkup;
+  onSendText: (text: string) => void;
+  disabled: boolean;
+}) {
+  const base =
+    "rounded-md px-2.5 py-1 text-xs font-medium ring-1 transition-colors";
+  return (
+    <div className="flex w-full flex-col gap-1">
+      {props.markup.rows.map((row, ri) => (
+        <div key={ri} className="flex flex-wrap gap-1">
+          {row.map((b, bi) => {
+            if (b.action === "url" && b.url) {
+              return (
+                <a
+                  key={bi}
+                  href={b.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={base + " bg-white text-[#229ED9] ring-zinc-300 hover:bg-zinc-50"}
+                >
+                  {b.text} ↗
+                </a>
+              );
+            }
+            if (b.action === "send_text") {
+              return (
+                <button
+                  key={bi}
+                  type="button"
+                  disabled={props.disabled}
+                  onClick={() => props.onSendText(b.text)}
+                  className={base + " bg-white text-zinc-700 ring-zinc-300 hover:bg-zinc-50 disabled:opacity-50"}
+                >
+                  {b.text}
+                </button>
+              );
+            }
+            return (
+              <button
+                key={bi}
+                type="button"
+                disabled
+                title="Эта кнопка доступна только в Telegram-приложении"
+                className={base + " cursor-not-allowed bg-zinc-100 text-zinc-400 ring-zinc-200"}
+              >
+                {b.text}
+              </button>
+            );
+          })}
+        </div>
+      ))}
     </div>
   );
 }

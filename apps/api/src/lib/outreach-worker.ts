@@ -442,16 +442,23 @@ async function sendMessagePhase(
 
   const username = stripAt(lead.username);
   const [cached] = await db
-    .select({ userId: tgUsers.userId, isDeleted: tgUsers.isDeleted })
+    .select({
+      userId: tgUsers.userId,
+      isDeleted: tgUsers.isDeleted,
+      isBot: tgUsers.isBot,
+    })
     .from(tgUsers)
     .where(sql`lower(${tgUsers.username}) = ${username.toLowerCase()}`)
     .limit(1);
   if (cached?.isDeleted) {
     throw new Error(`DELETED_SKIPPED — @${lead.username} no longer exists`);
   }
+  // Боты (этап 16.9) теперь в реплике — авто-опенер им не шлём (ручной способ).
+  if (cached?.isBot) {
+    throw new Error(`BOT_SKIPPED — @${lead.username} is a bot`);
+  }
 
-  // Реплика знает только живых не-ботов (replicator skip'ает userTypeBot).
-  // Cache hit ⇒ точно регулярный юзер, идём прямо в sendMessage.
+  // Cache hit ⇒ известный не-бот, идём прямо в sendMessage.
   // Cache miss ⇒ unseen username: резолвим через searchPublicChat и
   // проверяем тип через getUser (offline после search'а; userTypeBot из
   // td_api.tl:732 — точная семантика, без эвристики @*bot).
