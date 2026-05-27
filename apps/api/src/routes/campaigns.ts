@@ -15,6 +15,7 @@ import {
   projects,
   scheduledMessages,
   tgChats,
+  tgUsers,
 } from "../db/schema.ts";
 import { assertProjectAccess } from "../lib/projects-access.ts";
 import {
@@ -92,6 +93,9 @@ const PlacementSchema = z
     // «Тёплый» канал (этап 16.9 п.5): кто-то из аккаунтов команды уже в личном
     // диалоге с админом. Помогает в лонглисте отличить знакомых от холодных.
     teamKnowsAdmin: z.boolean(),
+    // Привязанный админ — бот (авторитетно, tg_users.is_bot). Бот = ручной
+    // способ: авто-опенер не шлётся, в дровере плашка «напишите вручную».
+    adminIsBot: z.boolean(),
     // Аккаунт, через который идёт аутрич этому блогеру (после активации).
     account: z
       .object({
@@ -957,15 +961,24 @@ function placementColumns() {
       string | null
     >`${contacts.properties} ->> 'telegram_username'`,
     unread: contacts.unreadCount,
-    // «Команда уже в контакте с этим админом» (этап 16.9 п.5): есть ли у любого
-    // аккаунта воркспейса личный диалог с tg_user'ом админа (реплика tg_chats,
-    // воркспейс-wide, lookup по ключу). Бейдж «тёплый» в лонглисте.
+    // «Команда уже в контакте с этим админом» (этап 16.9 п.5): админ нам
+    // ОТВЕТИЛ хотя бы раз через любой аккаунт воркспейса (has_inbound — тот же
+    // сигнал, что у кружочков в /channels, чтобы лонглист и таблица не
+    // расходились). Не «мы написали» и не пустой openChat.
     teamKnowsAdmin: sql<boolean>`exists (
       select 1 from ${tgChats}
       join ${outreachAccounts} on ${outreachAccounts.id} = ${tgChats.accountId}
       where ${tgChats.peerUserId} = (${contacts.properties} ->> 'tg_user_id')
         and ${outreachAccounts.workspaceId} = ${channels.workspaceId}
+        and ${tgChats.hasInbound} = true
     )`,
+    // Привязанный админ-контакт — бот (этап 16.9): авторитетно из tg_users.is_bot
+    // по tg_user_id контакта (НЕ суффикс @…bot). Фронт показывает «бот — вручную»
+    // и считает канал ручным (бот = не авто-рассылка).
+    adminIsBot: sql<boolean>`coalesce((
+      select ${tgUsers.isBot} from ${tgUsers}
+      where ${tgUsers.userId} = (${contacts.properties} ->> 'tg_user_id')
+    ), false)`,
   };
 }
 
@@ -1052,6 +1065,7 @@ function serializePlacement(
     adminUsername: string | null;
     unread: number | null;
     teamKnowsAdmin: boolean;
+    adminIsBot: boolean;
   },
   outreachMap: Awaited<ReturnType<typeof outreachByItem>>,
   accountMap: Awaited<ReturnType<typeof loadAccounts>>,
@@ -1088,6 +1102,7 @@ function serializePlacement(
       (row.channelHasDm && row.channelDmStarCost === 0),
     unread: row.unread ?? 0,
     teamKnowsAdmin: row.teamKnowsAdmin,
+    adminIsBot: row.adminIsBot,
     account,
     chainStatus: chainStatus(row.repliedAt, row.available, o.sentCount, o.read),
     outreach: {

@@ -446,6 +446,12 @@ function LonglistPhase({
   const total = active.length;
   const ready = active.filter((p) => p.contactReady).length;
   const unready = total - ready;
+  // Готовы, но способ связи ручной (бот/группа/личка) — авто-опенер не уйдёт.
+  const manualReady = active.filter(
+    (p) =>
+      p.contactReady &&
+      !(!!p.adminContactId && !p.adminIsBot && p.hasRecipient),
+  ).length;
   const replied = active.filter((p) => p.chainStatus === "replied").length;
   const pct = total > 0 ? Math.round((ready / total) * 100) : 0;
   const isDraft = campaign.status === "draft";
@@ -486,6 +492,12 @@ function LonglistPhase({
                 <span className="font-medium text-amber-600">
                   {" · "}
                   {unready} без контакта
+                </span>
+              )}
+              {manualReady > 0 && (
+                <span className="text-zinc-400">
+                  {" · "}
+                  {manualReady} вручную
                 </span>
               )}
               {replied > 0 && ` · ${replied} ответ.`}
@@ -880,6 +892,11 @@ function BloggerRow({
   siblingCount: number;
 }) {
   const ch = p.channel;
+  // Авто-рассылка уходит только живому человеку-контакту с получателем.
+  // Бот / группа / личка-канала / контакт без @ — готов, но ВРУЧНУЮ (опенер
+  // не шлётся, менеджер пишет сам).
+  const isAuto = !!p.adminContactId && !p.adminIsBot && p.hasRecipient;
+  const isManualReady = p.contactReady && !isAuto;
   return (
     <button
       type="button"
@@ -914,6 +931,14 @@ function BloggerRow({
           {!p.contactReady && (
             <span className="text-[11px] font-medium text-amber-600">
               нет контакта
+            </span>
+          )}
+          {isManualReady && (
+            <span
+              title="Способ связи ручной (бот/группа/личка) — авто-опенер не уйдёт, напишите сами"
+              className="shrink-0 rounded-full bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-500"
+            >
+              вручную
             </span>
           )}
           {p.teamKnowsAdmin && (

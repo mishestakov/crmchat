@@ -91,8 +91,10 @@ export function PlacementPane({
   const cMeta = (channelQ.data?.meta ?? {}) as Record<string, unknown>;
   const avgReach = typeof cMeta.avg_reach === "number" ? cMeta.avg_reach : null;
   const cErr = typeof cMeta.err === "number" ? cMeta.err : null;
-  // Бот (@…bot) — ручной способ связи (этап 16.9): авто-цепочка его пропускает.
-  const isBot = !!placement.adminUsername?.toLowerCase().endsWith("bot");
+  // Бот — ручной способ связи (этап 16.9): авто-цепочка его пропускает.
+  // Авторитетно из tg_users.is_bot (userTypeBot), НЕ суффикс @…bot (резал живых
+  // @talbot/@robot).
+  const isBot = placement.adminIsBot;
   // Способ связи канала (этап 16.9): человек/бот (adminContactId) ИЛИ
   // группа/личка-канала (meta.contact_method). null → способ ещё не выбран.
   const contactMethod = (cMeta.contact_method ?? null) as {
@@ -736,10 +738,21 @@ function GroupPicker({
   onPick: (chatId: string, accountId: string) => void;
   loading: boolean;
 }) {
+  // Поиск групп БЕЗОПАСЕН для MTProto, поэтому RAM-кэш всех групп не нужен (нечем
+  // флудить). Почему (ресерч по исходникам TDLib, tools/tdlib/.src):
+  //   • /account-groups зовёт searchChats + getChat;
+  //   • searchChats → MessagesManager::search_dialogs (MessagesManager.cpp:14146)
+  //     ищет по in-memory `dialogs_hints_` и резолвит promise синхронно —
+  //     td_api.tl прямо: «This is an offline method». Ноль сетевых запросов;
+  //   • getChat для юзер-аккаунта — тоже offline (td_api.tl §getChat);
+  //   • единственный сетевой вызов — loadChats, и его делает реплитор ОДИН раз
+  //     на bootstrap, не на поиск (searchChatsOnServer мы не используем).
+  // Дебаунс 500мс — лишь чтобы не гонять offline-поиск + IPC к воркеру на каждую
+  // букву (латентность), не ради защиты от флуда.
   const [q, setQ] = useState("");
   const [debounced, setDebounced] = useState("");
   useEffect(() => {
-    const t = setTimeout(() => setDebounced(q.trim()), 400);
+    const t = setTimeout(() => setDebounced(q.trim()), 500);
     return () => clearTimeout(t);
   }, [q]);
   const groupsQ = useQuery({

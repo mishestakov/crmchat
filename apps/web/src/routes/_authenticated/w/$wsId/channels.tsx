@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
@@ -6,6 +6,7 @@ import type { Channel, ImportChannelsMapping } from "@repo/core";
 import { api } from "../../../../lib/api";
 import { formatMembers } from "../../../../components/channel-card";
 import { ChannelDrawer } from "../../../../components/channel-drawer";
+import { LeadChatDrawer } from "../../../../components/lead-chat-drawer";
 import { SearchInput } from "../../../../components/search-input";
 import { TruncationBanner } from "../../../../components/truncation-banner";
 import { parseCsv, type ParsedCsv } from "../../../../lib/csv";
@@ -135,11 +136,20 @@ function ChannelsPage() {
   });
 
   const [openChannelId, setOpenChannelId] = useState<string | null>(null);
+  // Клик по админу в строке → чат с ним (переписка через аккаунт, у кого диалог).
+  const [adminChat, setAdminChat] = useState<{
+    contactId: string;
+    accountId: string | null;
+  } | null>(null);
 
   const accountsQ = useOutreachAccounts(wsId);
   const accountById = new Map(
     (accountsQ.data ?? []).map((a) => [a.id, a]),
   );
+  const accountLabel = (id: string) => {
+    const a = accountById.get(id);
+    return a ? formatAccount(a) : id;
+  };
 
   const rows = channelsQ.data ?? [];
 
@@ -235,8 +245,10 @@ function ChannelsPage() {
               <tr>
                 <th className="px-3 py-2 font-medium">Канал</th>
                 <th className="px-3 py-2 text-right font-medium">Подписчики</th>
+                <th className="px-3 py-2 text-right font-medium">Ср. охват</th>
+                <th className="px-3 py-2 text-right font-medium">ERR</th>
                 <th className="px-3 py-2 font-medium">Админ</th>
-                <th className="px-3 py-2 font-medium">Закреплён за</th>
+                <th className="px-3 py-2 font-medium">Общались</th>
                 <th className="px-3 py-2 font-medium">Последний пост</th>
               </tr>
             </thead>
@@ -244,7 +256,7 @@ function ChannelsPage() {
               {rows.length === 0 && (
                 <tr>
                   <td
-                    colSpan={5}
+                    colSpan={7}
                     className="px-3 py-12 text-center text-zinc-400"
                   >
                     {search
@@ -254,10 +266,12 @@ function ChannelsPage() {
                 </tr>
               )}
               {rows.map((c) => {
-                const primaryAdmin = c.admins[0];
-                const acc = primaryAdmin?.primaryAccountId
-                  ? accountById.get(primaryAdmin.primaryAccountId)
-                  : null;
+                // Авто-метрики из ленты (meta пишет /history при открытии
+                // карточки). Нет данных — «—», как у подписчиков.
+                const meta = (c.meta ?? {}) as Record<string, unknown>;
+                const avgReach =
+                  typeof meta.avg_reach === "number" ? meta.avg_reach : null;
+                const err = typeof meta.err === "number" ? meta.err : null;
                 return (
                   <tr
                     key={c.id}
@@ -301,11 +315,21 @@ function ChannelsPage() {
                     <td className="px-3 py-2 text-right tabular-nums text-zinc-700">
                       {formatMembers(c.memberCount)}
                     </td>
-                    <td className="px-3 py-2 text-zinc-600">
-                      <AdminCell wsId={wsId} admins={c.admins} />
+                    <td className="px-3 py-2 text-right tabular-nums text-zinc-700">
+                      {avgReach !== null ? formatMembers(avgReach) : "—"}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-zinc-700">
+                      {err !== null ? `${err}%` : "—"}
                     </td>
                     <td className="px-3 py-2 text-zinc-600">
-                      {acc ? formatAccount(acc) : "—"}
+                      <AdminCell admins={c.admins} onOpenChat={setAdminChat} />
+                    </td>
+                    <td className="px-3 py-2">
+                      <ManagerCircles
+                        admins={c.admins}
+                        labelOf={accountLabel}
+                        onOpenChat={setAdminChat}
+                      />
                     </td>
                     <td className="px-3 py-2 text-zinc-600">
                       {c.lastMessageAt ? formatRelative(c.lastMessageAt) : "—"}
@@ -325,16 +349,29 @@ function ChannelsPage() {
           onClose={() => setOpenChannelId(null)}
         />
       )}
+
+      {adminChat && (
+        <LeadChatDrawer
+          wsId={wsId}
+          lead={{
+            id: adminChat.contactId,
+            contactId: adminChat.contactId,
+            account: adminChat.accountId ? { id: adminChat.accountId } : null,
+          }}
+          accounts={accountsQ.data ?? []}
+          onClose={() => setAdminChat(null)}
+        />
+      )}
     </div>
   );
 }
 
 function AdminCell({
-  wsId,
   admins,
+  onOpenChat,
 }: {
-  wsId: string;
   admins: Channel["admins"];
+  onOpenChat: (chat: { contactId: string; accountId: string | null }) => void;
 }) {
   if (admins.length === 0) return <>—</>;
   const first = admins[0]!;
@@ -349,14 +386,19 @@ function AdminCell({
           : undefined
       }
     >
-      <Link
-        to="/w/$wsId/contacts/$id"
-        params={{ wsId, id: first.contactId }}
-        onClick={(e) => e.stopPropagation()}
-        className="text-zinc-700 hover:text-emerald-700 hover:underline"
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpenChat({
+            contactId: first.contactId,
+            accountId: first.primaryAccountId,
+          });
+        }}
+        className="text-left text-zinc-700 hover:text-emerald-700 hover:underline"
       >
         {label}
-      </Link>
+      </button>
       {admins.length > 1 && (
         <span className="text-zinc-400"> +{admins.length - 1}</span>
       )}
@@ -371,6 +413,60 @@ function formatAccount(a: {
   id: string;
 }): string {
   return a.firstName || (a.tgUsername ? `@${a.tgUsername}` : a.phoneNumber ?? a.id);
+}
+
+// Кружочки аккаунтов команды, у кого есть личный диалог с админом канала
+// (первый админ). Hover → «кто · как давно общались». Это анти-дабл-тач: видно,
+// что коллега уже на связи. Закреплённый аккаунт (sticky) — с зелёным кольцом.
+function ManagerCircles({
+  admins,
+  labelOf,
+  onOpenChat,
+}: {
+  admins: Channel["admins"];
+  labelOf: (accountId: string) => string;
+  onOpenChat: (chat: { contactId: string; accountId: string | null }) => void;
+}) {
+  const adminContactId = admins[0]?.contactId ?? null;
+  const chatAccounts = admins[0]?.chatAccounts ?? [];
+  if (chatAccounts.length === 0) return <span className="text-zinc-400">—</span>;
+  const primary = admins[0]?.primaryAccountId ?? null;
+  return (
+    <div className="flex -space-x-1.5">
+      {chatAccounts.map((ca) => {
+        const label = labelOf(ca.accountId);
+        // Кружочек = «ответил». Hover — когда последний раз был контакт.
+        const last =
+          ca.lastInboundAt && ca.lastOutboundAt
+            ? ca.lastInboundAt > ca.lastOutboundAt
+              ? ca.lastInboundAt
+              : ca.lastOutboundAt
+            : ca.lastInboundAt ?? ca.lastOutboundAt;
+        const title = last ? `${label} · ${formatRelative(last)}` : label;
+        const isPrimary = ca.accountId === primary;
+        return (
+          <button
+            key={ca.accountId}
+            type="button"
+            title={title}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (adminContactId)
+                onOpenChat({ contactId: adminContactId, accountId: ca.accountId });
+            }}
+            className={
+              "flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-semibold uppercase ring-2 transition-transform hover:scale-110 " +
+              (isPrimary
+                ? "bg-emerald-100 text-emerald-800 ring-emerald-300"
+                : "bg-teal-100 text-teal-800 ring-white")
+            }
+          >
+            {label.replace(/^@/, "").charAt(0) || "?"}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 // CSV-import wizard: модалка с превью топ-10 строк × select-маппинг на

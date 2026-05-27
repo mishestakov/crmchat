@@ -40,6 +40,17 @@ export const ChannelSchema = z.object({
       fullName: z.string().nullable(),
       telegramUsername: z.string().nullable(),
       primaryAccountId: z.string().nullable(),
+      // Аккаунты команды, у кого есть личный диалог с этим админом (из
+      // tg_chats, воркспейс-wide) — «кружочки» в таблице каналов + анти-дабл-
+      // тач (при наведении — как давно общались). Пусто = с админом никто не в
+      // контакте.
+      chatAccounts: z.array(
+        z.object({
+          accountId: z.string(),
+          lastInboundAt: z.iso.datetime().nullable(),
+          lastOutboundAt: z.iso.datetime().nullable(),
+        }),
+      ),
     }),
   ),
   createdBy: z.string().min(1).max(64),

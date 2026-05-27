@@ -12,6 +12,7 @@ import {
   type projects,
 } from "../db/schema.ts";
 import { contactTgUserIdSql } from "./contact-sql.ts";
+import { resolveStickyByPeerIds } from "./sticky.ts";
 import { substituteVariables } from "./substitute-variables.ts";
 
 // Helpers для активации проекта (/activate) и доливки лидов в активный
@@ -76,28 +77,14 @@ export async function resolveStickyByTgUserIds(
 
   const missing = tgUserIds.filter((u) => !map.has(u));
   if (missing.length > 0) {
-    // DISTINCT ON (peer) → один аккаунт на peer'а: самый свежий диалог по
-    // greatest(last_message/inbound/outbound), затем account_id для детерминизма.
-    const rows = await db
-      .selectDistinctOn([tgChats.peerUserId], {
-        peerUserId: tgChats.peerUserId,
-        accountId: tgChats.accountId,
-      })
-      .from(tgChats)
-      .innerJoin(outreachAccounts, eq(tgChats.accountId, outreachAccounts.id))
-      .where(
-        and(
-          eq(outreachAccounts.workspaceId, wsId),
-          inArray(tgChats.peerUserId, missing),
-        ),
-      )
-      .orderBy(
-        tgChats.peerUserId,
-        sql`greatest(${tgChats.lastMessageAt}, ${tgChats.lastInboundAt}, ${tgChats.lastOutboundAt}) desc nulls last`,
-        tgChats.accountId,
-      );
-    for (const r of rows) {
-      if (!map.has(r.peerUserId)) map.set(r.peerUserId, r.accountId);
+    // Реплика — канонический «кто последним получил ОТВЕТ» (sticky.ts): L1
+    // max(last_inbound_at), L2 has_inbound. Тот же резолвер, что у contacts-
+    // бэкфилла → предсказание (/leads) и факт (/activate) не расходятся.
+    // Важно: аккаунт, который лишь холодно написал (без ответа peer'а), sticky
+    // НЕ становится — иначе чужое исходящее перехватывало бы знакомого блогера.
+    const replica = await resolveStickyByPeerIds(wsId, missing);
+    for (const [peer, acc] of replica) {
+      if (!map.has(peer)) map.set(peer, acc);
     }
   }
   return map;
@@ -159,9 +146,14 @@ export function buildScheduledRows(opts: {
 }): ScheduledRow[] {
   let rrIdx = 0;
   return opts.leads.flatMap((lead) => {
-    const prior = lead.tgUserId
+    const priorRaw = lead.tgUserId
       ? opts.priorByTgUserId.get(lead.tgUserId)
       : undefined;
+    // Sticky-аккаунт валиден только если он в наборе проекта (active ∩
+    // accountsSelected). Иначе (peer общался с paused/не-выбранным аккаунтом)
+    // — round-robin, а не отправка с аккаунта, которого в кампании нет.
+    const prior =
+      priorRaw && opts.accountIds.includes(priorRaw) ? priorRaw : undefined;
     const accountId = prior ?? opts.accountIds[rrIdx % opts.accountIds.length]!;
     if (!prior) rrIdx++;
     const isWarm = lead.tgUserId ? opts.warmTgUserIds.has(lead.tgUserId) : false;
@@ -237,14 +229,21 @@ export async function prepareAgencyLeads(opts: {
   }
 
   // Боты — ручной способ связи (этап 16.9): авто-опенер им не шлём (старт +
-  // кнопки делает менеджер). Сигнал авторитетный — tg_users.is_bot, а не суффикс
-  // @username (он резал живых @talbot/@robot).
+  // кнопки делает менеджер). Сигнал авторитетный — tg_users.is_bot (userTypeBot,
+  // td_api.tl), НЕ суффикс @username (резал живых @talbot/@robot). Матчим И по
+  // username (без ведущего @ — tg_users.username хранится голым), И по
+  // tg_user_id (бот без публичного @username иначе проскочил бы prepare и упал
+  // позже в worker'е как BOT_SKIPPED).
   const leadKeys = opts.leads
-    .map((l) => l.username?.toLowerCase())
+    .map((l) => l.username?.replace(/^@/, "").toLowerCase())
     .filter((u): u is string => !!u);
-  let botUsernames = new Set<string>();
+  const leadTgIds = opts.leads
+    .map((l) => l.tgUserId)
+    .filter((u): u is string => !!u);
+  const botUsernames = new Set<string>();
+  const botTgIds = new Set<string>();
   if (leadKeys.length > 0) {
-    const botRows = await db
+    const rows = await db
       .select({ u: sql<string>`lower(${tgUsers.username})` })
       .from(tgUsers)
       .where(
@@ -253,7 +252,14 @@ export async function prepareAgencyLeads(opts: {
           inArray(sql`lower(${tgUsers.username})`, leadKeys),
         ),
       );
-    botUsernames = new Set(botRows.map((r) => r.u));
+    for (const r of rows) botUsernames.add(r.u);
+  }
+  if (leadTgIds.length > 0) {
+    const rows = await db
+      .select({ id: tgUsers.userId })
+      .from(tgUsers)
+      .where(and(eq(tgUsers.isBot, true), inArray(tgUsers.userId, leadTgIds)));
+    for (const r of rows) botTgIds.add(r.id);
   }
 
   const seen = new Set<string>();
@@ -261,7 +267,8 @@ export async function prepareAgencyLeads(opts: {
   for (const l of opts.leads) {
     if (!l.username) continue;
     const key = l.username.toLowerCase();
-    if (botUsernames.has(key)) continue;
+    if (botUsernames.has(l.username.replace(/^@/, "").toLowerCase())) continue;
+    if (l.tgUserId && botTgIds.has(l.tgUserId)) continue;
     if (seen.has(key)) continue;
     seen.add(key);
     if (opts.skipContacted && contacted.has(key)) continue;

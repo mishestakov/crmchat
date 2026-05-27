@@ -89,9 +89,10 @@ function AuthLayout() {
           {wsId && (
             <>
               <SidebarGroup title="База">
-                <SidebarLink to="/w/$wsId/contacts" wsId={wsId}>
-                  Контакты
-                </SidebarLink>
+                {/* «Листать всех людей» убрано в обоих режимах: оба
+                    канало-центричны, всё про админа живёт на канале. Карточка
+                    контакта (/contacts/$id) остаётся — на неё deep-link из
+                    канала/канбана/лидов. */}
                 <SidebarLink to="/w/$wsId/channels" wsId={wsId}>
                   Каналы
                 </SidebarLink>
@@ -157,7 +158,7 @@ function WorkspaceSwitcher({ currentWsId }: { currentWsId?: string }) {
           const id = e.target.value;
           if (id)
             navigate({
-              to: "/w/$wsId/contacts",
+              to: "/w/$wsId/channels",
               params: { wsId: id },
             });
         }}

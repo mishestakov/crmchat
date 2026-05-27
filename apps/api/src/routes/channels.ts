@@ -26,6 +26,7 @@ import {
   channels,
   contacts,
   outreachAccounts,
+  tgChats,
   tgUsers,
 } from "../db/schema.ts";
 import {
@@ -685,11 +686,20 @@ async function isAccessibleGroup(
   }
 }
 
-// Live-листинг групп аккаунта (этап 16.9 ревизия): без реплики в БД.
-// searchChats — offline, ищет по title/username известных чатов в порядке
-// main-list (пустой query → недавние; td_api.tl §searchChats). Затем getChat
-// (offline для юзера) на каждый id — тип+title из памяти TDLib. Всё offline,
-// без сетевых round-trip'ов, данные актуальные.
+// Live-листинг групп аккаунта (этап 16.9 ревизия): без реплики в БД, и при этом
+// БЕЗ единого MTProto-запроса — поэтому безопасно дёргать на поиск (флуда нет).
+// Ресерч по исходникам TDLib (tools/tdlib/.src), чтобы вывод не потерялся:
+//   • searchChats → Requests.cpp:3325 → MessagesManager::search_dialogs
+//     (MessagesManager.cpp:14146): `dialogs_hints_.search(query, limit)` по
+//     IN-MEMORY структуре + `promise.set_value(Unit())` синхронно — НИ ОДНОГО
+//     сетевого запроса (td_api.tl: «This is an offline method»). Пустой query →
+//     search_recently_found_dialogs (тоже локально).
+//   • getChat для юзер-аккаунта — offline (td_api.tl §getChat: «offline method
+//     if the current user is not a bot»), читает локальный Dialog.
+//   • Сетевой вызов есть только у searchChatsOnServer (НЕ используем) и loadChats
+//     (грузит чат-лист — это делает реплитор один раз на bootstrap, не на поиск).
+// Отсюда: RAM-кэш всех групп — оверинжиниринг (нет сети → нечем флудить); поиск
+// идёт прямо по offline-индексу TDLib, данные всегда актуальные.
 async function listAccountGroups(
   client: TdClient,
   query: string,
@@ -2212,6 +2222,7 @@ async function joinAdmins(
   rows: (typeof channels.$inferSelect)[],
 ): Promise<Channel[]> {
   if (rows.length === 0) return [];
+  const wsId = rows[0]!.workspaceId;
   const channelIds = rows.map((r) => r.id);
   const [adminRows, thumbRows] = await Promise.all([
     db
@@ -2234,6 +2245,55 @@ async function joinAdmins(
   ]);
   const thumbByChannel = new Map(thumbRows.map((t) => [t.channelId, t.b64]));
 
+  // Диалоги команды с админами (tg_chats, воркспейс-wide) → «кружочки» в таблице.
+  // Ключ — tg_user_id админа. Один запрос на весь батч каналов.
+  const adminTgUserIds = [
+    ...new Set(
+      adminRows
+        .map((a) => {
+          const p = a.properties as Record<string, unknown>;
+          return typeof p.tg_user_id === "string" ? p.tg_user_id : null;
+        })
+        .filter((x): x is string => x !== null),
+    ),
+  ];
+  type ChatAccount = {
+    accountId: string;
+    lastInboundAt: string | null;
+    lastOutboundAt: string | null;
+  };
+  const chatAccountsByPeer = new Map<string, ChatAccount[]>();
+  if (adminTgUserIds.length > 0) {
+    const chatRows = await db
+      .select({
+        peerUserId: tgChats.peerUserId,
+        accountId: tgChats.accountId,
+        lastInboundAt: tgChats.lastInboundAt,
+        lastOutboundAt: tgChats.lastOutboundAt,
+      })
+      .from(tgChats)
+      .innerJoin(outreachAccounts, eq(outreachAccounts.id, tgChats.accountId))
+      .where(
+        and(
+          eq(outreachAccounts.workspaceId, wsId),
+          inArray(tgChats.peerUserId, adminTgUserIds),
+          // «Общались» = админ нам ОТВЕТИЛ хотя бы раз, а не «мы написали» и не
+          // «openChat по пустому чату». Сигнал — has_inbound (peer когда-либо
+          // слал входящее), тот же, что в resolveWarmTgUserIds (warm-set).
+          eq(tgChats.hasInbound, true),
+        ),
+      );
+    for (const r of chatRows) {
+      const list = chatAccountsByPeer.get(r.peerUserId) ?? [];
+      list.push({
+        accountId: r.accountId,
+        lastInboundAt: r.lastInboundAt?.toISOString() ?? null,
+        lastOutboundAt: r.lastOutboundAt?.toISOString() ?? null,
+      });
+      chatAccountsByPeer.set(r.peerUserId, list);
+    }
+  }
+
   const byChannel = new Map<
     string,
     {
@@ -2241,10 +2301,13 @@ async function joinAdmins(
       fullName: string | null;
       telegramUsername: string | null;
       primaryAccountId: string | null;
+      chatAccounts: ChatAccount[];
     }[]
   >();
   for (const a of adminRows) {
     const props = a.properties as Record<string, unknown>;
+    const tgUserId =
+      typeof props.tg_user_id === "string" ? props.tg_user_id : null;
     const list = byChannel.get(a.channelId) ?? [];
     list.push({
       contactId: a.contactId,
@@ -2255,6 +2318,7 @@ async function joinAdmins(
           ? props.telegram_username
           : null,
       primaryAccountId: a.primaryAccountId,
+      chatAccounts: tgUserId ? chatAccountsByPeer.get(tgUserId) ?? [] : [],
     });
     byChannel.set(a.channelId, list);
   }
