@@ -596,6 +596,8 @@ app.openapi(
             eq(projectItems.projectId, project.id),
             eq(projectItems.kind, "placement"),
             isNull(projectItems.shortlistedAt),
+            // Отказавшихся (available=false) в гейт не считаем (этап 16.10).
+            sql`${projectItems.available} is distinct from false`,
           ),
         );
       // Готовность = совпадает с Placement.contactReady (см. campaigns.ts):
@@ -616,7 +618,7 @@ app.openapi(
     let leads: SchedulingLead[];
     if (project.kind === "agency") {
       const longlist = allLeads
-        .filter((l) => l.shortlistedAt === null)
+        .filter((l) => l.shortlistedAt === null && l.available !== false)
         .map((l) => ({
           id: l.id,
           username: l.username,

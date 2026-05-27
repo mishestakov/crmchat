@@ -28,7 +28,6 @@ import { substituteVariables } from "../lib/substitute-variables.ts";
 import { pickDefined } from "../lib/pick-defined.ts";
 import { extractUsername } from "../lib/tg-username.ts";
 import { resolveAdminRecipient } from "../lib/placement-recipient.ts";
-import { scanChannelsInBackground } from "./channels.ts";
 import { type WorkspaceVars } from "../middleware/assert-member.ts";
 
 // Agency-кампания переиспользует projects (kind='agency') + project_items
@@ -86,6 +85,9 @@ const PlacementSchema = z
     // доступна бесплатная личка (hasDm && dmStarCost===0). Жёсткий гейт
     // требует contactReady=true у всех размещений лонглиста.
     contactReady: z.boolean(),
+    // Непрочитанные в переписке с админом (этап 16.10): из contacts.unreadCount,
+    // который репликатор держит live. У каналов одного админа — одинаковое.
+    unread: z.number().int(),
     // Аккаунт, через который идёт аутрич этому блогеру (после активации).
     account: z
       .object({
@@ -585,18 +587,8 @@ app.openapi(
       });
     }
 
-    // Эагерный скан добавленных каналов (этап 16.8): тянем метрики/описание
-    // сразу, не дожидаясь открытия drawer'а. Fire-and-forget — ответ не
-    // блокируем, ошибки глотаются внутри.
-    void scanChannelsInBackground(
-      wsId,
-      insertedItems
-        .map((i) => i.channelId)
-        .filter((id): id is string => id !== null),
-      userId,
-      role,
-    ).catch(() => {});
-
+    // Скан канала ленивый — подтянется при открытии (ChannelCard auto-sync),
+    // авто-скан на добавлении убрали ради меньшего флуда (этап 16.10).
     return c.json({ added, channelsCreated, skippedInvalid, skippedDuplicate });
   },
 );
@@ -957,6 +949,7 @@ function placementColumns() {
     adminUsername: sql<
       string | null
     >`${contacts.properties} ->> 'telegram_username'`,
+    unread: contacts.unreadCount,
   };
 }
 
@@ -1040,6 +1033,7 @@ function serializePlacement(
     channelDmStarCost: number | null;
     channelHasAdmin: boolean;
     adminUsername: string | null;
+    unread: number | null;
   },
   outreachMap: Awaited<ReturnType<typeof outreachByItem>>,
   accountMap: Awaited<ReturnType<typeof loadAccounts>>,
@@ -1073,6 +1067,7 @@ function serializePlacement(
     contactReady:
       row.channelHasAdmin ||
       (row.channelHasDm && row.channelDmStarCost === 0),
+    unread: row.unread ?? 0,
     account,
     chainStatus: chainStatus(row.repliedAt, row.available, o.sentCount, o.read),
     outreach: {

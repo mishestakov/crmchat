@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   X,
   MessageCircle,
-  ListChecks,
   Trash2,
   FileText,
   Image as ImageIcon,
@@ -26,23 +25,20 @@ import {
 import { ChannelCard } from "../../../../../components/channel-card";
 import { ContactPicker } from "../../../../../components/contact-picker";
 import type { Channel } from "@repo/core";
-import { type Placement, type ContractStatus, type CreativeStatus } from "./-shared";
+import {
+  formatViews,
+  type Placement,
+  type ContractStatus,
+  type CreativeStatus,
+} from "./-shared";
 import { Chip, contractView, creativeView } from "./-ui";
 
-type Draft = {
-  available: boolean | null;
-  priceAmount: string;
-  forecastViews: string;
-  forecastErr: string;
-};
+// Менеджер вводит руками только цену — прогнозы (охват/ERR) берём из канала
+// (этап 16.10), «готов» заменён кнопками решения.
+type Draft = { priceAmount: string };
 
 function toDraft(p: Placement): Draft {
-  return {
-    available: p.available,
-    priceAmount: p.priceAmount?.toString() ?? "",
-    forecastViews: p.forecastViews?.toString() ?? "",
-    forecastErr: p.forecastErr?.toString() ?? "",
-  };
+  return { priceAmount: p.priceAmount?.toString() ?? "" };
 }
 
 // null для пустой строки, иначе число.
@@ -89,42 +85,43 @@ export function PlacementPane({
     staleTime: 5 * 60 * 1000,
   });
 
+  // Авто-метрики канала из ленты (этап 16.10): показываем read-only и
+  // снапшотим в прогноз при «Согласован» — менеджер их не вводит.
+  const cMeta = (channelQ.data?.meta ?? {}) as Record<string, unknown>;
+  const avgReach = typeof cMeta.avg_reach === "number" ? cMeta.avg_reach : null;
+  const cErr = typeof cMeta.err === "number" ? cMeta.err : null;
+
+  const invalidate = () =>
+    qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] });
+
+  // Автосейв цены на blur (единственное ручное поле).
   const save = useMutation({
     mutationFn: async () => {
-      const { data, error } = await api.PATCH(
+      const { error } = await api.PATCH(
         "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}",
         {
           params: { path: { wsId, projectId, placementId: placement.id } },
-          body: {
-            available: draft.available,
-            priceAmount: numOrNull(draft.priceAmount),
-            forecastViews: numOrNull(draft.forecastViews),
-            forecastErr: numOrNull(draft.forecastErr),
-          },
+          body: { priceAmount: numOrNull(draft.priceAmount) },
         },
       );
       if (error) throw error;
-      return data!;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] });
-    },
+    onSuccess: invalidate,
   });
 
-  // «В шортлист» — собранного блогера убираем из опроса (shortlisted_at=now).
-  // Шлём и черновик (цена/прогнозы) одним PATCH: автосейв на blur не успевает
-  // сработать при клике по кнопке внутри той же строки (этап 16.8 / fix #3).
-  const shortlist = useMutation({
+  // «Согласован» — блогер согласился: цена + снапшот метрик канала в прогноз →
+  // в шортлист (этап 16.10). onRemoved переключит список на следующего.
+  const agree = useMutation({
     mutationFn: async () => {
       const { error } = await api.PATCH(
         "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}",
         {
           params: { path: { wsId, projectId, placementId: placement.id } },
           body: {
-            available: draft.available,
+            available: true,
             priceAmount: numOrNull(draft.priceAmount),
-            forecastViews: numOrNull(draft.forecastViews),
-            forecastErr: numOrNull(draft.forecastErr),
+            forecastViews: avgReach,
+            forecastErr: cErr,
             shortlisted: true,
           },
         },
@@ -132,7 +129,25 @@ export function PlacementPane({
       if (error) throw error;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] });
+      invalidate();
+      onRemoved();
+    },
+  });
+
+  // «Отказ» — не работаем: available=false (строка прячется из списка, A4).
+  const decline = useMutation({
+    mutationFn: async () => {
+      const { error } = await api.PATCH(
+        "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}",
+        {
+          params: { path: { wsId, projectId, placementId: placement.id } },
+          body: { available: false },
+        },
+      );
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      invalidate();
       onRemoved();
     },
   });
@@ -145,7 +160,7 @@ export function PlacementPane({
       {/* Центр: карточка канала — метрики, описание, лента постов. */}
       <div className="min-w-0 flex-1 overflow-hidden border-r border-zinc-200">
         {channelQ.data ? (
-          <ChannelCard wsId={wsId} channel={channelQ.data} />
+          <ChannelCard wsId={wsId} channel={channelQ.data} compact />
         ) : (
           <div className="flex h-full items-center justify-center px-6 text-center text-sm text-zinc-400">
             {channelQ.isLoading ? "Загрузка канала…" : "Канал недоступен"}
@@ -166,64 +181,51 @@ export function PlacementPane({
               }}
               className="border-b border-zinc-200 px-4 py-3"
             >
-              <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
-                <BarField label="Готов">
-                  <select
-                    value={
-                      draft.available === null
-                        ? ""
-                        : draft.available
-                          ? "yes"
-                          : "no"
-                    }
-                    onChange={(e) =>
-                      setDraft((d) => ({
-                        ...d,
-                        available:
-                          e.target.value === ""
-                            ? null
-                            : e.target.value === "yes",
-                      }))
-                    }
-                    className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm focus:border-emerald-500 focus:outline-none"
-                  >
-                    <option value="">—</option>
-                    <option value="yes">Да</option>
-                    <option value="no">Нет</option>
-                  </select>
-                </BarField>
+              {(avgReach !== null || cErr !== null) && (
+                <div className="mb-2 flex items-baseline gap-4 text-xs text-zinc-500">
+                  {avgReach !== null && (
+                    <span>
+                      ср. охват{" "}
+                      <b className="text-zinc-700">{formatViews(avgReach)}</b>
+                    </span>
+                  )}
+                  {cErr !== null && (
+                    <span>
+                      ERR <b className="text-zinc-700">{cErr}%</b>
+                    </span>
+                  )}
+                </div>
+              )}
+              <div className="flex items-end gap-3">
                 <BarField label="Цена ₽">
                   <BarNum
                     value={draft.priceAmount}
-                    onChange={(v) => setDraft((d) => ({ ...d, priceAmount: v }))}
+                    onChange={(v) => setDraft({ priceAmount: v })}
                   />
                 </BarField>
-                <BarField label="Прогноз ПДП">
-                  <BarNum
-                    value={draft.forecastViews}
-                    onChange={(v) =>
-                      setDraft((d) => ({ ...d, forecastViews: v }))
-                    }
-                  />
-                </BarField>
-                <BarField label="ERR %">
-                  <BarNum
-                    value={draft.forecastErr}
-                    onChange={(v) => setDraft((d) => ({ ...d, forecastErr: v }))}
-                  />
-                </BarField>
+                <SaveHint pending={save.isPending} error={save.error} />
               </div>
               <div className="mt-2.5 flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => shortlist.mutate()}
-                  disabled={shortlist.isPending}
+                  onClick={() => agree.mutate()}
+                  disabled={agree.isPending}
                   className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                  title="Блогер согласился — в шортлист"
                 >
-                  <ListChecks size={15} />
-                  {shortlist.isPending ? "…" : "В шортлист"}
+                  <Check size={15} />
+                  Согласован
                 </button>
-                <SaveHint pending={save.isPending} error={save.error} />
+                <button
+                  type="button"
+                  onClick={() => decline.mutate()}
+                  disabled={decline.isPending}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-600 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                  title="Не работаем — скрыть из списка"
+                >
+                  <X size={15} />
+                  Отказ
+                </button>
                 <RemovePlacementButton
                   wsId={wsId}
                   projectId={projectId}

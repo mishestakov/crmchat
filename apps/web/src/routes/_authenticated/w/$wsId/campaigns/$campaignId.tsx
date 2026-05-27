@@ -410,6 +410,7 @@ function LonglistPhase({
   const projectId = campaign.id;
   const [addOpen, setAddOpen] = useState(false);
   const [launchOpen, setLaunchOpen] = useState(false);
+  const [showDeclined, setShowDeclined] = useState(false);
 
   // stage=longlist — только те, кого ещё опрашиваем (выбывшие «в шортлист» не
   // показываются здесь, они на фазе согласования).
@@ -436,24 +437,33 @@ function LonglistPhase({
     },
   );
 
-  const placements = placementsQ.data ?? [];
-  const replied = placements.filter((p) => p.chainStatus === "replied").length;
-  const total = placements.length;
-  const ready = placements.filter((p) => p.contactReady).length;
+  // Отказ (available=false → chainStatus 'declined') прячем из списка и не
+  // считаем в прогрессе/гейте — совпадает с бэком (этап 16.10).
+  const all = placementsQ.data ?? [];
+  const declinedCount = all.filter((p) => p.chainStatus === "declined").length;
+  const active = all.filter((p) => p.chainStatus !== "declined");
+  const visible = showDeclined ? all : active;
+  const total = active.length;
+  const ready = active.filter((p) => p.contactReady).length;
   const unready = total - ready;
+  const replied = active.filter((p) => p.chainStatus === "replied").length;
   const pct = total > 0 ? Math.round((ready / total) * 100) : 0;
   const isDraft = campaign.status === "draft";
 
   // Сколько ещё каналов у того же админа — для хинта «+N» в строке (этап 16.8).
   const adminCounts = useMemo(() => {
+    const data = placementsQ.data ?? [];
+    const src = showDeclined
+      ? data
+      : data.filter((p) => p.chainStatus !== "declined");
     const m = new Map<string, number>();
-    for (const p of placements) {
+    for (const p of src) {
       if (p.adminContactId) {
         m.set(p.adminContactId, (m.get(p.adminContactId) ?? 0) + 1);
       }
     }
     return m;
-  }, [placements]);
+  }, [placementsQ.data, showDeclined]);
 
   return (
     <div className="flex h-full flex-col">
@@ -478,8 +488,18 @@ function LonglistPhase({
                   {unready} без контакта
                 </span>
               )}
+              {replied > 0 && ` · ${replied} ответ.`}
             </span>
           </div>
+          {declinedCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowDeclined((v) => !v)}
+              className="text-xs text-zinc-400 hover:text-zinc-600"
+            >
+              {showDeclined ? "скрыть отказ" : `показать отказ (${declinedCount})`}
+            </button>
+          )}
           <div className="ml-auto flex items-center gap-2">
             <button
               type="button"
@@ -512,9 +532,8 @@ function LonglistPhase({
 
       <div className="min-h-0 flex-1">
         <InboxShell
-          items={placements}
+          items={visible}
           getId={(p) => p.id}
-          headerRight={`${total} в лонглисте · ${replied} ответили`}
           emptyHint="Лонглист пуст. Нажмите «Добавить блогеров», чтобы импортировать каналы — они сразу просканируются."
           renderRow={(p, selected, onSelect) => (
             <BloggerRow
@@ -846,8 +865,9 @@ function LaunchModal({
   );
 }
 
-// Строка списка блогеров в лонглисте: канал + статус контакта (готов/нет) +
-// хинт «ещё N у этого админа» + статус аутрича/цена. Клик выбирает блогера.
+// Строка списка блогеров (этап 16.10, BD-кокпит): кто/что отправлено и ответ +
+// непрочитанные в реал-тайме + хинт «ещё N у админа». Маркер только когда
+// контакта нет (он actionable). Шум (цена/«контакт есть»/клиент-статус) убран.
 function BloggerRow({
   p,
   selected,
@@ -860,7 +880,6 @@ function BloggerRow({
   siblingCount: number;
 }) {
   const ch = p.channel;
-  const dmFree = !!ch?.hasDm && ch.dmStarCost === 0;
   return (
     <button
       type="button"
@@ -870,45 +889,31 @@ function BloggerRow({
         (selected ? "bg-emerald-50" : "hover:bg-zinc-50")
       }
     >
-      <span
-        className={
-          "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full " +
-          (p.contactReady
-            ? "bg-emerald-100 text-emerald-600"
-            : "bg-zinc-100 text-zinc-400")
-        }
-      >
+      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-500">
         <Users size={14} />
       </span>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium text-zinc-900">
-          {ch?.title ?? "Канал удалён"}
+        <div className="flex items-center gap-2">
+          <div className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-900">
+            {ch?.title ?? "Канал удалён"}
+          </div>
+          {p.unread > 0 && (
+            <span className="shrink-0 rounded-full bg-emerald-500 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-white">
+              {p.unread}
+            </span>
+          )}
         </div>
         <div className="truncate text-xs text-zinc-400">
           {ch?.username ? `@${ch.username}` : "—"}
-        </div>
-        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-          {p.contactReady ? (
-            <span className="text-[11px] text-emerald-600">контакт есть</span>
-          ) : (
-            <span className="text-[11px] font-medium text-amber-600">
-              нет контакта
-            </span>
-          )}
-          {dmFree && !p.adminContactId && (
-            <span className="text-[11px] text-zinc-400">личка бесплатно</span>
-          )}
           {siblingCount > 0 && (
-            <span className="text-[11px] text-zinc-400">
-              ещё {siblingCount} у этого админа
-            </span>
+            <span className="text-zinc-400"> · ещё {siblingCount} у админа</span>
           )}
         </div>
         <div className="mt-1 flex items-center gap-2">
           <OutreachStatus p={p} />
-          {p.priceAmount !== null && (
-            <span className="text-xs font-medium text-zinc-600">
-              {formatRub(p.priceAmount)}
+          {!p.contactReady && (
+            <span className="text-[11px] font-medium text-amber-600">
+              нет контакта
             </span>
           )}
         </div>

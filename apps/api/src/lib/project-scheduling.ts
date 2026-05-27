@@ -173,6 +173,8 @@ export async function prepareAgencyLeads(opts: {
         eq(projectItems.projectId, opts.projectId),
         eq(projectItems.kind, "placement"),
         isNull(projectItems.shortlistedAt),
+        // Отказавшихся не включаем в {{каналы}} (этап 16.10).
+        sql`${projectItems.available} is distinct from false`,
       ),
     );
   const canals = new Map<string, string[]>();

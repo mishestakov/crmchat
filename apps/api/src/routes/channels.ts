@@ -581,12 +581,63 @@ app.openapi(
   },
 );
 
+function median(nums: number[]): number {
+  if (nums.length === 0) return 0;
+  const s = [...nums].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 === 1 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
+}
+
+type TdHistMsg = {
+  id: number;
+  is_pinned?: boolean;
+  interaction_info?: {
+    view_count?: number;
+    forward_count?: number;
+    reply_info?: { reply_count?: number };
+    reactions?: { reactions?: { total_count: number }[] };
+  };
+};
+
+// Авто-метрики канала из ленты (этап 16.10): ср. охват = медиана просмотров по
+// последним ~15 постам (без закрепа), ERR (by reach) = медиана по постам
+// (реакции+репосты+комменты)/просмотры × 100. Чистая функция: считается из уже
+// полученной /history-ленты (отдельного TDLib-вызова не нужно). Мало данных → null.
+function metricsFromMessages(
+  msgs: TdHistMsg[],
+): { avgReach: number; err: number; sample: number } | null {
+  const posts = msgs.filter(
+    (m) =>
+      !m.is_pinned &&
+      typeof m.interaction_info?.view_count === "number" &&
+      m.interaction_info.view_count > 0,
+  );
+  if (posts.length < 3) return null;
+  const recent = posts.slice(0, 15);
+  const avgReach = median(recent.map((m) => m.interaction_info!.view_count!));
+  const ers = recent.map((m) => {
+    const ii = m.interaction_info!;
+    const reactions = (ii.reactions?.reactions ?? []).reduce(
+      (sum, r) => sum + r.total_count,
+      0,
+    );
+    const eng =
+      reactions + (ii.forward_count ?? 0) + (ii.reply_info?.reply_count ?? 0);
+    return ii.view_count! > 0 ? eng / ii.view_count! : 0;
+  });
+  const err = median(ers) * 100;
+  return {
+    avgReach: Math.round(avgReach),
+    err: Math.round(err * 10) / 10,
+    sample: recent.length,
+  };
+}
+
 // Ядро sync'а карточки канала из TG: резолв (searchPublicChat/getChat →
-// getSupergroupFullInfo) + запись типизированных колонок и meta. Вынесено из
-// HTTP-хендлера ради переиспользования фоновым сканом на добавлении в лонглист
-// (см. scanChannelsInBackground, этап 16.8). Бросает при TDLib-провале
-// (permanent → помечает канал unavailable). Возвращает обновлённую raw-строку
-// channels (без joinAdmins-сериализации — это забота вызывающего).
+// getSupergroupFullInfo) + запись типизированных колонок и meta. Дёргается
+// HTTP-ручкой /sync и ленивым авто-синком в ChannelCard при открытии канала.
+// Бросает при TDLib-провале (permanent → помечает канал unavailable).
+// Возвращает обновлённую raw-строку channels (без joinAdmins-сериализации).
 async function syncChannelFromTg(
   channel: typeof channels.$inferSelect,
   tdClient: TdClient,
@@ -709,43 +760,6 @@ async function syncChannelFromTg(
       : Promise.resolve(),
   ]);
   return updated!;
-}
-
-// Фоновый скан каналов сразу при добавлении в лонглист (этап 16.8): тянем
-// свежую карточку, чтобы при переключении строк метрики уже были на месте.
-// In-process fire-and-forget с троттлом; ошибки глотаем поштучно (ленивый sync
-// при открытии drawer'а подстрахует). Нет active-аккаунта — молча выходим.
-const BG_SCAN_THROTTLE_MS = 400;
-const BG_SCAN_TTL_MS = 24 * 60 * 60 * 1000;
-
-export async function scanChannelsInBackground(
-  wsId: string,
-  channelIds: string[],
-  userId: string,
-  role: WorkspaceRole,
-): Promise<void> {
-  const ids = [...new Set(channelIds)];
-  if (ids.length === 0) return;
-  const picked = await pickOutreachClient(wsId, userId, role);
-  if (!picked) return;
-  for (const cid of ids) {
-    try {
-      const [ch] = await db
-        .select()
-        .from(channels)
-        .where(eq(channels.id, cid))
-        .limit(1);
-      if (!ch || ch.platform !== "telegram") continue;
-      if (!ch.externalId && !ch.username) continue;
-      const fresh =
-        !!ch.syncedAt && Date.now() - ch.syncedAt.getTime() < BG_SCAN_TTL_MS;
-      if (fresh || isInUnavailableCooldown(ch)) continue;
-      await syncChannelFromTg(ch, picked.client);
-    } catch {
-      // ленивый sync подхватит при открытии drawer'а
-    }
-    await new Promise((r) => setTimeout(r, BG_SCAN_THROTTLE_MS));
-  }
 }
 
 // Pull свежей карточки канала из TG. Lazy: фронт дёргает при открытии
@@ -1179,6 +1193,7 @@ app.openapi(
     type TdMessage = {
       id: number;
       date: number;
+      is_pinned?: boolean;
       content: TdContent;
       interaction_info?: {
         view_count?: number;
@@ -1294,6 +1309,28 @@ app.openapi(
         isForwarded: !!m.forward_info,
       };
     });
+
+    // Авто-метрики из этой же ленты (этап 16.10) — без отдельного TDLib-вызова.
+    // Пишем в meta: центр и правый рельс показывают, «Согласован» снапшотит в
+    // прогноз. Только на первой странице (newest посты): пагинация тащит старые,
+    // по ним охват считать нельзя.
+    const metrics =
+      fromMessageId === undefined
+        ? metricsFromMessages(result.messages ?? [])
+        : null;
+    if (metrics) {
+      await db
+        .update(channels)
+        .set({
+          meta: sql`${channels.meta} || ${JSON.stringify({
+            avg_reach: metrics.avgReach,
+            err: metrics.err,
+            metrics_sample: metrics.sample,
+            metrics_at: new Date().toISOString(),
+          })}::jsonb`,
+        })
+        .where(eq(channels.id, id));
+    }
 
     return c.json({ messages: items });
   },

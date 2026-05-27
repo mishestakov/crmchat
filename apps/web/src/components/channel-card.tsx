@@ -35,8 +35,14 @@ import { ContactPicker } from "./contact-picker";
 // значение должно совпадать.
 const UNAVAILABLE_COOLDOWN_MS = 60 * 60 * 1000;
 
-export function ChannelCard(props: { wsId: string; channel: Channel }) {
-  const { wsId, channel } = props;
+export function ChannelCard(props: {
+  wsId: string;
+  channel: Channel;
+  // compact — превью канала в центре лонглиста (этап 16.10): тонкая шапка,
+  // description мелким+clamp, без бейджей/админов — только канал и его посты.
+  compact?: boolean;
+}) {
+  const { wsId, channel, compact } = props;
   const qc = useQueryClient();
   const accountsQ = useOutreachAccounts(wsId);
   const hasActiveAccount =
@@ -162,9 +168,9 @@ export function ChannelCard(props: { wsId: string; channel: Channel }) {
           {syncErrorReason ?? `Не удалось обновить: ${syncErrorRaw}`}
         </div>
       )}
-      <ChannelHero channel={channel} syncing={syncMut.isPending} />
-      <MetaBadges channel={channel} />
-      <AdminsSection wsId={wsId} channel={channel} />
+      <ChannelHero channel={channel} syncing={syncMut.isPending} compact={compact} />
+      {!compact && <MetaBadges channel={channel} />}
+      {!compact && <AdminsSection wsId={wsId} channel={channel} />}
       <PostsFeed
         wsId={wsId}
         channelId={channel.id}
@@ -245,28 +251,41 @@ function UnavailableStatus(props: {
   );
 }
 
-function ChannelHero(props: { channel: Channel; syncing: boolean }) {
-  const { channel } = props;
+function ChannelHero(props: {
+  channel: Channel;
+  syncing: boolean;
+  compact?: boolean;
+}) {
+  const { channel, compact } = props;
   const meta = channel.meta as Record<string, unknown>;
   const isVerified = meta?.is_verified === true;
   const boostLevel =
     typeof meta?.boost_level === "number" ? meta.boost_level : 0;
   const createdAtTg =
     typeof meta?.created_at_tg === "number" ? meta.created_at_tg : null;
+  // Авто-метрики из ленты (этап 16.10), пишутся на скане в meta.
+  const avgReach = typeof meta?.avg_reach === "number" ? meta.avg_reach : null;
+  const err = typeof meta?.err === "number" ? meta.err : null;
+  const avatar = compact ? "h-11 w-11" : "h-16 w-16";
 
   return (
-    <header className="border-b border-zinc-100 px-6 pb-5 pt-6">
-      <div className="flex items-start gap-4">
+    <header
+      className={
+        "border-b border-zinc-100 " +
+        (compact ? "px-5 pb-3 pt-4" : "px-6 pb-5 pt-6")
+      }
+    >
+      <div className={"flex items-start " + (compact ? "gap-3" : "gap-4")}>
         {channel.thumbnailB64 ? (
           <img
             src={`data:image/jpeg;base64,${channel.thumbnailB64}`}
             alt=""
-            className="h-16 w-16 shrink-0 rounded-full object-cover ring-1 ring-zinc-200 blur-[1.5px]"
+            className={`${avatar} shrink-0 rounded-full object-cover ring-1 ring-zinc-200 blur-[1.5px]`}
           />
         ) : (
           <div
             className={
-              "flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-zinc-100 to-zinc-200 text-base font-semibold text-zinc-500" +
+              `flex ${avatar} shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-zinc-100 to-zinc-200 text-base font-semibold text-zinc-500` +
               (props.syncing ? " animate-pulse" : "")
             }
           >
@@ -274,7 +293,12 @@ function ChannelHero(props: { channel: Channel; syncing: boolean }) {
           </div>
         )}
         <div className="min-w-0 flex-1 pt-0.5">
-          <h2 className="flex items-center gap-1.5 text-lg font-semibold leading-tight tracking-tight text-zinc-900">
+          <h2
+            className={
+              "flex items-center gap-1.5 font-semibold leading-tight tracking-tight text-zinc-900 " +
+              (compact ? "text-base" : "text-lg")
+            }
+          >
             <span className="truncate">{channel.title}</span>
             {isVerified && (
               <BadgeCheck
@@ -295,25 +319,39 @@ function ChannelHero(props: { channel: Channel; syncing: boolean }) {
               <LinkIcon size={11} className="opacity-60" />
             </a>
           )}
-          <div className="mt-3 flex items-baseline gap-6 text-sm">
+          <div
+            className={
+              "flex items-baseline text-sm " +
+              (compact ? "mt-2 gap-5" : "mt-3 gap-6")
+            }
+          >
             <Stat
               value={formatMembers(channel.memberCount)}
               label="подписчиков"
             />
-            {createdAtTg && (
+            {avgReach !== null && (
+              <Stat value={formatMembers(avgReach)} label="ср. охват" />
+            )}
+            {err !== null && <Stat value={`${err}%`} label="ERR" />}
+            {!compact && createdAtTg && (
               <Stat value={formatAge(createdAtTg)} label="возраст" />
             )}
-            {boostLevel > 0 && (
+            {!compact && boostLevel > 0 && (
               <Stat value={`★ ${boostLevel}`} label="boost" tone="amber" />
             )}
           </div>
         </div>
       </div>
-      {channel.description && (
-        <p className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-zinc-700">
-          {channel.description}
-        </p>
-      )}
+      {channel.description &&
+        (compact ? (
+          <p className="mt-3 whitespace-pre-line text-xs leading-relaxed text-zinc-600">
+            {channel.description.replace(/\n{2,}/g, "\n").trim()}
+          </p>
+        ) : (
+          <p className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-zinc-700">
+            {channel.description}
+          </p>
+        ))}
     </header>
   );
 }
@@ -751,6 +789,8 @@ function PostsFeed(props: {
   const [loadMoreError, setLoadMoreError] = useState<unknown>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const didAutoScrollRef = useRef(false);
+  const qc = useQueryClient();
+  const metricsRefreshed = useRef(false);
 
   useEffect(() => {
     setOlderPages([]);
@@ -758,7 +798,20 @@ function PostsFeed(props: {
     setLoadMoreError(null);
     setLoadingMore(false);
     didAutoScrollRef.current = false;
+    metricsRefreshed.current = false;
   }, [props.channelId]);
+
+  // Лента (/history) пересчитала метрики канала на бэке (этап 16.10) →
+  // обновляем объект канала, чтобы шапка/правый рельс показали свежие
+  // ср.охват/ERR. Один раз на успешную загрузку, без петли (channelQ рефетчит,
+  // initialQ из кэша).
+  useEffect(() => {
+    if (!initialQ.isSuccess || metricsRefreshed.current) return;
+    metricsRefreshed.current = true;
+    qc.invalidateQueries({
+      queryKey: ["channel", props.wsId, props.channelId],
+    });
+  }, [initialQ.isSuccess, props.wsId, props.channelId, qc]);
 
   // По td_api.tl §getChatHistory: единственный надёжный сигнал «больше
   // нет» — пустой ответ. length < limit может быть chunk-границей.
