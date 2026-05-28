@@ -8,6 +8,7 @@ import {
   MessageCircle,
   Pin,
   Send,
+  Tag,
   Users,
   X,
 } from "lucide-react";
@@ -67,6 +68,21 @@ type ChatMessage = {
   entities: MessageEntity[];
   mediaThumb: MessageThumb | null;
   replyMarkup: ReplyMarkup | null;
+  albumId: string | null;
+};
+
+// Пометка сообщения как артефакта фазы «Запуск» (опц. в ChatPanel).
+export type MessageTagKind = "contract" | "creative" | "act";
+export const MESSAGE_TAG_LABEL: Record<MessageTagKind, string> = {
+  contract: "Договор",
+  creative: "Креатив",
+  act: "Акт",
+};
+export type MessageTagRef = {
+  chatId: string;
+  messageId: string;
+  albumId: string | null;
+  accountId: string;
 };
 
 // Оверлей-обёртка: backdrop + правый aside вокруг ChatPanel. Esc / клик по
@@ -112,6 +128,11 @@ export function ChatPanel(props: {
   accounts: AccountRow[];
   onSelectAccount: (accountId: string) => void;
   onClose?: () => void;
+  // Фаза «Запуск»: пометка сообщения как договор/креатив/акт. Если передан —
+  // у каждого сообщения появляется кнопка «пометить». Альбом группируется по
+  // albumId. taggedKindByMessageId рисует бейдж на уже помеченных.
+  onTagMessage?: (kind: MessageTagKind, ref: MessageTagRef) => void;
+  taggedKindByMessageId?: Record<string, MessageTagKind>;
 }) {
   const qc = useQueryClient();
   const accountById = new Map(props.accounts.map((a) => [a.id, a]));
@@ -313,6 +334,22 @@ export function ChatPanel(props: {
   const lastReadOutboxId = initialQ.data?.lastReadOutboxId ?? null;
   const peerStatus = initialQ.data?.peerStatus ?? null;
   const peerIsBot = initialQ.data?.peerIsBot ?? false;
+  const chatId = initialQ.data?.chatId ?? null;
+
+  // Пометка сообщения (фаза «Запуск»). Альбом не собираем на фронте — храним
+  // albumId, сервер дочитает весь альбом при рендере (надёжнее: не зависим от
+  // того, что подгружено в чате).
+  const [tagMenuFor, setTagMenuFor] = useState<string | null>(null);
+  const tagMessage = (m: ChatMessage, kind: MessageTagKind) => {
+    if (!chatId || !props.onTagMessage) return;
+    props.onTagMessage(kind, {
+      chatId,
+      messageId: m.id,
+      albumId: m.albumId,
+      accountId: props.accountId,
+    });
+    setTagMenuFor(null);
+  };
 
   useEffect(() => {
     if (!initialQ.isSuccess) return;
@@ -547,7 +584,7 @@ export function ChatPanel(props: {
                       <div
                         key={m.id}
                         className={
-                          "flex max-w-[85%] flex-col gap-1 " +
+                          "group flex max-w-[85%] flex-col gap-1 " +
                           (m.isOutgoing
                             ? "ml-auto items-end"
                             : "mr-auto items-start")
@@ -596,6 +633,49 @@ export function ChatPanel(props: {
                             onSendText={(t) => sendMut.mutate(t)}
                             disabled={sendMut.isPending}
                           />
+                        )}
+                        {props.onTagMessage && (
+                          <div className="flex items-center gap-1">
+                            {props.taggedKindByMessageId?.[m.id] && (
+                              <span className="rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">
+                                {MESSAGE_TAG_LABEL[
+                                  props.taggedKindByMessageId[m.id]!
+                                ]}
+                              </span>
+                            )}
+                            {tagMenuFor === m.id ? (
+                              <div className="flex items-center gap-1">
+                                {(
+                                  ["contract", "creative", "act"] as const
+                                ).map((k) => (
+                                  <button
+                                    key={k}
+                                    type="button"
+                                    onClick={() => tagMessage(m, k)}
+                                    className="rounded border border-zinc-300 bg-white px-1.5 py-0.5 text-[10px] font-medium text-zinc-700 hover:bg-zinc-50"
+                                  >
+                                    {MESSAGE_TAG_LABEL[k]}
+                                  </button>
+                                ))}
+                                <button
+                                  type="button"
+                                  onClick={() => setTagMenuFor(null)}
+                                  className="px-0.5 text-[10px] text-zinc-400 hover:text-zinc-600"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setTagMenuFor(m.id)}
+                                disabled={!chatId}
+                                className="flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] text-zinc-400 opacity-0 transition-opacity hover:text-zinc-700 group-hover:opacity-100 disabled:opacity-0"
+                              >
+                                <Tag size={11} /> пометить
+                              </button>
+                            )}
+                          </div>
                         )}
                       </div>
                     );

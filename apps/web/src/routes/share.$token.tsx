@@ -67,6 +67,10 @@ function SharePage() {
   }
   const p = projectQ.data!;
   const finalized = !!p.finalizedAt;
+  // Финализировать можно только когда по каждому размещению есть решение.
+  const allDecided =
+    p.placements.length > 0 &&
+    p.placements.every((pl) => pl.clientStatus !== "pending");
 
   return (
     <div className="min-h-screen bg-zinc-100">
@@ -143,6 +147,11 @@ function SharePage() {
             (finalized ? (
               <div className="border-t border-zinc-100 bg-emerald-50 px-5 py-3 text-sm text-emerald-800">
                 ✓ Медиаплан финализирован.
+              </div>
+            ) : !allDecided ? (
+              <div className="border-t border-zinc-100 px-5 py-4 text-center text-sm text-zinc-500">
+                Отметьте все размещения (подходит / не подходит), чтобы
+                финализировать медиаплан.
               </div>
             ) : (
               <div className="border-t border-zinc-100 px-5 py-4">

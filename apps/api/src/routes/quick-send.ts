@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
   contacts,
@@ -16,6 +16,7 @@ import {
   setAccountCooldown,
 } from "../lib/outreach-account-client.ts";
 import { emitProjectChanged } from "../lib/events.ts";
+import { FINAL_OFFER_MSG_IDX } from "../lib/project-scheduling.ts";
 import { readOnTelegram } from "./contacts.ts";
 import type { WorkspaceVars } from "../middleware/assert-member.ts";
 
@@ -208,10 +209,11 @@ app.openapi(
       });
     }
 
-    // Отменяем pending'и для этого peer'а во всех проектах. Под капотом
-    // worker увидит status='cancelled' и больше их не возьмёт. Если
-    // pending уже захвачен другим tick'ом — race возможен, но он на TG-уровне
-    // безобиден (просто отправится одно лишнее сообщение).
+    // Отменяем pending'и холодной цепочки для этого peer'а во всех проектах:
+    // ручная отправка = «беру переписку на себя», авто-пинги больше не нужны.
+    // НО финальный оффер (msg_idx=FINAL_OFFER_MSG_IDX) не трогаем — он осознанно
+    // адресован уже ответившим, и ручное сообщение/ERID-отправка не должны его
+    // гасить (та же логика, что в worker/listener).
     const cancelled = await db
       .update(scheduledMessages)
       .set({ status: "cancelled", error: "manual takeover" })
@@ -219,6 +221,7 @@ app.openapi(
         and(
           eq(scheduledMessages.workspaceId, wsId),
           eq(scheduledMessages.status, "pending"),
+          lt(scheduledMessages.messageIdx, FINAL_OFFER_MSG_IDX),
           inArray(
             scheduledMessages.itemId,
             db

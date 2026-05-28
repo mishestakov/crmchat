@@ -11,6 +11,7 @@ import {
   placementContractStatus,
   placementCreativeStatus,
   placementMetricsStatus,
+  type PlacementStepMessages,
   projectItems,
   projects,
   scheduledMessages,
@@ -24,12 +25,22 @@ import {
   resolveProjectAccountIds,
   buildScheduledRows,
   prepareAgencyLeads,
+  FINAL_OFFER_MSG_IDX,
   type SchedulingLead,
 } from "../lib/project-scheduling.ts";
 import { substituteVariables } from "../lib/substitute-variables.ts";
 import { pickDefined } from "../lib/pick-defined.ts";
 import { extractUsername } from "../lib/tg-username.ts";
 import { resolveAdminRecipient } from "../lib/placement-recipient.ts";
+import { getOutreachWorkerClient } from "../lib/outreach-account-client.ts";
+import {
+  mapChannelHistoryItems,
+  type TdChannelMessage,
+} from "../lib/channel-history.ts";
+import {
+  TdMediaThumbSchema,
+  TdMessageEntitySchema,
+} from "../lib/td-message.ts";
 import { type WorkspaceVars } from "../middleware/assert-member.ts";
 
 // Agency-кампания переиспользует projects (kind='agency') + project_items
@@ -60,6 +71,23 @@ const ChainStatusSchema = z.enum([
   "replied",
   "declined",
 ]);
+
+// Ссылка на помеченное сообщение в чате (договор/креатив/акт). albumId !=null →
+// сервер дочитает весь альбом при рендере (media_album_id). Файлы не храним.
+const MsgRefSchema = z.object({
+  chatId: z.string(),
+  messageId: z.string(),
+  albumId: z.string().nullable(),
+  accountId: z.string(),
+  at: z.iso.datetime(),
+});
+// Тело пометки (PUT): то же, но без `at` — сервер ставит сам.
+const TagBodySchema = MsgRefSchema.omit({ at: true });
+const StepMessagesSchema = z.object({
+  contract: MsgRefSchema.optional(),
+  creative: MsgRefSchema.optional(),
+  act: MsgRefSchema.optional(),
+});
 
 const PlacementSchema = z
   .object({
@@ -128,6 +156,7 @@ const PlacementSchema = z
     repliedAt: z.iso.datetime().nullable(),
     // production (фаза 5)
     finalOfferSentAt: z.iso.datetime().nullable(),
+    finalOfferStatus: z.enum(["none", "queued", "sent", "failed"]),
     contractStatus: z.enum(placementContractStatus.enumValues),
     creativeStatus: z.enum(placementCreativeStatus.enumValues),
     creativeRound: z.number().int(),
@@ -137,6 +166,11 @@ const PlacementSchema = z
     postUrl: z.string().nullable(),
     publishedAt: z.iso.datetime().nullable(),
     actReceivedAt: z.iso.datetime().nullable(),
+    // помеченные сообщения чата (договор/креатив/акт) + ЕРИД-отправка + коммент
+    // клиента к креативу
+    stepMessages: StepMessagesSchema.nullable(),
+    eridSentAt: z.iso.datetime().nullable(),
+    creativeClientComment: z.string().nullable(),
     // отчёт (фаза 6) — снимок метрик поста через TDLib
     metricsStatus: z.enum(placementMetricsStatus.enumValues),
     metricsViews: z.number().int().nullable(),
@@ -183,8 +217,30 @@ const UpdatePlacementBody = z
     postUrl: z.string().max(500).nullable().optional(),
     publishedAt: z.iso.datetime().nullable().optional(),
     actReceivedAt: z.iso.datetime().nullable().optional(),
+    eridSentAt: z.iso.datetime().nullable().optional(),
+    creativeClientComment: z.string().max(2000).nullable().optional(),
   })
   .openapi("UpdatePlacement");
+
+// Чтение помеченного сообщения (договор/креатив/акт) для инлайн-рендера в
+// гармошке и превью в Вертолёте. Альбом = несколько messageIds → getMessages.
+const StepKindParam = PlacementParam.extend({
+  kind: z.enum(["contract", "creative", "act"]),
+});
+const TaggedPostSchema = z
+  .object({
+    id: z.string(),
+    date: z.iso.datetime(),
+    text: z.string(),
+    entities: z.array(TdMessageEntitySchema),
+    mediaThumb: TdMediaThumbSchema.nullable(),
+    views: z.number().nullable(),
+    forwards: z.number().nullable(),
+    replies: z.number().nullable(),
+    reactions: z.array(z.object({ emoji: z.string(), count: z.number() })),
+    isForwarded: z.boolean(),
+  })
+  .openapi("TaggedMessage");
 
 const app = new OpenAPIHono<{ Variables: WorkspaceVars }>();
 
@@ -213,6 +269,9 @@ async function outreachByItem(itemIds: string[]) {
       read: boolean;
       lastSentAt: Date | null;
       accountId: string | null;
+      // статус финального оффера (msg_idx=FINAL_OFFER_MSG_IDX), отдельно от
+      // холодной цепочки. null = оффер не ставился.
+      finalOffer: string | null;
     }
   >();
   if (itemIds.length === 0) return map;
@@ -221,11 +280,15 @@ async function outreachByItem(itemIds: string[]) {
       itemId: scheduledMessages.itemId,
       accountId: scheduledMessages.accountId,
       status: scheduledMessages.status,
+      messageIdx: scheduledMessages.messageIdx,
       sentAt: scheduledMessages.sentAt,
       readAt: scheduledMessages.readAt,
     })
     .from(scheduledMessages)
     .where(inArray(scheduledMessages.itemId, itemIds));
+  // приоритет статуса оффера при нескольких попытках: sent > pending > failed.
+  const offerRank = (s: string) =>
+    s === "sent" ? 3 : s === "pending" ? 2 : s === "failed" ? 1 : 0;
   for (const r of rows) {
     const e = map.get(r.itemId) ?? {
       totalSteps: 0,
@@ -233,7 +296,18 @@ async function outreachByItem(itemIds: string[]) {
       read: false,
       lastSentAt: null as Date | null,
       accountId: null as string | null,
+      finalOffer: null as string | null,
     };
+    if (r.messageIdx === FINAL_OFFER_MSG_IDX) {
+      if (e.finalOffer === null || offerRank(r.status) > offerRank(e.finalOffer)) {
+        e.finalOffer = r.status;
+      }
+      // accountId берём и отсюда: у shortlist-direct размещения финальный оффер
+      // может быть единственным сообщением, и это его «липкий» аккаунт DM.
+      e.accountId ??= r.accountId;
+      map.set(r.itemId, e);
+      continue; // в счётчики холодной цепочки финальный оффер не мешаем
+    }
     e.totalSteps += 1;
     if (r.status === "sent") e.sentCount += 1;
     if (r.readAt) e.read = true;
@@ -665,7 +739,7 @@ app.openapi(
         ...(body.shortlisted !== undefined && {
           shortlistedAt: body.shortlisted ? new Date() : null,
         }),
-        // production: enum/text/int — прямое копирование (null валиден).
+        // production: enum/text/int/jsonb — прямое копирование (null валиден).
         ...pickDefined(body, [
           "contractStatus",
           "creativeStatus",
@@ -673,6 +747,7 @@ app.openapi(
           "erid",
           "eridAdvertiserData",
           "postUrl",
+          "creativeClientComment",
         ]),
         ...(body.scheduledAt !== undefined && {
           scheduledAt: body.scheduledAt ? new Date(body.scheduledAt) : null,
@@ -684,6 +759,9 @@ app.openapi(
           actReceivedAt: body.actReceivedAt
             ? new Date(body.actReceivedAt)
             : null,
+        }),
+        ...(body.eridSentAt !== undefined && {
+          eridSentAt: body.eridSentAt ? new Date(body.eridSentAt) : null,
         }),
       })
       .where(
@@ -737,9 +815,6 @@ app.openapi(
 // scheduled_messages на блогера, и тот же worker, что шлёт BD-цепочки,
 // отправляет их с human-flow (typing, паузы), проверяя status/cooldown
 // аккаунта. Аккаунт — sticky (тот же менеджер блогеру) либо round-robin по
-// активным. msg_idx=1000 — маркер вне лонглист-цепочки: worker не запланирует
-// после него follow-up (в project.messages нет такого шага).
-const FINAL_OFFER_MSG_IDX = 1000;
 
 app.openapi(
   createRoute({
@@ -793,11 +868,19 @@ app.openapi(
           eq(projectItems.clientStatus, "approved"),
           isNotNull(projectItems.shortlistedAt),
           sql`(${projectItems.username} IS NOT NULL OR ${projectItems.tgUserId} IS NOT NULL)`,
+          // Не дублируем оффер: пропускаем тех, кому он уже отправлен или в
+          // очереди (повторный «оповестить» добивает только оставшихся/неудачных).
+          sql`NOT EXISTS (
+            SELECT 1 FROM ${scheduledMessages}
+            WHERE ${scheduledMessages.itemId} = ${projectItems.id}
+              AND ${scheduledMessages.messageIdx} = ${FINAL_OFFER_MSG_IDX}
+              AND ${scheduledMessages.status} IN ('sent', 'pending')
+          )`,
         ),
       );
     if (rows.length === 0) {
       throw new HTTPException(400, {
-        message: "Нет одобренных блогеров с контактом для рассылки",
+        message: "Все одобренные блогеры уже оповещены",
       });
     }
 
@@ -841,6 +924,10 @@ app.openapi(
       for (let i = 0; i < scheduled.length; i += CHUNK) {
         await tx.insert(scheduledMessages).values(scheduled.slice(i, i + CHUNK));
       }
+      // ВНИМАНИЕ: finalOfferSentAt = «поставлено в очередь», НЕ «доставлено».
+      // Для реального статуса доставки используйте finalOfferStatus (none/
+      // queued/sent/failed), считаемый из scheduled_messages. Это поле — лишь
+      // отметка факта запуска рассылки.
       await tx
         .update(projectItems)
         .set({ finalOfferSentAt: now })
@@ -942,6 +1029,9 @@ function placementColumns() {
     postUrl: projectItems.postUrl,
     publishedAt: projectItems.publishedAt,
     actReceivedAt: projectItems.actReceivedAt,
+    stepMessages: projectItems.stepMessages,
+    eridSentAt: projectItems.eridSentAt,
+    creativeClientComment: projectItems.creativeClientComment,
     metricsStatus: projectItems.metricsStatus,
     metricsViews: projectItems.metricsViews,
     metricsForwards: projectItems.metricsForwards,
@@ -1054,6 +1144,9 @@ function serializePlacement(
     postUrl: string | null;
     publishedAt: Date | null;
     actReceivedAt: Date | null;
+    stepMessages: PlacementStepMessages | null;
+    eridSentAt: Date | null;
+    creativeClientComment: string | null;
     metricsStatus: (typeof placementMetricsStatus.enumValues)[number];
     metricsViews: number | null;
     metricsForwards: number | null;
@@ -1094,6 +1187,7 @@ function serializePlacement(
     read: false,
     lastSentAt: null,
     accountId: null,
+    finalOffer: null as string | null,
   };
   const account = o.accountId ? accountMap.get(o.accountId) ?? null : null;
   return {
@@ -1141,6 +1235,16 @@ function serializePlacement(
     shortlistedAt: row.shortlistedAt?.toISOString() ?? null,
     repliedAt: row.repliedAt?.toISOString() ?? null,
     finalOfferSentAt: row.finalOfferSentAt?.toISOString() ?? null,
+    // Реальный статус доставки финального оффера (из scheduled_messages), а не
+    // факт постановки в очередь: none | queued | sent | failed. cancelled (старое
+    // до фикса) → none, чтобы можно было переотправить.
+    finalOfferStatus: (o.finalOffer === "sent"
+      ? "sent"
+      : o.finalOffer === "pending"
+        ? "queued"
+        : o.finalOffer === "failed"
+          ? "failed"
+          : "none") as "none" | "queued" | "sent" | "failed",
     contractStatus: row.contractStatus,
     creativeStatus: row.creativeStatus,
     creativeRound: row.creativeRound,
@@ -1150,6 +1254,9 @@ function serializePlacement(
     postUrl: row.postUrl,
     publishedAt: row.publishedAt?.toISOString() ?? null,
     actReceivedAt: row.actReceivedAt?.toISOString() ?? null,
+    stepMessages: row.stepMessages ?? null,
+    eridSentAt: row.eridSentAt?.toISOString() ?? null,
+    creativeClientComment: row.creativeClientComment,
     metricsStatus: row.metricsStatus,
     metricsViews: row.metricsViews,
     metricsForwards: row.metricsForwards,
@@ -1160,5 +1267,174 @@ function serializePlacement(
     createdAt: row.createdAt.toISOString(),
   };
 }
+
+app.openapi(
+  createRoute({
+    method: "get",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}/step-message/{kind}",
+    tags: ["agency"],
+    request: { params: StepKindParam },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({ messages: z.array(TaggedPostSchema) }),
+          },
+        },
+        description: "Помеченное сообщение чата (рендер на лету, альбом учтён)",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const { projectId, placementId, kind } = c.req.valid("param");
+    await assertProjectAccess(projectId, wsId, userId, role);
+    const [row] = await db
+      .select({ stepMessages: projectItems.stepMessages })
+      .from(projectItems)
+      .where(
+        and(
+          eq(projectItems.id, placementId),
+          eq(projectItems.projectId, projectId),
+          eq(projectItems.kind, "placement"),
+        ),
+      )
+      .limit(1);
+    const ref = row?.stepMessages?.[kind];
+    if (!ref) return c.json({ messages: [] });
+    const client = await getOutreachWorkerClient({
+      id: ref.accountId,
+      workspaceId: wsId,
+    });
+    if (!client) return c.json({ messages: [] });
+    const chatId = Number(ref.chatId);
+    const msgId = Number(ref.messageId);
+    type TdAlbumMsg = TdChannelMessage & { media_album_id?: string | number };
+    try {
+      // openChat: getMessage/getChatHistory НЕ offline — на холодной сессии без
+      // open чат может не зарезолвиться и сообщение вернётся null (хотя есть).
+      await client.invoke({ _: "openChat", chat_id: chatId } as never);
+      let msgs: TdAlbumMsg[];
+      if (ref.albumId) {
+        // Альбом = соседние сообщения с общим media_album_id. Берём окно истории
+        // вокруг помеченного и фильтруем — фронт хранит одно id, не зависим от
+        // того, что было подгружено в чате (фикс потери части альбома).
+        const r = (await client.invoke({
+          _: "getChatHistory",
+          chat_id: chatId,
+          from_message_id: msgId,
+          offset: -9,
+          limit: 20,
+          only_local: false,
+        } as never)) as { messages?: (TdAlbumMsg | null)[] };
+        msgs = (r.messages ?? []).filter(
+          (m): m is TdAlbumMsg =>
+            !!m && String(m.media_album_id ?? "0") === ref.albumId,
+        );
+        if (msgs.length === 0) {
+          const one = (await client
+            .invoke({
+              _: "getMessage",
+              chat_id: chatId,
+              message_id: msgId,
+            } as never)
+            .catch(() => null)) as TdAlbumMsg | null;
+          if (one) msgs = [one];
+        }
+        // история идёт от новых к старым — отдаём альбом по возрастанию id.
+        msgs.sort((a, b) => Number(a.id) - Number(b.id));
+      } else {
+        const one = (await client.invoke({
+          _: "getMessage",
+          chat_id: chatId,
+          message_id: msgId,
+        } as never)) as TdAlbumMsg | null;
+        msgs = one ? [one] : [];
+      }
+      return c.json({ messages: mapChannelHistoryItems(msgs) });
+    } catch {
+      return c.json({ messages: [] });
+    } finally {
+      await client
+        .invoke({ _: "closeChat", chat_id: chatId } as never)
+        .catch(() => {});
+    }
+  },
+);
+
+// Пометить сообщение чата как договор/креатив/акт (атомарный merge в jsonb —
+// без read-modify-write, чтобы быстрые двойные пометки не затирали друг друга).
+app.openapi(
+  createRoute({
+    method: "put",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}/step-message/{kind}",
+    tags: ["agency"],
+    request: {
+      params: StepKindParam,
+      body: {
+        content: { "application/json": { schema: TagBodySchema } },
+        required: true,
+      },
+    },
+    responses: { 204: { description: "Tagged" } },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const { projectId, placementId, kind } = c.req.valid("param");
+    const ref = c.req.valid("json");
+    await assertProjectAccess(projectId, wsId, userId, role);
+    const patch = { [kind]: { ...ref, at: new Date().toISOString() } };
+    const [row] = await db
+      .update(projectItems)
+      .set({
+        stepMessages: sql`COALESCE(${projectItems.stepMessages}, '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb`,
+      })
+      .where(
+        and(
+          eq(projectItems.id, placementId),
+          eq(projectItems.projectId, projectId),
+          eq(projectItems.kind, "placement"),
+        ),
+      )
+      .returning({ id: projectItems.id });
+    if (!row) throw new HTTPException(404, { message: "placement not found" });
+    return c.body(null, 204);
+  },
+);
+
+// Снять пометку (атомарно — удаляем ключ из jsonb).
+app.openapi(
+  createRoute({
+    method: "delete",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}/step-message/{kind}",
+    tags: ["agency"],
+    request: { params: StepKindParam },
+    responses: { 204: { description: "Untagged" } },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const { projectId, placementId, kind } = c.req.valid("param");
+    await assertProjectAccess(projectId, wsId, userId, role);
+    const [row] = await db
+      .update(projectItems)
+      .set({ stepMessages: sql`${projectItems.stepMessages} - ${kind}` })
+      .where(
+        and(
+          eq(projectItems.id, placementId),
+          eq(projectItems.projectId, projectId),
+          eq(projectItems.kind, "placement"),
+        ),
+      )
+      .returning({ id: projectItems.id });
+    if (!row) throw new HTTPException(404, { message: "placement not found" });
+    return c.body(null, 204);
+  },
+);
 
 export default app;

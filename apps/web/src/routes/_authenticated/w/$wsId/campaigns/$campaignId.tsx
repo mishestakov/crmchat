@@ -7,6 +7,7 @@ import {
   Users,
   Check,
   CheckCheck,
+  MessageCircle,
   MessageCircleReply,
   Pause,
   Play,
@@ -25,6 +26,8 @@ import {
 import { api } from "../../../../../lib/api";
 import { errorMessage } from "../../../../../lib/errors";
 import { useEventSourceEvent } from "../../../../../lib/hooks";
+import { useOutreachAccounts } from "../../../../../lib/outreach-queries";
+import { LeadChatDrawer } from "../../../../../components/lead-chat-drawer";
 import { formatPastRelative } from "../../../../../lib/date-utils";
 import {
   type PhaseKey,
@@ -40,8 +43,12 @@ import {
   clientView,
   contractView,
   creativeView,
+  deriveProduction,
+  PROD_OWNER,
+  PROD_OWNER_ORDER,
+  type ProdOwner,
 } from "./-ui";
-import { PlacementPane, ProductionDrawer } from "./-placement-drawer";
+import { PlacementPane, ProductionPane } from "./-placement-drawer";
 import { ChannelDrawer } from "../../../../../components/channel-drawer";
 import {
   ChannelPreviewDrawer,
@@ -137,9 +144,16 @@ function CampaignPage() {
 
       {/* Лонглист — инбокс на всю ширину и высоту (вне max-w-6xl, от края до
           края). Остальные фазы — в центрированной прокручиваемой колонке. */}
-      {phase === "longlist" ? (
+      {phase === "longlist" || phase === "production" ? (
+        // Инбокс-фазы — на всю ширину/высоту (от края до края). ProductionPhase
+        // в matrix-режиме сам центрирует таблицу в max-w-6xl.
         <div className="min-h-0 flex-1">
-          <LonglistPhase wsId={wsId} campaign={campaign} />
+          {phase === "longlist" && (
+            <LonglistPhase wsId={wsId} campaign={campaign} />
+          )}
+          {phase === "production" && (
+            <ProductionPhase wsId={wsId} campaign={campaign} />
+          )}
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
@@ -150,9 +164,6 @@ function CampaignPage() {
             {phase === "review" && <ReviewPhase wsId={wsId} campaign={campaign} />}
             {phase === "shortlist" && (
               <ShortlistPhase wsId={wsId} campaign={campaign} />
-            )}
-            {phase === "production" && (
-              <ProductionPhase wsId={wsId} campaign={campaign} />
             )}
             {phase === "wrapup" && <WrapupPhase wsId={wsId} campaign={campaign} />}
           </div>
@@ -440,6 +451,17 @@ function LonglistPhase({
       qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] });
     },
   );
+  // Входящий ответ обновляет contact (unread/lastMessageAt) и repliedAt лида, но
+  // project-stream «changed» летит только при отмене pending. Подписываемся ещё
+  // на contact-stream — иначе бейдж unread / статус «ответил» в левом списке не
+  // обновляются live (только после F5). Рефетч placements лёгкий.
+  useEventSourceEvent(
+    live ? `/v1/workspaces/${wsId}/contact-stream` : null,
+    "contact",
+    () => {
+      qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] });
+    },
+  );
 
   // Отказ (available=false → chainStatus 'declined') прячем из списка и не
   // считаем в прогрессе/гейте — совпадает с бэком (этап 16.10).
@@ -605,6 +627,10 @@ function InboxShell<T>({
   onAdd,
   addTitle,
   headerRight,
+  selectedId: controlledId,
+  onSelectId,
+  groupBy,
+  renderGroupHeader,
 }: {
   items: T[];
   getId: (item: T) => string;
@@ -618,8 +644,19 @@ function InboxShell<T>({
   onAdd?: () => void;
   addTitle?: string;
   headerRight?: React.ReactNode;
+  // Управляемый выбор (фаза «Запуск»: клик в матрице пред-выбирает блогера).
+  // Без onSelectId — internal state, как у лонглиста.
+  selectedId?: string | null;
+  onSelectId?: (id: string | null) => void;
+  // Группировка списка (опц.): items должны быть отсортированы по группе, заголовок
+  // вставляется при смене группы.
+  groupBy?: (item: T) => string;
+  renderGroupHeader?: (groupKey: string, count: number) => React.ReactNode;
 }) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [internalId, setInternalId] = useState<string | null>(null);
+  const controlled = onSelectId !== undefined;
+  const selectedId = controlled ? (controlledId ?? null) : internalId;
+  const setSelectedId = controlled ? onSelectId! : setInternalId;
   const selected = items.find((i) => getId(i) === selectedId) ?? null;
 
   // Держим валидный выбор: по умолчанию первый; выбывшего (ушёл/удалён)
@@ -633,7 +670,30 @@ function InboxShell<T>({
     if (!selectedId || !items.some((i) => getId(i) === selectedId)) {
       setSelectedId(getId(first));
     }
-  }, [items, selectedId, getId]);
+  }, [items, selectedId, getId, setSelectedId]);
+
+  const listNodes: React.ReactNode[] = [];
+  let lastGroup: string | undefined;
+  for (const item of items) {
+    const id = getId(item);
+    if (groupBy) {
+      const g = groupBy(item);
+      if (g !== lastGroup) {
+        lastGroup = g;
+        const count = items.filter((i) => groupBy(i) === g).length;
+        listNodes.push(
+          <Fragment key={`__h_${g}`}>
+            {renderGroupHeader?.(g, count)}
+          </Fragment>,
+        );
+      }
+    }
+    listNodes.push(
+      <Fragment key={id}>
+        {renderRow(item, id === selectedId, () => setSelectedId(id))}
+      </Fragment>,
+    );
+  }
 
   return (
     <div className="flex h-full min-h-[440px] overflow-hidden border-y border-zinc-200 bg-white">
@@ -662,14 +722,7 @@ function InboxShell<T>({
           {items.length === 0 ? (
             <div className="px-4 py-6 text-sm text-zinc-500">{emptyHint}</div>
           ) : (
-            items.map((item) => {
-              const id = getId(item);
-              return (
-                <Fragment key={id}>
-                  {renderRow(item, id === selectedId, () => setSelectedId(id))}
-                </Fragment>
-              );
-            })
+            listNodes
           )}
         </div>
       </div>
@@ -995,6 +1048,22 @@ function ReviewPhase({
       qc.invalidateQueries({ queryKey: ["campaign", wsId, projectId] }),
   });
 
+  // Блогер может написать на согласовании («передумал») — даём знать live:
+  // бейдж unread на строке + доступ к чату по клику (оверлей).
+  const live = campaign.status === "active" || campaign.status === "paused";
+  useEventSourceEvent(
+    live ? `/v1/workspaces/${wsId}/projects/${projectId}/stream` : null,
+    "changed",
+    () => qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] }),
+  );
+  useEventSourceEvent(
+    live ? `/v1/workspaces/${wsId}/contact-stream` : null,
+    "contact",
+    () => qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] }),
+  );
+  const accountsQ = useOutreachAccounts(wsId);
+  const [chatFor, setChatFor] = useState<Placement | null>(null);
+
   return (
     <div className="space-y-4">
       <ShareAccessBlock wsId={wsId} projectId={projectId} />
@@ -1046,7 +1115,24 @@ function ReviewPhase({
                 return (
                   <tr key={p.id} className="border-t border-zinc-100">
                     <td className="px-4 py-2.5">
-                      <ChannelCell placement={p} preview />
+                      <div className="flex items-center gap-2">
+                        <ChannelCell placement={p} preview />
+                        {p.adminContactId && (
+                          <button
+                            type="button"
+                            onClick={() => setChatFor(p)}
+                            title="Переписка с админом"
+                            className="relative shrink-0 rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                          >
+                            <MessageCircle size={15} />
+                            {p.unread > 0 && (
+                              <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-500 px-1 text-[10px] font-semibold leading-none text-white">
+                                {p.unread}
+                              </span>
+                            )}
+                          </button>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-zinc-700">
                       {formatViews(p.channel?.memberCount ?? null)}
@@ -1081,6 +1167,18 @@ function ReviewPhase({
         </>
       )}
 
+      {chatFor?.adminContactId && (
+        <LeadChatDrawer
+          wsId={wsId}
+          lead={{
+            id: chatFor.id,
+            contactId: chatFor.adminContactId,
+            account: null,
+          }}
+          accounts={accountsQ.data ?? []}
+          onClose={() => setChatFor(null)}
+        />
+      )}
     </div>
   );
 }
@@ -1269,6 +1367,26 @@ function ShortlistPhase({
   const approved = (shortlistQ.data ?? []).filter(
     (p) => p.clientStatus === "approved",
   );
+  // Блогер может ответить на оффер — live-обновляем список (бейдж/чат).
+  const live = campaign.status === "active" || campaign.status === "paused";
+  useEventSourceEvent(
+    live ? `/v1/workspaces/${wsId}/projects/${projectId}/stream` : null,
+    "changed",
+    () => qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] }),
+  );
+  useEventSourceEvent(
+    live ? `/v1/workspaces/${wsId}/contact-stream` : null,
+    "contact",
+    () => qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] }),
+  );
+  const accountsQ = useOutreachAccounts(wsId);
+  const [chatFor, setChatFor] = useState<Placement | null>(null);
+  // Кому ещё не ушёл оффер (или ушёл с ошибкой) — только им шлёт «оповестить».
+  const notOffered = approved.filter(
+    (p) =>
+      p.hasRecipient &&
+      (p.finalOfferStatus === "none" || p.finalOfferStatus === "failed"),
+  ).length;
   const [text, setText] = useState(
     "Привет! Рады сообщить — вы выбраны в проект. Давайте согласуем дату выхода и детали 🙌",
   );
@@ -1287,10 +1405,6 @@ function ShortlistPhase({
         queryKey: ["placements", wsId, projectId, "shortlist"],
       }),
   });
-
-  // Получатель есть, если worker сможет адресовать (username/tg_user_id) —
-  // тот же критерий, что у backend (поле hasRecipient).
-  const withTg = approved.filter((p) => p.hasRecipient).length;
 
   return (
     <div className="space-y-4">
@@ -1314,12 +1428,16 @@ function ShortlistPhase({
         <div className="flex items-center gap-3">
           <button
             type="button"
-            disabled={withTg === 0 || send.isPending || !text.trim()}
+            disabled={notOffered === 0 || send.isPending || !text.trim()}
             onClick={() => send.mutate()}
             className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
           >
             <Send size={15} />
-            {send.isPending ? "Ставим в очередь…" : `Отправить ${withTg} блогерам`}
+            {send.isPending
+              ? "Ставим в очередь…"
+              : notOffered === 0
+                ? "Все оповещены"
+                : `Отправить ${notOffered} блогерам`}
           </button>
           {send.data && (
             <span className="text-sm text-zinc-600">
@@ -1350,11 +1468,32 @@ function ShortlistPhase({
             {approved.map((p) => (
               <tr key={p.id} className="border-t border-zinc-100">
                 <td className="px-4 py-2.5">
-                  <ChannelCell placement={p} />
+                  <div className="flex items-center gap-2">
+                    <ChannelCell placement={p} />
+                    {p.adminContactId && (
+                      <button
+                        type="button"
+                        onClick={() => setChatFor(p)}
+                        title="Переписка с админом"
+                        className="relative shrink-0 rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                      >
+                        <MessageCircle size={15} />
+                        {p.unread > 0 && (
+                          <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-500 px-1 text-[10px] font-semibold leading-none text-white">
+                            {p.unread}
+                          </span>
+                        )}
+                      </button>
+                    )}
+                  </div>
                 </td>
                 <td className="px-4 py-2.5">
-                  {p.finalOfferSentAt ? (
+                  {p.finalOfferStatus === "sent" ? (
                     <Chip tone="emerald">отправлен</Chip>
+                  ) : p.finalOfferStatus === "queued" ? (
+                    <Chip tone="amber">в очереди</Chip>
+                  ) : p.finalOfferStatus === "failed" ? (
+                    <Chip tone="red">ошибка</Chip>
                   ) : (
                     <span className="text-xs text-zinc-400">не отправлен</span>
                   )}
@@ -1365,6 +1504,18 @@ function ShortlistPhase({
         </TableCard>
       )}
 
+      {chatFor?.adminContactId && (
+        <LeadChatDrawer
+          wsId={wsId}
+          lead={{
+            id: chatFor.id,
+            contactId: chatFor.adminContactId,
+            account: null,
+          }}
+          accounts={accountsQ.data ?? []}
+          onClose={() => setChatFor(null)}
+        />
+      )}
     </div>
   );
 }
@@ -1378,7 +1529,18 @@ function ProductionPhase({
   campaign: Campaign;
 }) {
   const projectId = campaign.id;
-  const [openId, setOpenId] = useState<string | null>(null);
+  // Два независимых представления + тумблер (запоминаем выбор). «Вертолёт» —
+  // матрица-обзор всей воронки; «Инбокс» — работа с одним блогером (шаги + чат).
+  const [creativePreview, setCreativePreview] = useState<{
+    placementId: string;
+    title: string;
+  } | null>(null);
+  const [view, setView] = useState<"matrix" | "inbox">(
+    () =>
+      (localStorage.getItem("zapusk-view") as "matrix" | "inbox" | null) ??
+      "matrix",
+  );
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const rowsQ = useQuery({
     queryKey: ["placements", wsId, projectId, "shortlist"] as const,
     queryFn: async () => {
@@ -1390,18 +1552,76 @@ function ProductionPhase({
       return data;
     },
   });
-  const rows = (rowsQ.data ?? []).filter((p) => p.clientStatus === "approved");
-  const open = rows.find((p) => p.id === openId) ?? null;
+  // Одобренные клиентом, отсортированы «на нас → клиент → блогер → готово»:
+  // и в матрице, и в инбокс-списке актуальное для менеджера сверху.
+  const rows = (rowsQ.data ?? [])
+    .filter((p) => p.clientStatus === "approved")
+    .sort(
+      (a, b) =>
+        PROD_OWNER_ORDER.indexOf(deriveProduction(a).owner) -
+        PROD_OWNER_ORDER.indexOf(deriveProduction(b).owner),
+    );
+
+  const pickView = (v: "matrix" | "inbox") => {
+    setView(v);
+    localStorage.setItem("zapusk-view", v);
+  };
+  // Клик по строке матрицы открывает этого блогера в инбоксе (не морфинг —
+  // просто переключение вью с пред-выбором).
+  const openInInbox = (id: string) => {
+    setSelectedId(id);
+    pickView("inbox");
+  };
 
   return (
-    <div className="space-y-4">
+    <div className="flex h-full flex-col">
+      <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-zinc-200 bg-white px-4 py-2.5">
+        <div className="inline-flex rounded-lg border border-zinc-300 p-0.5 text-sm">
+          <button
+            type="button"
+            onClick={() => pickView("matrix")}
+            className={
+              "rounded-md px-3 py-1 font-medium " +
+              (view === "matrix"
+                ? "bg-zinc-900 text-white"
+                : "text-zinc-600 hover:bg-zinc-100")
+            }
+          >
+            Вертолёт
+          </button>
+          <button
+            type="button"
+            onClick={() => pickView("inbox")}
+            className={
+              "rounded-md px-3 py-1 font-medium " +
+              (view === "inbox"
+                ? "bg-zinc-900 text-white"
+                : "text-zinc-600 hover:bg-zinc-100")
+            }
+          >
+            Инбокс
+          </button>
+        </div>
+        <div className="flex items-center gap-3 text-xs text-zinc-500">
+          {PROD_OWNER_ORDER.map((o) => (
+            <span key={o} className="flex items-center gap-1">
+              <span
+                className={"h-1.5 w-1.5 rounded-full " + PROD_OWNER[o].dot}
+              />
+              {PROD_OWNER[o].label}
+            </span>
+          ))}
+        </div>
+      </div>
+
       {rows.length === 0 ? (
-        <div className="rounded-2xl bg-white p-6 text-sm text-zinc-500 shadow-sm">
+        <div className="border-y border-zinc-200 bg-white px-6 py-6 text-sm text-zinc-500">
           Нет одобренных размещений. Запуск стартует после согласования
           клиентом.
         </div>
-      ) : (
-        <TableCard>
+      ) : view === "matrix" ? (
+        <div className="min-h-0 flex-1 overflow-auto border-y border-zinc-200 bg-white">
+          <table className="w-full text-sm">
           <thead className="bg-zinc-50 text-xs text-zinc-500">
             <tr>
               <Th>Канал</Th>
@@ -1417,23 +1637,58 @@ function ProductionPhase({
             {rows.map((p) => {
               const ct = contractView[p.contractStatus];
               const cr = creativeView[p.creativeStatus];
+              const prod = deriveProduction(p);
+              const o = PROD_OWNER[prod.owner];
               return (
                 <tr
                   key={p.id}
-                  onClick={() => setOpenId(p.id)}
-                  className="cursor-pointer border-t border-zinc-100 hover:bg-zinc-50"
+                  onClick={() => openInInbox(p.id)}
+                  className={
+                    "cursor-pointer border-t border-l-4 border-zinc-100 hover:bg-zinc-50 " +
+                    o.border
+                  }
                 >
                   <td className="px-4 py-2.5">
                     <ChannelCell placement={p} />
+                    <div className="mt-1 flex items-center gap-1.5">
+                      <span
+                        className={"h-1.5 w-1.5 rounded-full " + o.dot}
+                      />
+                      <span className="text-xs text-zinc-500">
+                        {prod.stage}
+                      </span>
+                      {prod.owner === "us" && prod.cta && (
+                        <span className="rounded bg-red-600 px-1.5 py-0.5 text-[11px] font-medium text-white">
+                          → {prod.cta}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-2.5">
                     <Chip tone={ct.tone}>{ct.label}</Chip>
                   </td>
                   <td className="px-4 py-2.5">
-                    <Chip tone={cr.tone}>
-                      {cr.label}
-                      {p.creativeRound > 1 ? ` · v${p.creativeRound}` : ""}
-                    </Chip>
+                    <div className="flex items-center gap-1.5">
+                      <Chip tone={cr.tone}>
+                        {cr.label}
+                        {p.creativeRound > 1 ? ` · v${p.creativeRound}` : ""}
+                      </Chip>
+                      {p.stepMessages?.creative && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setCreativePreview({
+                              placementId: p.id,
+                              title: p.channel?.title ?? "Креатив",
+                            });
+                          }}
+                          className="text-xs text-emerald-700 hover:underline"
+                        >
+                          превью
+                        </button>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-2.5 text-sm text-zinc-700">
                     {p.scheduledAt ? (
@@ -1467,15 +1722,93 @@ function ProductionPhase({
               );
             })}
           </tbody>
-        </TableCard>
+          </table>
+        </div>
+      ) : (
+        <div className="min-h-0 flex-1">
+          <InboxShell
+            items={rows}
+            getId={(p) => p.id}
+            selectedId={selectedId}
+            onSelectId={setSelectedId}
+            groupBy={(p) => deriveProduction(p).owner}
+            renderGroupHeader={(g, count) => {
+              const o = PROD_OWNER[g as ProdOwner];
+              return (
+                <div
+                  className={
+                    "px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide " +
+                    o.text
+                  }
+                >
+                  {o.label} · {count}
+                </div>
+              );
+            }}
+            emptyHint=""
+            renderRow={(p, selected, onSelect) => {
+              const prod = deriveProduction(p);
+              const o = PROD_OWNER[prod.owner];
+              return (
+                <button
+                  type="button"
+                  onClick={onSelect}
+                  className={
+                    "block w-full border-l-2 px-3 py-2 text-left " +
+                    (selected
+                      ? o.border + " " + o.soft
+                      : "border-l-transparent hover:bg-zinc-50")
+                  }
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={"h-1.5 w-1.5 shrink-0 rounded-full " + o.dot}
+                    />
+                    <span className="truncate text-sm font-medium text-zinc-900">
+                      {p.channel?.title ?? "Канал удалён"}
+                    </span>
+                  </div>
+                  <div className="ml-3.5 truncate text-xs text-zinc-500">
+                    {prod.stage}
+                  </div>
+                </button>
+              );
+            }}
+            renderPane={(p) => (
+              <ProductionPane wsId={wsId} projectId={projectId} placement={p} />
+            )}
+          />
+        </div>
       )}
 
-      {open && (
-        <ProductionDrawer
-          wsId={wsId}
-          projectId={projectId}
-          placement={open}
-          onClose={() => setOpenId(null)}
+      {creativePreview && (
+        <ChannelPreviewDrawer
+          title={`Креатив · ${creativePreview.title}`}
+          queryKey={[
+            "step-message",
+            wsId,
+            projectId,
+            creativePreview.placementId,
+            "creative",
+          ]}
+          queryFn={async () => {
+            const { data, error } = await api.GET(
+              "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}/step-message/{kind}",
+              {
+                params: {
+                  path: {
+                    wsId,
+                    projectId,
+                    placementId: creativePreview.placementId,
+                    kind: "creative",
+                  },
+                },
+              },
+            );
+            if (error) throw error;
+            return data!.messages as ChannelMessage[];
+          }}
+          onClose={() => setCreativePreview(null)}
         />
       )}
     </div>

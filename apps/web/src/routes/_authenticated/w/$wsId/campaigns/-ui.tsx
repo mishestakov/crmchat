@@ -6,6 +6,7 @@ import {
   type ClientStatus,
   type ContractStatus,
   type CreativeStatus,
+  type Placement,
 } from "./-shared";
 
 // Палитра тонов — в стиле StatusBadge из project-tabs.tsx (rounded-full chip).
@@ -58,6 +59,53 @@ export const creativeView: Record<CreativeStatus, View> = {
   revising: { label: "правки", tone: "amber" },
   approved: { label: "одобрен", tone: "emerald" },
 };
+
+// ── Фаза «Запуск»: производный статус размещения ────────────────────────────
+// 12 реальных шагов сводятся к паре «текущая стадия + на ком сейчас ход».
+// Деривится из полей размещения (БД не трогаем). owner=us → это todo менеджера;
+// список/матрица сортируются так, чтобы «на нас» был сверху.
+export type ProdOwner = "us" | "client" | "blogger" | "done";
+
+export const PROD_OWNER: Record<
+  ProdOwner,
+  { label: string; dot: string; text: string; border: string; soft: string }
+> = {
+  us:      { label: "На нас",     dot: "bg-red-500",     text: "text-red-700",     border: "border-l-red-400",     soft: "bg-red-50" },
+  client:  { label: "На клиенте", dot: "bg-blue-500",    text: "text-blue-700",    border: "border-l-blue-400",    soft: "bg-blue-50" },
+  blogger: { label: "На блогере", dot: "bg-amber-500",   text: "text-amber-700",   border: "border-l-amber-400",   soft: "bg-amber-50" },
+  done:    { label: "Готово",     dot: "bg-emerald-500", text: "text-emerald-700", border: "border-l-emerald-400", soft: "bg-emerald-50" },
+};
+
+export const PROD_OWNER_ORDER: ProdOwner[] = ["us", "client", "blogger", "done"];
+
+export function deriveProduction(p: Placement): {
+  owner: ProdOwner;
+  stage: string;
+  cta: string | null;
+} {
+  if (p.contractStatus !== "signed") {
+    if (p.contractStatus === "none")
+      return { owner: "us", stage: "Договор · отправить", cta: "Отправить договор" };
+    if (p.contractStatus === "sent")
+      return { owner: "blogger", stage: "Договор · ждём подпись", cta: null };
+    return { owner: "us", stage: "Договор · согласовать правки", cta: "Согласовать правки" };
+  }
+  if (p.creativeStatus !== "approved") {
+    if (p.creativeStatus === "internal_review")
+      return { owner: "us", stage: "Креатив · проверяем драфт", cta: "Проверить драфт" };
+    if (p.creativeStatus === "client_review")
+      return { owner: "client", stage: "Креатив · у клиента на ОК", cta: null };
+    // none / awaiting / revising — ждём драфт/правки от блогера
+    return { owner: "blogger", stage: "Креатив · ждём от блогера", cta: null };
+  }
+  if (!p.erid)
+    return { owner: "us", stage: "ЕРИД · промаркировать", cta: "Промаркировать (ЕРИД)" };
+  if (!p.publishedAt)
+    return { owner: "blogger", stage: "Публикация · ждём выход", cta: null };
+  if (!p.actReceivedAt)
+    return { owner: "blogger", stage: "Акт · ждём от блогера", cta: "Запросить акт" };
+  return { owner: "done", stage: "Готово", cta: null };
+}
 
 export function Chip({
   tone = "zinc",

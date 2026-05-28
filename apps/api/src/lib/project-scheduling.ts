@@ -41,6 +41,12 @@ export function delayToMs(delay: { period: string; value: number }): number {
 // показывает «после предыдущего» вместо «через 974 года».
 export const FOLLOWUP_PENDING_SENTINEL = new Date("2999-01-01T00:00:00Z");
 
+// msg_idx финального оффера («вы выбраны», bulk-send на фазе «Подтверждение»).
+// Высокий индекс отделяет его от холодной цепочки (0,1,2…): «отмена при ответе»
+// гасит только холодную цепочку, финальный оффер шлём ВСЕГДА — он и адресован
+// уже ответившим (одобренным клиентом) блогерам.
+export const FINAL_OFFER_MSG_IDX = 1000;
+
 // Sticky-резолвер: для набора tg_user_id возвращает Map → аккаунт, за которым
 // «закреплён» этот peer. Используется в /activate (перед round-robin) и в
 // /leads (предсказание для draft-sequence — UI должен совпасть с activate).

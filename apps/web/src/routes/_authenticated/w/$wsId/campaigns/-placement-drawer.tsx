@@ -2,27 +2,31 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   X,
-  MessageCircle,
   Send,
   Trash2,
   FileText,
   Image as ImageIcon,
-  Calendar,
   Hash,
   Eye,
   FileCheck,
-  Copy,
   Check,
-  Circle,
 } from "lucide-react";
 import { api } from "../../../../../lib/api";
 import { errorMessage } from "../../../../../lib/errors";
-import { useEscapeKey } from "../../../../../lib/hooks";
+import { formatPastRelative } from "../../../../../lib/date-utils";
 import { useOutreachAccounts } from "../../../../../lib/outreach-queries";
+import { LeadChatPanel } from "../../../../../components/lead-chat-drawer";
 import {
-  LeadChatDrawer,
-  LeadChatPanel,
-} from "../../../../../components/lead-chat-drawer";
+  MESSAGE_TAG_LABEL,
+  type MessageTagKind,
+  type MessageTagRef,
+} from "../../../../../components/chat-drawer";
+import {
+  type MessageEntity,
+  MessageMediaThumb,
+  type MessageThumb,
+  renderMessageEntities,
+} from "../../../../../lib/tg-message";
 import { ChannelCard } from "../../../../../components/channel-card";
 import { ContactPicker } from "../../../../../components/contact-picker";
 import type { Channel } from "@repo/core";
@@ -32,7 +36,7 @@ import {
   type ContractStatus,
   type CreativeStatus,
 } from "./-shared";
-import { Chip, contractView, creativeView } from "./-ui";
+import { deriveProduction, PROD_OWNER } from "./-ui";
 
 // Менеджер вводит руками только цену — прогнозы (охват/ERR) берём из канала
 // (этап 16.10), «готов» заменён кнопками решения.
@@ -906,22 +910,33 @@ function toProd(p: Placement): ProdDraft {
   };
 }
 
-export function ProductionDrawer({
+export function ProductionPane({
   wsId,
   projectId,
   placement,
-  onClose,
 }: {
   wsId: string;
   projectId: string;
   placement: Placement;
-  onClose: () => void;
 }) {
-  useEscapeKey(onClose);
   const qc = useQueryClient();
   const accountsQ = useOutreachAccounts(wsId);
-  const [chatOpen, setChatOpen] = useState(false);
   const [draft, setDraft] = useState<ProdDraft>(() => toProd(placement));
+  // Ресинк с сервером: pane кейится по placement.id (не пересоздаётся на рефетч
+  // того же размещения), поэтому при изменении серверных данных подтягиваем их —
+  // но только если у менеджера нет несохранённых правок (draft == старый сервер),
+  // иначе не затираем его ввод.
+  const [serverBaseline, setServerBaseline] = useState(() =>
+    JSON.stringify(toProd(placement)),
+  );
+  const serverNow = JSON.stringify(toProd(placement));
+  if (serverNow !== serverBaseline) {
+    if (JSON.stringify(draft) === serverBaseline) setDraft(toProd(placement));
+    setServerBaseline(serverNow);
+  }
+  // Какой шаг раскрыт вручную (клик по шапке). null → раскрыт текущий (первый
+  // незакрытый). Сброс при смене блогера — pane пересоздаётся по key.
+  const [openStep, setOpenStep] = useState<string | null>(null);
   const set = <K extends keyof ProdDraft>(k: K, v: ProdDraft[K]) =>
     setDraft((d) => ({ ...d, [k]: v }));
 
@@ -956,211 +971,402 @@ export function ProductionDrawer({
       qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] }),
   });
 
-  const dirty = JSON.stringify(draft) !== JSON.stringify(toProd(placement));
-  const ct = contractView[draft.contractStatus];
-  const cr = creativeView[draft.creativeStatus];
-  const copyErid = () => {
-    void navigator.clipboard.writeText(
-      `erid: ${draft.erid} · Реклама: ${draft.eridAdvertiserData}`,
+  // Помеченные сообщения (договор/креатив/акт). Бейджим в чате по messageId.
+  const stepMessages = placement.stepMessages ?? {};
+  const taggedKindByMessageId: Record<string, MessageTagKind> = {};
+  for (const kind of ["contract", "creative", "act"] as const) {
+    const ref = stepMessages[kind];
+    if (ref) taggedKindByMessageId[ref.messageId] = kind;
+  }
+  // Запись/снятие тега — атомарно на сервере (PUT/DELETE merge в jsonb), без
+  // read-modify-write: быстрые двойные пометки не затирают друг друга.
+  const tagMut = useMutation({
+    mutationFn: async (args: {
+      kind: MessageTagKind;
+      ref: MessageTagRef | null;
+    }) => {
+      const path = {
+        wsId,
+        projectId,
+        placementId: placement.id,
+        kind: args.kind,
+      };
+      if (args.ref) {
+        const { error } = await api.PUT(
+          "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}/step-message/{kind}",
+          { params: { path }, body: args.ref },
+        );
+        if (error) throw error;
+      } else {
+        const { error } = await api.DELETE(
+          "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}/step-message/{kind}",
+          { params: { path } },
+        );
+        if (error) throw error;
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] });
+      qc.invalidateQueries({
+        queryKey: ["step-message", wsId, projectId, placement.id],
+      });
+    },
+  });
+
+  // ЕРИД-отправка в чат: один клик шлёт erid+данные блогеру (через quick-send,
+  // ручной путь) и фиксирует erid_sent_at. Повторяемо. Аккаунт — отправляющий
+  // по размещению (после активации), иначе аккаунт помеченного сообщения/первый.
+  const adminContactId = placement.adminContactId;
+  const sendAccountId =
+    placement.account?.id ??
+    stepMessages.creative?.accountId ??
+    stepMessages.contract?.accountId ??
+    accountsQ.data?.[0]?.id ??
+    null;
+  const eridSend = useMutation({
+    mutationFn: async () => {
+      if (!adminContactId || !sendAccountId) {
+        throw new Error("Нет привязанного админа или аккаунта для отправки");
+      }
+      const text = `ERID: ${draft.erid}\nРекламодатель: ${draft.eridAdvertiserData}\n\nНанесите «Реклама» + ERID в левый нижний угол креатива.`;
+      const { error: sErr } = await api.POST("/v1/workspaces/{wsId}/quick-send", {
+        params: { path: { wsId } },
+        body: { accountId: sendAccountId, contactId: adminContactId, text },
+      });
+      if (sErr) throw sErr;
+      const { error: pErr } = await api.PATCH(
+        "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}",
+        {
+          params: { path: { wsId, projectId, placementId: placement.id } },
+          body: {
+            erid: draft.erid || null,
+            eridAdvertiserData: draft.eridAdvertiserData || null,
+            eridSentAt: new Date().toISOString(),
+          },
+        },
+      );
+      if (pErr) throw pErr;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] });
+      qc.invalidateQueries({ queryKey: ["chat-history"] });
+    },
+  });
+
+  // Зона помеченного сообщения в шаге: рендер на лету + «убрать», иначе подсказка.
+  const renderTagArea = (kind: MessageTagKind) =>
+    stepMessages[kind] ? (
+      <div className="space-y-1">
+        <TaggedMessageView
+          wsId={wsId}
+          projectId={projectId}
+          placementId={placement.id}
+          kind={kind}
+        />
+        <button
+          type="button"
+          onClick={() => tagMut.mutate({ kind, ref: null })}
+          disabled={tagMut.isPending}
+          className="text-[11px] text-zinc-400 hover:text-red-600 disabled:opacity-50"
+        >
+          убрать пометку
+        </button>
+      </div>
+    ) : (
+      <p className="text-[11px] text-zinc-400">
+        Пометьте сообщение в чате справа → «{MESSAGE_TAG_LABEL[kind]}».
+      </p>
     );
-  };
 
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <button
-        type="button"
-        aria-label="Закрыть"
-        onClick={onClose}
-        className="absolute inset-0 cursor-default bg-zinc-900/30"
-      />
-      <div className="relative flex h-full w-full max-w-[460px] flex-col bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-3">
-          <div className="min-w-0">
-            <div className="truncate font-semibold text-zinc-900">
-              {placement.channel?.title ?? "Канал удалён"}
-            </div>
-            <div className="text-xs text-zinc-500">
-              {placement.channel?.username
-                ? `@${placement.channel.username}`
-                : "—"}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-          >
-            <X size={18} />
-          </button>
+  const dirty = JSON.stringify(draft) !== JSON.stringify(toProd(placement));
+  const prod = deriveProduction(placement);
+  const owner = PROD_OWNER[prod.owner];
+
+  // Степпер-гармошка: раскрыт текущий (первый незакрытый), сделанные свёрнуты
+  // зелёным summary, будущие приглушены. Дата выхода свёрнута внутрь «Публикации».
+  const steps: {
+    key: string;
+    icon: React.ReactNode;
+    title: string;
+    done: boolean;
+    summary: string;
+    body: React.ReactNode;
+  }[] = [
+    {
+      key: "contract",
+      icon: <FileText size={15} />,
+      title: "Договор",
+      done: draft.contractStatus === "signed",
+      summary: "Подписан · сканы/ЭДО",
+      body: (
+        <div className="space-y-2">
+          <ProdSelect
+            value={draft.contractStatus}
+            onChange={(v) => set("contractStatus", v as ContractStatus)}
+            options={[
+              ["none", "не отправлен"],
+              ["sent", "отправлен"],
+              ["revising", "правки"],
+              ["signed", "подписан"],
+            ]}
+          />
+          {renderTagArea("contract")}
         </div>
-
-        <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
-          <StepCard
-            icon={<FileText size={16} />}
-            title="Договор"
-            done={draft.contractStatus === "signed"}
-            status={<Chip tone={ct.tone}>{ct.label}</Chip>}
-          >
+      ),
+    },
+    {
+      key: "creative",
+      icon: <ImageIcon size={15} />,
+      title:
+        draft.creativeRound > 1
+          ? `Креатив · раунд ${draft.creativeRound}`
+          : "Креатив",
+      done: draft.creativeStatus === "approved",
+      summary: `Одобрен клиентом${draft.creativeRound > 1 ? ` · v${draft.creativeRound}` : ""}`,
+      body: (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
             <ProdSelect
-              value={draft.contractStatus}
-              onChange={(v) => set("contractStatus", v as ContractStatus)}
+              value={draft.creativeStatus}
+              onChange={(v) => set("creativeStatus", v as CreativeStatus)}
               options={[
-                ["none", "не отправлен"],
-                ["sent", "отправлен"],
+                ["none", "—"],
+                ["awaiting", "ждём драфт"],
+                ["internal_review", "проверка агентством"],
+                ["client_review", "у клиента на ОК"],
                 ["revising", "правки"],
-                ["signed", "подписан"],
+                ["approved", "одобрен"],
               ]}
             />
-          </StepCard>
-
-          <StepCard
-            icon={<ImageIcon size={16} />}
-            title={
-              draft.creativeRound > 0
-                ? `Креатив · раунд ${draft.creativeRound}`
-                : "Креатив"
-            }
-            done={draft.creativeStatus === "approved"}
-            status={<Chip tone={cr.tone}>{cr.label}</Chip>}
-          >
-            <div className="flex items-center gap-2">
-              <ProdSelect
-                value={draft.creativeStatus}
-                onChange={(v) => set("creativeStatus", v as CreativeStatus)}
-                options={[
-                  ["none", "—"],
-                  ["awaiting", "ждём драфт"],
-                  ["internal_review", "проверка агентством"],
-                  ["client_review", "у клиента на ОК"],
-                  ["revising", "правки"],
-                  ["approved", "одобрен"],
-                ]}
-              />
-              <input
-                type="number"
-                min={0}
-                value={draft.creativeRound}
-                onChange={(e) => set("creativeRound", Number(e.target.value))}
-                title="Раунд правок"
-                className="w-16 rounded-md border border-zinc-300 px-2 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
-              />
-            </div>
-          </StepCard>
-
-          <StepCard
-            icon={<Calendar size={16} />}
-            title="Дата выхода"
-            done={!!draft.scheduledDate}
-            status={
-              draft.scheduledDate ? (
-                <Chip tone="emerald">{draft.scheduledDate}</Chip>
-              ) : (
-                <Chip tone="zinc">не назначена</Chip>
-              )
-            }
-          >
+            <input
+              type="number"
+              min={0}
+              value={draft.creativeRound}
+              onChange={(e) => set("creativeRound", Number(e.target.value))}
+              title="Раунд правок"
+              className="w-16 rounded-md border border-zinc-300 px-2 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+            />
+          </div>
+          <p className="text-[11px] text-zinc-400">
+            Сначала чек на ТЗ, потом клиенту на ОК.
+          </p>
+          {renderTagArea("creative")}
+        </div>
+      ),
+    },
+    {
+      key: "erid",
+      icon: <Hash size={15} />,
+      title: "ЕРИД + данные рекламодателя",
+      done: !!draft.erid,
+      summary: draft.erid ? `${draft.erid} · данные переданы` : "",
+      body: (
+        <div className="space-y-2">
+          <input
+            value={draft.erid}
+            onChange={(e) => set("erid", e.target.value)}
+            placeholder="erid токен"
+            className="w-full rounded-md border border-zinc-300 px-2 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+          />
+          <input
+            value={draft.eridAdvertiserData}
+            onChange={(e) => set("eridAdvertiserData", e.target.value)}
+            placeholder="данные рекла (ИНН + название)"
+            className="w-full rounded-md border border-zinc-300 px-2 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+          />
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => eridSend.mutate()}
+              disabled={
+                !draft.erid || !adminContactId || !sendAccountId || eridSend.isPending
+              }
+              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
+              <Send size={13} />
+              {eridSend.isPending
+                ? "Отправляем…"
+                : placement.eridSentAt
+                  ? "Отправить снова"
+                  : "Отправить в чат"}
+            </button>
+            {placement.eridSentAt && (
+              <span className="text-[11px] text-emerald-700">
+                отправлено {formatPastRelative(placement.eridSentAt)}
+              </span>
+            )}
+          </div>
+          {!adminContactId && (
+            <p className="text-[11px] text-amber-600">
+              Нет привязанного админа — отправить нельзя.
+            </p>
+          )}
+          {eridSend.error && (
+            <p className="text-[11px] text-red-600">
+              {errorMessage(eridSend.error)}
+            </p>
+          )}
+          <p className="text-[11px] text-zinc-400">
+            Блогер наносит «Реклама» + ERID на картинку (левый нижний угол).
+          </p>
+        </div>
+      ),
+    },
+    {
+      key: "publish",
+      icon: <Eye size={15} />,
+      title: "Публикация",
+      done: draft.published,
+      summary: draft.scheduledDate ? `Вышел · ${draft.scheduledDate}` : "Вышел",
+      body: (
+        <div className="space-y-2">
+          <label className="flex items-center gap-2 text-xs text-zinc-500">
+            Дата выхода
             <input
               type="date"
               value={draft.scheduledDate}
               onChange={(e) => set("scheduledDate", e.target.value)}
-              className="rounded-md border border-zinc-300 px-2 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+              className="rounded-md border border-zinc-300 px-2 py-1 text-sm focus:border-emerald-500 focus:outline-none"
             />
-          </StepCard>
+          </label>
+          <input
+            value={draft.postUrl}
+            onChange={(e) => set("postUrl", e.target.value)}
+            placeholder="https://t.me/channel/123"
+            className="w-full rounded-md border border-zinc-300 px-2 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+          />
+          <label className="flex items-center gap-2 text-sm text-zinc-700">
+            <input
+              type="checkbox"
+              checked={draft.published}
+              onChange={(e) => set("published", e.target.checked)}
+            />
+            Пост вышел
+          </label>
+        </div>
+      ),
+    },
+    {
+      key: "act",
+      icon: <FileCheck size={15} />,
+      title: "Акт",
+      done: draft.actReceived,
+      summary: "Акт получен",
+      body: (
+        <div className="space-y-2">
+          {renderTagArea("act")}
+          <label className="flex items-center gap-2 text-sm text-zinc-700">
+            <input
+              type="checkbox"
+              checked={draft.actReceived}
+              onChange={(e) => set("actReceived", e.target.checked)}
+            />
+            Акт получен от блогера
+          </label>
+        </div>
+      ),
+    },
+  ];
+  // «Текущий» шаг для авто-раскрытия считаем по СОХРАНЁННОМУ состоянию, не по
+  // live-черновику — иначе правка поля (напр. статус→«подписан») флипала бы done
+  // и схлопывала редактируемый шаг до автосейва.
+  const saved = toProd(placement);
+  const doneServer = [
+    saved.contractStatus === "signed",
+    saved.creativeStatus === "approved",
+    !!saved.erid,
+    saved.published,
+    saved.actReceived,
+  ];
+  const currentIdx = doneServer.findIndex((d) => !d);
+  const openKey = openStep ?? (currentIdx >= 0 ? steps[currentIdx]!.key : null);
 
-          <StepCard
-            icon={<Hash size={16} />}
-            title="ЕРИД"
-            done={!!draft.erid}
-            status={
-              draft.erid ? (
-                <Chip tone="emerald">есть</Chip>
-              ) : (
-                <Chip tone="zinc">нет</Chip>
-              )
+  return (
+    <div className="flex h-full">
+      {/* Левая зона: степпер шагов производства + автосейв. */}
+      <div className="flex w-[440px] shrink-0 flex-col border-r border-zinc-200">
+        <div className="border-b border-zinc-200 px-5 py-3">
+          <div className="truncate font-semibold text-zinc-900">
+            {placement.channel?.title ?? "Канал удалён"}
+          </div>
+          <div className="text-xs text-zinc-500">
+            {placement.channel?.username
+              ? `@${placement.channel.username}`
+              : "—"}
+          </div>
+          <div
+            className={
+              "mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium " +
+              owner.soft +
+              " " +
+              owner.text
             }
           >
-            <div className="space-y-2">
-              <input
-                value={draft.erid}
-                onChange={(e) => set("erid", e.target.value)}
-                placeholder="erid токен"
-                className="w-full rounded-md border border-zinc-300 px-2 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
-              />
-              <input
-                value={draft.eridAdvertiserData}
-                onChange={(e) => set("eridAdvertiserData", e.target.value)}
-                placeholder="данные рекла (ИНН + название)"
-                className="w-full rounded-md border border-zinc-300 px-2 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
-              />
-              {draft.erid && (
-                <ProdGhostBtn onClick={copyErid}>
-                  <Copy size={13} /> Скопировать для блогера
-                </ProdGhostBtn>
-              )}
-              <p className="text-[11px] text-zinc-400">
-                MVP: проставляем руками, реплаем отвечаем в чате. Авто-запрос ЕРИД
-                — позже.
-              </p>
-            </div>
-          </StepCard>
+            <span className={"h-1.5 w-1.5 rounded-full " + owner.dot} />
+            {prod.stage}
+          </div>
+        </div>
 
-          <StepCard
-            icon={<Eye size={16} />}
-            title="Публикация"
-            done={draft.published}
-            status={
-              draft.published ? (
-                <Chip tone="emerald">вышел</Chip>
-              ) : (
-                <Chip tone="zinc">не вышел</Chip>
-              )
-            }
-          >
-            <div className="space-y-2">
-              <input
-                value={draft.postUrl}
-                onChange={(e) => set("postUrl", e.target.value)}
-                placeholder="https://t.me/channel/123"
-                className="w-full rounded-md border border-zinc-300 px-2 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
-              />
-              <label className="flex items-center gap-2 text-sm text-zinc-700">
-                <input
-                  type="checkbox"
-                  checked={draft.published}
-                  onChange={(e) => set("published", e.target.checked)}
-                />
-                Пост вышел
-              </label>
-            </div>
-          </StepCard>
-
-          <StepCard
-            icon={<FileCheck size={16} />}
-            title="Акт"
-            done={draft.actReceived}
-            status={
-              draft.actReceived ? (
-                <Chip tone="emerald">получен</Chip>
-              ) : (
-                <Chip tone="zinc">нет</Chip>
-              )
-            }
-          >
-            <label className="flex items-center gap-2 text-sm text-zinc-700">
-              <input
-                type="checkbox"
-                checked={draft.actReceived}
-                onChange={(e) => set("actReceived", e.target.checked)}
-              />
-              Акт получен от блогера
-            </label>
-          </StepCard>
-
-          {placement.adminContactId && (
-            <ProdGhostBtn onClick={() => setChatOpen(true)}>
-              <MessageCircle size={14} /> Переписка с админом
-            </ProdGhostBtn>
-          )}
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {steps.map((s, i) => {
+            const state = s.done
+              ? "done"
+              : i === currentIdx
+                ? "current"
+                : "future";
+            const expanded = openKey === s.key;
+            const last = i === steps.length - 1;
+            return (
+              <div key={s.key} className="flex gap-3">
+                <div className="flex flex-col items-center">
+                  <span
+                    className={
+                      "flex h-6 w-6 shrink-0 items-center justify-center rounded-full " +
+                      (state === "done"
+                        ? "bg-emerald-500 text-white"
+                        : state === "current"
+                          ? "border-2 border-emerald-500 bg-white"
+                          : "border-2 border-zinc-300 bg-white")
+                    }
+                  >
+                    {state === "done" ? (
+                      <Check size={13} />
+                    ) : state === "current" ? (
+                      <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                    ) : null}
+                  </span>
+                  {!last && (
+                    <div
+                      className={
+                        "mt-1 w-px flex-1 " +
+                        (s.done ? "bg-emerald-300" : "bg-zinc-200")
+                      }
+                    />
+                  )}
+                </div>
+                <div className="min-w-0 flex-1 pb-4">
+                  <button
+                    type="button"
+                    onClick={() => setOpenStep(s.key)}
+                    className={
+                      "flex items-center gap-1.5 text-sm font-medium " +
+                      (state === "future" ? "text-zinc-400" : "text-zinc-800")
+                    }
+                  >
+                    {s.icon}
+                    {s.title}
+                  </button>
+                  {expanded ? (
+                    <div className="mt-2">{s.body}</div>
+                  ) : s.done && s.summary ? (
+                    <div className="mt-1 text-xs text-emerald-700">
+                      {s.summary}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
         </div>
 
         <div className="border-t border-zinc-200 p-3">
@@ -1186,55 +1392,85 @@ export function ProductionDrawer({
         </div>
       </div>
 
-      {chatOpen && placement.adminContactId && (
-        <LeadChatDrawer
-          wsId={wsId}
-          lead={{
-            id: placement.id,
-            contactId: placement.adminContactId,
-            account: null,
-          }}
-          accounts={accountsQ.data ?? []}
-          onClose={() => setChatOpen(false)}
-        />
-      )}
+      {/* Правая зона: чат с админом канала (как в инбоксе лонглиста). */}
+      <div className="min-w-0 flex-1">
+        {placement.adminContactId ? (
+          <LeadChatPanel
+            wsId={wsId}
+            lead={{
+              id: placement.id,
+              contactId: placement.adminContactId,
+              // Пиним аккаунт реального DM (через него шла переписка/оффер) —
+              // чтобы чат открылся на нём, а тег/ERID ушли с него же, а не с
+              // accounts[0] (важно для мульти-аккаунт воркспейса).
+              account: placement.account ? { id: placement.account.id } : null,
+            }}
+            accounts={accountsQ.data ?? []}
+            onTagMessage={(kind, ref) => tagMut.mutate({ kind, ref })}
+            taggedKindByMessageId={taggedKindByMessageId}
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center px-6 text-center text-sm text-zinc-400">
+            Контакт админа не привязан — добавьте его в Лонглисте, чтобы
+            переписываться здесь.
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-function StepCard({
-  icon,
-  title,
-  done,
-  status,
-  children,
+// Рендер помеченного сообщения (договор/креатив/акт) на лету через TDLib.
+// Альбом = несколько сообщений. Медиа — minithumbnail (низкое разрешение, не
+// храним файлы); менеджеру достаточно, у него есть чат. Удалено/вне кэша → плашка.
+function TaggedMessageView({
+  wsId,
+  projectId,
+  placementId,
+  kind,
 }: {
-  icon: React.ReactNode;
-  title: string;
-  done: boolean;
-  status: React.ReactNode;
-  children: React.ReactNode;
+  wsId: string;
+  projectId: string;
+  placementId: string;
+  kind: MessageTagKind;
 }) {
-  return (
-    <div className="rounded-xl border border-zinc-200 p-3">
-      <div className="mb-2 flex items-center gap-2">
-        <span
-          className={
-            "flex h-6 w-6 items-center justify-center rounded-full " +
-            (done
-              ? "bg-emerald-100 text-emerald-700"
-              : "bg-zinc-100 text-zinc-400")
-          }
-        >
-          {done ? <Check size={14} /> : <Circle size={10} />}
-        </span>
-        <span className="flex items-center gap-1.5 text-sm font-medium text-zinc-800">
-          {icon}
-          {title}
-        </span>
-        <span className="ml-auto">{status}</span>
+  const q = useQuery({
+    queryKey: ["step-message", wsId, projectId, placementId, kind] as const,
+    queryFn: async () => {
+      const { data, error } = await api.GET(
+        "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}/step-message/{kind}",
+        { params: { path: { wsId, projectId, placementId, kind } } },
+      );
+      if (error) throw error;
+      return data!.messages;
+    },
+    staleTime: 60_000,
+  });
+  if (q.isLoading) {
+    return <div className="text-[11px] text-zinc-400">Загрузка сообщения…</div>;
+  }
+  const msgs = q.data ?? [];
+  if (!msgs.length) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-700">
+        Сообщение недоступно (удалено или вне кэша) — перепометьте.
       </div>
-      <div className="pl-8">{children}</div>
+    );
+  }
+  return (
+    <div className="space-y-1.5 rounded-lg border border-zinc-200 bg-zinc-50 p-2">
+      {msgs.map((m) => (
+        <div key={m.id} className="space-y-1">
+          {m.mediaThumb && (
+            <MessageMediaThumb thumb={m.mediaThumb as MessageThumb} />
+          )}
+          {m.text && (
+            <div className="whitespace-pre-wrap break-words text-xs text-zinc-700">
+              {renderMessageEntities(m.text, m.entities as MessageEntity[])}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -1263,20 +1499,3 @@ function ProdSelect({
   );
 }
 
-function ProdGhostBtn({
-  onClick,
-  children,
-}: {
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-    >
-      {children}
-    </button>
-  );
-}

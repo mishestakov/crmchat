@@ -2,7 +2,13 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { Contact } from "@repo/core";
 import { api } from "../lib/api";
-import { type AccountRow, ChatDrawer, ChatPanel } from "./chat-drawer";
+import {
+  type AccountRow,
+  ChatDrawer,
+  ChatPanel,
+  type MessageTagKind,
+  type MessageTagRef,
+} from "./chat-drawer";
 
 // Обёртка над ChatDrawer/ChatPanel для входа из проекта (канбан + таблица
 // лидов + лонглист кампаний). После 5A лид всегда указывает на contact
@@ -75,6 +81,8 @@ export function LeadChatPanel(props: {
   wsId: string;
   lead: LeadShape;
   accounts: AccountRow[];
+  onTagMessage?: (kind: MessageTagKind, ref: MessageTagRef) => void;
+  taggedKindByMessageId?: Record<string, MessageTagKind>;
 }) {
   const chat = useLeadChat(props);
   if (!chat) {
@@ -91,6 +99,8 @@ export function LeadChatPanel(props: {
       accountId={chat.accountId}
       accounts={props.accounts}
       onSelectAccount={chat.setAccountId}
+      onTagMessage={props.onTagMessage}
+      taggedKindByMessageId={props.taggedKindByMessageId}
     />
   );
 }

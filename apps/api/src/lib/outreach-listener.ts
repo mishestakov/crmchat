@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
   contacts,
@@ -19,6 +19,7 @@ import {
   validateContactProperties,
 } from "./contact-properties.ts";
 import { emitContactChanged, emitProjectChanged } from "./events.ts";
+import { FINAL_OFFER_MSG_IDX } from "./project-scheduling.ts";
 import { errMsg } from "./errors.ts";
 import type { TdClient } from "./tdlib/index.ts";
 import { extractActiveUsername, extractFullName } from "./tdlib/td-user.ts";
@@ -220,6 +221,8 @@ async function onNewMessage(
           and(
             eq(scheduledMessages.status, "pending"),
             inArray(scheduledMessages.itemId, leadIds),
+            // только холодную цепочку — финальный оффер на ответ не гасим.
+            lt(scheduledMessages.messageIdx, FINAL_OFFER_MSG_IDX),
           ),
         )
         .returning({ projectId: scheduledMessages.projectId });

@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lt, lte, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
   outreachAccounts,
@@ -19,7 +19,11 @@ import {
 import { emitProjectChanged } from "./events.ts";
 import { rememberPendingSend } from "./outreach-listener.ts";
 import { isNowInWindow, startOfDayInTz } from "./outreach-schedule.ts";
-import { delayToMs, resolveWarmTgUserIds } from "./project-scheduling.ts";
+import {
+  delayToMs,
+  resolveWarmTgUserIds,
+  FINAL_OFFER_MSG_IDX,
+} from "./project-scheduling.ts";
 import type { ProjectMessage } from "../db/schema.ts";
 import type { TdClient } from "./tdlib/index.ts";
 
@@ -296,7 +300,11 @@ async function processAccount(accountId: string, items: DueItem[]) {
       continue;
     }
 
-    if (lead.repliedAt) {
+    // Ответ блогера гасит ХОЛОДНУЮ цепочку (0,1,2…), но НЕ финальный оффер
+    // (msg_idx=FINAL_OFFER_MSG_IDX): он адресован как раз ответившим/одобренным,
+    // его шлём всегда. Поэтому: финальный оффер — пропускаем гард и отправляем;
+    // холодное сообщение при repliedAt — отменяем (только холодную цепочку).
+    if (lead.repliedAt && item.messageIdx !== FINAL_OFFER_MSG_IDX) {
       const cancelled = await db
         .update(scheduledMessages)
         .set({ status: "cancelled", error: "lead replied" })
@@ -304,6 +312,7 @@ async function processAccount(accountId: string, items: DueItem[]) {
           and(
             eq(scheduledMessages.itemId, item.leadId),
             eq(scheduledMessages.status, "pending"),
+            lt(scheduledMessages.messageIdx, FINAL_OFFER_MSG_IDX),
           ),
         )
         .returning({ projectId: scheduledMessages.projectId });

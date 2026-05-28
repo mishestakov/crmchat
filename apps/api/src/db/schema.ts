@@ -731,6 +731,24 @@ export const projectImports = pgTable(
   (t) => [index("project_imports_project_id_idx").on(t.projectId)],
 );
 
+// Ссылка на помеченное сообщение в чате с админом (фаза «Запуск»): договор,
+// креатив, акт. Файлы НЕ храним — только ссылку, рендерим на лету из TDLib.
+// messageIds — список, т.к. альбом (10 фото) = N сообщений с общим media_album_id
+// (td_api.tl §message.media_album_id); фронт собирает их из загруженной истории.
+// accountId — через какой аккаунт открыт диалог (им же читаем сообщение позже).
+export type PlacementMsgRef = {
+  chatId: string;
+  messageId: string; // помеченное сообщение (для альбома — любое из него)
+  albumId: string | null; // media_album_id != "0" → сервер дочитает весь альбом
+  accountId: string;
+  at: string; // ISO — когда пометили
+};
+export type PlacementStepMessages = {
+  contract?: PlacementMsgRef;
+  creative?: PlacementMsgRef;
+  act?: PlacementMsgRef;
+};
+
 // Project item — карточка на канбане проекта. Lead (контакт-в-задаче) или
 // placement (channel-в-проекте).
 export const projectItems = pgTable(
@@ -818,6 +836,13 @@ export const projectItems = pgTable(
     postUrl: text("post_url"),
     publishedAt: timestamp("published_at", { withTimezone: true }),
     actReceivedAt: timestamp("act_received_at", { withTimezone: true }),
+    // Помеченные сообщения в чате (договор/креатив/акт) — ссылки, не файлы.
+    stepMessages: jsonb("step_messages").$type<PlacementStepMessages>(),
+    // Когда ЕРИД отправлен блогеру в чат (кнопка «Отправить»). Повторяемо.
+    eridSentAt: timestamp("erid_sent_at", { withTimezone: true }),
+    // Комментарий клиента к креативу (запрос правок) из клиентского портала —
+    // Фаза B (клиентское согласование креативов). Shape сразу финальный.
+    creativeClientComment: text("creative_client_comment"),
 
     // Фаза «Отчёт»: снимок поста, снятый metrics-worker'ом через TDLib.
     // postSnapshot — текст + минитамбнейл (base64 jpeg из payload, без

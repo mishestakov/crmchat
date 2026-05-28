@@ -264,6 +264,25 @@ app.openapi(
   async (c) => {
     const { token } = c.req.valid("param");
     const share = await resolveShare(token);
+    // Нельзя финализировать, пока хоть одно размещение шортлиста не отмечено
+    // (pending). Защита бэка к фронт-гейту — клиент должен решить по каждому.
+    const [pending] = await db
+      .select({ id: projectItems.id })
+      .from(projectItems)
+      .where(
+        and(
+          eq(projectItems.projectId, share.projectId),
+          eq(projectItems.kind, "placement"),
+          sql`${projectItems.shortlistedAt} IS NOT NULL`,
+          eq(projectItems.clientStatus, "pending"),
+        ),
+      )
+      .limit(1);
+    if (pending) {
+      throw new HTTPException(409, {
+        message: "Сначала отметьте все размещения: подходит или не подходит",
+      });
+    }
     await db
       .update(projects)
       .set({ clientFinalizedAt: new Date() })

@@ -580,6 +580,9 @@ const ChatMessageSchema = z.object({
   entities: z.array(TdMessageEntitySchema),
   mediaThumb: TdMediaThumbSchema.nullable(),
   replyMarkup: ReplyMarkupSchema.nullable(),
+  // id альбома (media_album_id), если сообщение — часть альбома; иначе null.
+  // Фронт группирует по нему при пометке сообщения (фаза «Запуск»).
+  albumId: z.string().nullable(),
 });
 
 const PeerStatusSchema = z.object({
@@ -613,6 +616,9 @@ app.openapi(
               // Контакт — бот (этап 16.9): фронт показывает «Запустить бота»
               // при пустом диалоге и трактует reply_markup как бот-кнопки.
               peerIsBot: z.boolean(),
+              // TDLib chat_id диалога (нужен для пометки сообщения в фазе
+              // «Запуск» — кладём в тег вместе с messageIds). null если диалога нет.
+              chatId: z.string().nullable(),
             }),
           },
         },
@@ -698,6 +704,7 @@ app.openapi(
         lastReadOutboxId: null,
         peerStatus,
         peerIsBot,
+        chatId: null,
       });
     }
 
@@ -760,6 +767,7 @@ app.openapi(
       lastReadOutboxId: chatRow.lastReadOutboxId,
       peerStatus,
       peerIsBot,
+      chatId: String(chatRow.chatId),
     });
   },
 );
@@ -965,6 +973,7 @@ type TdMessage = {
   is_outgoing: boolean;
   content: TdContent;
   reply_markup?: TdReplyMarkup;
+  media_album_id?: number | string;
 };
 
 // TDLib reply_markup → нормализованная модель (см. ReplyMarkupSchema).
@@ -1011,6 +1020,10 @@ function mapMessage(m: TdMessage): z.infer<typeof ChatMessageSchema> {
     entities,
     mediaThumb,
     replyMarkup: mapReplyMarkup(m.reply_markup),
+    albumId:
+      m.media_album_id && String(m.media_album_id) !== "0"
+        ? String(m.media_album_id)
+        : null,
   };
 }
 
