@@ -43,7 +43,7 @@ function ProjectsLayout() {
         "/v1/workspaces/{wsId}/tracks",
         {
           params: { path: { wsId } },
-          body: { name, kind: "program" },
+          body: { name },
         },
       );
       if (error) throw error;

@@ -2,30 +2,24 @@ import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { and, asc, eq } from "drizzle-orm";
 import { db } from "../db/client.ts";
-import { trackKind, tracks } from "../db/schema.ts";
+import { tracks } from "../db/schema.ts";
 import { pickDefined } from "../lib/pick-defined.ts";
 import { type WorkspaceVars } from "../middleware/assert-member.ts";
 
-// Track — папка проектов в workspace. Для BD-команды (kind='program'):
-// «Привлечение/Удержание/Отток/Ad-hoc». Для агентства (kind='client'):
-// «Coca-Cola/Beeline». Видимость треков — у всех member'ов; RBAC живёт
-// на уровне Project (см. lib/projects-access.ts).
-
-const TrackKindSchema = z.enum(trackKind.enumValues);
+// Track — папка проектов в workspace. Для BD-команды: «Привлечение/Удержание/
+// Отток/Ad-hoc». Для агентства: «Coca-Cola/Beeline». Сценарий разводит
+// workspace.mode (своего kind у трека нет). Видимость — у всех member'ов;
+// RBAC живёт на уровне Project (см. lib/projects-access.ts).
 
 const TrackSchema = z
   .object({
     id: z.string(),
     name: z.string(),
-    kind: TrackKindSchema,
     properties: z.record(z.string(), z.unknown()),
     createdAt: z.iso.datetime(),
   })
   .openapi("Track");
 
-// kind не принимается от юзера — проставляется автоматом из workspace.mode
-// при insert'е (см. ниже). Это правило «mode — первичный тумблер, kind следует
-// за ним» зафиксировано в db/schema.ts рядом с trackKind/projectKind/projectItemKind.
 const CreateTrackBody = z
   .object({
     name: z.string().min(1).max(200),
@@ -94,15 +88,12 @@ app.openapi(
   async (c) => {
     const wsId = c.get("workspaceId");
     const userId = c.get("userId");
-    const mode = c.get("workspaceMode");
     const body = c.req.valid("json");
-    const kind = mode === "agency" ? "client" : "program";
     const [row] = await db
       .insert(tracks)
       .values({
         workspaceId: wsId,
         name: body.name,
-        kind,
         properties: body.properties ?? {},
         createdBy: userId,
       })
@@ -174,7 +165,6 @@ function serialize(row: typeof tracks.$inferSelect) {
   return {
     id: row.id,
     name: row.name,
-    kind: row.kind,
     properties: row.properties,
     createdAt: row.createdAt.toISOString(),
   };

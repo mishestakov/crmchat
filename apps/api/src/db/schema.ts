@@ -215,35 +215,6 @@ export const properties = pgTable(
   ],
 );
 
-export const contactViewMode = pgEnum("contact_view_mode", ["list", "kanban"]);
-
-export type ContactViewFilters = {
-  q?: string;
-  props?: Record<string, string>;
-};
-
-export const contactViews = pgTable(
-  "contact_views",
-  {
-    id: text("id").primaryKey().$defaultFn(shortId),
-    workspaceId: text("workspace_id")
-      .notNull()
-      .references(() => workspaces.id, { onDelete: "cascade" }),
-    name: text("name").notNull(),
-    mode: contactViewMode("mode").notNull().default("list"),
-    filters: jsonb("filters")
-      .$type<ContactViewFilters>()
-      .notNull()
-      .default({}),
-    createdBy: text("created_by")
-      .notNull()
-      .references(() => users.id),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [index("contact_views_workspace_id_idx").on(t.workspaceId)],
-);
-
 export const activityType = pgEnum("activity_type", ["note", "reminder"]);
 export const activityStatus = pgEnum("activity_status", ["open", "completed"]);
 export const activityRepeat = pgEnum("activity_repeat", [
@@ -447,30 +418,16 @@ export const outreachAccountsMode = pgEnum("outreach_accounts_mode", [
   "all",
   "selected",
 ]);
-export const contactCreationTrigger = pgEnum("contact_creation_trigger", [
-  "on-reply",
-  "on-first-message-sent",
-]);
-
 // Иерархия Track → Project → Item. Общая для двух юз-кейсов:
 // (1) BD-команда: Track=программа («Привлечение/Удержание/Отток»),
 //     Project=инстанс программы за период, Item=лид.
 // (2) Агентство: Track=клиент (Coca-Cola), Project=кампания (Q4 Holiday),
 //     Item=размещение (channel × project × date).
-// `kind` discriminator — производный от workspace.mode при создании сущности,
-// юзеру в UI не виден и не выбирается. Первичный тумблер «какой сценарий» —
-// это workspace.mode. kind оставлен как поле в схеме на случай, если завтра
-// в одном workspace потребуются разнотипные сущности (например, отдельные
-// outreach-операции для лонг-листа внутри agency-воркспейса).
-// Соответствие: mode='bd' → program/outreach/lead;
-//                mode='agency' → client/agency/placement.
-// 'generic' — техническое значение, в продуктовых сценариях не используется.
-
-export const trackKind = pgEnum("track_kind", [
-  "program",
-  "client",
-  "generic",
-]);
+// Тип сущности задаёт workspace.mode (первичный тумблер сценария). На уровне
+// project/item discriminator всё же нужен (project_item_kind: lead vs placement
+// разводит outreach- и agency-логику). У track'а отдельного kind НЕТ — папка
+// одинакова в обоих сценариях, mode уже всё разводит.
+// Соответствие: mode='bd' → outreach/lead; mode='agency' → agency/placement.
 
 export const projectKind = pgEnum("project_kind", [
   "outreach",
@@ -556,7 +513,6 @@ export const tracks = pgTable(
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
-    kind: trackKind("kind").notNull().default("generic"),
     properties: jsonb("properties")
       .$type<Record<string, unknown>>()
       .notNull()
@@ -690,10 +646,8 @@ export const projects = pgTable(
     phase: projectPhase("phase").notNull().default("briefing"),
     brief: text("brief"),
     budgetAmount: numeric("budget_amount", { precision: 12, scale: 2 }),
-    budgetCurrency: text("budget_currency").notNull().default("RUB"),
     periodStart: timestamp("period_start", { withTimezone: true }),
     periodEnd: timestamp("period_end", { withTimezone: true }),
-    kpi: text("kpi"),
     tov: text("tov"),
     constraints: text("constraints"),
 
@@ -708,9 +662,6 @@ export const projects = pgTable(
       .$type<ProjectMessage[]>()
       .notNull()
       .default([]),
-    contactCreationTrigger: contactCreationTrigger("contact_creation_trigger")
-      .notNull()
-      .default("on-reply"),
     contactDefaultOwnerIds: jsonb("contact_default_owner_ids")
       .$type<string[]>()
       .notNull()
@@ -749,10 +700,6 @@ export type ProjectImportSourceMeta = {
   // заполнятся при первом sync'е из соцсети.
   channelUsernameColumn?: string;
   columns?: string[];
-  // Маппинг CRM-properties workspace → CSV-колонки (key = property.key,
-  // value = column header). Смапленные значения попадают в item.properties
-  // под property.key; неcмапленные CSV-колонки — под raw header (для шаблонов).
-  propertyMappings?: Record<string, string>;
 };
 
 export type ProjectImportStats = {
@@ -840,7 +787,6 @@ export const projectItems = pgTable(
     // По нему рекл шортлистит на согласовании.
     available: boolean("available"),
     priceAmount: numeric("price_amount", { precision: 12, scale: 2 }),
-    priceCurrency: text("price_currency").notNull().default("RUB"),
     forecastViews: integer("forecast_views"),
     forecastErr: numeric("forecast_err", { precision: 5, scale: 2 }),
     clientStatus: placementClientStatus("client_status")
@@ -1162,7 +1108,6 @@ export const tgChats = pgTable(
       .references(() => outreachAccounts.id, { onDelete: "cascade" }),
     chatId: text("chat_id").notNull(),
     peerUserId: text("peer_user_id").notNull(),
-    title: text("title"),
     lastMessageId: text("last_message_id"),
     lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
     // Время последнего входящего (is_outgoing=false) от peer'а в этот аккаунт.
@@ -1180,7 +1125,6 @@ export const tgChats = pgTable(
     // fallback (Уровень 2): если ни у кого нет точного last_inbound_at, но
     // у кого-то has_inbound=true — выигрывает свежайший last_message_at среди них.
     hasInbound: boolean("has_inbound").notNull().default(false),
-    unreadCount: integer("unread_count").notNull().default(0),
     // ID последнего сообщения, которое peer у нас прочитал. Из chat payload
     // (initial chat list) + updateChatReadOutbox. Drawer рендерит ✓/✓✓:
     // если message.id <= lastReadOutboxId → peer прочитал (двойная галочка).

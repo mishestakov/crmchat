@@ -97,10 +97,10 @@ await seedDefaultProperties(SASHA_WS);
 await db
   .insert(tracks)
   .values([
-    { id: "trk_sasha_acquire", workspaceId: SASHA_WS, name: "Привлечение", kind: "program", createdBy: SASHA_ID },
-    { id: "trk_sasha_retain", workspaceId: SASHA_WS, name: "Удержание", kind: "program", createdBy: SASHA_ID },
-    { id: "trk_sasha_churn", workspaceId: SASHA_WS, name: "Отток", kind: "program", createdBy: SASHA_ID },
-    { id: "trk_sasha_adhoc", workspaceId: SASHA_WS, name: "Ad-hoc", kind: "program", createdBy: SASHA_ID },
+    { id: "trk_sasha_acquire", workspaceId: SASHA_WS, name: "Привлечение", createdBy: SASHA_ID },
+    { id: "trk_sasha_retain", workspaceId: SASHA_WS, name: "Удержание", createdBy: SASHA_ID },
+    { id: "trk_sasha_churn", workspaceId: SASHA_WS, name: "Отток", createdBy: SASHA_ID },
+    { id: "trk_sasha_adhoc", workspaceId: SASHA_WS, name: "Ad-hoc", createdBy: SASHA_ID },
   ])
   .onConflictDoNothing({ target: tracks.id });
 
@@ -515,7 +515,6 @@ await db
       id: "trk_cpp_cocacola",
       workspaceId: CPP_WS,
       name: "Coca-Cola",
-      kind: "client",
       properties: { inn: "7707049388", contract: "CC-2026-001" },
       createdBy: ZHENYA_ID,
     },
@@ -523,7 +522,6 @@ await db
       id: "trk_cpp_beeline",
       workspaceId: CPP_WS,
       name: "Beeline",
-      kind: "client",
       properties: { inn: "7713076301", contract: "BL-2026-014" },
       createdBy: ZHENYA_ID,
     },
@@ -531,7 +529,6 @@ await db
       id: "trk_cpp_skyeng",
       workspaceId: CPP_WS,
       name: "Skyeng",
-      kind: "client",
       properties: { inn: "7724831594", contract: "SK-2026-007" },
       createdBy: ZHENYA_ID,
     },
@@ -900,7 +897,6 @@ await db
       id: "trk_ag_coke",
       workspaceId: AGENCY_WS,
       name: "Coca-Cola",
-      kind: "client",
       properties: {
         legal_entity: "ООО «Кока-Кола»",
         inn: "7707049388",
@@ -912,7 +908,6 @@ await db
       id: "trk_ag_beeline",
       workspaceId: AGENCY_WS,
       name: "Beeline",
-      kind: "client",
       properties: { inn: "7713076301" },
       createdBy: ZHENYA_ID,
     },
@@ -932,7 +927,6 @@ await db
     brief:
       "Новогодняя кампания Coca-Cola Zero для аудитории 25-40. Нативные интеграции в нишах lifestyle / авто / технологии. Акцент «праздник без сахара».",
     budgetAmount: "1500000",
-    kpi: "CPV ≤ 1,2 ₽, суммарный охват ≥ 800k",
     tov: "Тёплый, праздничный, без пафоса.",
     constraints: "Без алкоголя в кадре. Не упоминать конкурентов.",
     messages: CPP_OFFER_MESSAGES,

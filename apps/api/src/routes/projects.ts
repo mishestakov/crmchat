@@ -6,7 +6,6 @@ import { db } from "../db/client.ts";
 import {
   channelAdmins,
   channels,
-  contactCreationTrigger,
   contacts,
   DEFAULT_OUTREACH_STAGES,
   messageTemplates,
@@ -70,7 +69,6 @@ const MessageSchema = z.object({
 const ProjectStatusSchema = z.enum(projectStatus.enumValues);
 const PhaseSchema = z.enum(projectPhase.enumValues);
 const AccountsModeSchema = z.enum(outreachAccountsMode.enumValues);
-const ContactCreationTriggerSchema = z.enum(contactCreationTrigger.enumValues);
 
 const StageSchema = z.object({
   id: z.string().min(1).max(64),
@@ -89,17 +87,14 @@ const ProjectSchema = z
     phase: PhaseSchema,
     brief: z.string().nullable(),
     budgetAmount: z.number().nullable(),
-    budgetCurrency: z.string(),
     periodStart: z.iso.datetime().nullable(),
     periodEnd: z.iso.datetime().nullable(),
-    kpi: z.string().nullable(),
     tov: z.string().nullable(),
     constraints: z.string().nullable(),
     stages: z.array(StageSchema),
     accountsMode: AccountsModeSchema,
     accountsSelected: z.array(z.string()),
     messages: z.array(MessageSchema),
-    contactCreationTrigger: ContactCreationTriggerSchema,
     contactDefaultOwnerIds: z.array(z.string()),
     contactDefaults: z.record(z.string(), z.unknown()),
     activatedAt: z.iso.datetime().nullable(),
@@ -130,7 +125,6 @@ const CreateProjectBody = z
     budgetAmount: z.number().nonnegative().optional(),
     periodStart: z.iso.datetime().optional(),
     periodEnd: z.iso.datetime().optional(),
-    kpi: z.string().max(2000).optional(),
     tov: z.string().max(2000).optional(),
     constraints: z.string().max(2000).optional(),
   })
@@ -143,7 +137,6 @@ const UpdateProjectBody = z
     accountsMode: AccountsModeSchema.optional(),
     accountsSelected: z.array(z.string()).optional(),
     messages: z.array(MessageSchema).optional(),
-    contactCreationTrigger: ContactCreationTriggerSchema.optional(),
     contactDefaultOwnerIds: z.array(z.string()).optional(),
     contactDefaults: z.record(z.string(), z.unknown()).optional(),
     // agency: фаза и бриф правятся в любом статусе (не snapshot-поля).
@@ -153,7 +146,6 @@ const UpdateProjectBody = z
     budgetAmount: z.number().nonnegative().nullable().optional(),
     periodStart: z.iso.datetime().nullable().optional(),
     periodEnd: z.iso.datetime().nullable().optional(),
-    kpi: z.string().max(2000).nullable().optional(),
     tov: z.string().max(2000).nullable().optional(),
     constraints: z.string().max(2000).nullable().optional(),
   })
@@ -387,7 +379,6 @@ app.openapi(
         budgetAmount: body.budgetAmount != null ? String(body.budgetAmount) : null,
         periodStart: body.periodStart ? new Date(body.periodStart) : null,
         periodEnd: body.periodEnd ? new Date(body.periodEnd) : null,
-        kpi: body.kpi ?? null,
         tov: body.tov ?? null,
         constraints: body.constraints ?? null,
         createdBy: userId,
@@ -473,13 +464,11 @@ app.openapi(
           "accountsMode",
           "accountsSelected",
           "messages",
-          "contactCreationTrigger",
           "contactDefaultOwnerIds",
           "contactDefaults",
           // agency text/enum-поля — прямое копирование (null валиден).
           "phase",
           "brief",
-          "kpi",
           "tov",
           "constraints",
         ]),
@@ -1504,17 +1493,14 @@ function serializeProject(
     phase: row.phase,
     brief: row.brief,
     budgetAmount: row.budgetAmount === null ? null : Number(row.budgetAmount),
-    budgetCurrency: row.budgetCurrency,
     periodStart: row.periodStart?.toISOString() ?? null,
     periodEnd: row.periodEnd?.toISOString() ?? null,
-    kpi: row.kpi,
     tov: row.tov,
     constraints: row.constraints,
     stages: row.stages,
     accountsMode: row.accountsMode,
     accountsSelected: row.accountsSelected,
     messages: row.messages,
-    contactCreationTrigger: row.contactCreationTrigger,
     contactDefaultOwnerIds: row.contactDefaultOwnerIds,
     contactDefaults: row.contactDefaults,
     activatedAt: row.activatedAt?.toISOString() ?? null,

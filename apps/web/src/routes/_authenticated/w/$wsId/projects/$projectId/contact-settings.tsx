@@ -20,8 +20,6 @@ export const Route = createFileRoute(
   component: ContactSettingsPage,
 });
 
-type Trigger = "on-reply" | "on-first-message-sent";
-
 function ContactSettingsPage() {
   const { wsId, projectId } = Route.useParams();
   const navigate = useNavigate();
@@ -52,13 +50,11 @@ function ContactSettingsPage() {
     },
   });
 
-  const [trigger, setTrigger] = useState<Trigger>("on-reply");
   const [defaults, setDefaults] = useState<Record<string, unknown>>({});
   const [ownerIds, setOwnerIds] = useState<string[]>([]);
 
   useEffect(() => {
     if (!seq.data) return;
-    setTrigger(seq.data.contactCreationTrigger);
     setDefaults(seq.data.contactDefaults);
     setOwnerIds(seq.data.contactDefaultOwnerIds);
   }, [seq.data]);
@@ -83,7 +79,6 @@ function ContactSettingsPage() {
         {
           params: { path: { wsId, projectId } },
           body: {
-            contactCreationTrigger: trigger,
             contactDefaults: defaults,
             contactDefaultOwnerIds: ownerIds,
           },
@@ -102,14 +97,13 @@ function ContactSettingsPage() {
 
   const isDirty = useMemo(() => {
     if (!seq.data) return false;
-    if (trigger !== seq.data.contactCreationTrigger) return true;
     if (JSON.stringify(defaults) !== JSON.stringify(seq.data.contactDefaults)) {
       return true;
     }
     const a = [...ownerIds].sort();
     const b = [...seq.data.contactDefaultOwnerIds].sort();
     return JSON.stringify(a) !== JSON.stringify(b);
-  }, [seq.data, trigger, defaults, ownerIds]);
+  }, [seq.data, defaults, ownerIds]);
 
   if (seq.isLoading || properties.isLoading) {
     return (
@@ -144,38 +138,6 @@ function ContactSettingsPage() {
       <BackButton />
       <div className="mx-auto w-full max-w-2xl space-y-4">
         <h1 className="text-2xl font-semibold">CRM-автоматизации</h1>
-
-        <Section header="Когда создавать контакт">
-          <SectionItem onClick={() => setTrigger("on-reply")}>
-            <input
-              type="radio"
-              checked={trigger === "on-reply"}
-              readOnly
-              className="shrink-0"
-            />
-            <SectionItemTitle>
-              <div className="font-medium">Когда лид ответит</div>
-              <div className="text-xs text-zinc-500">
-                Контакт создаётся в момент первого входящего от лида.
-              </div>
-            </SectionItemTitle>
-          </SectionItem>
-          <SectionItem onClick={() => setTrigger("on-first-message-sent")}>
-            <input
-              type="radio"
-              checked={trigger === "on-first-message-sent"}
-              readOnly
-              className="shrink-0"
-            />
-            <SectionItemTitle>
-              <div className="font-medium">При отправке первого сообщения</div>
-              <div className="text-xs text-zinc-500">
-                Контакт появится сразу после первой исходящей — удобно если
-                нужно видеть лидов в воронке без ожидания ответа.
-              </div>
-            </SectionItemTitle>
-          </SectionItem>
-        </Section>
 
         <Section header="Ответственные за лидов">
           <Link

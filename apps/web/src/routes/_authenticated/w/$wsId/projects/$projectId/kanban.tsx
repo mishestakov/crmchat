@@ -145,22 +145,12 @@ function KanbanPage() {
   });
 
   const stages = projectQ.data?.stages ?? [];
-  // Канбан показывает лидов с момента срабатывания триггера проекта:
-  //   - 'on-reply' (дефолт) — после ответа peer'а (project_items.repliedAt).
-  //   - 'on-first-message-sent' — после первой отправки worker'a
-  //     (messages[0].sentAt). До триггера лиды только в табличке /leads.
-  // Контакты создаются раньше — при импорте (5A), но это не управляет
-  // появлением карточки. Триггер per-проект, поэтому смотрим в projectQ.
-  const trigger = projectQ.data?.contactCreationTrigger;
+  // Канбан показывает лидов после ответа peer'а (project_items.repliedAt).
+  // Контакт заводится на входящем (см. outreach-listener), карточка на канбане
+  // появляется тогда же; до ответа лид виден только в табличке /leads.
   const leads = useMemo(
-    () =>
-      (leadsQ.data?.leads ?? []).filter((l) => {
-        if (trigger === "on-first-message-sent") {
-          return !!l.messages[0]?.sentAt;
-        }
-        return !!l.repliedAt;
-      }),
-    [leadsQ.data?.leads, trigger],
+    () => (leadsQ.data?.leads ?? []).filter((l) => !!l.repliedAt),
+    [leadsQ.data?.leads],
   );
 
   // Группировка по stageId. Лиды со stageId который не существует в

@@ -161,7 +161,6 @@ export function attachReplicator(
           target: [tgChats.accountId, tgChats.chatId],
           set: {
             peerUserId: sql`excluded.peer_user_id`,
-            title: sql`excluded.title`,
             lastMessageId: sql`excluded.last_message_id`,
             lastMessageAt: sql`excluded.last_message_at`,
             // GREATEST: повторный updateNewChat от TDLib приносит только
@@ -173,7 +172,6 @@ export function attachReplicator(
             // признак — храним, для sticky-fallback'а это история не
             // последнего сообщения, а «вообще когда-либо».
             hasInbound: sql`${tgChats.hasInbound} OR excluded.has_inbound`,
-            unreadCount: sql`excluded.unread_count`,
             // GREATEST: id сообщений монотонно растут, повторный
             // updateNewChat не должен откатить уже накопленный
             // updateChatReadOutbox.
@@ -302,11 +300,6 @@ export function attachReplicator(
       case "updateUser":
         handleUser((u as unknown as { user: UserPayload }).user);
         break;
-      case "updateChatTitle": {
-        const x = u as unknown as { chat_id: number | string; title: string };
-        mergeChatPartial(String(x.chat_id), { title: x.title || null });
-        break;
-      }
       case "updateChatLastMessage": {
         const x = u as unknown as {
           chat_id: number | string;
@@ -347,14 +340,6 @@ export function attachReplicator(
             ? { lastOutboundAt: at }
             : { lastInboundAt: at, hasInbound: true }),
         });
-        break;
-      }
-      case "updateChatReadInbox": {
-        const x = u as unknown as {
-          chat_id: number | string;
-          unread_count: number;
-        };
-        mergeChatPartial(String(x.chat_id), { unreadCount: x.unread_count });
         break;
       }
       case "updateChatReadOutbox": {
@@ -469,13 +454,11 @@ function mapChat(accountId: string, chat: ChatPayload): ChatRow | null {
     accountId,
     chatId: String(chat.id),
     peerUserId: String(chat.type.user_id),
-    title: chat.title || null,
     lastMessageId: chat.last_message ? String(chat.last_message.id) : null,
     lastMessageAt: lastAt,
     lastInboundAt: lastAt && !isOut ? lastAt : null,
     lastOutboundAt: lastAt && isOut ? lastAt : null,
     hasInbound: !!hasInbound,
-    unreadCount: chat.unread_count ?? 0,
     lastReadOutboxId:
       outboxRaw !== undefined &&
       outboxRaw !== null &&

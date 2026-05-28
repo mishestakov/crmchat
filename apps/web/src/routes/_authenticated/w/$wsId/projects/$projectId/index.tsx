@@ -625,17 +625,13 @@ function buildAccountsSummary(
   return `${chosen.slice(0, 3).join(", ")} + ${chosen.length - 3}`;
 }
 
-// Сводка CRM-автоматизаций: триггер + кол-во ответственных. Заменяет
-// прежний прочерк «—» — без клика непонятно что внутри.
+// Сводка CRM-автоматизаций: кол-во ответственных за лидов. Заменяет прежний
+// прочерк «—» — без клика непонятно что внутри.
 function buildCrmSummary(project: SequenceData): string {
-  const trigger =
-    project.contactCreationTrigger === "on-reply"
-      ? "при ответе"
-      : "при первой отправке";
   const owners = project.contactDefaultOwnerIds.length;
-  if (owners === 0) return trigger;
-  if (owners === 1) return `${trigger} · 1 ответственный`;
-  return `${trigger} · ${owners} ответственных (round-robin)`;
+  if (owners === 0) return "Ответственный: создатель рассылки";
+  if (owners === 1) return "1 ответственный";
+  return `${owners} ответственных (round-robin)`;
 }
 
 // Сводка цепочки: «N шагов: первое сразу → через 1 ч → через 1 день».
