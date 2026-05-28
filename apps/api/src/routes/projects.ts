@@ -99,6 +99,9 @@ const ProjectSchema = z
     contactDefaults: z.record(z.string(), z.unknown()),
     activatedAt: z.iso.datetime().nullable(),
     completedAt: z.iso.datetime().nullable(),
+    // Клиент финализировал медиаплан (фаза «Согласование»): решения заморожены.
+    // null = ещё правит / не дошли до согласования. Менеджер может переоткрыть.
+    clientFinalizedAt: z.iso.datetime().nullable(),
     createdAt: z.iso.datetime(),
     // SUM(contacts.unread_count) по всем лидам проекта с фильтром по доступным
     // member'у аккаунтам. Считается только в GET /projects (list). Для single-
@@ -831,6 +834,37 @@ app.openapi(
   },
 );
 
+// Переоткрыть финализированный клиентом медиаплан: обнуляем clientFinalizedAt,
+// клиент снова может менять решения по своей magic-link. На случай «клиент
+// финализировал, но позвонил и передумал». Идемпотентно.
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/unfinalize",
+    tags: ["agency"],
+    request: { params: WsProjectParam },
+    responses: {
+      200: {
+        content: { "application/json": { schema: ProjectSchema } },
+        description: "Media plan reopened for client editing",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const { projectId } = c.req.valid("param");
+    const project = await assertProjectAccess(projectId, wsId, userId, role);
+    await db
+      .update(projects)
+      .set({ clientFinalizedAt: null, updatedAt: new Date() })
+      .where(eq(projects.id, project.id));
+    const refreshed = await assertProjectAccess(projectId, wsId, userId, role);
+    return c.json(serializeProject(refreshed));
+  },
+);
+
 app.openapi(
   createRoute({
     method: "get",
@@ -1505,6 +1539,7 @@ function serializeProject(
     contactDefaults: row.contactDefaults,
     activatedAt: row.activatedAt?.toISOString() ?? null,
     completedAt: row.completedAt?.toISOString() ?? null,
+    clientFinalizedAt: row.clientFinalizedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     unreadCount,
   };

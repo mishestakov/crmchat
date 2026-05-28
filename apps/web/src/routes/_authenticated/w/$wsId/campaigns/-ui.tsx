@@ -36,7 +36,6 @@ export const clientView: Record<ClientStatus, View> = {
   pending: { label: "ждёт решения", tone: "zinc" },
   approved: { label: "одобрен", tone: "emerald" },
   rejected: { label: "отклонён", tone: "red" },
-  replace: { label: "замена", tone: "amber" },
 };
 
 export function availableView(v: boolean | null): View {

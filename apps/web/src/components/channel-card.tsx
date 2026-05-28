@@ -725,7 +725,7 @@ function SubscribePrompt(props: { wsId: string; channelId: string }) {
   );
 }
 
-type ChannelMessage = {
+export type ChannelMessage = {
   id: string;
   date: string;
   text: string;
@@ -972,7 +972,7 @@ function PostsFeed(props: {
   );
 }
 
-function Post({ m }: { m: ChannelMessage }) {
+export function Post({ m }: { m: ChannelMessage }) {
   const hasInteractions =
     m.views !== null ||
     m.forwards !== null ||

@@ -70,6 +70,10 @@ const PlacementSchema = z
         title: z.string(),
         username: z.string().nullable(),
         memberCount: z.number().int().nullable(),
+        // Авто-метрики из ленты (этап 16.10): ср.охват + ERR. Живые из
+        // channels.meta — на согласовании клиент видит актуальные, а не снимок.
+        avgReach: z.number().nullable(),
+        err: z.number().nullable(),
         // DM-путь канала (этап 16.8): есть ли личка и сколько звёзд стоит
         // отправка. dmStarCost === 0 → бесплатно (засчитывается готовым
         // контактом для гейта); >0 → менеджер пишет руками; null → ещё не
@@ -114,6 +118,8 @@ const PlacementSchema = z
     }),
     available: z.boolean().nullable(),
     priceAmount: z.number().nullable(),
+    // Цена для клиента (null = совпадает с priceAmount).
+    clientPrice: z.number().nullable(),
     forecastViews: z.number().int().nullable(),
     forecastErr: z.number().nullable(),
     clientStatus: ClientStatusSchema,
@@ -160,6 +166,7 @@ const UpdatePlacementBody = z
   .object({
     available: z.boolean().nullable().optional(),
     priceAmount: z.number().nonnegative().nullable().optional(),
+    clientPrice: z.number().nonnegative().nullable().optional(),
     forecastViews: z.number().int().nonnegative().nullable().optional(),
     forecastErr: z.number().nonnegative().nullable().optional(),
     clientStatus: ClientStatusSchema.optional(),
@@ -636,6 +643,10 @@ app.openapi(
           priceAmount:
             body.priceAmount === null ? null : String(body.priceAmount),
         }),
+        ...(body.clientPrice !== undefined && {
+          clientPrice:
+            body.clientPrice === null ? null : String(body.clientPrice),
+        }),
         ...(body.forecastViews !== undefined && {
           forecastViews: body.forecastViews,
         }),
@@ -914,6 +925,7 @@ function placementColumns() {
     id: projectItems.id,
     available: projectItems.available,
     priceAmount: projectItems.priceAmount,
+    clientPrice: projectItems.clientPrice,
     forecastViews: projectItems.forecastViews,
     forecastErr: projectItems.forecastErr,
     clientStatus: projectItems.clientStatus,
@@ -945,6 +957,9 @@ function placementColumns() {
     channelTitle: channels.title,
     channelUsername: channels.username,
     channelMembers: channels.memberCount,
+    // Авто-метрики из ленты (meta пишет /history): ср.охват + ERR. Живые.
+    channelAvgReach: sql<number | null>`(${channels.meta} ->> 'avg_reach')::int`,
+    channelErr: sql<number | null>`(${channels.meta} ->> 'err')::float8`,
     // Бесплатная личка канала: есть DM-группа (direct_messages_chat_id кладёт
     // сам sync) — НЕ has_dm, который пишет репликатор асинхронно (этап 16.8).
     channelHasDm: sql<boolean>`coalesce(${channels.meta} ->> 'direct_messages_chat_id', '0') <> '0'`,
@@ -1022,6 +1037,7 @@ function serializePlacement(
     id: string;
     available: boolean | null;
     priceAmount: string | null;
+    clientPrice: string | null;
     forecastViews: number | null;
     forecastErr: string | null;
     clientStatus: (typeof placementClientStatus.enumValues)[number];
@@ -1058,6 +1074,8 @@ function serializePlacement(
     channelTitle: string | null;
     channelUsername: string | null;
     channelMembers: number | null;
+    channelAvgReach: number | null;
+    channelErr: number | null;
     channelHasDm: boolean;
     channelDmStarCost: number | null;
     channelHasAdmin: boolean;
@@ -1086,6 +1104,8 @@ function serializePlacement(
           title: row.channelTitle ?? "—",
           username: row.channelUsername,
           memberCount: row.channelMembers,
+          avgReach: row.channelAvgReach,
+          err: row.channelErr,
           hasDm: row.channelHasDm,
           dmStarCost: row.channelDmStarCost,
         }
@@ -1113,6 +1133,7 @@ function serializePlacement(
     },
     available: row.available,
     priceAmount: row.priceAmount === null ? null : Number(row.priceAmount),
+    clientPrice: row.clientPrice === null ? null : Number(row.clientPrice),
     forecastViews: row.forecastViews,
     forecastErr: row.forecastErr === null ? null : Number(row.forecastErr),
     clientStatus: row.clientStatus,

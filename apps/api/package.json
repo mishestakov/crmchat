@@ -10,11 +10,11 @@
     "db:seed": "node --env-file=../../.env src/seed.ts"
   },
   "dependencies": {
-    "@hono/node-server": "^2.0.2",
+    "@hono/node-server": "^2.0.4",
     "@hono/zod-openapi": "^1.4.0",
     "@repo/core": "workspace:*",
     "drizzle-orm": "^0.45.2",
-    "hono": "^4.12.18",
+    "hono": "^4.12.23",
     "jose": "^6.2.3",
     "postgres": "^3.4.9",
     "tdl": "^8.1.0",

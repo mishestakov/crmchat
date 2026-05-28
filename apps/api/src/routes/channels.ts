@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { and, count, eq, inArray, or, sql } from "drizzle-orm";
 import {
   type Channel,
   ChannelSchema as BaseChannelSchema,
@@ -20,12 +20,18 @@ import {
   extractMediaThumb,
 } from "../lib/td-message.ts";
 import {
+  fetchChannelHistory,
+  mapChannelHistoryItems,
+  readChannelPreview,
+} from "../lib/channel-history.ts";
+import {
   channelAdmins,
   channelSubscriptions,
   channelThumbnails,
   channels,
   contacts,
   outreachAccounts,
+  projectItems,
   tgChats,
   tgUsers,
 } from "../db/schema.ts";
@@ -353,10 +359,29 @@ app.openapi(
     tags: ["channels"],
     middleware: [assertRole("admin")] as const,
     request: { params: WsIdParam },
-    responses: { 204: { description: "Deleted" } },
+    responses: {
+      204: { description: "Deleted" },
+      409: { description: "Channel is used by placements" },
+    },
   }),
   async (c) => {
     const { wsId, id } = c.req.valid("param");
+    // Гард целостности медиаплана: канал — накопительный актив, его удаление не
+    // должно молча уносить размещения (цены, решения клиента, метрики) через
+    // ON DELETE CASCADE. Есть placements на канал → 409, удалять нельзя.
+    // channel_admins/subscriptions/thumbnails при удалении каскадят (не ценность).
+    const [row] = await db
+      .select({ used: count() })
+      .from(projectItems)
+      .where(
+        and(eq(projectItems.channelId, id), eq(projectItems.workspaceId, wsId)),
+      );
+    const used = row?.used ?? 0;
+    if (used > 0) {
+      throw new HTTPException(409, {
+        message: `channel is used by ${used} placement(s)`,
+      });
+    }
     await db
       .delete(channels)
       .where(and(eq(channels.id, id), eq(channels.workspaceId, wsId)));
@@ -1390,25 +1415,6 @@ app.openapi(
     }
     const tdClient = picked.client;
 
-    type TdReaction = {
-      type: { _: string; emoji?: string };
-      total_count: number;
-    };
-    type TdMessage = {
-      id: number;
-      date: number;
-      is_pinned?: boolean;
-      content: TdContent;
-      interaction_info?: {
-        view_count?: number;
-        forward_count?: number;
-        reply_info?: { reply_count: number };
-        reactions?: { reactions: TdReaction[] };
-      };
-      forward_info?: { origin: { _: string }; date: number };
-    };
-    type TdMessages = { messages: TdMessage[] };
-
     const chatId = Number(channel.externalId);
 
     // Прогрев state'а на каждый запрос: searchPublicChat кладёт чат в TDLib
@@ -1431,59 +1437,24 @@ app.openapi(
       }
     }
 
-    // openChat → backfill-loop getChatHistory → closeChat. Без openChat
-    // TDLib не считает чат активным; в supergroup'ах/каналах «all updates
-    // are received only for opened chats» (td_api.tl §openChat) и
-    // сервер-fetch менее агрессивный. closeChat — best-effort в finally,
-    // только если openChat успел: иначе TDLib ответит «Chat not found» и
-    // спамит лог (счётчик opened-chats и так не рос).
-    //
-    // Каналы холодные (юзер не подписан → RAM-кэш TDLib пустой), и первый
-    // getChatHistory часто возвращает 1-2 сообщения — TDLib инициирует
-    // фоновый fetch и возвращает что успел (td_api.tl §getChatHistory: «can
-    // be smaller than the specified limit»). Дозваниваемся пагинацией по
-    // from_message_id=oldest_id пока не наберём limit или TDLib не отдаст
-    // empty (конец канала). MAX_ATTEMPTS — защита от бесконечного цикла.
-    const fetchHistory = (from: number, want: number) =>
-      tdClient.invoke({
-        _: "getChatHistory",
-        chat_id: chatId,
-        from_message_id: from,
-        offset: 0,
-        limit: want,
-        only_local: false,
-      } as never) as Promise<TdMessages>;
-
-    const MAX_ATTEMPTS = 5;
-    let aggregated: TdMessage[] = [];
-    let from = fromMessageId ?? 0;
-    let opened = false;
+    // Сетевое чтение ленты (openChat → backfill-loop getChatHistory → closeChat)
+    // вынесено в lib/channel-history.fetchChannelHistory — тот же код тянет
+    // превью канала. Здесь оборачиваем классификацией ошибок: permanent →
+    // помечаем канал недоступным, иначе 404.
+    let aggregated;
     try {
-      await tdClient.invoke({ _: "openChat", chat_id: chatId } as never);
-      opened = true;
-      for (let i = 0; i < MAX_ATTEMPTS; i++) {
-        const r = await fetchHistory(from, limit - aggregated.length);
-        if (r.messages.length === 0) break;
-        aggregated = [...aggregated, ...r.messages];
-        if (aggregated.length >= limit) break;
-        from = Number(r.messages[r.messages.length - 1]!.id);
-      }
+      aggregated = await fetchChannelHistory(tdClient, {
+        chatId,
+        limit,
+        fromMessageId,
+      });
     } catch (e) {
       const cls = classifyResolveError(e);
       if (cls.permanent) await markChannelUnavailable(id, cls.reason);
       throw new HTTPException(404, {
         message: `history fetch failed: ${errMsg(e)}`,
       });
-    } finally {
-      if (opened) {
-        await tdClient
-          .invoke({ _: "closeChat", chat_id: chatId } as never)
-          .catch((e: unknown) =>
-            console.error(`[channels/history] closeChat ${chatId} failed:`, e),
-          );
-      }
     }
-    const result: TdMessages = { messages: aggregated };
 
     // Дошли сюда — TDLib отдал историю, канал точно доступен. Сбрасываем
     // unavailable-флаг, если ранее был выставлен (например, прошлый sync
@@ -1492,36 +1463,14 @@ app.openapi(
       await clearChannelUnavailable(id);
     }
 
-    const items = (result.messages ?? []).map((m) => {
-      const { text, entities } = extractFormattedText(m.content);
-      const mediaThumb = extractMediaThumb(m.content);
-      const ii = m.interaction_info;
-      const reactions = (ii?.reactions?.reactions ?? [])
-        .filter((r) => r.type._ === "reactionTypeEmoji" && r.type.emoji)
-        .map((r) => ({ emoji: r.type.emoji!, count: r.total_count }));
-      return {
-        id: String(m.id),
-        date: new Date(m.date * 1000).toISOString(),
-        // Без текста и без thumb (стикер/voice/etc) — короткий type-label.
-        text: text || (mediaThumb ? "" : "[медиа]"),
-        entities,
-        mediaThumb,
-        views: ii?.view_count ?? null,
-        forwards: ii?.forward_count ?? null,
-        replies: ii?.reply_info?.reply_count ?? null,
-        reactions,
-        isForwarded: !!m.forward_info,
-      };
-    });
+    const items = mapChannelHistoryItems(aggregated);
 
     // Авто-метрики из этой же ленты (этап 16.10) — без отдельного TDLib-вызова.
     // Пишем в meta: центр и правый рельс показывают, «Согласован» снапшотит в
     // прогноз. Только на первой странице (newest посты): пагинация тащит старые,
     // по ним охват считать нельзя.
     const metrics =
-      fromMessageId === undefined
-        ? metricsFromMessages(result.messages ?? [])
-        : null;
+      fromMessageId === undefined ? metricsFromMessages(aggregated) : null;
     if (metrics) {
       await db
         .update(channels)
@@ -1537,6 +1486,49 @@ app.openapi(
     }
 
     return c.json({ messages: items });
+  },
+);
+
+// Бережный предпросмотр канала (этап 16.10): посты ТОЛЬКО из локального кэша
+// TDLib (only_local) — ноль MTProto-запросов, не флудим на согласовании. Пусто,
+// Предпросмотр канала (этап 16.10): лёгкая версия /history без метрик. Тянет
+// ленту с сервера (readChannelPreview), т.к. only_local отдавал 1 пост из-за
+// per-account кэша. Ошибка → [] (дровер не падает). Те же посты видит клиент.
+app.openapi(
+  createRoute({
+    method: "get",
+    path: "/v1/workspaces/{wsId}/channels/{id}/preview",
+    tags: ["channels"],
+    request: {
+      params: WsIdParam,
+      query: z.object({
+        limit: z.coerce.number().int().min(1).max(50).default(20),
+      }),
+    },
+    responses: {
+      200: {
+        content: { "application/json": { schema: ChannelHistoryResponse } },
+        description: "Channel posts feed (network read, errors → empty)",
+      },
+    },
+  }),
+  async (c) => {
+    const { wsId, id } = c.req.valid("param");
+    const { limit } = c.req.valid("query");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const channel = await assertChannelAccess(id, wsId);
+    if (channel.platform !== "telegram" || !channel.externalId) {
+      return c.json({ messages: [] });
+    }
+    const picked = await pickChannelReader(id, wsId, userId, role);
+    if (!picked) return c.json({ messages: [] });
+    const msgs = await readChannelPreview(picked.client, {
+      chatId: Number(channel.externalId),
+      username: channel.username,
+      limit,
+    });
+    return c.json({ messages: mapChannelHistoryItems(msgs) });
   },
 );
 

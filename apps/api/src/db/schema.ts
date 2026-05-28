@@ -307,9 +307,7 @@ export const contacts = pgTable(
 export const outreachAccountStatus = pgEnum("outreach_account_status", [
   "active",
   "banned",
-  "frozen",
   "unauthorized",
-  "offline",
 ]);
 
 export const outreachAccounts = pgTable(
@@ -429,11 +427,7 @@ export const outreachAccountsMode = pgEnum("outreach_accounts_mode", [
 // одинакова в обоих сценариях, mode уже всё разводит.
 // Соответствие: mode='bd' → outreach/lead; mode='agency' → agency/placement.
 
-export const projectKind = pgEnum("project_kind", [
-  "outreach",
-  "agency",
-  "generic",
-]);
+export const projectKind = pgEnum("project_kind", ["outreach", "agency"]);
 
 // draft → active ↔ paused → done → archived. archived проекты скрыты из
 // основного listing'а; вытащить из архива пока нельзя (или через прямой
@@ -472,7 +466,6 @@ export const placementClientStatus = pgEnum("placement_client_status", [
   "pending",
   "approved",
   "rejected",
-  "replace",
 ]);
 
 // Этапы производства размещения (фаза 5, drawer-stepper). Проставляются
@@ -650,6 +643,10 @@ export const projects = pgTable(
     periodEnd: timestamp("period_end", { withTimezone: true }),
     tov: text("tov"),
     constraints: text("constraints"),
+    // Клиент финализировал медиаплан по своей magic-link: с этого момента он
+    // больше не меняет решения (фаза «Согласование» заморожена). Менеджер может
+    // переоткрыть из кабинета (обнулить) — тогда клиент снова правит.
+    clientFinalizedAt: timestamp("client_finalized_at", { withTimezone: true }),
 
     // === outreach-specific =================================================
 
@@ -787,13 +784,17 @@ export const projectItems = pgTable(
     // По нему рекл шортлистит на согласовании.
     available: boolean("available"),
     priceAmount: numeric("price_amount", { precision: 12, scale: 2 }),
+    // Цена для клиента (наценка). null = «совпадает с priceAmount» — клиент
+    // видит ту же сумму. Менеджер задаёт иную, если в клиентской ссылке нужна
+    // другая цена, чем закупочная у блогера.
+    clientPrice: numeric("client_price", { precision: 12, scale: 2 }),
     forecastViews: integer("forecast_views"),
     forecastErr: numeric("forecast_err", { precision: 5, scale: 2 }),
     clientStatus: placementClientStatus("client_status")
       .notNull()
       .default("pending"),
-    // Комментарий клиента к решению (обязателен для reject/replace) + когда
-    // проставил. Заполняются из клиентского magic-link view.
+    // Комментарий клиента к решению (необязателен, шлётся с любым статусом) +
+    // когда проставил. Заполняются из клиентского magic-link view.
     clientStatusComment: text("client_status_comment"),
     clientStatusAt: timestamp("client_status_at", { withTimezone: true }),
     // Когда менеджер добавил размещение в шортлист (явная кнопка «В шортлист»).

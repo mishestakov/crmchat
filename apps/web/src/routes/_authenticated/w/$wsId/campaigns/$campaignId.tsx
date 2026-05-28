@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   Plus,
   Send,
@@ -43,6 +43,10 @@ import {
 } from "./-ui";
 import { PlacementPane, ProductionDrawer } from "./-placement-drawer";
 import { ChannelDrawer } from "../../../../../components/channel-drawer";
+import {
+  ChannelPreviewDrawer,
+} from "../../../../../components/channel-preview-drawer";
+import type { ChannelMessage } from "../../../../../components/channel-card";
 
 export const Route = createFileRoute(
   "/_authenticated/w/$wsId/campaigns/$campaignId",
@@ -977,10 +981,40 @@ function ReviewPhase({
   });
   const shortlist = shortlistQ.data ?? [];
   const decided = shortlist.filter((p) => p.clientStatus !== "pending").length;
+  const finalizedAt = campaign.clientFinalizedAt;
+  const qc = useQueryClient();
+  const unfinalize = useMutation({
+    mutationFn: async () => {
+      const { error } = await api.POST(
+        "/v1/workspaces/{wsId}/projects/{projectId}/unfinalize",
+        { params: { path: { wsId, projectId } } },
+      );
+      if (error) throw error;
+    },
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["campaign", wsId, projectId] }),
+  });
 
   return (
     <div className="space-y-4">
       <ShareAccessBlock wsId={wsId} projectId={projectId} />
+
+      {finalizedAt && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm">
+          <span className="text-emerald-800">
+            Клиент финализировал медиаплан · {formatPastRelative(finalizedAt)}.
+            Решения заморожены.
+          </span>
+          <button
+            type="button"
+            onClick={() => unfinalize.mutate()}
+            disabled={unfinalize.isPending}
+            className="shrink-0 rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+          >
+            Переоткрыть
+          </button>
+        </div>
+      )}
 
       {shortlist.length === 0 ? (
         <div className="rounded-2xl bg-white p-6 text-sm text-zinc-500 shadow-sm">
@@ -997,9 +1031,11 @@ function ReviewPhase({
             <thead className="bg-zinc-50 text-xs text-zinc-500">
               <tr>
                 <Th>Канал</Th>
-                <Th className="text-right">Прогноз ПДП</Th>
+                <Th className="text-right">Подписчики</Th>
+                <Th className="text-right">Охват</Th>
                 <Th className="text-right">ERR</Th>
                 <Th className="text-right">Цена</Th>
+                <Th className="text-right">Цена для клиента</Th>
                 <Th>Решение клиента</Th>
                 <Th>Комментарий</Th>
               </tr>
@@ -1010,16 +1046,26 @@ function ReviewPhase({
                 return (
                   <tr key={p.id} className="border-t border-zinc-100">
                     <td className="px-4 py-2.5">
-                      <ChannelCell placement={p} />
+                      <ChannelCell placement={p} preview />
                     </td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-zinc-700">
-                      {formatViews(p.forecastViews)}
+                      {formatViews(p.channel?.memberCount ?? null)}
                     </td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-zinc-700">
-                      {p.forecastErr !== null ? p.forecastErr + "%" : "—"}
+                      {formatViews(p.channel?.avgReach ?? null)}
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-zinc-700">
+                      {p.channel?.err != null ? p.channel.err + "%" : "—"}
                     </td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-zinc-700">
                       {formatRub(p.priceAmount)}
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <ClientPriceCell
+                        wsId={wsId}
+                        projectId={projectId}
+                        placement={p}
+                      />
                     </td>
                     <td className="px-4 py-2.5">
                       <Chip tone={cs.tone}>{cs.label}</Chip>
@@ -1049,6 +1095,7 @@ function ShareAccessBlock({
 }) {
   const qc = useQueryClient();
   const [copied, setCopied] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
   const sharesQ = useQuery({
     queryKey: ["shares", wsId, projectId] as const,
     queryFn: async () => {
@@ -1084,62 +1131,115 @@ function ShareAccessBlock({
   });
 
   const shares = sharesQ.data ?? [];
+  const primary = shares[0] ?? null;
   const fullUrl = (url: string) => window.location.origin + url;
-  const copy = (url: string) => {
-    void navigator.clipboard.writeText(fullUrl(url));
-    setCopied(url);
-    setTimeout(() => setCopied((c) => (c === url ? null : c)), 1500);
+  const primaryUrl = primary ? fullUrl(primary.url) : "";
+  const copy = (rawUrl: string) => {
+    const f = fullUrl(rawUrl);
+    void navigator.clipboard.writeText(f);
+    setCopied(f);
+    setTimeout(() => setCopied((c) => (c === f ? null : c)), 1500);
   };
 
+  // Ссылка для клиента существует всегда: если её нет (новый проект или менеджер
+  // отозвал все) — создаём одну. autoCreated-ref + isPending-гард защищают от
+  // дубля в рамках одного маунта (StrictMode/гонка до рефетча). Зашёл в фазу,
+  // ссылок нет → снова одна — это и есть задуманное «ссылка всегда под рукой».
+  const autoCreated = useRef(false);
+  useEffect(() => {
+    if (!sharesQ.isSuccess || autoCreated.current) return;
+    if (shares.length === 0 && !create.isPending) {
+      autoCreated.current = true;
+      create.mutate();
+    }
+  }, [sharesQ.isSuccess, shares.length, create]);
+
   return (
-    <div className="rounded-2xl bg-white p-5 shadow-sm">
-      <div className="mb-3 flex items-center justify-between">
-        <div>
-          <h2 className="text-sm font-semibold text-zinc-900">Доступ клиента</h2>
-          <p className="text-xs text-zinc-500">
-            Ссылка на шортлист без регистрации. Клиент видит каналы и прогнозы
-            (без ваших цен) и проставляет «подходит / не подходит».
-          </p>
-        </div>
-        <PrimaryBtn icon={<Plus size={15} />} onClick={() => create.mutate()}>
-          Создать ссылку
-        </PrimaryBtn>
+    <div className="space-y-1.5">
+      <p className="text-xs text-zinc-500">
+        Ссылка для клиента — видит каналы и метрики (без ваших цен), ставит
+        «подходит / не подходит».
+      </p>
+      <div className="flex items-center gap-2">
+        <input
+          readOnly
+          value={primaryUrl || "Создаётся…"}
+          onFocus={(e) => e.currentTarget.select()}
+          className="min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-700 focus:border-emerald-500 focus:outline-none"
+        />
+        <button
+          type="button"
+          onClick={() => primary && copy(primary.url)}
+          disabled={!primary}
+          className="shrink-0 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
+        >
+          {copied === primaryUrl && primaryUrl ? "Скопировано" : "Копировать"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setEditing(true)}
+          className="shrink-0 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+        >
+          Редактировать
+        </button>
       </div>
 
-      {shares.length === 0 ? (
-        <p className="text-sm text-zinc-500">Ссылок ещё нет.</p>
-      ) : (
-        <div className="space-y-1.5">
-          {shares.map((s) => (
-            <div
-              key={s.id}
-              className="flex items-center gap-3 rounded-lg border border-zinc-200 px-3 py-2"
+      {editing && (
+        <Modal onClose={() => setEditing(false)} size="md">
+          <div className="space-y-3">
+            <h2 className="text-sm font-semibold text-zinc-900">
+              Ссылки для клиента
+            </h2>
+            <p className="text-xs text-zinc-500">
+              Можно выдать несколько (например, разным контактам клиента). Отзыв
+              убивает доступ по конкретной ссылке.
+            </p>
+            {shares.length === 0 ? (
+              <p className="text-sm text-zinc-500">Ссылок нет.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {shares.map((s) => (
+                  <div
+                    key={s.id}
+                    className="flex items-center gap-3 rounded-lg border border-zinc-200 px-3 py-2"
+                  >
+                    <code className="min-w-0 flex-1 truncate text-xs text-zinc-600">
+                      {fullUrl(s.url)}
+                    </code>
+                    <span className="shrink-0 text-xs text-zinc-400">
+                      {s.lastSeenAt
+                        ? `открыто ${formatPastRelative(s.lastSeenAt)}`
+                        : "не открывали"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => copy(s.url)}
+                      className="shrink-0 rounded-lg border border-zinc-300 px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                    >
+                      {copied === fullUrl(s.url) ? "Скопировано" : "Скопировать"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => revoke.mutate(s.id)}
+                      disabled={revoke.isPending}
+                      className="shrink-0 rounded-lg px-2 py-1 text-xs font-medium text-zinc-400 hover:text-red-600 disabled:opacity-50"
+                    >
+                      Отозвать
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => create.mutate()}
+              disabled={create.isPending}
+              className="w-full rounded-lg border border-dashed border-zinc-300 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
             >
-              <code className="min-w-0 flex-1 truncate text-xs text-zinc-600">
-                {fullUrl(s.url)}
-              </code>
-              <span className="shrink-0 text-xs text-zinc-400">
-                {s.lastSeenAt
-                  ? `открыто ${formatPastRelative(s.lastSeenAt)}`
-                  : "не открывали"}
-              </span>
-              <button
-                type="button"
-                onClick={() => copy(s.url)}
-                className="shrink-0 rounded-lg border border-zinc-300 px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-              >
-                {copied === s.url ? "Скопировано" : "Скопировать"}
-              </button>
-              <button
-                type="button"
-                onClick={() => revoke.mutate(s.id)}
-                className="shrink-0 rounded-lg px-2 py-1 text-xs font-medium text-zinc-400 hover:text-red-600"
-              >
-                Отозвать
-              </button>
-            </div>
-          ))}
-        </div>
+              {create.isPending ? "Создаём…" : "+ Создать новую ссылку"}
+            </button>
+          </div>
+        </Modal>
       )}
     </div>
   );
@@ -1626,7 +1726,96 @@ function OutreachStatus({ p }: { p: Placement }) {
 // Клик по каналу открывает общий ChannelDrawer (лента постов, авто-синк
 // статистики «открыл-актуализировалось», админы) — переиспользуем со страницы
 // Каналов. stopPropagation, чтобы не сработал row-click (drawer размещения).
-function ChannelCell({ placement }: { placement: Placement }) {
+// Цена для клиента: по умолчанию «= [закупочная]» серым (клиент видит ту же
+// сумму). Клик → инпут с оверрайдом; пусто → снова «совпадает» (clientPrice=null).
+function ClientPriceCell({
+  wsId,
+  projectId,
+  placement,
+}: {
+  wsId: string;
+  projectId: string;
+  placement: Placement;
+}) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const save = useMutation({
+    mutationFn: async (val: number | null) => {
+      const { error } = await api.PATCH(
+        "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}",
+        {
+          params: { path: { wsId, projectId, placementId: placement.id } },
+          body: { clientPrice: val },
+        },
+      );
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      setEditing(false);
+      qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] });
+    },
+  });
+  const commit = () => {
+    const t = draft.replace(/\s/g, "");
+    const val = t === "" ? null : Number(t);
+    if (val !== null && !Number.isFinite(val)) return setEditing(false);
+    if ((placement.clientPrice ?? null) === val) return setEditing(false);
+    save.mutate(val);
+  };
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        type="number"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") setEditing(false);
+        }}
+        placeholder="как закупка"
+        className="w-28 rounded-md border border-emerald-400 px-2 py-1 text-right text-sm focus:outline-none"
+      />
+    );
+  }
+  const hasOverride = placement.clientPrice != null;
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        setDraft(
+          hasOverride
+            ? String(placement.clientPrice)
+            : placement.priceAmount != null
+              ? String(placement.priceAmount)
+              : "",
+        );
+        setEditing(true);
+      }}
+      title="Цена для клиента — кликните, чтобы указать другую (по умолчанию совпадает с закупочной)"
+      className={
+        "rounded px-1.5 py-0.5 text-sm tabular-nums hover:bg-zinc-100 " +
+        (hasOverride ? "font-medium text-zinc-900" : "text-zinc-400")
+      }
+    >
+      {hasOverride
+        ? formatRub(placement.clientPrice)
+        : `= ${formatRub(placement.priceAmount)}`}
+    </button>
+  );
+}
+
+function ChannelCell({
+  placement,
+  preview,
+}: {
+  placement: Placement;
+  // preview=true → лёгкий дровер из кэша (only_local, без сети) — для
+  // согласования, где каналов много и не хочется флудить. Иначе полный дровер.
+  preview?: boolean;
+}) {
   const { wsId } = Route.useParams();
   const [open, setOpen] = useState(false);
   const ch = placement.channel;
@@ -1655,11 +1844,27 @@ function ChannelCell({ placement }: { placement: Placement }) {
         </div>
       </button>
       {open && ch && (
-        <ChannelDrawer
-          wsId={wsId}
-          channelId={ch.id}
-          onClose={() => setOpen(false)}
-        />
+        preview ? (
+          <ChannelPreviewDrawer
+            title={ch.title}
+            queryKey={["channel-preview", wsId, ch.id]}
+            queryFn={async () => {
+              const { data, error } = await api.GET(
+                "/v1/workspaces/{wsId}/channels/{id}/preview",
+                { params: { path: { wsId, id: ch.id } } },
+              );
+              if (error) throw error;
+              return data!.messages as ChannelMessage[];
+            }}
+            onClose={() => setOpen(false)}
+          />
+        ) : (
+          <ChannelDrawer
+            wsId={wsId}
+            channelId={ch.id}
+            onClose={() => setOpen(false)}
+          />
+        )
       )}
     </>
   );
