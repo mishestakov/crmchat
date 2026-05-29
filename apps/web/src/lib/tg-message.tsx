@@ -1,4 +1,5 @@
 import type React from "react";
+import { formatViews } from "./format";
 
 // TG message entities + inline thumbnails — общий рендер для фида канала
 // (channel-card.tsx) и контактного чата (contacts/index.tsx). Shape
@@ -55,6 +56,67 @@ export function MessageMediaThumb(props: { thumb: MessageThumb }) {
           {thumb.kind === "video" ? "Видео" : "GIF"}
         </span>
       )}
+    </div>
+  );
+}
+
+// Full-res медиа: блюр-минитюмбнейл как мгновенный placeholder + полноразмер
+// лениво поверх. Общий рендер для ленты канала и личного чата (байты тянет
+// соответствующий bytes-роут, src передаёт вызывающий). Ошибка → прячем
+// полноразмер, остаётся блюр.
+export function FullResMedia(props: {
+  src: string;
+  thumb: MessageThumb | null;
+  kind: "photo" | "video";
+  width: number;
+  height: number;
+}) {
+  return (
+    <div
+      className="relative overflow-hidden bg-zinc-900"
+      style={{ aspectRatio: `${props.width} / ${props.height}` }}
+    >
+      {props.thumb && (
+        <img
+          src={`data:image/jpeg;base64,${props.thumb.b64}`}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover blur-[2px]"
+        />
+      )}
+      <img
+        src={props.src}
+        alt=""
+        loading="lazy"
+        className="relative h-full w-full object-cover"
+        onError={(e) => {
+          e.currentTarget.style.display = "none";
+        }}
+      />
+      {props.kind === "video" && (
+        <span className="absolute right-2 top-2 rounded bg-black/50 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-white">
+          Видео
+        </span>
+      )}
+    </div>
+  );
+}
+
+// Чипы реакций (эмодзи + счётчик) — общий вид для ленты канала и личного чата.
+export function ReactionChips(props: {
+  reactions: { emoji: string; count: number }[];
+}) {
+  if (props.reactions.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1">
+      {props.reactions.map((r) => (
+        <span
+          key={r.emoji}
+          className="inline-flex items-center gap-0.5 rounded-full bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-600"
+        >
+          <span>{r.emoji}</span>
+          <span className="tabular-nums">{formatViews(r.count)}</span>
+        </span>
+      ))}
     </div>
   );
 }

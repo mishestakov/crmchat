@@ -26,9 +26,11 @@ import { errorMessage } from "../lib/errors";
 import { formatFileSize } from "../lib/format";
 import { useEventSourceEvent } from "../lib/hooks";
 import {
+  FullResMedia,
   type MessageEntity,
   MessageMediaThumb,
   type MessageThumb,
+  ReactionChips,
   renderMessageEntities,
 } from "../lib/tg-message";
 
@@ -76,7 +78,9 @@ type ChatMessage = {
   text: string;
   entities: MessageEntity[];
   mediaThumb: MessageThumb | null;
+  media: { kind: "photo" | "video"; width: number; height: number } | null;
   document: ChatDocument | null;
+  reactions: { emoji: string; count: number }[];
   replyMarkup: ReplyMarkup | null;
   albumId: string | null;
 };
@@ -704,8 +708,19 @@ export function ChatPanel(props: {
                                 : "ring-1 ring-zinc-200")
                           }
                         >
-                          {m.mediaThumb && (
-                            <MessageMediaThumb thumb={m.mediaThumb} />
+                          {m.media ? (
+                            <FullResMedia
+                              src={
+                                `/v1/workspaces/${props.wsId}/contacts/${props.contact.id}/chat-media/${m.id}` +
+                                `?accountId=${encodeURIComponent(props.accountId)}`
+                              }
+                              thumb={m.mediaThumb}
+                              kind={m.media.kind}
+                              width={m.media.width}
+                              height={m.media.height}
+                            />
+                          ) : (
+                            m.mediaThumb && <MessageMediaThumb thumb={m.mediaThumb} />
                           )}
                           <div className="px-3 py-2">
                             {m.document && (
@@ -762,6 +777,7 @@ export function ChatPanel(props: {
                             </div>
                           </div>
                         </div>
+                        <ReactionChips reactions={m.reactions} />
                         {m.replyMarkup && (
                           <ReplyMarkupButtons
                             markup={m.replyMarkup}

@@ -111,6 +111,28 @@ export type TdContent = {
   document?: TdDocument;
 };
 
+// Реакции сообщения (эмодзи + счётчик) — общий разбор для ленты канала и
+// личного чата (структура interaction_info в TDLib одинаковая). Только обычные
+// emoji: custom-emoji без скачивания не отрисуем, paid-реакции скипаем.
+export const MessageReactionSchema = z.object({
+  emoji: z.string(),
+  count: z.number().int().nonnegative(),
+});
+type TdInteractionInfo = {
+  view_count?: number;
+  forward_count?: number;
+  reactions?: {
+    reactions?: { type?: { _: string; emoji?: string }; total_count?: number }[];
+  };
+};
+export function extractReactions(
+  ii: TdInteractionInfo | undefined,
+): { emoji: string; count: number }[] {
+  return (ii?.reactions?.reactions ?? [])
+    .filter((r) => r.type?._ === "reactionTypeEmoji" && r.type.emoji)
+    .map((r) => ({ emoji: r.type!.emoji!, count: r.total_count ?? 0 }));
+}
+
 // Дескриптор медиа креатива для скачивания в норм-разрешении (фото — самый
 // большой размер; видео — постер-превью, не воспроизводим). Общий для
 // клиентского портала (/creatives) и превью у менеджера (step-media).
@@ -182,6 +204,61 @@ export function extractDocument(content: TdContent): MappedDocument | null {
     fileName: doc?.file_name || "файл",
     mimeType: doc?.mime_type || "application/octet-stream",
     size: doc?.document?.size ?? 0,
+  };
+}
+
+// Снимок опубликованного поста (фаза «Отчёт»): нормализованный контент, не сырой
+// TDLib. Храним достаточное для рендера «хоть чего-то», даже если пост удалят:
+// форматированный текст, тамбнейл (блюр), дескриптор медиа + messageId/chatId
+// для дозагрузки full-res пока пост жив, и метрики на момент снимка. Файлы НЕ
+// храним — медиа тянем on-demand, нет — остаётся тамбнейл.
+export const PostSnapshotSchema = z.object({
+  messageId: z.string(),
+  chatId: z.string(),
+  text: z.string(),
+  entities: z.array(TdMessageEntitySchema),
+  thumbB64: z.string().nullable(),
+  thumbW: z.number().int().nullable(),
+  thumbH: z.number().int().nullable(),
+  media: z
+    .object({
+      kind: z.enum(["photo", "video"]),
+      width: z.number().int(),
+      height: z.number().int(),
+    })
+    .nullable(),
+  views: z.number().int().nullable(),
+  forwards: z.number().int().nullable(),
+  reactions: z.array(MessageReactionSchema),
+  capturedAt: z.iso.datetime(),
+});
+export type PostSnapshot = z.infer<typeof PostSnapshotSchema>;
+
+export function buildPostSnapshot(p: {
+  messageId: string;
+  chatId: string;
+  content: TdContent | undefined;
+  info: TdInteractionInfo | null | undefined;
+  capturedAt: string;
+}): PostSnapshot {
+  const { text, entities } = p.content
+    ? extractFormattedText(p.content)
+    : { text: "", entities: [] };
+  const thumb = p.content ? extractMediaThumb(p.content) : null;
+  const cm = p.content ? extractCreativeMedia(p.content) : null;
+  return {
+    messageId: p.messageId,
+    chatId: p.chatId,
+    text,
+    entities,
+    thumbB64: thumb?.b64 ?? null,
+    thumbW: thumb?.width ?? null,
+    thumbH: thumb?.height ?? null,
+    media: cm ? { kind: cm.kind, width: cm.width, height: cm.height } : null,
+    views: p.info?.view_count ?? null,
+    forwards: p.info?.forward_count ?? null,
+    reactions: extractReactions(p.info ?? undefined),
+    capturedAt: p.capturedAt,
   };
 }
 

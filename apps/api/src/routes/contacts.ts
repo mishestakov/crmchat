@@ -47,10 +47,14 @@ import {
   TdDocumentSchema,
   TdMediaThumbSchema,
   TdMessageEntitySchema,
+  MessageReactionSchema,
+  extractCreativeMedia,
   extractDocument,
   extractFormattedText,
   extractMediaThumb,
+  extractReactions,
 } from "../lib/td-message.ts";
+import { respondWithCreativeMedia } from "../lib/creative-media-response.ts";
 import { assertRole, type WorkspaceVars } from "../middleware/assert-member.ts";
 
 // Subquery: ближайший открытый reminder для контакта. Тащим в каждый GET — чтобы
@@ -582,7 +586,16 @@ const ChatMessageSchema = z.object({
   text: z.string(),
   entities: z.array(TdMessageEntitySchema),
   mediaThumb: TdMediaThumbSchema.nullable(),
+  // full-res дескриптор фото/видео-постера (байты — через chat-media роут по id).
+  media: z
+    .object({
+      kind: z.enum(["photo", "video"]),
+      width: z.number().int(),
+      height: z.number().int(),
+    })
+    .nullable(),
   document: TdDocumentSchema.nullable(),
+  reactions: z.array(MessageReactionSchema),
   replyMarkup: ReplyMarkupSchema.nullable(),
   // id альбома (media_album_id), если сообщение — часть альбома; иначе null.
   // Фронт группирует по нему при пометке сообщения (фаза «Запуск»).
@@ -978,6 +991,11 @@ type TdMessage = {
   content: TdContent;
   reply_markup?: TdReplyMarkup;
   media_album_id?: number | string;
+  interaction_info?: {
+    reactions?: {
+      reactions?: { type: { _: string; emoji?: string }; total_count: number }[];
+    };
+  };
 };
 
 // TDLib reply_markup → нормализованная модель (см. ReplyMarkupSchema).
@@ -1015,6 +1033,10 @@ function mapMessage(m: TdMessage): z.infer<typeof ChatMessageSchema> {
   const { text, entities } = extractFormattedText(m.content);
   const mediaThumb = extractMediaThumb(m.content);
   const document = extractDocument(m.content);
+  const cm = extractCreativeMedia(m.content);
+  const media = cm
+    ? { kind: cm.kind, width: cm.width, height: cm.height }
+    : null;
   return {
     id: String(m.id),
     date: new Date(m.date * 1000).toISOString(),
@@ -1025,7 +1047,9 @@ function mapMessage(m: TdMessage): z.infer<typeof ChatMessageSchema> {
     text: text || (mediaThumb || document ? "" : fallbackLabel(m.content._)),
     entities,
     mediaThumb,
+    media,
     document,
+    reactions: extractReactions(m.interaction_info),
     replyMarkup: mapReplyMarkup(m.reply_markup),
     albumId:
       m.media_album_id && String(m.media_album_id) !== "0"
@@ -1108,6 +1132,13 @@ app.get("/v1/workspaces/:wsId/contact-stream", (c) => {
   });
 });
 
+// tg_user_id контакта из properties (хранится строкой). null если нет/не строка.
+function tgUserIdOf(properties: unknown): string | null {
+  const v = (properties as Record<string, unknown> | null | undefined)
+    ?.tg_user_id;
+  return typeof v === "string" ? v : null;
+}
+
 // Отправка файла документом в чат (drag-drop). Plain-роут (не OpenAPI) — proще
 // для multipart; auth берётся из wsApp.use(assertMember). Тег не ставим — менеджер
 // пометит сообщение из чата после доставки.
@@ -1142,9 +1173,8 @@ app.post("/v1/workspaces/:wsId/contacts/:id/send-document", async (c) => {
     .from(contacts)
     .where(and(eq(contacts.id, contactId), eq(contacts.workspaceId, wsId)))
     .limit(1);
-  const tgUserId = (contact?.properties as Record<string, unknown> | undefined)
-    ?.tg_user_id;
-  if (typeof tgUserId !== "string") {
+  const tgUserId = tgUserIdOf(contact?.properties);
+  if (!tgUserId) {
     throw new HTTPException(400, {
       message: "У контакта нет TG ID — откройте чат, чтобы резолвить",
     });
@@ -1188,6 +1218,43 @@ app.get("/v1/workspaces/:wsId/contacts/:id/chat-file", async (c) => {
       "Cache-Control": "private, max-age=300",
     },
   });
+});
+
+// Байты фото/видео-постера сообщения личного чата (full-res) — плейн-роут
+// (бинарь). Тот же путь, что лента канала (post-media): on-demand, не храним.
+// chatId приватного чата == tg_user_id контакта (TDLib convention).
+app.get("/v1/workspaces/:wsId/contacts/:id/chat-media/:messageId", async (c) => {
+  const wsId = c.get("workspaceId");
+  const contactId = c.req.param("id");
+  const messageId = c.req.param("messageId");
+  const accountId = c.req.query("accountId");
+  if (typeof accountId !== "string") {
+    throw new HTTPException(400, { message: "accountId required" });
+  }
+  const [acc] = await db
+    .select({ id: outreachAccounts.id })
+    .from(outreachAccounts)
+    .where(
+      and(eq(outreachAccounts.id, accountId), eq(outreachAccounts.workspaceId, wsId)),
+    )
+    .limit(1);
+  if (!acc) throw new HTTPException(404, { message: "account not found" });
+  const [contact] = await db
+    .select({ properties: contacts.properties })
+    .from(contacts)
+    .where(and(eq(contacts.id, contactId), eq(contacts.workspaceId, wsId)))
+    .limit(1);
+  const tgUserId = tgUserIdOf(contact?.properties);
+  if (!tgUserId) {
+    throw new HTTPException(404, { message: "no tg id" });
+  }
+  const client = await getOutreachWorkerClient({ id: accountId, workspaceId: wsId });
+  if (!client) throw new HTTPException(503, { message: "tg client unavailable" });
+  return respondWithCreativeMedia(
+    client,
+    { chatId: tgUserId, messageId, albumId: null },
+    0,
+  );
 });
 
 export default app;

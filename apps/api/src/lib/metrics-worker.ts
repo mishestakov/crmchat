@@ -3,16 +3,13 @@ import { db } from "../db/client.ts";
 import { outreachAccounts, projectItems } from "../db/schema.ts";
 import { errMsg } from "./errors.ts";
 import {
+  findSubscribedReaderAccount,
   getOutreachWorkerClient,
   parseFloodWaitSeconds,
   setAccountCooldown,
 } from "./outreach-account-client.ts";
 import { emitProjectChanged } from "./events.ts";
-import {
-  extractFormattedText,
-  extractMediaThumb,
-  type TdContent,
-} from "./td-message.ts";
+import { buildPostSnapshot, type TdContent } from "./td-message.ts";
 import type { TdClient } from "./tdlib/index.ts";
 
 // Воркер снятия метрик опубликованных постов (фаза «Отчёт»). Менеджер жмёт
@@ -95,6 +92,7 @@ async function tick() {
         id: projectItems.id,
         projectId: projectItems.projectId,
         workspaceId: projectItems.workspaceId,
+        channelId: projectItems.channelId,
         postUrl: projectItems.postUrl,
       })
       .from(projectItems)
@@ -126,32 +124,47 @@ type InteractionInfo = {
   reactions?: { reactions?: Array<{ total_count?: number }> };
 } | null;
 
+// Аккаунт для чтения поста: с rate-budget не в cooldown (FloodWait общий для
+// отправки и чтения — не дёргаем забенченный аккаунт). Приоритет — аккаунт,
+// ПОДПИСАННЫЙ на канал (для приватных это единственный, кто прочитает пост;
+// для публичных — без разницы). Нет подписанного → любой активный.
+async function pickReaderAccount(workspaceId: string, channelId: string | null) {
+  if (channelId) {
+    const sub = await findSubscribedReaderAccount(workspaceId, channelId, true);
+    if (sub) return sub;
+  }
+  const [acc] = await db
+    .select({
+      id: outreachAccounts.id,
+      workspaceId: outreachAccounts.workspaceId,
+    })
+    .from(outreachAccounts)
+    .where(
+      and(
+        eq(outreachAccounts.workspaceId, workspaceId),
+        eq(outreachAccounts.status, "active"),
+        or(
+          isNull(outreachAccounts.cooldownUntil),
+          lte(outreachAccounts.cooldownUntil, new Date()),
+        ),
+      ),
+    )
+    .limit(1);
+  return acc ?? null;
+}
+
 async function runOne(row: {
   id: string;
   projectId: string;
   workspaceId: string;
+  channelId: string | null;
   postUrl: string | null;
 }) {
   let accountId: string | null = null;
   try {
     if (!row.postUrl) throw new Error("у размещения нет ссылки на пост");
 
-    // Аккаунт с rate-budget не в cooldown (FloodWait общий для отправки и
-    // чтения — не дёргаем забенченный аккаунт, как и outreach-worker).
-    const [acc] = await db
-      .select({ id: outreachAccounts.id, workspaceId: outreachAccounts.workspaceId })
-      .from(outreachAccounts)
-      .where(
-        and(
-          eq(outreachAccounts.workspaceId, row.workspaceId),
-          eq(outreachAccounts.status, "active"),
-          or(
-            isNull(outreachAccounts.cooldownUntil),
-            lte(outreachAccounts.cooldownUntil, new Date()),
-          ),
-        ),
-      )
-      .limit(1);
+    const acc = await pickReaderAccount(row.workspaceId, row.channelId);
     if (!acc) throw new Error("нет активного аккаунта для снятия метрик");
     accountId = acc.id;
 
@@ -194,10 +207,6 @@ async function runOne(row: {
         0,
       ) ?? null;
 
-    const content = message.content;
-    const text = content ? extractFormattedText(content).text : "";
-    const thumb = content ? extractMediaThumb(content) : null;
-
     await db
       .update(projectItems)
       .set({
@@ -207,12 +216,13 @@ async function runOne(row: {
         metricsReactions: reactions,
         metricsCollectedAt: new Date(),
         metricsError: null,
-        postSnapshot: {
-          text,
-          thumbB64: thumb?.b64 ?? null,
-          thumbW: thumb?.width ?? null,
-          thumbH: thumb?.height ?? null,
-        },
+        postSnapshot: buildPostSnapshot({
+          messageId: String(msgId),
+          chatId: String(chatId),
+          content: message.content,
+          info,
+          capturedAt: new Date().toISOString(),
+        }),
       })
       .where(eq(projectItems.id, row.id));
   } catch (e) {

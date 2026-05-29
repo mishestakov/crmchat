@@ -1,6 +1,6 @@
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, isNull, lte, ne, or } from "drizzle-orm";
 import { db } from "../db/client.ts";
-import { outreachAccounts } from "../db/schema.ts";
+import { channelSubscriptions, outreachAccounts } from "../db/schema.ts";
 import { shortId } from "../db/short-id.ts";
 import { encrypt } from "./crypto.ts";
 import { errMsg } from "./errors.ts";
@@ -395,6 +395,44 @@ export async function deleteOutreachAccount(
 //
 // Возвращает null, если td-database директория сломана / не auth — в этом
 // случае worker помечает аккаунт unauthorized и не пытается слать.
+// Активный аккаунт воркспейса, ПОДПИСАННЫЙ на канал (для приватных — единственный,
+// кто прочитает). Общий выбор для ленты канала (pickChannelReader) и снятия
+// метрик (metrics-worker). respectCooldown — пропускать забенченные по FloodWait
+// (для фоновых чтений true; для интерактивной ленты — false).
+export async function findSubscribedReaderAccount(
+  workspaceId: string,
+  channelId: string,
+  respectCooldown = false,
+): Promise<{ id: string; workspaceId: string } | null> {
+  const conds = [
+    eq(channelSubscriptions.channelId, channelId),
+    eq(channelSubscriptions.status, "subscribed"),
+    eq(outreachAccounts.workspaceId, workspaceId),
+    eq(outreachAccounts.status, "active"),
+  ];
+  if (respectCooldown) {
+    conds.push(
+      or(
+        isNull(outreachAccounts.cooldownUntil),
+        lte(outreachAccounts.cooldownUntil, new Date()),
+      )!,
+    );
+  }
+  const [acc] = await db
+    .select({
+      id: outreachAccounts.id,
+      workspaceId: outreachAccounts.workspaceId,
+    })
+    .from(channelSubscriptions)
+    .innerJoin(
+      outreachAccounts,
+      eq(outreachAccounts.id, channelSubscriptions.accountId),
+    )
+    .where(and(...conds))
+    .limit(1);
+  return acc ?? null;
+}
+
 export async function getOutreachWorkerClient(account: {
   id: string;
   workspaceId: string;

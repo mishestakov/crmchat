@@ -14,6 +14,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { shortId } from "./short-id.ts";
+import type { PostSnapshot } from "../lib/td-message.ts";
 
 // Все PK — короткие 12-hex id (см. short-id.ts). Раньше были UUID-36, в URL'ах
 // и логах слишком длинно для нашей шкалы. Тип в БД — обычный text.
@@ -861,12 +862,7 @@ export const projectItems = pgTable(
     metricsReactions: integer("metrics_reactions"),
     metricsCollectedAt: timestamp("metrics_collected_at", { withTimezone: true }),
     metricsError: text("metrics_error"),
-    postSnapshot: jsonb("post_snapshot").$type<{
-      text: string;
-      thumbB64: string | null;
-      thumbW: number | null;
-      thumbH: number | null;
-    }>(),
+    postSnapshot: jsonb("post_snapshot").$type<PostSnapshot>(),
 
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

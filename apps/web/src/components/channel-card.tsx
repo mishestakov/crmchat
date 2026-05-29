@@ -18,9 +18,11 @@ import { formatRelative } from "../lib/date-utils";
 import { errorMessage } from "../lib/errors";
 import { useOutreachAccounts } from "../lib/outreach-queries";
 import {
+  FullResMedia,
   type MessageEntity,
   MessageMediaThumb,
   type MessageThumb,
+  ReactionChips,
   renderMessageEntities,
 } from "../lib/tg-message";
 import { ContactPicker } from "./contact-picker";
@@ -1000,32 +1002,13 @@ export function Post({
   return (
     <article className="overflow-hidden rounded-2xl bg-white ring-1 ring-zinc-200">
       {fullRes ? (
-        <div
-          className="relative overflow-hidden bg-zinc-900"
-          style={{ aspectRatio: `${m.media!.width} / ${m.media!.height}` }}
-        >
-          {m.mediaThumb && (
-            <img
-              src={`data:image/jpeg;base64,${m.mediaThumb.b64}`}
-              alt=""
-              className="absolute inset-0 h-full w-full object-cover blur-[2px]"
-            />
-          )}
-          <img
-            src={`/v1/workspaces/${wsId}/channels/${channelId}/post-media/${m.id}`}
-            alt=""
-            loading="lazy"
-            className="relative h-full w-full object-cover"
-            onError={(e) => {
-              e.currentTarget.style.display = "none";
-            }}
-          />
-          {m.media!.kind === "video" && (
-            <span className="absolute right-2 top-2 rounded bg-black/50 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-white">
-              Видео
-            </span>
-          )}
-        </div>
+        <FullResMedia
+          src={`/v1/workspaces/${wsId}/channels/${channelId}/post-media/${m.id}`}
+          thumb={m.mediaThumb}
+          kind={m.media!.kind}
+          width={m.media!.width}
+          height={m.media!.height}
+        />
       ) : (
         m.mediaThumb && <MessageMediaThumb thumb={m.mediaThumb} />
       )}
@@ -1064,17 +1047,7 @@ export function Post({
           {m.replies !== null && m.replies > 0 && (
             <Metric icon={MessageSquare}>{formatCompact(m.replies)}</Metric>
           )}
-          {m.reactions.map((r) => (
-            <span
-              key={r.emoji}
-              className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px]"
-            >
-              <span>{r.emoji}</span>
-              <span className="tabular-nums text-zinc-600">
-                {formatCompact(r.count)}
-              </span>
-            </span>
-          ))}
+          <ReactionChips reactions={m.reactions} />
         </div>
       </div>
     </article>

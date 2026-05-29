@@ -22,6 +22,7 @@ import {
   type MessageTagRef,
 } from "../../../../../components/chat-drawer";
 import {
+  FullResMedia,
   type MessageEntity,
   MessageMediaThumb,
   type MessageThumb,
@@ -891,7 +892,6 @@ type ProdDraft = {
   scheduledDate: string; // YYYY-MM-DD
   erid: string;
   eridAdvertiserData: string;
-  postUrl: string;
   actReceived: boolean;
 };
 
@@ -903,7 +903,6 @@ function toProd(p: Placement): ProdDraft {
     scheduledDate: p.scheduledAt ? p.scheduledAt.slice(0, 10) : "",
     erid: p.erid ?? "",
     eridAdvertiserData: p.eridAdvertiserData ?? "",
-    postUrl: p.postUrl ?? "",
     actReceived: !!p.actReceivedAt,
   };
 }
@@ -961,11 +960,7 @@ export function ProductionPane({
               : null,
             erid: draft.erid || null,
             eridAdvertiserData: draft.eridAdvertiserData || null,
-            postUrl: draft.postUrl || null,
-            // «Пост вышел» = есть ссылка на пост (отдельной галочки нет).
-            publishedAt: draft.postUrl
-              ? (placement.publishedAt ?? new Date().toISOString())
-              : null,
+            // postUrl/publishedAt владеет capture-post (резолв+снапшот), не save.
             actReceivedAt: draft.actReceived
               ? (placement.actReceivedAt ?? new Date().toISOString())
               : null,
@@ -1301,7 +1296,7 @@ export function ProductionPane({
       key: "publish",
       icon: <Eye size={15} />,
       title: "Публикация",
-      done: !!draft.postUrl,
+      done: !!placement.postUrl,
       summary: draft.scheduledDate ? `Вышел · ${draft.scheduledDate}` : "Вышел",
       body: (
         <div className="space-y-2">
@@ -1314,15 +1309,11 @@ export function ProductionPane({
               className="rounded-md border border-zinc-300 px-2 py-1 text-sm focus:border-emerald-500 focus:outline-none"
             />
           </label>
-          <input
-            value={draft.postUrl}
-            onChange={(e) => set("postUrl", e.target.value)}
-            placeholder="https://t.me/channel/123"
-            className="w-full rounded-md border border-zinc-300 px-2 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+          <PublishStep
+            wsId={wsId}
+            projectId={projectId}
+            placement={placement}
           />
-          <p className="text-[11px] text-zinc-400">
-            Ссылка на пост = «вышел». Шаг закроется, как только вставите URL.
-          </p>
         </div>
       ),
     },
@@ -1355,7 +1346,7 @@ export function ProductionPane({
     saved.contractStatus === "signed",
     saved.creativeStatus === "approved",
     !!saved.erid,
-    !!saved.postUrl,
+    !!placement.postUrl,
     saved.actReceived,
   ];
   const currentIdx = doneServer.findIndex((d) => !d);
@@ -1753,6 +1744,115 @@ function CreativeStep({
       {sendToClient.error && (
         <p className="text-[11px] text-red-600">
           {errorMessage(sendToClient.error)}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// Шаг «Публикация»: вставка ссылки → резолв+проверка «пост в этом канале» на
+// бэке → снимок (текст+тамбнейл+метрики, файлы НЕ храним) → превью прямо здесь.
+// Медиа в превью тянется on-demand (пост жив → full-res, удалён → тамбнейл).
+function PublishStep({
+  wsId,
+  projectId,
+  placement,
+}: {
+  wsId: string;
+  projectId: string;
+  placement: Placement;
+}) {
+  const qc = useQueryClient();
+  const [url, setUrl] = useState(placement.postUrl ?? "");
+  const snap = placement.postSnapshot;
+  const channelId = placement.channel?.id;
+  const capture = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.POST(
+        "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}/capture-post",
+        {
+          params: { path: { wsId, projectId, placementId: placement.id } },
+          body: { url: url.trim() },
+        },
+      );
+      if (error) throw error;
+      return data!;
+    },
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] }),
+  });
+  const thumb: MessageThumb | null = snap?.thumbB64
+    ? {
+        kind: snap.media?.kind ?? "photo",
+        b64: snap.thumbB64,
+        width: snap.thumbW ?? 1,
+        height: snap.thumbH ?? 1,
+      }
+    : null;
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-2">
+        <input
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="https://t.me/channel/123"
+          className="min-w-0 flex-1 rounded-md border border-zinc-300 px-2 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+        />
+        <button
+          type="button"
+          onClick={() => capture.mutate()}
+          disabled={capture.isPending || !url.trim()}
+          className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+        >
+          {capture.isPending ? "Проверяем…" : "Проверить и сохранить"}
+        </button>
+      </div>
+      {capture.error && (
+        <p className="text-[11px] text-red-600">{errorMessage(capture.error)}</p>
+      )}
+      {snap ? (
+        <div className="overflow-hidden rounded-lg border border-zinc-200">
+          {snap.media && channelId ? (
+            <FullResMedia
+              src={`/v1/workspaces/${wsId}/channels/${channelId}/post-media/${snap.messageId}`}
+              thumb={thumb}
+              kind={snap.media.kind}
+              width={snap.media.width}
+              height={snap.media.height}
+            />
+          ) : (
+            thumb && <MessageMediaThumb thumb={thumb} />
+          )}
+          {snap.text && (
+            <div className="whitespace-pre-wrap break-words px-2 py-1.5 text-xs text-zinc-700">
+              {renderMessageEntities(
+                snap.text,
+                (snap.entities ?? []) as MessageEntity[],
+              )}
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2 border-t border-zinc-100 px-2 py-1.5 text-[11px] text-zinc-500">
+            {snap.views != null && <span>👁 {snap.views}</span>}
+            {snap.forwards != null && <span>↪ {snap.forwards}</span>}
+            {(snap.reactions ?? []).map((r) => (
+              <span key={r.emoji}>
+                {r.emoji} {r.count}
+              </span>
+            ))}
+            <a
+              href={placement.postUrl ?? url}
+              target="_blank"
+              rel="noreferrer"
+              className="ml-auto text-emerald-600 underline"
+            >
+              открыть в Telegram
+            </a>
+          </div>
+        </div>
+      ) : (
+        <p className="text-[11px] text-zinc-400">
+          Вставьте ссылку на пост — проверим, что он вышел в этом канале, и
+          сохраним его вид для отчёта.
         </p>
       )}
     </div>

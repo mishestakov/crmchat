@@ -1887,6 +1887,19 @@ function WrapupPhase({ wsId, campaign }: { wsId: string; campaign: Campaign }) {
     (p) => p.clientStatus === "approved" && p.postUrl,
   );
   const pendingCount = rows.filter((p) => p.metricsStatus === "pending").length;
+  // SSE: metrics-worker шлёт emitProjectChanged после КАЖДОГО снятого поста —
+  // подхватываем сразу (мгновенный прогресс), пока есть pending. Поллинг выше
+  // остаётся тонким fallback'ом на случай обрыва стрима.
+  useEventSourceEvent(
+    pendingCount > 0
+      ? `/v1/workspaces/${wsId}/projects/${projectId}/stream`
+      : null,
+    "changed",
+    () =>
+      qc.invalidateQueries({
+        queryKey: ["placements", wsId, projectId, "shortlist"],
+      }),
+  );
 
   const collect = useMutation({
     mutationFn: async () => {
@@ -1925,6 +1938,29 @@ function WrapupPhase({ wsId, campaign }: { wsId: string; campaign: Campaign }) {
           {pendingCount > 0 ? `Снимаем… ${pendingCount}` : "Снять статистику со всех"}
         </button>
       </div>
+
+      {pendingCount > 0 &&
+        (() => {
+          const completed = rows.length - pendingCount;
+          return (
+            <div className="space-y-1">
+              <div className="flex justify-between text-xs text-zinc-500">
+                <span>Снимаем статистику…</span>
+                <span>
+                  {completed} из {rows.length}
+                </span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-zinc-200">
+                <div
+                  className="h-full bg-emerald-500 transition-all"
+                  style={{
+                    width: `${Math.round((completed / rows.length) * 100)}%`,
+                  }}
+                />
+              </div>
+            </div>
+          );
+        })()}
 
       {rows.length === 0 ? (
         <div className="rounded-2xl bg-white p-6 text-sm text-zinc-500 shadow-sm">

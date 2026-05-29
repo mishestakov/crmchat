@@ -38,8 +38,12 @@ import {
   readTaggedMessages,
 } from "../lib/channel-history.ts";
 import {
+  buildPostSnapshot,
+  type TdContent,
   CreativeMediaSchema,
   mapCreativeMediaList,
+  type PostSnapshot,
+  PostSnapshotSchema,
   TdMediaThumbSchema,
   TdMessageEntitySchema,
 } from "../lib/td-message.ts";
@@ -182,14 +186,7 @@ const PlacementSchema = z
     metricsReactions: z.number().int().nullable(),
     metricsCollectedAt: z.iso.datetime().nullable(),
     metricsError: z.string().nullable(),
-    postSnapshot: z
-      .object({
-        text: z.string(),
-        thumbB64: z.string().nullable(),
-        thumbW: z.number().int().nullable(),
-        thumbH: z.number().int().nullable(),
-      })
-      .nullable(),
+    postSnapshot: PostSnapshotSchema.nullable(),
     createdAt: z.iso.datetime(),
   })
   .openapi("Placement");
@@ -1164,12 +1161,7 @@ function serializePlacement(
     metricsReactions: number | null;
     metricsCollectedAt: Date | null;
     metricsError: string | null;
-    postSnapshot: {
-      text: string;
-      thumbB64: string | null;
-      thumbW: number | null;
-      thumbH: number | null;
-    } | null;
+    postSnapshot: PostSnapshot | null;
     createdAt: Date;
     contactId: string | null;
     username: string | null;
@@ -1452,6 +1444,118 @@ app.openapi(
       .returning({ id: projectItems.id });
     if (!row) throw new HTTPException(404, { message: "placement not found" });
     return c.body(null, 204);
+  },
+);
+
+// Вставка ссылки на пост: резолвим через TDLib, проверяем что пост в этом канале,
+// снимаем снапшот СРАЗУ (текст+тамбнейл+метрики+id) — страховка, если блогер
+// удалит пост до отчёта. Файлы не храним: full-res тянем on-demand пока пост жив.
+const CapturePostBody = z
+  .object({ url: z.string().min(1).max(500) })
+  .openapi("CapturePost");
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}/capture-post",
+    tags: ["agency"],
+    request: {
+      params: PlacementParam,
+      body: {
+        content: { "application/json": { schema: CapturePostBody } },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": { schema: z.object({ snapshot: PostSnapshotSchema }) },
+        },
+        description: "Снимок поста снят и сохранён",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const { projectId, placementId } = c.req.valid("param");
+    const { url } = c.req.valid("json");
+    await assertProjectAccess(projectId, wsId, userId, role);
+    const [row] = await db
+      .select({ externalId: channels.externalId })
+      .from(projectItems)
+      .leftJoin(channels, eq(channels.id, projectItems.channelId))
+      .where(
+        and(
+          eq(projectItems.id, placementId),
+          eq(projectItems.projectId, projectId),
+          eq(projectItems.kind, "placement"),
+        ),
+      )
+      .limit(1);
+    if (!row) throw new HTTPException(404, { message: "placement not found" });
+    const [acc] = await db
+      .select({ id: outreachAccounts.id })
+      .from(outreachAccounts)
+      .where(
+        and(
+          eq(outreachAccounts.workspaceId, wsId),
+          eq(outreachAccounts.status, "active"),
+        ),
+      )
+      .limit(1);
+    if (!acc) {
+      throw new HTTPException(412, { message: "нет активного аккаунта Telegram" });
+    }
+    const client = await getOutreachWorkerClient({ id: acc.id, workspaceId: wsId });
+    if (!client) throw new HTTPException(503, { message: "tg client unavailable" });
+    const link = (await client.invoke({
+      _: "getMessageLinkInfo",
+      url,
+    } as never)) as {
+      chat_id?: number;
+      message?: {
+        id?: number;
+        chat_id?: number;
+        content?: TdContent;
+        interaction_info?: {
+          view_count?: number;
+          forward_count?: number;
+          reactions?: {
+            reactions?: { type: { _: string; emoji?: string }; total_count: number }[];
+          };
+        };
+      } | null;
+    };
+    const message = link.message;
+    if (!message?.id) {
+      throw new HTTPException(422, {
+        message: "Пост недоступен (приватный канал, удалён или нет доступа)",
+      });
+    }
+    const postChatId = Number(message.chat_id || link.chat_id);
+    if (row.externalId && postChatId !== Number(row.externalId)) {
+      throw new HTTPException(422, {
+        message: "Ссылка не из этого канала — проверьте, что пост вышел тут",
+      });
+    }
+    const snapshot = buildPostSnapshot({
+      messageId: String(message.id),
+      chatId: String(postChatId),
+      content: message.content,
+      info: message.interaction_info ?? null,
+      capturedAt: new Date().toISOString(),
+    });
+    await db
+      .update(projectItems)
+      .set({
+        postUrl: url,
+        // первый раз — фиксируем время выхода; повторная вставка не перетирает.
+        publishedAt: sql`COALESCE(${projectItems.publishedAt}, now())`,
+        postSnapshot: snapshot,
+      })
+      .where(eq(projectItems.id, placementId));
+    return c.json({ snapshot });
   },
 );
 

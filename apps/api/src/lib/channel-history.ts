@@ -2,6 +2,7 @@ import {
   extractCreativeMedia,
   extractFormattedText,
   extractMediaThumb,
+  extractReactions,
   type TdContent,
 } from "./td-message.ts";
 import type { TdClient } from "./tdlib/client.ts";
@@ -43,9 +44,7 @@ export function mapChannelHistoryItems(
       ? { kind: cm.kind, width: cm.width, height: cm.height }
       : null;
     const ii = m.interaction_info;
-    const reactions = (ii?.reactions?.reactions ?? [])
-      .filter((r) => r.type._ === "reactionTypeEmoji" && r.type.emoji)
-      .map((r) => ({ emoji: r.type.emoji!, count: r.total_count }));
+    const reactions = extractReactions(ii);
     return {
       id: String(m.id),
       date: new Date(m.date * 1000).toISOString(),

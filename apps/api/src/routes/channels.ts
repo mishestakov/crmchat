@@ -42,6 +42,7 @@ import {
 } from "../lib/channels-access.ts";
 import { contactAccessClause } from "../lib/contacts-access.ts";
 import {
+  findSubscribedReaderAccount,
   getOutreachWorkerClient,
   parseFloodWaitSeconds,
   setAccountCooldown,
@@ -162,22 +163,7 @@ async function pickChannelReader(
   userId: string,
   role: WorkspaceRole,
 ): Promise<{ client: TdClient; accountId: string } | null> {
-  const [subscribed] = await db
-    .select({ id: outreachAccounts.id, workspaceId: outreachAccounts.workspaceId })
-    .from(channelSubscriptions)
-    .innerJoin(
-      outreachAccounts,
-      eq(outreachAccounts.id, channelSubscriptions.accountId),
-    )
-    .where(
-      and(
-        eq(channelSubscriptions.channelId, channelId),
-        eq(channelSubscriptions.status, "subscribed"),
-        eq(outreachAccounts.workspaceId, wsId),
-        eq(outreachAccounts.status, "active"),
-      ),
-    )
-    .limit(1);
+  const subscribed = await findSubscribedReaderAccount(wsId, channelId);
   if (subscribed) {
     const client = await getOutreachWorkerClient(subscribed);
     if (client) return { client, accountId: subscribed.id };
