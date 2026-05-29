@@ -97,9 +97,6 @@ export async function tdSignInPassword(
     (s) => s.kind === "ready",
     STEP_TIMEOUT_MS,
   );
-  // Запоминаем пароль в pending — provisionIframeSession переюзает его,
-  // если у юзера 2FA включена и второй TDLib-инстанс упирается в WaitPassword.
-  pending.lastPassword = password;
   return { kind: "ok" };
 }
 

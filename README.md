@@ -6,9 +6,6 @@
 cd ~/crmchat
 docker compose up -d --wait    # postgres
 pnpm dev                        # api:3000 + web:5173 (turbo)
-cd ~/crmchat/apps/tg-client
-npm install
-npm run dev
 ```
 
 Если БД пустая (wipe volume / первый запуск) — вместо первой пары:

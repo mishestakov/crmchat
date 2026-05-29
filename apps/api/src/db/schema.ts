@@ -242,8 +242,7 @@ export const contacts = pgTable(
       .default({}),
     // Счётчик непрочитанных сообщений в TG-чате с этим контактом. Инкрементит
     // outreach-listener (входящее DM от tg_user_id, который у нас в contacts);
-    // обнуляется явным POST /read из фронта (открыли чат / TWA-iframe прислал
-    // chatRead postMessage).
+    // обнуляется явным POST /read из фронта.
     unreadCount: integer("unread_count").notNull().default(0),
     // Время последнего входящего сообщения от контакта — для сортировки кoлонок
     // канбана «свежий ответ сверху» в будущем + для UI-подсказок «X мин назад».
@@ -295,15 +294,9 @@ export const contacts = pgTable(
 // Outreach-аккаунт: ОТПРАВЛЯЮЩИЙ TG-аккаунт для холодных рассылок.
 //   - Multi per workspace (не unique по чему-либо identifying).
 //   - Жизненный цикл: расходник; при бане — заводят новый.
-//   - Worker MTProto-state (TDLib binlog) живёт per-account в
+//   - Одна TDLib-сессия на аккаунт (worker): под ней и шлём, и читаем.
+//     MTProto-state (TDLib binlog) живёт per-account в
 //     `td-database/outreach/<accountId>/`.
-//   - iframe_session — ВТОРОЙ независимый MTProto auth_key для TWA-iframe:
-//     зашифрованный JSON `{ mainDcId, keys: { [dcId]: hex } }`. Создаётся
-//     при persist'e через временный TDLib инстанс +
-//     confirmQrCodeAuthentication (см. lib/tdlib/provision-iframe-session.ts).
-//     Один auth_key для worker и iframe не подходит: TG распределяет updates
-//     на активную сессию, и при открытом iframe worker молчит — теряем
-//     incoming/read events.
 //   - TODO фаза 4: proxy_id, warmup_*, bucket, transport, daily_limit.
 export const outreachAccountStatus = pgEnum("outreach_account_status", [
   "active",
@@ -319,18 +312,6 @@ export const outreachAccounts = pgTable(
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
     status: outreachAccountStatus("status").notNull().default("active"),
-    // Зашифрованный JSON `{ mainDcId, keys: { [dcId]: hex } }`. NULL'ом сидит
-    // только короткий момент между INSERT row и success'ным
-    // provisionIframeSession; после провижна — заполнен. Если так и остался
-    // NULL (provision упал) — UI зовёт /twa-session, ловит 409 и просит
-    // re-auth.
-    iframeSession: text("iframe_session"),
-    // session_id (TG int64) iframe-сессии, возвращённый
-    // confirmQrCodeAuthentication. Используется при удалении аккаунта для
-    // точечного terminateSession({session_id}) — иначе пришлось бы искать
-    // по device_model="CRM iframe" через getActiveSessions, что fragile при
-    // повторных привязках (висящие старые сессии с тем же device_model).
-    iframeSessionId: text("iframe_session_id"),
     tgUserId: text("tg_user_id").notNull(),
     tgUsername: text("tg_username"),
     phoneNumber: text("phone_number"),
@@ -1079,7 +1060,7 @@ export const channelAdmins = pgTable(
 // channel_subscriptions — подписка outreach-аккаунта на TG-канал.
 // Источник истины: сделана через наш subscribe endpoint (joinChat /
 // joinChatByInviteLink) или явно зарегистрирована. Не пытаемся отражать
-// подписки «снаружи CRM» (с телефона/TWA) — пока менеджер не нажмёт
+// подписки «снаружи CRM» (с телефона/из приложения) — пока менеджер не нажмёт
 // «Подписаться» в нашем UI, мы считаем что аккаунт не подписан.
 //
 // Используется в /channels/{id}/history: первый приоритет — читаем через

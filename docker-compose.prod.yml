@@ -57,7 +57,6 @@ services:
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET}
       TELEGRAM_API_ID: ${TELEGRAM_API_ID}
       TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
-      ENCRYPTION_SECRET: ${ENCRYPTION_SECRET}
       TG_PROXY_URL: ${TG_PROXY_URL:-}
       TDLIB_DATA_DIR: /data/td
     sysctls:
@@ -88,22 +87,9 @@ services:
       dockerfile: apps/web/Dockerfile
       args:
         VITE_API_BASE: ""
-        VITE_TG_CLIENT_ORIGIN: ${VITE_TG_CLIENT_ORIGIN}
     restart: unless-stopped
     ports:
       - "127.0.0.1:8081:80"
-
-  tg-client:
-    build:
-      context: .
-      dockerfile: apps/tg-client/Dockerfile
-      args:
-        TELEGRAM_API_ID: ${TELEGRAM_API_ID}
-        TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
-        TG_BASE_URL: /
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:8082:80"
 
 volumes:
   postgres-data:

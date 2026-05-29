@@ -279,8 +279,8 @@ async function processAccount(accountId: string, items: DueItem[]) {
   });
   if (!client) {
     // Не помечаем unauthorized: spawn мог упасть по временной причине
-    // (TDLIB_LIBDIR не проброшен после HMR, dir заблокирован файлами,
-    // network blip). status переключаем только когда TDLib явно сообщил
+    // (dir заблокирован файлами, network blip). status переключаем только
+    // когда TDLib явно сообщил
     // logged_out / closed (см. markUnauthorized в outreach-account-client.ts)
     // или sendOne словил AUTH_KEY-style ошибку (см. ниже).
     console.warn(

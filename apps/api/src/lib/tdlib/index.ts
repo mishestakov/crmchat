@@ -15,8 +15,6 @@ export {
   type PendingEntry,
   type PendingStore,
 } from "./pending-store.ts";
-export { type TwaSession } from "./to-twa-session.ts";
-export { provisionIframeSession } from "./provision-iframe-session.ts";
 export { extractActiveUsername, type TdUser } from "./td-user.ts";
 export {
   tdRequestQr,

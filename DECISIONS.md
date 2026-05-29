@@ -79,22 +79,15 @@ oauth.telegram.org).
 
 ---
 
-## TDLib на бэке + gramjs только в TWA-iframe
+## TDLib-only на бэке, без встроенного веб-чата
 
-**Решение.** MTProto на стороне `apps/api` — через TDLib (`tdl` npm-обёртка над кастомно собранным `libtdjson.so` из `tools/tdlib/`). Гramjs остаётся **только** в `apps/tg-client/` (форк Telegram-T, монтируется как iframe в карточке контакта). Iframe получает auth-key через эндпоинт `/twa-session`, который дёргает у TDLib `getRawAuthKey dc_id` (наш патч) и конвертит сырые 256 байт в формат `{ mainDcId, keys: { [dcId]: hex } }`, ожидаемый TWA. Один TG-аккаунт → одна запись в Active Sessions Telegram.
+**Решение.** Весь Telegram — через TDLib на стороне `apps/api` (`tdl` npm-обёртка; стоковый `libtdjson` из npm-пакета `prebuilt-tdlib`, без своей сборки). Одна TDLib-сессия на outreach-аккаунт (worker): под ней и шлём, и читаем, и снимаем метрики. Полноценную переписку (медиа, файлы, реакции) менеджер ведёт в официальном Telegram-приложении сам — встроенного чата в CRM нет.
 
-**В прежней версии (до этой миграции).** Бэкенд ходил в TG через gramjs: ручной QR-флоу с `Api.auth.ExportLoginToken` + `LoginTokenMigrateTo` DC migration, ручной SRP в `computeCheck` для 2FA, ручное управление `phoneCodeHash` между HTTP-запросами, отдельный кэш `qr-token-cache` с TTL и SSE-bus. Iframe получал свой auth_key через `auth.AcceptLoginToken` хак (worker accept'ил token второго device server-side), отдельная зашифрованная колонка `outreach_accounts.iframe_session` хранила второй gramjs StringSession. Все workaround'ы (handler-leak при reconnect, плоский ImportAuthorization, пустой `catchUp()`, ручная DC-маршрутизация, периодический `reviveDeadListeners`) — следствия gramjs API.
+**Что снесли (была отдельная итерация с встроенным веб-чатом).** Форк Telegram Web A (`apps/tg-client`) монтировался как iframe в карточке контакта и работал на gramjs; ему скармливался auth-key из TDLib через эндпоинт `/twa-session` + кастомный патч `getRawAuthKey`/`getMtprotoSession`; вторая (iframe) TDLib-сессия на аккаунт хранилась в зашифрованной колонке `outreach_accounts.iframe_session`. Всё это удалено: форк, патч TDLib, `provision-iframe-session`, эндпоинт `/twa-session`, колонки `iframe_session`/`iframe_session_id`, AES-обёртка (`lib/crypto.ts`, `ENCRYPTION_SECRET`), Caddy dc*-прокси и сервис `tg-client`.
 
-**Почему отказались.**
-- TDLib инкапсулирует MTProto-state, переподключения, DC-routing, SRP — всю боль gramjs мы у себя руками воспроизводили.
-- `getRawAuthKey` (наш ~21-строчный патч поверх существующего `AuthDataShared::get_auth_key_for_dc`) даёт прямой выход на TWA-iframe без второй авторизации/2FA — auth-key из TDLib-сессии становится auth-key'ем gramjs-iframe.
-- Перестаёт нужно `iframe_session` в БД — генерим on-demand при запросе `/twa-session`.
-- TDLib bin-log сам шифрует чувствительные данные (опция `database_encryption_key`), наша AES-обёртка над gramjs StringSession пропадает.
-- Spike в `playground/tdlib-bridge/` (01–04) подтвердил end-to-end флоу + патч.
+**Почему отказались.** Встроенный веб-чат давал двойную авторизацию (вторая сессия + 2FA), кастомный патч TDLib и вендорный форк TWA как техдолг под каждую версию upstream, плюс MTProto-authKey по HTTP с большим blast-radius. Полноценный чат проще и безопаснее оставить официальному приложению Telegram; CRM нужны только программные операции (отправка/чтение/метрики), которые TDLib закрывает напрямую.
 
-**Что осталось.** `apps/tg-client/` (TWA) — gramjs-форк, не трогаем: для встраиваемого web-клиента TDLib-WASM избыточен, и любые наши правки в форке — техдолг под каждую версию upstream.
-
-**Цена.** Кастомный билд `libtdjson.so` (`tools/tdlib/build.sh`, ~5 минут на чистой машине) — деплой требует либо включения сборки в CI/Docker, либо распространения `.so` отдельно. `td-database/<accountId>/` — persistent FS-stete, требует volume в проде.
+**Сборки TDLib нет.** Раз патч ушёл, `libtdjson` берём готовым из npm-пакета `prebuilt-tdlib` (попадает в `node_modules` при install, `getTdjson()` отдаёт путь). Удалены: `tools/tdlib/`, стадия `tdlib-builder` в `apps/api/Dockerfile`, системные deps на сборку (clang-18/cmake/…), `TDLIB_LIBDIR`. `td-database/<accountId>/` — persistent FS-state, требует volume в проде.
 
 ---
 
@@ -180,8 +173,7 @@ oauth.telegram.org).
 - **FloodWait уже уважаем** (`outreach-worker.ts` ловит `FloodWaitError`/`SlowModeWaitError`, ставит per-account cooldown в памяти + двигает `sendAt`). На рестарте процесса cooldown теряется — первая попытка снова словит тот же flood и заново уснёт.
 - **Inbound listener: реализован для остановки sequence на ответ, не для UI чата.** `outreach-listener.ts` ловит `NewMessage incoming:true isPrivate:true`, матчит `senderId` против `outreach_leads.tg_user_id` в workspace, ставит `replied_at` и cancel'ит pending во ВСЕХ sequences этого лида. Listener подключается eager на старте воркера + при сразу после успешной auth (см. `outreach-account-client.ts:persistOutreachAccount`). НЕ закрывает: лид ответил ДО того как мы получили его tg_user_id (мы его получаем только после первой успешной отправки через `client.getEntity`). Если кто-то сначала ответил юзеру вне CRM, потом мы запустили sequence — match'а не будет, sequence пойдёт. Это закроется когда добавим CRM-side resolve username→tgUserId на этапе CSV-импорта (TODO без приоритета).
 - **Полноценный UI ответов (чат внутри CRM, история переписки) — НЕ делаем.** Это отдельная фича уровня donor's «embedded TG-chat», большая. Сейчас в карточке лида только зелёная подсветка строки + relative «ответил X мин назад». Юзер уходит читать ответ в TG-клиент.
-- **TWA iframe-чат в карточке контакта — реализован.** `apps/tg-client` форк Ajaxy/telegram-tt вендорится через bootstrap-патч, монтируется как iframe в `_authenticated` layout (`<TgChatHost>` alive across opens — один MTProto handshake на жизнь сессии). Кнопка «Открыть чат» в `/contacts/$id` шлёт `openChat` через postMessage. Account = первый active outreach-аккаунт; account-switcher и continuity-of-identity (использовать тот аккаунт что писал лиду первым) — следующим заходом.
-- **`/twa-session` отдаёт MTProto authKey по HTTP.** Это полный контроль над TG-аккаунтом. Защиты: `assertMember` middleware (workspace-scoped), `Cache-Control: no-store, private` на response (ни browser, ни прокси не сохраняют), HTTPS обязателен в проде (TODO env-config CORS/Origin). При компрометации одного workspace'а злоумышленник получает auth-keys всех outreach-аккаунтов этого workspace — тот же blast-radius что и при прямом доступе к БД. Принимаем риск.
+- **Встроенный веб-чат (TWA-iframe) — был, снесён.** Полноценную переписку менеджер ведёт в официальном Telegram-приложении; CRM показывает только историю и быструю отправку (`chat-drawer`) + метрики. Детали сноса — в записи «TDLib-only на бэке, без встроенного веб-чата» выше.
 - **Re-auth UI пока инструкцией.** На странице outreach-аккаунта со статусом `unauthorized` показывается текст «зайдите через Добавить под тем же TG-юзером» (наш `persistOutreachAccount` использует `onConflictDoUpdate` по `(workspaceId, tgUserId)`, при auth тем же телефоном запись обновится). Кнопка «Войти заново» с pre-filled phone — следующим заходом.
 
 ---
@@ -271,16 +263,10 @@ oauth.telegram.org).
   каждым уникальным sender'ом. Сейчас not-hot-path (срабатывает один раз на
   контакт, потом инжектируется `tg_user_id` и идёт быстрый путь). Решения:
   in-memory `Map<senderId, username>` как кэш, либо запрет создания контактов
-  без `tg_user_id` через UI (использовать `/contacts/lookup/by-tg`-резолв).
-- **`provisionIframeSession` блокирует auth-флоу**. Если генерация
-  iframe-session упадёт после авторизации worker'а — юзер не может закончить
-  логин (QR висит). Альтернатива: lazy-провижн при первом запросе
-  `/twa-session` с возможностью retry. Сделать `iframe_session` nullable +
-  отдельный POST `/accounts/{id}/refresh-iframe-session` для retry.
+  без `tg_user_id` через UI (TG-резолв username→tgUserId).
 - **`reviveDeadListeners` каждые 10 сек** — N RPC на N аккаунтов. На 100+
   outreach-аккаунтов это 10 RPC/сек впустую. Перейти на event-driven: ловить
   `disconnect`-event клиента gramjs и сразу пересоздавать, без polling.
-- ~~**TDLib вместо gramjs (long-term).**~~ Сделано — см. отдельную запись «TDLib на бэке + gramjs только в TWA-iframe» выше. Соответственно закрыты:
+- ~~**TDLib вместо gramjs (long-term).**~~ Сделано — см. запись «TDLib-only на бэке, без встроенного веб-чата» выше. Соответственно закрыты:
   - **N+1 RPC риск в `outreach-listener.ts` fallback'е** — ушёл вместе с `event.message.getSender()` (TDLib отдаёт sender как ID, имя/username берём из `getUser`/кэша).
-  - **`provisionIframeSession` блокирует auth-флоу** — устранён, `iframe_session` колонки в БД больше нет, `/twa-session` дёргает `getRawAuthKey` лениво.
   - **`reviveDeadListeners` каждые 10 сек** — устранён, TDLib держит соединение и переподключается сам.

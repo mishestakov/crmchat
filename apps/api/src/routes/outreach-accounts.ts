@@ -22,7 +22,6 @@ import {
   accountAccessClause,
   assertAccountAccess,
 } from "../lib/outreach-access.ts";
-import { tryDecrypt } from "../lib/crypto.ts";
 import {
   streamAuthState,
   tdRequestQr,
@@ -85,19 +84,6 @@ const ImportContactsRespSchema = z
     replicaSize: z.number().int(),
   })
   .openapi("ImportContactsResp");
-
-// TWA session: { mainDcId, keys: { [dcId]: hexAuthKey } } — формат, который
-// принимает apps/tg-client. Получается через TDLib getMtprotoSession patch
-// (см. tools/tdlib/patches/0001-add-mtproto-extensions.patch).
-const TwaSessionResponseSchema = z
-  .object({
-    session: z.object({
-      mainDcId: z.number().int(),
-      keys: z.record(z.string(), z.string()),
-      isTest: z.literal(true).optional(),
-    }),
-  })
-  .openapi("TwaSessionResponse");
 
 function serializeAccount(r: typeof outreachAccounts.$inferSelect) {
   return {
@@ -219,54 +205,6 @@ app.openapi(
       .returning();
     if (!row) throw new HTTPException(404, { message: "account not found" });
     return c.json(serializeAccount(row));
-  },
-);
-
-app.openapi(
-  createRoute({
-    method: "get",
-    path: "/v1/workspaces/{wsId}/outreach/accounts/{accountId}/twa-session",
-    tags: ["outreach"],
-    request: { params: WsAccountParam },
-    responses: {
-      200: {
-        content: { "application/json": { schema: TwaSessionResponseSchema } },
-        description: "Session in TWA format for iframe injection",
-      },
-    },
-  }),
-  async (c) => {
-    const wsId = c.get("workspaceId");
-    const userId = c.get("userId");
-    const role = c.get("workspaceRole");
-    const { accountId } = c.req.valid("param");
-    const row = await assertAccountAccess(accountId, wsId, userId, role);
-    if (!row.iframeSession) {
-      throw new HTTPException(409, {
-        message: "iframe session unavailable, re-auth required",
-      });
-    }
-
-    const decoded = tryDecrypt(row.iframeSession);
-    if (!decoded) {
-      throw new HTTPException(409, {
-        message: "iframe session corrupted, re-auth required",
-      });
-    }
-    let session: { mainDcId: number; keys: Record<number, string> };
-    try {
-      session = JSON.parse(decoded);
-    } catch (e) {
-      console.error(`[twa-session] parse failed for ${accountId}:`, errMsg(e));
-      throw new HTTPException(409, {
-        message: "iframe session malformed, re-auth required",
-      });
-    }
-
-    // no-store: response содержит MTProto authKey — полный контроль над TG-
-    // аккаунтом. Запрещаем кэш (browser disk, прокси, CDN).
-    c.header("Cache-Control", "no-store, private");
-    return c.json({ session });
   },
 );
 

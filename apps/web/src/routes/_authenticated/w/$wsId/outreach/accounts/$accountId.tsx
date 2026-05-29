@@ -215,7 +215,7 @@ function AccountDetailPage() {
               confirm(
                 `Выйти из аккаунта ${
                   acc.firstName || acc.tgUsername || acc.phoneNumber || ""
-                }? Обе сессии (worker и iframe-чат) будут разлогинены в Telegram.`,
+                }? Сессия будет разлогинена в Telegram.`,
               )
             ) {
               remove.mutate();

@@ -1,5 +1,4 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
@@ -7,7 +6,6 @@ import {
   CheckCheck,
   Download,
   FileText,
-  MessageCircle,
   Pin,
   Send,
   Tag,
@@ -156,19 +154,6 @@ export function ChatPanel(props: {
 
   const displayName = contactFullName(props.contact) || "—";
   const peerKey = props.contact.id;
-
-  // Identifier для deep-link на /outreach/chat. Приоритет: tg_user_id (точно)
-  // → username (CSV-импорт по @ без резолва). Без обоих кнопка скрыта.
-  const peerLink = ((): { peerUserId: string } | { peerUsername: string } | null => {
-    const v = props.contact.properties as Record<string, unknown>;
-    if (typeof v.tg_user_id === "string") {
-      return { peerUserId: v.tg_user_id };
-    }
-    if (typeof v.telegram_username === "string" && v.telegram_username) {
-      return { peerUsername: v.telegram_username.replace(/^@/, "") };
-    }
-    return null;
-  })();
 
   // Preview активных проектов: бэк находит project_items.tg_user_id и считает
   // pending'и. Если у peer'а есть pending'и → warning перед отправкой.
@@ -559,18 +544,6 @@ export function ChatPanel(props: {
                 <Pin size={12} />
                 Закрепить за аккаунтом
               </button>
-            )}
-            {peerLink && (
-              <Link
-                to="/w/$wsId/outreach/chat"
-                params={{ wsId: props.wsId }}
-                search={{ accountId: props.accountId, ...peerLink }}
-                title="Открыть полноценный TG-чат (поддерживает медиа, файлы, реакции)"
-                className="inline-flex items-center gap-1 rounded-full bg-[#229ED9] px-3 py-1 text-xs font-medium text-white shadow-sm hover:bg-[#1B89BD]"
-              >
-                <MessageCircle size={14} />
-                Открыть в чате
-              </Link>
             )}
             {props.onClose && (
               <button

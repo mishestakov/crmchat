@@ -3,16 +3,9 @@
 **/dist
 **/.vite
 
-# TDLib source/build cache — собирается заново внутри tdlib-builder stage
-tools/tdlib/.src
-tools/tdlib/.build
-
 # TDLib runtime state — не должен попадать в образ
 apps/api/tg-data
 apps/api/td_db
-
-# Telegram Web A — vendored форк, отдельный Dockerfile
-apps/tg-client/telegram-tt
 
 .git
 .gitignore

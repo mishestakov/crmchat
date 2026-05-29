@@ -1,7 +1,10 @@
 import * as tdl from "tdl";
+import { getTdjson } from "prebuilt-tdlib";
 
 // Однократная конфигурация tdl: путь к libtdjson.so и креды my.telegram.org.
-// Импортируется первым кем угодно из tdlib/* — сайд-эффектом настраивает
+// libtdjson едет готовым бинарём из npm-пакета prebuilt-tdlib (getTdjson()
+// возвращает абсолютный путь к .so в node_modules) — своей сборки TDLib больше
+// нет. Импортируется первым кем угодно из tdlib/* — сайд-эффектом настраивает
 // глобальный addon. Флаг живёт на globalThis: повторный tdl.configure() в
 // одном процессе ругается «tdjson is already loaded» (native addon переживает
 // module scope). Сценарий — re-import модуля в одном процессе (test-runner,
@@ -18,17 +21,9 @@ declare global {
 export function ensureTdlConfigured(): void {
   if ((globalThis as Record<string, unknown>)[FLAG]) return;
 
-  const libdir = process.env.TDLIB_LIBDIR;
-  if (!libdir) {
-    throw new Error(
-      "TDLIB_LIBDIR не задан. Соберите libtdjson.so через tools/tdlib/build.sh и подключите: eval \"$(tools/tdlib/build.sh --env)\".",
-    );
-  }
-
   try {
     tdl.configure({
-      tdjson: "libtdjson.so",
-      libdir,
+      tdjson: getTdjson(),
       // 1 = ошибки + warnings (default — чуть тише, чем gramjs INFO).
       verbosityLevel: 1,
     });

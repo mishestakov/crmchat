@@ -16,9 +16,6 @@ dist/
 .env.production
 *.tsbuildinfo
 
-# tg-client setup marker (см. apps/tg-client/setup.sh)
-apps/tg-client/.crmchat-patched
-
 # TDLib per-account binlog/files — persistent FS state, в проде volume
 apps/api/.td-database/
 

@@ -261,63 +261,6 @@ app.openapi(
   },
 );
 
-// Lookup контакта по TG-identifier'у — для chat-iframe sidebar'а: iframe
-// шлёт chatOpened с peerId/username, нам надо найти соответствующий контакт.
-// Возвращает 404 если не найден; фронт показывает кнопку «Создать лид».
-app.openapi(
-  createRoute({
-    method: "get",
-    path: "/v1/workspaces/{wsId}/contacts/lookup/by-tg",
-    tags: ["contacts"],
-    request: {
-      params: WsParam,
-      query: z.object({
-        tgUserId: z.string().optional(),
-        username: z.string().optional(),
-      }),
-    },
-    responses: {
-      200: {
-        content: { "application/json": { schema: ContactSchema } },
-        description: "Contact",
-      },
-    },
-  }),
-  async (c) => {
-    const wsId = c.get("workspaceId");
-    const { tgUserId, username } = c.req.valid("query");
-    if (!tgUserId && !username) {
-      throw new HTTPException(400, {
-        message: "either tgUserId or username required",
-      });
-    }
-    const conds: SQL[] = [];
-    if (tgUserId) {
-      conds.push(sql`${contactTgUserIdSql} = ${tgUserId}`);
-    }
-    if (username) {
-      const u = username.replace(/^@/, "");
-      conds.push(sql`${contactUsernameSql} = ${u}`);
-    }
-    // nextStep здесь не нужен — sidebar чата рендерит компактную карточку
-    // без активити. Не тащим correlated subquery.
-    const [row] = await db
-      .select(getTableColumns(contacts))
-      .from(contacts)
-      .where(and(contactAccessClause(wsId), or(...conds)))
-      .limit(1);
-    if (!row) throw new HTTPException(404, { message: "contact not found" });
-    return c.json(
-      serialize({
-        ...row,
-        nextStep: null,
-        chatAccounts: [],
-        channels: [],
-      }),
-    );
-  },
-);
-
 app.openapi(
   createRoute({
     method: "patch",

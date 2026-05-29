@@ -2,8 +2,8 @@
 
 # =============================================================================
 # Stage 1 — Vite build.
-# Build-args VITE_API_BASE / VITE_TG_CLIENT_ORIGIN зашиваются в bundle на этапе
-# сборки (Vite не читает env в рантайме). Меняются — нужен rebuild.
+# Build-arg VITE_API_BASE зашивается в bundle на этапе сборки (Vite не читает
+# env в рантайме). Меняется — нужен rebuild.
 # =============================================================================
 FROM node:24-alpine AS builder
 
@@ -23,9 +23,7 @@ COPY packages ./packages
 COPY apps/web ./apps/web
 
 ARG VITE_API_BASE=""
-ARG VITE_TG_CLIENT_ORIGIN=""
 ENV VITE_API_BASE=$VITE_API_BASE
-ENV VITE_TG_CLIENT_ORIGIN=$VITE_TG_CLIENT_ORIGIN
 
 RUN pnpm --filter web build
 

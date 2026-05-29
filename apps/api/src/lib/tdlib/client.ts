@@ -16,7 +16,7 @@ const DATA_ROOT = resolve(process.env.TDLIB_DATA_DIR ?? ".td-database");
 export type TdClient = TdlClient;
 
 // outreach — постоянный outreach-аккаунт workspace'а (worker-инстанс).
-// raw — временный ключ для коротких задач (provision iframe-сессии, и т.п.).
+// raw — временный ключ для коротких задач.
 export type TdAccountKey =
   | { kind: "outreach"; accountId: string }
   | { kind: "raw"; key: string };
@@ -99,7 +99,7 @@ async function syncProxy(
   client: TdlClient,
   proxy: { server: string; port: number; secret: string },
 ): Promise<void> {
-  const list = (await client.invoke({ _: "getProxies" })) as {
+  const list = (await client.invoke({ _: "getProxies" })) as unknown as {
     proxies: Array<{
       id: number;
       server: string;

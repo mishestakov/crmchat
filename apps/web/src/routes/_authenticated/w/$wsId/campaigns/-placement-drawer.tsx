@@ -744,7 +744,7 @@ function GroupPicker({
   loading: boolean;
 }) {
   // Поиск групп БЕЗОПАСЕН для MTProto, поэтому RAM-кэш всех групп не нужен (нечем
-  // флудить). Почему (ресерч по исходникам TDLib, tools/tdlib/.src):
+  // флудить). Почему (ресерч по исходникам TDLib, github.com/tdlib/td):
   //   • /account-groups зовёт searchChats + getChat;
   //   • searchChats → MessagesManager::search_dialogs (MessagesManager.cpp:14146)
   //     ищет по in-memory `dialogs_hints_` и резолвит promise синхронно —

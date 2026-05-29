@@ -21,11 +21,6 @@ export type PendingEntry = {
   client: TdClient;
   authBus: AuthStateBus;
   key: TdAccountKey;
-  // 2FA-пароль, который юзер ввёл в текущем auth-флоу. Хранится в RAM
-  // только до конца persist'а (provisionIframeSession его пере-использует
-  // когда второй TDLib-инстанс упирается в WaitPassword), потом стирается.
-  // В БД НИКОГДА не уходит.
-  lastPassword?: string;
 };
 
 export type PendingStore = {

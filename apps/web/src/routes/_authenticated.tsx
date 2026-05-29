@@ -110,9 +110,6 @@ function AuthLayout() {
                     Проекты
                   </SidebarLink>
                 )}
-                <SidebarLink to="/w/$wsId/outreach/chat" wsId={wsId}>
-                  Чат
-                </SidebarLink>
                 <SidebarLink to="/w/$wsId/outreach/accounts" wsId={wsId}>
                   Telegram-аккаунты
                 </SidebarLink>
@@ -207,7 +204,6 @@ function SidebarLink(props: {
     | "/w/$wsId/outreach/accounts"
     | "/w/$wsId/projects"
     | "/w/$wsId/campaigns"
-    | "/w/$wsId/outreach/chat"
     | "/w/$wsId/outreach/schedule";
   wsId: string;
   children: ReactNode;

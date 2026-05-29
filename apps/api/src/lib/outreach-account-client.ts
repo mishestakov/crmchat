@@ -2,7 +2,6 @@ import { and, eq, isNull, lte, ne, or } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import { channelSubscriptions, outreachAccounts } from "../db/schema.ts";
 import { shortId } from "../db/short-id.ts";
-import { encrypt } from "./crypto.ts";
 import { errMsg } from "./errors.ts";
 import { attachListener, detachListener } from "./outreach-listener.ts";
 import { attachReplicator, type ReplicatorHandle } from "./tg-replicator.ts";
@@ -12,7 +11,6 @@ import {
   createTdClient,
   destroyTdAccount,
   extractActiveUsername,
-  provisionIframeSession,
   renameTdAccount,
   waitForAuthState,
   type AuthStateBus,
@@ -208,63 +206,10 @@ export async function persistOutreachAccount(
     })
     .returning({ id: outreachAccounts.id });
 
-  // 7) Поднимаем рабочего клиента на финальном dir.
+  // 7) Поднимаем рабочего клиента на финальном dir. Одна TDLib-сессия на
+  // аккаунт — под ней и шлём, и читаем (worker + listener + replicator).
   const worker = await spawnWorker(finalAccountId, workspaceId);
   workerClients.set(finalAccountId, worker);
-
-  // 8) ВТОРОЙ независимый auth_key для iframe (TWA). Worker confirms QR
-  // временного TDLib instance'а; при 2FA — переюзаем уже-введённый пароль
-  // из pending.lastPassword (RAM-only, не из БД).
-  //
-  // ВАЖНО: pauseWorker callback закрывает worker между confirmQrCodeAuthentication
-  // и checkAuthenticationPassword на iframe. Иначе catchup-spam worker'а
-  // блокирует iframe finalize на минуты. После провижна re-spawn worker'а.
-  let workerPaused = false;
-  try {
-    const { twa, sessionId } = await provisionIframeSession(
-      worker.client,
-      finalAccountId,
-      pending.lastPassword,
-      async () => {
-        if (workerPaused) return;
-        workerPaused = true;
-        detachListener(finalAccountId, worker.client);
-        worker.replicator.detach();
-        worker.authBus.detach();
-        try {
-          await worker.client.close();
-        } catch {
-          // ignore
-        }
-        workerClients.delete(finalAccountId);
-      },
-    );
-    await db
-      .update(outreachAccounts)
-      .set({
-        iframeSession: encrypt(JSON.stringify(twa)),
-        iframeSessionId: sessionId,
-      })
-      .where(eq(outreachAccounts.id, finalAccountId));
-  } catch (e) {
-    console.error(
-      "[persistOutreachAccount] provisionIframeSession failed:",
-      e instanceof Error ? (e.stack ?? e.message) : String(e),
-    );
-  } finally {
-    pending.lastPassword = undefined;
-    if (workerPaused) {
-      try {
-        const reborn = await spawnWorker(finalAccountId, workspaceId);
-        workerClients.set(finalAccountId, reborn);
-      } catch (e) {
-        console.error(
-          "[persistOutreachAccount] respawn worker failed:",
-          errMsg(e),
-        );
-      }
-    }
-  }
 
   return { id: row!.id };
 }
@@ -320,10 +265,7 @@ export async function deleteOutreachAccount(
   accountId: string,
 ): Promise<boolean> {
   const [row] = await db
-    .select({
-      id: outreachAccounts.id,
-      iframeSessionId: outreachAccounts.iframeSessionId,
-    })
+    .select({ id: outreachAccounts.id })
     .from(outreachAccounts)
     .where(
       and(
@@ -334,13 +276,8 @@ export async function deleteOutreachAccount(
     .limit(1);
   if (!row) return false;
 
-  // Перед logOut'ом worker'а — убиваем iframe-сессию через terminateSession
-  // по сохранённому session_id (его вернул confirmQrCodeAuthentication при
-  // provision'е). После logOut worker'а session невалиден, поэтому порядок
-  // строгий. Если worker нет в кэше (api рестартанул и warmup упал) —
-  // поднимаем временно. Если iframeSessionId пуст (legacy-аккаунт до этого
-  // фикса) — пропускаем terminate; logOut worker'а сам отзовёт все
-  // зависимые device-сессии.
+  // logOut worker'а отзывает session в TG. Если worker нет в кэше (api
+  // рестартанул и warmup упал) — поднимаем временно ради logOut.
   let worker = workerClients.get(accountId);
   if (!worker) {
     try {
@@ -354,19 +291,6 @@ export async function deleteOutreachAccount(
     }
   }
   if (worker) {
-    if (row.iframeSessionId) {
-      await worker.client
-        .invoke({
-          _: "terminateSession",
-          session_id: row.iframeSessionId,
-        } as never)
-        .catch((e: unknown) =>
-          console.error(
-            "[deleteOutreachAccount] terminate iframe session:",
-            errMsg(e),
-          ),
-        );
-    }
     try {
       await worker.client.invoke({ _: "logOut" } as never);
     } catch {

@@ -700,7 +700,7 @@ async function isAccessibleGroup(
 
 // Live-листинг групп аккаунта (этап 16.9 ревизия): без реплики в БД, и при этом
 // БЕЗ единого MTProto-запроса — поэтому безопасно дёргать на поиск (флуда нет).
-// Ресерч по исходникам TDLib (tools/tdlib/.src), чтобы вывод не потерялся:
+// Ресерч по исходникам TDLib (github.com/tdlib/td), чтобы вывод не потерялся:
 //   • searchChats → Requests.cpp:3325 → MessagesManager::search_dialogs
 //     (MessagesManager.cpp:14146): `dialogs_hints_.search(query, limit)` по
 //     IN-MEMORY структуре + `promise.set_value(Unit())` синхронно — НИ ОДНОГО

@@ -133,7 +133,7 @@ Auth — server-side сессия в httpOnly cookie (см. `auth.md`). Клие
 | Real-time источник | Postgres `LISTEN/NOTIFY` → SSE |
 | Очередь фоновых задач | **pg-boss** (поверх того же Postgres) |
 | Файлы | **S3-совместимое**: Yandex Object Storage в проде, **MinIO** локально |
-| MTProto | **TDLib** через `tdl` (кастомный билд `libtdjson.so` из `tools/tdlib/`); auth-state и binlog хранятся per-account в `td-database/<accountId>/` (FS-volume в проде). В TWA-iframe (`apps/tg-client`) — gramjs, auth_key в него передаётся через `/twa-session` (под капотом наш патч `getRawAuthKey`). |
+| MTProto | **TDLib** через `tdl`; `libtdjson` едет готовым бинарём из npm-пакета `prebuilt-tdlib` (своей сборки нет). Одна сессия на outreach-аккаунт, auth-state и binlog хранятся per-account в `td-database/<accountId>/` (FS-volume в проде). Полноценную переписку менеджер ведёт в официальном Telegram-приложении — встроенного веб-чата нет. |
 | Auth | Яндекс OAuth2 → server-side session в Postgres |
 | Scheduler | pg-boss schedules (cron-expression внутри очереди) |
 
