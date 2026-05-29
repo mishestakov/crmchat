@@ -49,6 +49,18 @@ function SharePage() {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["share", token] }),
   });
+  // Креативы на согласование (Фаза B) — появляются на этапе производства.
+  const creativesQ = useQuery({
+    queryKey: ["share-creatives", token] as const,
+    queryFn: async () => {
+      const { data, error } = await api.GET("/v1/share/{token}/creatives", {
+        params: { path: { token } },
+      });
+      if (error) throw error;
+      return data!.creatives;
+    },
+    retry: false,
+  });
 
   if (projectQ.isLoading) {
     return <Centered>Загрузка…</Centered>;
@@ -197,6 +209,25 @@ function SharePage() {
               </div>
             ))}
         </section>
+
+        {creativesQ.data && creativesQ.data.length > 0 && (
+          <section className="rounded-2xl bg-white shadow-sm">
+            <div className="border-b border-zinc-100 px-5 py-3">
+              <h2 className="text-sm font-semibold text-zinc-900">
+                Креативы на согласование
+              </h2>
+              <p className="text-xs text-zinc-500">
+                Посмотрите, как будет выглядеть пост, и согласуйте или попросите
+                правки.
+              </p>
+            </div>
+            <div className="divide-y divide-zinc-100">
+              {creativesQ.data.map((cr) => (
+                <CreativeCard key={cr.placementId} token={token} creative={cr} />
+              ))}
+            </div>
+          </section>
+        )}
       </main>
 
       {preview && (
@@ -381,6 +412,120 @@ function DecisionPill({
       {icon}
       {children}
     </button>
+  );
+}
+
+type ClientCreative = components["schemas"]["ClientCreative"];
+
+// Карточка креатива в клиентском портале (Фаза B): рендер «как будет выглядеть»
+// (медиа норм-разрешения с TDLib + текст) + Согласовать / На правки + коммент.
+function CreativeCard({
+  token,
+  creative,
+}: {
+  token: string;
+  creative: ClientCreative;
+}) {
+  const qc = useQueryClient();
+  const serverComment = creative.comment ?? "";
+  const [comment, setComment] = useState(serverComment);
+  const [prevServer, setPrevServer] = useState(serverComment);
+  if (serverComment !== prevServer) {
+    setPrevServer(serverComment);
+    setComment(serverComment);
+  }
+  const decide = useMutation({
+    mutationFn: async (status: "approved" | "revising") => {
+      const { error } = await api.POST(
+        "/v1/share/{token}/placements/{placementId}/creative-decision",
+        {
+          params: { path: { token, placementId: creative.placementId } },
+          body: { status, comment: comment.trim() || null },
+        },
+      );
+      if (error) throw error;
+    },
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["share-creatives", token] }),
+  });
+  const mediaUrl = (idx: number) =>
+    `/v1/share/${token}/placements/${creative.placementId}/creative-media/${idx}`;
+  return (
+    <div className="space-y-3 px-5 py-4">
+      <div className="text-sm font-medium text-zinc-900">
+        {creative.channelTitle}
+      </div>
+      {/* Превью поста: медиа + текст, как в Telegram */}
+      <div className="max-w-md overflow-hidden rounded-xl border border-zinc-200">
+        {creative.media.length > 0 && (
+          <div
+            className={
+              "grid gap-0.5 bg-zinc-100 " +
+              (creative.media.length === 1 ? "grid-cols-1" : "grid-cols-2")
+            }
+          >
+            {creative.media.map((m) => (
+              <div key={m.idx} className="relative bg-zinc-50">
+                <img
+                  src={mediaUrl(m.idx)}
+                  alt=""
+                  loading="lazy"
+                  className="h-full max-h-80 w-full object-cover"
+                />
+                {m.kind === "video" && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/25 text-2xl text-white">
+                    ▶
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        {creative.text && (
+          <div className="whitespace-pre-line px-3 py-2 text-sm text-zinc-800">
+            {creative.text}
+          </div>
+        )}
+      </div>
+      {creative.status === "approved" ? (
+        <div className="text-sm font-medium text-emerald-700">✓ Согласовано</div>
+      ) : creative.status === "revising" ? (
+        <div className="text-sm text-amber-700">
+          Отправлено на правки{creative.comment ? `: ${creative.comment}` : ""}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <textarea
+            rows={2}
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            placeholder="Комментарий к правкам (необязательно)"
+            className="w-full max-w-md resize-none rounded-lg border border-zinc-300 px-2 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+          />
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => decide.mutate("approved")}
+              disabled={decide.isPending}
+              className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
+              Согласовать
+            </button>
+            <button
+              type="button"
+              onClick={() => decide.mutate("revising")}
+              disabled={decide.isPending}
+              className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
+            >
+              На правки
+            </button>
+          </div>
+        </div>
+      )}
+      {decide.error && (
+        <p className="text-xs text-red-600">{errorMessage(decide.error)}</p>
+      )}
+    </div>
   );
 }
 

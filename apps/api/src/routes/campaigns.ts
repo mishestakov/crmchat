@@ -35,7 +35,7 @@ import { resolveAdminRecipient } from "../lib/placement-recipient.ts";
 import { getOutreachWorkerClient } from "../lib/outreach-account-client.ts";
 import {
   mapChannelHistoryItems,
-  type TdChannelMessage,
+  readTaggedMessages,
 } from "../lib/channel-history.ts";
 import {
   TdMediaThumbSchema,
@@ -1309,58 +1309,8 @@ app.openapi(
       workspaceId: wsId,
     });
     if (!client) return c.json({ messages: [] });
-    const chatId = Number(ref.chatId);
-    const msgId = Number(ref.messageId);
-    type TdAlbumMsg = TdChannelMessage & { media_album_id?: string | number };
-    try {
-      // openChat: getMessage/getChatHistory НЕ offline — на холодной сессии без
-      // open чат может не зарезолвиться и сообщение вернётся null (хотя есть).
-      await client.invoke({ _: "openChat", chat_id: chatId } as never);
-      let msgs: TdAlbumMsg[];
-      if (ref.albumId) {
-        // Альбом = соседние сообщения с общим media_album_id. Берём окно истории
-        // вокруг помеченного и фильтруем — фронт хранит одно id, не зависим от
-        // того, что было подгружено в чате (фикс потери части альбома).
-        const r = (await client.invoke({
-          _: "getChatHistory",
-          chat_id: chatId,
-          from_message_id: msgId,
-          offset: -9,
-          limit: 20,
-          only_local: false,
-        } as never)) as { messages?: (TdAlbumMsg | null)[] };
-        msgs = (r.messages ?? []).filter(
-          (m): m is TdAlbumMsg =>
-            !!m && String(m.media_album_id ?? "0") === ref.albumId,
-        );
-        if (msgs.length === 0) {
-          const one = (await client
-            .invoke({
-              _: "getMessage",
-              chat_id: chatId,
-              message_id: msgId,
-            } as never)
-            .catch(() => null)) as TdAlbumMsg | null;
-          if (one) msgs = [one];
-        }
-        // история идёт от новых к старым — отдаём альбом по возрастанию id.
-        msgs.sort((a, b) => Number(a.id) - Number(b.id));
-      } else {
-        const one = (await client.invoke({
-          _: "getMessage",
-          chat_id: chatId,
-          message_id: msgId,
-        } as never)) as TdAlbumMsg | null;
-        msgs = one ? [one] : [];
-      }
-      return c.json({ messages: mapChannelHistoryItems(msgs) });
-    } catch {
-      return c.json({ messages: [] });
-    } finally {
-      await client
-        .invoke({ _: "closeChat", chat_id: chatId } as never)
-        .catch(() => {});
-    }
+    const msgs = await readTaggedMessages(client, ref);
+    return c.json({ messages: mapChannelHistoryItems(msgs) });
   },
 );
 

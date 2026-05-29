@@ -11,7 +11,7 @@ import {
   FileCheck,
   Check,
 } from "lucide-react";
-import { api } from "../../../../../lib/api";
+import { api, sendContactDocument } from "../../../../../lib/api";
 import { errorMessage } from "../../../../../lib/errors";
 import { formatPastRelative } from "../../../../../lib/date-utils";
 import { useOutreachAccounts } from "../../../../../lib/outreach-queries";
@@ -1054,6 +1054,32 @@ export function ProductionPane({
   });
 
   // Зона помеченного сообщения в шаге: рендер на лету + «убрать», иначе подсказка.
+  // Drop-зона договора: дроп файла на блок «Договор» → отправляем блогеру (тот же
+  // send-document, что и чат), менеджер пометит сообщение в чате после доставки.
+  const [docDragOver, setDocDragOver] = useState(false);
+  const [docUploading, setDocUploading] = useState(false);
+  const [docError, setDocError] = useState<string | null>(null);
+  const uploadDoc = async (file: File) => {
+    if (!placement.adminContactId || !sendAccountId) return;
+    setDocUploading(true);
+    setDocError(null);
+    try {
+      await sendContactDocument(
+        wsId,
+        placement.adminContactId,
+        sendAccountId,
+        file,
+      );
+      qc.invalidateQueries({
+        queryKey: ["chat-history", wsId, placement.adminContactId],
+      });
+    } catch (e) {
+      setDocError(e instanceof Error ? e.message : "Не удалось отправить файл");
+    } finally {
+      setDocUploading(false);
+    }
+  };
+
   const renderTagArea = (kind: MessageTagKind) =>
     stepMessages[kind] ? (
       <div className="space-y-1">
@@ -1071,6 +1097,34 @@ export function ProductionPane({
         >
           убрать пометку
         </button>
+      </div>
+    ) : kind === "contract" && placement.adminContactId ? (
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDocDragOver(true);
+        }}
+        onDragLeave={() => setDocDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDocDragOver(false);
+          const f = e.dataTransfer.files?.[0];
+          if (f) void uploadDoc(f);
+        }}
+        className={
+          "rounded-lg border border-dashed px-2 py-2.5 text-center text-[11px] " +
+          (docError
+            ? "border-red-300 bg-red-50 text-red-700"
+            : docDragOver
+              ? "border-emerald-400 bg-emerald-50 text-emerald-700"
+              : "border-zinc-300 text-zinc-400")
+        }
+      >
+        {docUploading
+          ? "Отправляем…"
+          : docError
+            ? `Не отправилось: ${docError}. Перетащите ещё раз.`
+            : "Перетащите файл договора — отправим блогеру, затем пометьте в чате"}
       </div>
     ) : (
       <p className="text-[11px] text-zinc-400">
@@ -1150,6 +1204,11 @@ export function ProductionPane({
           <p className="text-[11px] text-zinc-400">
             Сначала чек на ТЗ, потом клиенту на ОК.
           </p>
+          {placement.creativeClientComment && (
+            <p className="rounded-md bg-amber-50 px-2 py-1 text-[11px] text-amber-700">
+              Клиент просит правки: {placement.creativeClientComment}
+            </p>
+          )}
           {renderTagArea("creative")}
         </div>
       ),

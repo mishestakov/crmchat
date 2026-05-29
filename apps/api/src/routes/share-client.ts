@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { and, asc, eq, gt, isNull, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
   channelSubscriptions,
@@ -15,9 +15,12 @@ import {
 import {
   mapChannelHistoryItems,
   readChannelPreview,
+  readTaggedMessages,
 } from "../lib/channel-history.ts";
 import { getOutreachWorkerClient } from "../lib/outreach-account-client.ts";
+import { downloadToBytes } from "../lib/td-files.ts";
 import {
+  extractFormattedText,
   TdMediaThumbSchema,
   TdMessageEntitySchema,
 } from "../lib/td-message.ts";
@@ -390,6 +393,218 @@ app.openapi(
       limit,
     });
     return c.json({ messages: mapChannelHistoryItems(msgs) });
+  },
+);
+
+// ── Фаза B: клиентское согласование креативов ───────────────────────────────
+// Креатив = помеченное сообщение блогера (текст + медиа). Клиент видит «как будет
+// выглядеть» и жмёт Согласовать / На правки. Медиа тянем с TDLib on-demand в
+// норм-разрешении (downloadToBytes), файлы не храним.
+
+// Статусы креатива, видимые клиенту в портале (подмножество placementCreativeStatus).
+const CLIENT_CREATIVE_STATUSES = ["client_review", "approved", "revising"] as const;
+
+type TdCreativeContent = {
+  _: string;
+  photo?: {
+    sizes?: { photo: { id: number }; width: number; height: number }[];
+  };
+  video?: { thumbnail?: { file?: { id: number } }; width?: number; height?: number };
+};
+
+// Из контента сообщения → дескриптор медиа (фото — самый большой размер; видео —
+// постер-превью, не воспроизводим). null если не фото/видео.
+function creativeMediaOf(
+  content: TdCreativeContent,
+): { kind: "photo" | "video"; fileId: number; width: number; height: number } | null {
+  if (content._ === "messagePhoto") {
+    const sizes = content.photo?.sizes ?? [];
+    if (sizes.length === 0) return null;
+    const largest = sizes.reduce((a, b) => (b.width > a.width ? b : a));
+    return { kind: "photo", fileId: largest.photo.id, width: largest.width, height: largest.height };
+  }
+  if (content._ === "messageVideo") {
+    const file = content.video?.thumbnail?.file;
+    if (!file) return null;
+    return { kind: "video", fileId: file.id, width: content.video?.width ?? 0, height: content.video?.height ?? 0 };
+  }
+  return null;
+}
+
+const CreativeMediaSchema = z.object({
+  idx: z.number().int(),
+  kind: z.enum(["photo", "video"]),
+  width: z.number().int(),
+  height: z.number().int(),
+});
+const ClientCreativeSchema = z
+  .object({
+    placementId: z.string(),
+    channelTitle: z.string(),
+    text: z.string(),
+    media: z.array(CreativeMediaSchema),
+    status: z.enum(["client_review", "approved", "revising"]),
+    comment: z.string().nullable(),
+  })
+  .openapi("ClientCreative");
+
+app.openapi(
+  createRoute({
+    method: "get",
+    path: "/v1/share/{token}/creatives",
+    tags: ["share-client"],
+    request: { params: TokenParam },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({ creatives: z.array(ClientCreativeSchema) }),
+          },
+        },
+        description: "Креативы на согласование клиентом",
+      },
+    },
+  }),
+  async (c) => {
+    const { token } = c.req.valid("param");
+    const share = await resolveShare(token);
+    const rows = await db
+      .select({
+        id: projectItems.id,
+        channelTitle: channels.title,
+        stepMessages: projectItems.stepMessages,
+        status: projectItems.creativeStatus,
+        comment: projectItems.creativeClientComment,
+      })
+      .from(projectItems)
+      .leftJoin(channels, eq(channels.id, projectItems.channelId))
+      .where(
+        and(
+          eq(projectItems.projectId, share.projectId),
+          eq(projectItems.kind, "placement"),
+          sql`${projectItems.shortlistedAt} IS NOT NULL`,
+          sql`${projectItems.stepMessages} -> 'creative' IS NOT NULL`,
+          inArray(projectItems.creativeStatus, CLIENT_CREATIVE_STATUSES),
+        ),
+      )
+      .orderBy(asc(projectItems.createdAt));
+
+    const creatives: z.infer<typeof ClientCreativeSchema>[] = [];
+    for (const r of rows) {
+      const ref = r.stepMessages?.creative;
+      if (!ref) continue;
+      const client = await getOutreachWorkerClient({
+        id: ref.accountId,
+        workspaceId: share.workspaceId,
+      });
+      const msgs = client ? await readTaggedMessages(client, ref) : [];
+      const text = msgs
+        .map((m) => extractFormattedText(m.content).text)
+        .filter((t) => t.length > 0)
+        .join("\n");
+      const media = msgs
+        .map((m, idx) => {
+          const mm = creativeMediaOf(m.content as unknown as TdCreativeContent);
+          return mm ? { idx, kind: mm.kind, width: mm.width, height: mm.height } : null;
+        })
+        .filter((x): x is NonNullable<typeof x> => x !== null);
+      creatives.push({
+        placementId: r.id,
+        channelTitle: r.channelTitle ?? "—",
+        text,
+        media,
+        status: r.status as "client_review" | "approved" | "revising",
+        comment: r.comment,
+      });
+    }
+    return c.json({ creatives });
+  },
+);
+
+// Отдача медиа креатива (плейн-роут — бинарь). Скачиваем on-demand в норм-
+// разрешении, не храним. idx — индекс сообщения в альбоме креатива.
+app.get(
+  "/v1/share/:token/placements/:placementId/creative-media/:idx",
+  async (c) => {
+    const token = c.req.param("token");
+    const placementId = c.req.param("placementId");
+    const idx = Number(c.req.param("idx"));
+    const share = await resolveShare(token);
+    const [row] = await db
+      .select({ stepMessages: projectItems.stepMessages })
+      .from(projectItems)
+      .where(
+        and(
+          eq(projectItems.id, placementId),
+          eq(projectItems.projectId, share.projectId),
+          eq(projectItems.kind, "placement"),
+          sql`${projectItems.shortlistedAt} IS NOT NULL`,
+        ),
+      )
+      .limit(1);
+    const ref = row?.stepMessages?.creative;
+    if (!ref) throw new HTTPException(404, { message: "not found" });
+    const client = await getOutreachWorkerClient({
+      id: ref.accountId,
+      workspaceId: share.workspaceId,
+    });
+    if (!client) throw new HTTPException(404, { message: "not found" });
+    const msgs = await readTaggedMessages(client, ref);
+    const m = msgs[idx];
+    const media = m && creativeMediaOf(m.content as unknown as TdCreativeContent);
+    if (!media) throw new HTTPException(404, { message: "not found" });
+    const bytes = await downloadToBytes(client, media.fileId);
+    if (!bytes) throw new HTTPException(404, { message: "media unavailable" });
+    return new Response(bytes, {
+      status: 200,
+      headers: {
+        "Content-Type": "image/jpeg",
+        "Cache-Control": "private, max-age=300",
+      },
+    });
+  },
+);
+
+const CreativeDecisionBody = z
+  .object({
+    status: z.enum(["approved", "revising"]),
+    comment: z.string().max(2000).nullable().optional(),
+  })
+  .openapi("CreativeDecision");
+
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/share/{token}/placements/{placementId}/creative-decision",
+    tags: ["share-client"],
+    request: {
+      params: PlacementTokenParam,
+      body: {
+        content: { "application/json": { schema: CreativeDecisionBody } },
+        required: true,
+      },
+    },
+    responses: { 204: { description: "Creative decision saved" } },
+  }),
+  async (c) => {
+    const { token, placementId } = c.req.valid("param");
+    const { status, comment } = c.req.valid("json");
+    const share = await resolveShare(token);
+    const [row] = await db
+      .update(projectItems)
+      .set({ creativeStatus: status, creativeClientComment: comment ?? null })
+      .where(
+        and(
+          eq(projectItems.id, placementId),
+          eq(projectItems.projectId, share.projectId),
+          eq(projectItems.kind, "placement"),
+          sql`${projectItems.shortlistedAt} IS NOT NULL`,
+          inArray(projectItems.creativeStatus, CLIENT_CREATIVE_STATUSES),
+        ),
+      )
+      .returning({ id: projectItems.id });
+    if (!row) throw new HTTPException(404, { message: "creative not found" });
+    return c.body(null, 204);
   },
 );
 

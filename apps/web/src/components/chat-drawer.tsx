@@ -13,7 +13,7 @@ import {
   X,
 } from "lucide-react";
 import type { Contact } from "@repo/core";
-import { api } from "../lib/api";
+import { api, sendContactDocument } from "../lib/api";
 import {
   formatDateTime,
   formatHHMM,
@@ -221,6 +221,37 @@ export function ChatPanel(props: {
       });
     },
   });
+
+  // Drag-drop файла → отправка документом (бэкенд шлёт через TDLib). Тег
+  // ставится вручную из чата после доставки. dragDepth — счётчик enter/leave
+  // (leave летит и от дочерних элементов, булев флаг мигал бы).
+  const [dragDepth, setDragDepth] = useState(0);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const uploadFile = async (file: File) => {
+    setUploading(true);
+    setUploadError(null);
+    try {
+      await sendContactDocument(
+        props.wsId,
+        props.contact.id,
+        props.accountId,
+        file,
+      );
+      qc.invalidateQueries({
+        queryKey: [
+          "chat-history",
+          props.wsId,
+          props.contact.id,
+          props.accountId,
+        ],
+      });
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : "Ошибка отправки файла");
+    } finally {
+      setUploading(false);
+    }
+  };
 
   // Старт бота (этап 16.9): первое действие в пустом бот-диалоге. После — бот
   // присылает меню/приветствие, перетягиваем историю.
@@ -439,7 +470,42 @@ export function ChatPanel(props: {
     : null;
 
   return (
-    <div className="flex h-full flex-col bg-white">
+    <div
+      className="relative flex h-full flex-col bg-white"
+      onDragEnter={(e) => {
+        if (!chatId) return;
+        e.preventDefault();
+        setDragDepth((d) => d + 1);
+      }}
+      onDragOver={(e) => {
+        if (chatId) e.preventDefault();
+      }}
+      onDragLeave={() => setDragDepth((d) => Math.max(0, d - 1))}
+      onDrop={(e) => {
+        if (!chatId) return;
+        e.preventDefault();
+        setDragDepth(0);
+        const f = e.dataTransfer.files?.[0];
+        if (f) void uploadFile(f);
+      }}
+    >
+        {(dragDepth > 0 || uploading) && (
+          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-emerald-50/90 text-sm font-medium text-emerald-700">
+            {uploading ? "Отправляем файл…" : "Отпустите — отправить файл в чат"}
+          </div>
+        )}
+        {uploadError && (
+          <div className="flex items-center justify-between gap-2 border-b border-red-200 bg-red-50 px-4 py-1.5 text-xs text-red-700">
+            <span className="truncate">{uploadError}</span>
+            <button
+              type="button"
+              onClick={() => setUploadError(null)}
+              className="shrink-0 text-red-400 hover:text-red-700"
+            >
+              ✕
+            </button>
+          </div>
+        )}
         <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3">
           <div className="min-w-0">
             <div className="truncate font-medium">{displayName}</div>

@@ -127,3 +127,57 @@ export async function readChannelPreview(
     return [];
   }
 }
+
+// Чтение помеченного сообщения (договор/креатив/акт) — раздаётся менеджеру
+// (step-message) и клиенту (креативы). openChat обязателен: getMessage/
+// getChatHistory НЕ offline. albumId → собираем весь альбом из окна истории по
+// media_album_id (фронт хранит одно id). Ошибка → []. Сорт по возрастанию id.
+export type TdAlbumMessage = TdChannelMessage & {
+  media_album_id?: string | number;
+};
+export async function readTaggedMessages(
+  client: TdClient,
+  ref: { chatId: string; messageId: string; albumId: string | null },
+): Promise<TdAlbumMessage[]> {
+  const chatId = Number(ref.chatId);
+  const msgId = Number(ref.messageId);
+  try {
+    await client.invoke({ _: "openChat", chat_id: chatId } as never);
+    let msgs: TdAlbumMessage[];
+    if (ref.albumId) {
+      const r = (await client.invoke({
+        _: "getChatHistory",
+        chat_id: chatId,
+        from_message_id: msgId,
+        offset: -9,
+        limit: 20,
+        only_local: false,
+      } as never)) as { messages?: (TdAlbumMessage | null)[] };
+      msgs = (r.messages ?? []).filter(
+        (m): m is TdAlbumMessage =>
+          !!m && String(m.media_album_id ?? "0") === ref.albumId,
+      );
+      if (msgs.length === 0) {
+        const one = (await client
+          .invoke({ _: "getMessage", chat_id: chatId, message_id: msgId } as never)
+          .catch(() => null)) as TdAlbumMessage | null;
+        if (one) msgs = [one];
+      }
+      msgs.sort((a, b) => Number(a.id) - Number(b.id));
+    } else {
+      const one = (await client.invoke({
+        _: "getMessage",
+        chat_id: chatId,
+        message_id: msgId,
+      } as never)) as TdAlbumMessage | null;
+      msgs = one ? [one] : [];
+    }
+    return msgs;
+  } catch {
+    return [];
+  } finally {
+    await client
+      .invoke({ _: "closeChat", chat_id: chatId } as never)
+      .catch(() => {});
+  }
+}

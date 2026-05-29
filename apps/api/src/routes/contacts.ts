@@ -40,6 +40,7 @@ import {
 import { ensureContactTgUserId } from "../lib/ensure-tg-user-id.ts";
 import { errMsg } from "../lib/errors.ts";
 import { getOutreachWorkerClient } from "../lib/outreach-account-client.ts";
+import { sendDocument } from "../lib/td-files.ts";
 import { resolveStickyByPeerIds } from "../lib/sticky.ts";
 import {
   type TdContent,
@@ -1099,6 +1100,54 @@ app.get("/v1/workspaces/:wsId/contact-stream", (c) => {
       }
     }
   });
+});
+
+// Отправка файла документом в чат (drag-drop). Plain-роут (не OpenAPI) — proще
+// для multipart; auth берётся из wsApp.use(assertMember). Тег не ставим — менеджер
+// пометит сообщение из чата после доставки.
+app.post("/v1/workspaces/:wsId/contacts/:id/send-document", async (c) => {
+  const wsId = c.get("workspaceId");
+  const contactId = c.req.param("id");
+  const body = await c.req.parseBody();
+  const file = body["file"];
+  const accountId = body["accountId"];
+  const caption = typeof body["caption"] === "string" ? body["caption"] : "";
+  if (!(file instanceof File)) {
+    throw new HTTPException(400, { message: "file required" });
+  }
+  if (typeof accountId !== "string") {
+    throw new HTTPException(400, { message: "accountId required" });
+  }
+  if (file.size > 20 * 1024 * 1024) {
+    throw new HTTPException(413, { message: "Файл больше 20 МБ" });
+  }
+  // accountId приходит из body — проверяем принадлежность воркспейсу
+  // (getOutreachWorkerClient кэширует по account.id и сам по ws не скоупит).
+  const [acc] = await db
+    .select({ id: outreachAccounts.id })
+    .from(outreachAccounts)
+    .where(
+      and(eq(outreachAccounts.id, accountId), eq(outreachAccounts.workspaceId, wsId)),
+    )
+    .limit(1);
+  if (!acc) throw new HTTPException(404, { message: "account not found" });
+  const [contact] = await db
+    .select({ properties: contacts.properties })
+    .from(contacts)
+    .where(and(eq(contacts.id, contactId), eq(contacts.workspaceId, wsId)))
+    .limit(1);
+  const tgUserId = (contact?.properties as Record<string, unknown> | undefined)
+    ?.tg_user_id;
+  if (typeof tgUserId !== "string") {
+    throw new HTTPException(400, {
+      message: "У контакта нет TG ID — откройте чат, чтобы резолвить",
+    });
+  }
+  const client = await getOutreachWorkerClient({ id: accountId, workspaceId: wsId });
+  if (!client) throw new HTTPException(503, { message: "tg client unavailable" });
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  await sendDocument(client, Number(tgUserId), bytes, file.name, caption);
+  return c.body(null, 204);
 });
 
 export default app;
