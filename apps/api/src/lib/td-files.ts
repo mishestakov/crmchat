@@ -1,15 +1,13 @@
-import { writeFile, readFile, unlink } from "node:fs/promises";
+import { writeFile, readFile, rm, mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { randomUUID } from "node:crypto";
 import type { TdClient } from "./tdlib/client.ts";
 
-// Имя документа в Telegram = basename пути inputFileLocal. Префиксуем коротким id
-// (уникальность temp) + оригинальное имя (режем только разделители путей) — имя
-// у блогера остаётся читаемым.
-function tempName(name: string): string {
-  const base = name.replace(/[/\\]/g, "_").trim() || "file";
-  return `${randomUUID().slice(0, 8)}-${base}`;
+// Имя документа в Telegram = basename пути inputFileLocal. Уникальность даёт
+// temp-ДИРЕКТОРИЯ (mkdtemp), а сам файл сохраняем под оригинальным именем (режем
+// только разделители путей) — у блогера имя остаётся чистым, без uuid-префикса.
+function safeBaseName(name: string): string {
+  return name.replace(/[/\\]/g, "_").trim() || "file";
 }
 
 // Отправка файла документом в чат через TDLib. TDLib берёт АБСОЛЮТНЫЙ путь к
@@ -25,9 +23,10 @@ export async function sendDocument(
   fileName: string,
   caption: string,
 ): Promise<void> {
-  const path = join(tmpdir(), tempName(fileName));
+  const dir = await mkdtemp(join(tmpdir(), "tgdoc-"));
+  const path = join(dir, safeBaseName(fileName));
   await writeFile(path, bytes);
-  const cleanup = () => void unlink(path).catch(() => {});
+  const cleanup = () => void rm(dir, { recursive: true, force: true }).catch(() => {});
   try {
     await client.invoke({
       _: "sendMessage",

@@ -892,7 +892,6 @@ type ProdDraft = {
   erid: string;
   eridAdvertiserData: string;
   postUrl: string;
-  published: boolean;
   actReceived: boolean;
 };
 
@@ -905,7 +904,6 @@ function toProd(p: Placement): ProdDraft {
     erid: p.erid ?? "",
     eridAdvertiserData: p.eridAdvertiserData ?? "",
     postUrl: p.postUrl ?? "",
-    published: !!p.publishedAt,
     actReceived: !!p.actReceivedAt,
   };
 }
@@ -939,6 +937,14 @@ export function ProductionPane({
   const [openStep, setOpenStep] = useState<string | null>(null);
   const set = <K extends keyof ProdDraft>(k: K, v: ProdDraft[K]) =>
     setDraft((d) => ({ ...d, [k]: v }));
+  // Прыжок к помеченному сообщению в чате справа (клик «открыть в чате»). nonce
+  // растёт на каждый клик — повторный прыжок к тому же id срабатывает снова.
+  const [jumpTo, setJumpTo] = useState<{
+    messageId: string;
+    nonce: number;
+  } | null>(null);
+  const jumpToMessage = (messageId: string) =>
+    setJumpTo((j) => ({ messageId, nonce: (j?.nonce ?? 0) + 1 }));
 
   const save = useMutation({
     mutationFn: async () => {
@@ -956,7 +962,8 @@ export function ProductionPane({
             erid: draft.erid || null,
             eridAdvertiserData: draft.eridAdvertiserData || null,
             postUrl: draft.postUrl || null,
-            publishedAt: draft.published
+            // «Пост вышел» = есть ссылка на пост (отдельной галочки нет).
+            publishedAt: draft.postUrl
               ? (placement.publishedAt ?? new Date().toISOString())
               : null,
             actReceivedAt: draft.actReceived
@@ -997,6 +1004,8 @@ export function ProductionPane({
           { params: { path }, body: args.ref },
         );
         if (error) throw error;
+        // Пометка креатива переводит его в internal_review атомарно на бэке
+        // (PUT step-message) — здесь ничего доставлять не нужно.
       } else {
         const { error } = await api.DELETE(
           "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}/step-message/{kind}",
@@ -1053,6 +1062,26 @@ export function ProductionPane({
     },
   });
 
+  // «Договор подписан» — действие-кнопка, не черновик: персистим сразу (иначе
+  // правка теряется при уходе без Save). Держим draft в синхроне, чтобы внизу
+  // не всплывала лишняя «Сохранить».
+  const markContractSigned = useMutation({
+    mutationFn: async () => {
+      const { error } = await api.PATCH(
+        "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}",
+        {
+          params: { path: { wsId, projectId, placementId: placement.id } },
+          body: { contractStatus: "signed" },
+        },
+      );
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      set("contractStatus", "signed");
+      qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] });
+    },
+  });
+
   // Зона помеченного сообщения в шаге: рендер на лету + «убрать», иначе подсказка.
   // Drop-зона договора: дроп файла на блок «Договор» → отправляем блогеру (тот же
   // send-document, что и чат), менеджер пометит сообщение в чате после доставки.
@@ -1083,12 +1112,28 @@ export function ProductionPane({
   const renderTagArea = (kind: MessageTagKind) =>
     stepMessages[kind] ? (
       <div className="space-y-1">
-        <TaggedMessageView
-          wsId={wsId}
-          projectId={projectId}
-          placementId={placement.id}
-          kind={kind}
-        />
+        {/* Договор — это файл, превью бесполезно: компактная плашка + прыжок в
+            чат. Креатив/акт показываем как есть (TaggedMessageView). */}
+        {kind === "contract" ? (
+          <button
+            type="button"
+            onClick={() => jumpToMessage(stepMessages.contract!.messageId)}
+            className="flex w-full items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-left text-xs font-medium text-emerald-800 hover:bg-emerald-100"
+          >
+            <Check size={14} className="shrink-0" />
+            <span className="flex-1">Договор отправлен</span>
+            <span className="shrink-0 text-emerald-600 underline">
+              открыть в чате
+            </span>
+          </button>
+        ) : (
+          <TaggedMessageView
+            wsId={wsId}
+            projectId={projectId}
+            placementId={placement.id}
+            kind={kind}
+          />
+        )}
         <button
           type="button"
           onClick={() => tagMut.mutate({ kind, ref: null })}
@@ -1152,19 +1197,21 @@ export function ProductionPane({
       title: "Договор",
       done: draft.contractStatus === "signed",
       summary: "Подписан · сканы/ЭДО",
+      // Статус ведём от факта: отправка договора (drop) → пометка в чате
+      // проставляет «отправлен» автоматически; «подписан» — кнопкой ниже.
       body: (
         <div className="space-y-2">
-          <ProdSelect
-            value={draft.contractStatus}
-            onChange={(v) => set("contractStatus", v as ContractStatus)}
-            options={[
-              ["none", "не отправлен"],
-              ["sent", "отправлен"],
-              ["revising", "правки"],
-              ["signed", "подписан"],
-            ]}
-          />
           {renderTagArea("contract")}
+          {stepMessages.contract && draft.contractStatus !== "signed" && (
+            <button
+              type="button"
+              onClick={() => markContractSigned.mutate()}
+              disabled={markContractSigned.isPending}
+              className="w-full rounded-lg border border-zinc-300 px-2 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
+            >
+              {markContractSigned.isPending ? "Сохраняем…" : "Договор подписан"}
+            </button>
+          )}
         </div>
       ),
     },
@@ -1177,40 +1224,19 @@ export function ProductionPane({
           : "Креатив",
       done: draft.creativeStatus === "approved",
       summary: `Одобрен клиентом${draft.creativeRound > 1 ? ` · v${draft.creativeRound}` : ""}`,
-      body: (
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <ProdSelect
-              value={draft.creativeStatus}
-              onChange={(v) => set("creativeStatus", v as CreativeStatus)}
-              options={[
-                ["none", "—"],
-                ["awaiting", "ждём драфт"],
-                ["internal_review", "проверка агентством"],
-                ["client_review", "у клиента на ОК"],
-                ["revising", "правки"],
-                ["approved", "одобрен"],
-              ]}
-            />
-            <input
-              type="number"
-              min={0}
-              value={draft.creativeRound}
-              onChange={(e) => set("creativeRound", Number(e.target.value))}
-              title="Раунд правок"
-              className="w-16 rounded-md border border-zinc-300 px-2 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
-            />
-          </div>
-          <p className="text-[11px] text-zinc-400">
-            Сначала чек на ТЗ, потом клиенту на ОК.
-          </p>
-          {placement.creativeClientComment && (
-            <p className="rounded-md bg-amber-50 px-2 py-1 text-[11px] text-amber-700">
-              Клиент просит правки: {placement.creativeClientComment}
-            </p>
-          )}
-          {renderTagArea("creative")}
-        </div>
+      body: stepMessages.creative ? (
+        <CreativeStep
+          wsId={wsId}
+          projectId={projectId}
+          placement={placement}
+          sendAccountId={sendAccountId}
+          adminContactId={adminContactId}
+          onUntag={() => tagMut.mutate({ kind: "creative", ref: null })}
+        />
+      ) : (
+        <p className="text-[11px] text-zinc-400">
+          Пометьте сообщение блогера с креативом в чате справа → «Креатив».
+        </p>
       ),
     },
     {
@@ -1275,7 +1301,7 @@ export function ProductionPane({
       key: "publish",
       icon: <Eye size={15} />,
       title: "Публикация",
-      done: draft.published,
+      done: !!draft.postUrl,
       summary: draft.scheduledDate ? `Вышел · ${draft.scheduledDate}` : "Вышел",
       body: (
         <div className="space-y-2">
@@ -1294,14 +1320,9 @@ export function ProductionPane({
             placeholder="https://t.me/channel/123"
             className="w-full rounded-md border border-zinc-300 px-2 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
           />
-          <label className="flex items-center gap-2 text-sm text-zinc-700">
-            <input
-              type="checkbox"
-              checked={draft.published}
-              onChange={(e) => set("published", e.target.checked)}
-            />
-            Пост вышел
-          </label>
+          <p className="text-[11px] text-zinc-400">
+            Ссылка на пост = «вышел». Шаг закроется, как только вставите URL.
+          </p>
         </div>
       ),
     },
@@ -1334,7 +1355,7 @@ export function ProductionPane({
     saved.contractStatus === "signed",
     saved.creativeStatus === "approved",
     !!saved.erid,
-    saved.published,
+    !!saved.postUrl,
     saved.actReceived,
   ];
   const currentIdx = doneServer.findIndex((d) => !d);
@@ -1467,6 +1488,7 @@ export function ProductionPane({
             accounts={accountsQ.data ?? []}
             onTagMessage={(kind, ref) => tagMut.mutate({ kind, ref })}
             taggedKindByMessageId={taggedKindByMessageId}
+            jumpTo={jumpTo}
           />
         ) : (
           <div className="flex h-full items-center justify-center px-6 text-center text-sm text-zinc-400">
@@ -1475,6 +1497,264 @@ export function ProductionPane({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// Шаг «Креатив» (фаза «Запуск»): живое full-res превью помеченного креатива +
+// действия-кнопки вместо селекта статусов. Статус ведётся прямыми мутациями
+// (персист сразу, не через черновик). Превью читается на лету — если блогер
+// отредактировал то же сообщение, менеджер видит новый вариант.
+function CreativeStep({
+  wsId,
+  projectId,
+  placement,
+  sendAccountId,
+  adminContactId,
+  onUntag,
+}: {
+  wsId: string;
+  projectId: string;
+  placement: Placement;
+  sendAccountId: string | null;
+  adminContactId: string | null;
+  onUntag: () => void;
+}) {
+  const qc = useQueryClient();
+  const status = placement.creativeStatus;
+  const clientComment = placement.creativeClientComment;
+  const q = useQuery({
+    queryKey: [
+      "step-message",
+      wsId,
+      projectId,
+      placement.id,
+      "creative",
+    ] as const,
+    queryFn: async () => {
+      const { data, error } = await api.GET(
+        "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}/step-message/{kind}",
+        {
+          params: {
+            path: { wsId, projectId, placementId: placement.id, kind: "creative" },
+          },
+        },
+      );
+      if (error) throw error;
+      return data!;
+    },
+    staleTime: 30_000,
+  });
+  const messages = q.data?.messages ?? [];
+  const media = q.data?.media ?? [];
+  const editDate = q.data?.editDate ?? null;
+  // Блогер правит то же сообщение → красным, если правка ПОЗЖЕ отправки клиенту.
+  const editedAfterSent = !!(
+    editDate &&
+    placement.creativeClientSentAt &&
+    new Date(editDate) > new Date(placement.creativeClientSentAt)
+  );
+  const text = messages
+    .map((m) => m.text)
+    .filter(Boolean)
+    .join("\n");
+  const mediaUrl = (idx: number) =>
+    `/v1/workspaces/${wsId}/projects/${projectId}/placements/${placement.id}/step-media/creative/${idx}`;
+
+  // Статус-мутации меняют только creativeStatus (живёт в placement) — кэш
+  // креатива (step-message) НЕ трогаем, иначе лишний перечит сообщения с TDLib.
+  // Содержимое креатива перечитается само по staleTime / при смене блогера.
+  const invalidate = () =>
+    qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] });
+  const patchStatus = async (body: {
+    creativeStatus: "client_review";
+    creativeRound?: number;
+  }) => {
+    const { error } = await api.PATCH(
+      "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}",
+      { params: { path: { wsId, projectId, placementId: placement.id } }, body },
+    );
+    if (error) throw error;
+  };
+  // Отправка креатива клиенту. bumpRound=true — после правок блогера (новый
+  // раунд). Кнопки «Показать клиенту» и «снова» в разных ветках статуса —
+  // одновременно не видны, поэтому общий isPending/error безопасен.
+  const sendToClient = useMutation({
+    mutationFn: (bumpRound: boolean) =>
+      patchStatus({
+        creativeStatus: "client_review",
+        ...(bumpRound ? { creativeRound: placement.creativeRound + 1 } : {}),
+      }),
+    onSuccess: invalidate,
+  });
+
+  // Переслать коммент клиента блогеру (quick-send, человеко-флоу). Текст
+  // редактируемый — правки клиента ≠ дословно то, что просим у блогера.
+  const [fwdOpen, setFwdOpen] = useState(false);
+  const [fwdText, setFwdText] = useState("");
+  const forward = useMutation({
+    mutationFn: async () => {
+      if (!adminContactId || !sendAccountId) {
+        throw new Error("Нет аккаунта или контакта для отправки");
+      }
+      const { error } = await api.POST("/v1/workspaces/{wsId}/quick-send", {
+        params: { path: { wsId } },
+        body: { accountId: sendAccountId, contactId: adminContactId, text: fwdText },
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      setFwdOpen(false);
+      qc.invalidateQueries({ queryKey: ["chat-history"] });
+    },
+  });
+
+  return (
+    <div className="space-y-2">
+      {q.isLoading ? (
+        <p className="text-[11px] text-zinc-400">Загрузка креатива…</p>
+      ) : messages.length === 0 ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-700">
+          Сообщение недоступно (удалено или вне кэша) — перепометьте.
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-lg border border-zinc-200">
+          {media.length > 0 && (
+            <div
+              className={
+                "grid gap-0.5 bg-zinc-100 " +
+                (media.length === 1 ? "grid-cols-1" : "grid-cols-2")
+              }
+            >
+              {media.map((m) => (
+                <div key={m.idx} className="relative bg-zinc-50">
+                  <img
+                    src={mediaUrl(m.idx)}
+                    alt=""
+                    loading="lazy"
+                    className="max-h-72 w-full object-contain"
+                  />
+                  {m.kind === "video" && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/25 text-2xl text-white">
+                      ▶
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {text && (
+            <div className="whitespace-pre-wrap break-words px-2 py-1.5 text-xs text-zinc-700">
+              {renderMessageEntities(
+                text,
+                messages.flatMap((m) => m.entities as MessageEntity[]),
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {editDate && (
+        <p
+          className={
+            "text-[11px] " +
+            (editedAfterSent ? "font-medium text-red-600" : "text-zinc-400")
+          }
+        >
+          {editedAfterSent
+            ? "⚠ Креатив изменён ПОСЛЕ отправки клиенту"
+            : "Отредактирован"}{" "}
+          · {formatPastRelative(editDate)}
+        </p>
+      )}
+
+      {status === "approved" ? (
+        <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-700">
+          <Check size={14} /> Клиент одобрил креатив
+        </div>
+      ) : status === "client_review" ? (
+        <div className="rounded-md bg-blue-50 px-2 py-1 text-[11px] text-blue-700">
+          У клиента на согласовании — ждём ответа.
+        </div>
+      ) : status === "revising" ? (
+        <div className="space-y-1.5">
+          {clientComment && (
+            <p className="rounded-md bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
+              Клиент просит правки: {clientComment}
+            </p>
+          )}
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setFwdText(clientComment ?? "");
+                setFwdOpen((v) => !v);
+              }}
+              disabled={!adminContactId || !sendAccountId}
+              className="inline-flex items-center gap-1 rounded-lg border border-zinc-300 px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
+            >
+              <Send size={12} /> Переслать блогеру
+            </button>
+            <button
+              type="button"
+              onClick={() => sendToClient.mutate(true)}
+              disabled={sendToClient.isPending}
+              className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
+              {sendToClient.isPending ? "…" : "Показать клиенту снова"}
+            </button>
+          </div>
+          {fwdOpen && (
+            <div className="space-y-1.5 rounded-lg border border-zinc-200 p-2">
+              <textarea
+                rows={3}
+                value={fwdText}
+                onChange={(e) => setFwdText(e.target.value)}
+                placeholder="Что просим поправить у блогера"
+                className="w-full resize-none rounded-md border border-zinc-300 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => forward.mutate()}
+                disabled={forward.isPending || !fwdText.trim()}
+                className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {forward.isPending ? "Отправляем…" : "Отправить блогеру"}
+              </button>
+              {forward.error && (
+                <p className="text-[11px] text-red-600">
+                  {errorMessage(forward.error)}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      ) : (
+        // none / awaiting / internal_review — креатив на нашей проверке
+        <button
+          type="button"
+          onClick={() => sendToClient.mutate(false)}
+          disabled={sendToClient.isPending}
+          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+        >
+          {sendToClient.isPending ? "Отправляем…" : "Показать клиенту"}
+        </button>
+      )}
+
+      <div>
+        <button
+          type="button"
+          onClick={onUntag}
+          className="text-[11px] text-zinc-400 hover:text-red-600"
+        >
+          убрать пометку
+        </button>
+      </div>
+      {sendToClient.error && (
+        <p className="text-[11px] text-red-600">
+          {errorMessage(sendToClient.error)}
+        </p>
+      )}
     </div>
   );
 }
@@ -1531,30 +1811,6 @@ function TaggedMessageView({
         </div>
       ))}
     </div>
-  );
-}
-
-function ProdSelect({
-  value,
-  onChange,
-  options,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  options: [string, string][];
-}) {
-  return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
-    >
-      {options.map(([v, label]) => (
-        <option key={v} value={v}>
-          {label}
-        </option>
-      ))}
-    </select>
   );
 }
 

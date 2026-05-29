@@ -16,6 +16,7 @@ import {
   Eye,
   Repeat2,
   Heart,
+  Link2,
 } from "lucide-react";
 import { Modal } from "../../../../../components/modal";
 import {
@@ -41,6 +42,7 @@ import {
   Chip,
   PhaseStepper,
   clientView,
+  contractState,
   contractView,
   creativeView,
   deriveProduction,
@@ -1562,6 +1564,29 @@ function ProductionPhase({
         PROD_OWNER_ORDER.indexOf(deriveProduction(b).owner),
     );
 
+  // Ссылка клиенту — под рукой и на «Запуске» (согласование креативов идёт здесь).
+  const sharesQ = useQuery({
+    queryKey: ["shares", wsId, projectId] as const,
+    queryFn: async () => {
+      const { data, error } = await api.GET(
+        "/v1/workspaces/{wsId}/projects/{projectId}/shares",
+        { params: { path: { wsId, projectId } } },
+      );
+      if (error) throw error;
+      return data;
+    },
+  });
+  const clientLink = sharesQ.data?.[0]
+    ? window.location.origin + sharesQ.data[0].url
+    : null;
+  const [linkCopied, setLinkCopied] = useState(false);
+  const copyClientLink = () => {
+    if (!clientLink) return;
+    void navigator.clipboard.writeText(clientLink);
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 1500);
+  };
+
   const pickView = (v: "matrix" | "inbox") => {
     setView(v);
     localStorage.setItem("zapusk-view", v);
@@ -1612,6 +1637,17 @@ function ProductionPhase({
             </span>
           ))}
         </div>
+        {clientLink && (
+          <button
+            type="button"
+            onClick={copyClientLink}
+            title={clientLink}
+            className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-50"
+          >
+            <Link2 size={13} />
+            {linkCopied ? "Скопировано" : "Ссылка клиенту"}
+          </button>
+        )}
       </div>
 
       {rows.length === 0 ? (
@@ -1635,7 +1671,7 @@ function ProductionPhase({
           </thead>
           <tbody>
             {rows.map((p) => {
-              const ct = contractView[p.contractStatus];
+              const ct = contractView[contractState(p)];
               const cr = creativeView[p.creativeStatus];
               const prod = deriveProduction(p);
               const o = PROD_OWNER[prod.owner];
@@ -2177,27 +2213,33 @@ function ChannelCell({
         </div>
       </button>
       {open && ch && (
-        preview ? (
-          <ChannelPreviewDrawer
-            title={ch.title}
-            queryKey={["channel-preview", wsId, ch.id]}
-            queryFn={async () => {
-              const { data, error } = await api.GET(
-                "/v1/workspaces/{wsId}/channels/{id}/preview",
-                { params: { path: { wsId, id: ch.id } } },
-              );
-              if (error) throw error;
-              return data!.messages as ChannelMessage[];
-            }}
-            onClose={() => setOpen(false)}
-          />
-        ) : (
-          <ChannelDrawer
-            wsId={wsId}
-            channelId={ch.id}
-            onClose={() => setOpen(false)}
-          />
-        )
+        // Дровер живёт внутри ChannelCell, а та — внутри кликабельной строки
+        // матрицы (onClick=openInInbox). React-события всплывают сквозь портал по
+        // дереву компонентов, поэтому клик «Закрыть» долетал до строки и кидал в
+        // инбокс. Гасим всплытие на обёртке.
+        <span onClick={(e) => e.stopPropagation()}>
+          {preview ? (
+            <ChannelPreviewDrawer
+              title={ch.title}
+              queryKey={["channel-preview", wsId, ch.id]}
+              queryFn={async () => {
+                const { data, error } = await api.GET(
+                  "/v1/workspaces/{wsId}/channels/{id}/preview",
+                  { params: { path: { wsId, id: ch.id } } },
+                );
+                if (error) throw error;
+                return data!.messages as ChannelMessage[];
+              }}
+              onClose={() => setOpen(false)}
+            />
+          ) : (
+            <ChannelDrawer
+              wsId={wsId}
+              channelId={ch.id}
+              onClose={() => setOpen(false)}
+            />
+          )}
+        </span>
       )}
     </>
   );

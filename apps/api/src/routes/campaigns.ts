@@ -38,9 +38,12 @@ import {
   readTaggedMessages,
 } from "../lib/channel-history.ts";
 import {
+  CreativeMediaSchema,
+  mapCreativeMediaList,
   TdMediaThumbSchema,
   TdMessageEntitySchema,
 } from "../lib/td-message.ts";
+import { respondWithCreativeMedia } from "../lib/creative-media-response.ts";
 import { type WorkspaceVars } from "../middleware/assert-member.ts";
 
 // Agency-кампания переиспользует projects (kind='agency') + project_items
@@ -171,6 +174,7 @@ const PlacementSchema = z
     stepMessages: StepMessagesSchema.nullable(),
     eridSentAt: z.iso.datetime().nullable(),
     creativeClientComment: z.string().nullable(),
+    creativeClientSentAt: z.iso.datetime().nullable(),
     // отчёт (фаза 6) — снимок метрик поста через TDLib
     metricsStatus: z.enum(placementMetricsStatus.enumValues),
     metricsViews: z.number().int().nullable(),
@@ -763,6 +767,11 @@ app.openapi(
         ...(body.eridSentAt !== undefined && {
           eridSentAt: body.eridSentAt ? new Date(body.eridSentAt) : null,
         }),
+        // Переход в client_review = «отправили клиенту» → стампим время сервером
+        // (для подсветки «креатив правлен после отправки»).
+        ...(body.creativeStatus === "client_review" && {
+          creativeClientSentAt: new Date(),
+        }),
       })
       .where(
         and(
@@ -1032,6 +1041,7 @@ function placementColumns() {
     stepMessages: projectItems.stepMessages,
     eridSentAt: projectItems.eridSentAt,
     creativeClientComment: projectItems.creativeClientComment,
+    creativeClientSentAt: projectItems.creativeClientSentAt,
     metricsStatus: projectItems.metricsStatus,
     metricsViews: projectItems.metricsViews,
     metricsForwards: projectItems.metricsForwards,
@@ -1147,6 +1157,7 @@ function serializePlacement(
     stepMessages: PlacementStepMessages | null;
     eridSentAt: Date | null;
     creativeClientComment: string | null;
+    creativeClientSentAt: Date | null;
     metricsStatus: (typeof placementMetricsStatus.enumValues)[number];
     metricsViews: number | null;
     metricsForwards: number | null;
@@ -1257,6 +1268,7 @@ function serializePlacement(
     stepMessages: row.stepMessages ?? null,
     eridSentAt: row.eridSentAt?.toISOString() ?? null,
     creativeClientComment: row.creativeClientComment,
+    creativeClientSentAt: row.creativeClientSentAt?.toISOString() ?? null,
     metricsStatus: row.metricsStatus,
     metricsViews: row.metricsViews,
     metricsForwards: row.metricsForwards,
@@ -1278,7 +1290,15 @@ app.openapi(
       200: {
         content: {
           "application/json": {
-            schema: z.object({ messages: z.array(TaggedPostSchema) }),
+            schema: z.object({
+              messages: z.array(TaggedPostSchema),
+              // media (full-res дескрипторы) для превью креатива у менеджера;
+              // байты — отдельным step-media роутом. Для договора (документ) пусто.
+              media: z.array(CreativeMediaSchema),
+              // Когда сообщение последний раз отредактировано (макс по альбому),
+              // null если не правилось. Фронт сравнивает с creativeClientSentAt.
+              editDate: z.iso.datetime().nullable(),
+            }),
           },
         },
         description: "Помеченное сообщение чата (рендер на лету, альбом учтён)",
@@ -1303,14 +1323,56 @@ app.openapi(
       )
       .limit(1);
     const ref = row?.stepMessages?.[kind];
-    if (!ref) return c.json({ messages: [] });
+    if (!ref) return c.json({ messages: [], media: [], editDate: null });
     const client = await getOutreachWorkerClient({
       id: ref.accountId,
       workspaceId: wsId,
     });
-    if (!client) return c.json({ messages: [] });
+    if (!client) return c.json({ messages: [], media: [], editDate: null });
     const msgs = await readTaggedMessages(client, ref);
-    return c.json({ messages: mapChannelHistoryItems(msgs) });
+    const media = mapCreativeMediaList(msgs);
+    // edit_date (unix, 0 = не редактировалось) — макс по альбому.
+    const maxEdit = msgs.reduce((acc, m) => {
+      const e = (m as { edit_date?: number }).edit_date ?? 0;
+      return e > acc ? e : acc;
+    }, 0);
+    const editDate = maxEdit > 0 ? new Date(maxEdit * 1000).toISOString() : null;
+    return c.json({ messages: mapChannelHistoryItems(msgs), media, editDate });
+  },
+);
+
+// Байты медиа помеченного сообщения (full-res превью у менеджера) — плейн-роут
+// (бинарь). idx — индекс сообщения в альбоме; скачиваем on-demand, не храним.
+app.get(
+  "/v1/workspaces/:wsId/projects/:projectId/placements/:placementId/step-media/:kind/:idx",
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const projectId = c.req.param("projectId");
+    const placementId = c.req.param("placementId");
+    const kind = c.req.param("kind") as "contract" | "creative" | "act";
+    const idx = Number(c.req.param("idx"));
+    await assertProjectAccess(projectId, wsId, userId, role);
+    const [row] = await db
+      .select({ stepMessages: projectItems.stepMessages })
+      .from(projectItems)
+      .where(
+        and(
+          eq(projectItems.id, placementId),
+          eq(projectItems.projectId, projectId),
+          eq(projectItems.kind, "placement"),
+        ),
+      )
+      .limit(1);
+    const ref = row?.stepMessages?.[kind];
+    if (!ref) throw new HTTPException(404, { message: "not found" });
+    const client = await getOutreachWorkerClient({
+      id: ref.accountId,
+      workspaceId: wsId,
+    });
+    if (!client) throw new HTTPException(404, { message: "not found" });
+    return respondWithCreativeMedia(client, ref, idx);
   },
 );
 
@@ -1342,6 +1404,12 @@ app.openapi(
       .update(projectItems)
       .set({
         stepMessages: sql`COALESCE(${projectItems.stepMessages}, '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb`,
+        // Пометили креатив → он «на нашей проверке» (вертолёт). Делаем тем же
+        // UPDATE, чтобы тег и статус не рассинхронились (атомарно, без отдельного
+        // запроса с фронта). Не трогаем, если уже ушёл дальше (у клиента/одобрен).
+        ...(kind === "creative" && {
+          creativeStatus: sql`CASE WHEN ${projectItems.creativeStatus} IN ('none','awaiting') THEN 'internal_review'::placement_creative_status ELSE ${projectItems.creativeStatus} END`,
+        }),
       })
       .where(
         and(

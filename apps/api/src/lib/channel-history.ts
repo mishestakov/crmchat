@@ -1,4 +1,5 @@
 import {
+  extractCreativeMedia,
   extractFormattedText,
   extractMediaThumb,
   type TdContent,
@@ -26,10 +27,21 @@ export type TdChannelMessage = {
 };
 
 // Message → элемент ленты (текст+entities, превью медиа, просмотры/реакции).
-export function mapChannelHistoryItems(messages: TdChannelMessage[]) {
+// withMedia: считать ли full-res дескриптор (нужен только ленте канала /history,
+// где фронт грузит full-res поверх блюра; превью/шаринг его не используют).
+export function mapChannelHistoryItems(
+  messages: TdChannelMessage[],
+  opts?: { withMedia?: boolean },
+) {
   return messages.map((m) => {
     const { text, entities } = extractFormattedText(m.content);
     const mediaThumb = extractMediaThumb(m.content);
+    // Дескриптор full-res медиа (без fileId — фронт качает по messageId через
+    // post-media роут). Блюр-минитюмбнейл остаётся мгновенным placeholder'ом.
+    const cm = opts?.withMedia ? extractCreativeMedia(m.content) : null;
+    const media = cm
+      ? { kind: cm.kind, width: cm.width, height: cm.height }
+      : null;
     const ii = m.interaction_info;
     const reactions = (ii?.reactions?.reactions ?? [])
       .filter((r) => r.type._ === "reactionTypeEmoji" && r.type.emoji)
@@ -41,6 +53,7 @@ export function mapChannelHistoryItems(messages: TdChannelMessage[]) {
       text: text || (mediaThumb ? "" : "[медиа]"),
       entities,
       mediaThumb,
+      media,
       views: ii?.view_count ?? null,
       forwards: ii?.forward_count ?? null,
       replies: ii?.reply_info?.reply_count ?? null,

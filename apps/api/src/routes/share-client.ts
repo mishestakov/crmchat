@@ -18,8 +18,10 @@ import {
   readTaggedMessages,
 } from "../lib/channel-history.ts";
 import { getOutreachWorkerClient } from "../lib/outreach-account-client.ts";
-import { downloadToBytes } from "../lib/td-files.ts";
+import { respondWithCreativeMedia } from "../lib/creative-media-response.ts";
 import {
+  CreativeMediaSchema,
+  mapCreativeMediaList,
   extractFormattedText,
   TdMediaThumbSchema,
   TdMessageEntitySchema,
@@ -401,42 +403,11 @@ app.openapi(
 // выглядеть» и жмёт Согласовать / На правки. Медиа тянем с TDLib on-demand в
 // норм-разрешении (downloadToBytes), файлы не храним.
 
-// Статусы креатива, видимые клиенту в портале (подмножество placementCreativeStatus).
-const CLIENT_CREATIVE_STATUSES = ["client_review", "approved", "revising"] as const;
+// Клиент в портале видит только то, что ждёт его решения (одобренные и ушедшие
+// на правки уходят из списка). На правки/одобрение клиент действует только из
+// client_review.
+const CLIENT_CREATIVE_STATUSES = ["client_review"] as const;
 
-type TdCreativeContent = {
-  _: string;
-  photo?: {
-    sizes?: { photo: { id: number }; width: number; height: number }[];
-  };
-  video?: { thumbnail?: { file?: { id: number } }; width?: number; height?: number };
-};
-
-// Из контента сообщения → дескриптор медиа (фото — самый большой размер; видео —
-// постер-превью, не воспроизводим). null если не фото/видео.
-function creativeMediaOf(
-  content: TdCreativeContent,
-): { kind: "photo" | "video"; fileId: number; width: number; height: number } | null {
-  if (content._ === "messagePhoto") {
-    const sizes = content.photo?.sizes ?? [];
-    if (sizes.length === 0) return null;
-    const largest = sizes.reduce((a, b) => (b.width > a.width ? b : a));
-    return { kind: "photo", fileId: largest.photo.id, width: largest.width, height: largest.height };
-  }
-  if (content._ === "messageVideo") {
-    const file = content.video?.thumbnail?.file;
-    if (!file) return null;
-    return { kind: "video", fileId: file.id, width: content.video?.width ?? 0, height: content.video?.height ?? 0 };
-  }
-  return null;
-}
-
-const CreativeMediaSchema = z.object({
-  idx: z.number().int(),
-  kind: z.enum(["photo", "video"]),
-  width: z.number().int(),
-  height: z.number().int(),
-});
 const ClientCreativeSchema = z
   .object({
     placementId: z.string(),
@@ -502,12 +473,7 @@ app.openapi(
         .map((m) => extractFormattedText(m.content).text)
         .filter((t) => t.length > 0)
         .join("\n");
-      const media = msgs
-        .map((m, idx) => {
-          const mm = creativeMediaOf(m.content as unknown as TdCreativeContent);
-          return mm ? { idx, kind: mm.kind, width: mm.width, height: mm.height } : null;
-        })
-        .filter((x): x is NonNullable<typeof x> => x !== null);
+      const media = mapCreativeMediaList(msgs);
       creatives.push({
         placementId: r.id,
         channelTitle: r.channelTitle ?? "—",
@@ -549,19 +515,7 @@ app.get(
       workspaceId: share.workspaceId,
     });
     if (!client) throw new HTTPException(404, { message: "not found" });
-    const msgs = await readTaggedMessages(client, ref);
-    const m = msgs[idx];
-    const media = m && creativeMediaOf(m.content as unknown as TdCreativeContent);
-    if (!media) throw new HTTPException(404, { message: "not found" });
-    const bytes = await downloadToBytes(client, media.fileId);
-    if (!bytes) throw new HTTPException(404, { message: "media unavailable" });
-    return new Response(bytes, {
-      status: 200,
-      headers: {
-        "Content-Type": "image/jpeg",
-        "Cache-Control": "private, max-age=300",
-      },
-    });
+    return respondWithCreativeMedia(client, ref, idx);
   },
 );
 

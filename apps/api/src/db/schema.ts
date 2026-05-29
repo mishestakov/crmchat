@@ -843,6 +843,12 @@ export const projectItems = pgTable(
     // Комментарий клиента к креативу (запрос правок) из клиентского портала —
     // Фаза B (клиентское согласование креативов). Shape сразу финальный.
     creativeClientComment: text("creative_client_comment"),
+    // Когда креатив последний раз отправлен клиенту на согласование (статус →
+    // client_review). Сравниваем с edit_date сообщения: если блогер отредактировал
+    // креатив ПОСЛЕ — подсвечиваем менеджеру красным.
+    creativeClientSentAt: timestamp("creative_client_sent_at", {
+      withTimezone: true,
+    }),
 
     // Фаза «Отчёт»: снимок поста, снятый metrics-worker'ом через TDLib.
     // postSnapshot — текст + минитамбнейл (base64 jpeg из payload, без

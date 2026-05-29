@@ -78,17 +78,26 @@ export const PROD_OWNER: Record<
 
 export const PROD_OWNER_ORDER: ProdOwner[] = ["us", "client", "blogger", "done"];
 
+// Единый источник состояния договора. «Подписан» хранится в contractStatus
+// (кнопка у менеджера), а «отправлен» выводится из факта пометки договора в
+// чате (stepMessages.contract) — чтобы плашка, вертолёт и матрица не расходились
+// (раньше плашка читала тег, а остальное — отдельное поле).
+export function contractState(p: Placement): "none" | "sent" | "signed" {
+  if (p.contractStatus === "signed") return "signed";
+  if (p.stepMessages?.contract) return "sent";
+  return "none";
+}
+
 export function deriveProduction(p: Placement): {
   owner: ProdOwner;
   stage: string;
   cta: string | null;
 } {
-  if (p.contractStatus !== "signed") {
-    if (p.contractStatus === "none")
+  const cs = contractState(p);
+  if (cs !== "signed") {
+    if (cs === "none")
       return { owner: "us", stage: "Договор · отправить", cta: "Отправить договор" };
-    if (p.contractStatus === "sent")
-      return { owner: "blogger", stage: "Договор · ждём подпись", cta: null };
-    return { owner: "us", stage: "Договор · согласовать правки", cta: "Согласовать правки" };
+    return { owner: "blogger", stage: "Договор · ждём подпись", cta: null };
   }
   if (p.creativeStatus !== "approved") {
     if (p.creativeStatus === "internal_review")

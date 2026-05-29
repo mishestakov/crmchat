@@ -731,6 +731,9 @@ export type ChannelMessage = {
   text: string;
   entities: MessageEntity[];
   mediaThumb: MessageThumb | null;
+  // full-res дескриптор (есть только в /history). Опционально — /preview его не
+  // отдаёт, там остаётся блюр-thumb.
+  media?: { kind: "photo" | "video"; width: number; height: number } | null;
   views: number | null;
   forwards: number | null;
   replies: number | null;
@@ -965,22 +968,67 @@ function PostsFeed(props: {
           </p>
         )}
         {messages.map((m) => (
-          <Post key={m.id} m={m} />
+          <Post
+            key={m.id}
+            m={m}
+            wsId={props.wsId}
+            channelId={props.channelId}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-export function Post({ m }: { m: ChannelMessage }) {
+export function Post({
+  m,
+  wsId,
+  channelId,
+}: {
+  m: ChannelMessage;
+  // Если переданы — медиа рендерится в full-res (лениво, поверх блюра). Без них
+  // (preview-дровер) остаётся только блюр-thumb.
+  wsId?: string;
+  channelId?: string;
+}) {
   const hasInteractions =
     m.views !== null ||
     m.forwards !== null ||
     m.replies !== null ||
     m.reactions.length > 0;
+  const fullRes = m.media && wsId && channelId;
   return (
     <article className="overflow-hidden rounded-2xl bg-white ring-1 ring-zinc-200">
-      {m.mediaThumb && <MessageMediaThumb thumb={m.mediaThumb} />}
+      {fullRes ? (
+        <div
+          className="relative overflow-hidden bg-zinc-900"
+          style={{ aspectRatio: `${m.media!.width} / ${m.media!.height}` }}
+        >
+          {m.mediaThumb && (
+            <img
+              src={`data:image/jpeg;base64,${m.mediaThumb.b64}`}
+              alt=""
+              className="absolute inset-0 h-full w-full object-cover blur-[2px]"
+            />
+          )}
+          <img
+            src={`/v1/workspaces/${wsId}/channels/${channelId}/post-media/${m.id}`}
+            alt=""
+            loading="lazy"
+            className="relative h-full w-full object-cover"
+            onError={(e) => {
+              e.currentTarget.style.display = "none";
+            }}
+          />
+          {m.media!.kind === "video" && (
+            <span className="absolute right-2 top-2 rounded bg-black/50 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-white">
+              Видео
+            </span>
+          )}
+        </div>
+      ) : (
+        m.mediaThumb && <MessageMediaThumb thumb={m.mediaThumb} />
+      )}
       <div className="px-4 py-3">
         {m.isForwarded && (
           <div className="mb-1 inline-flex items-center gap-1 text-[10px] uppercase tracking-wider text-zinc-400">

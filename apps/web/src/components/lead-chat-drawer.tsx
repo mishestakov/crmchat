@@ -83,6 +83,7 @@ export function LeadChatPanel(props: {
   accounts: AccountRow[];
   onTagMessage?: (kind: MessageTagKind, ref: MessageTagRef) => void;
   taggedKindByMessageId?: Record<string, MessageTagKind>;
+  jumpTo?: { messageId: string; nonce: number } | null;
 }) {
   const chat = useLeadChat(props);
   if (!chat) {
@@ -101,6 +102,7 @@ export function LeadChatPanel(props: {
       onSelectAccount={chat.setAccountId}
       onTagMessage={props.onTagMessage}
       taggedKindByMessageId={props.taggedKindByMessageId}
+      jumpTo={props.jumpTo}
     />
   );
 }

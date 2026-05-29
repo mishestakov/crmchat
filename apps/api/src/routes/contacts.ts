@@ -40,12 +40,14 @@ import {
 import { ensureContactTgUserId } from "../lib/ensure-tg-user-id.ts";
 import { errMsg } from "../lib/errors.ts";
 import { getOutreachWorkerClient } from "../lib/outreach-account-client.ts";
-import { sendDocument } from "../lib/td-files.ts";
+import { sendDocument, downloadToBytes } from "../lib/td-files.ts";
 import { resolveStickyByPeerIds } from "../lib/sticky.ts";
 import {
   type TdContent,
+  TdDocumentSchema,
   TdMediaThumbSchema,
   TdMessageEntitySchema,
+  extractDocument,
   extractFormattedText,
   extractMediaThumb,
 } from "../lib/td-message.ts";
@@ -580,6 +582,7 @@ const ChatMessageSchema = z.object({
   text: z.string(),
   entities: z.array(TdMessageEntitySchema),
   mediaThumb: TdMediaThumbSchema.nullable(),
+  document: TdDocumentSchema.nullable(),
   replyMarkup: ReplyMarkupSchema.nullable(),
   // id альбома (media_album_id), если сообщение — часть альбома; иначе null.
   // Фронт группирует по нему при пометке сообщения (фаза «Запуск»).
@@ -1011,15 +1014,18 @@ function mapReplyMarkup(
 function mapMessage(m: TdMessage): z.infer<typeof ChatMessageSchema> {
   const { text, entities } = extractFormattedText(m.content);
   const mediaThumb = extractMediaThumb(m.content);
+  const document = extractDocument(m.content);
   return {
     id: String(m.id),
     date: new Date(m.date * 1000).toISOString(),
     isOutgoing: m.is_outgoing,
     // Sticker/voice/audio/location/poll/… — без текста и без thumb;
-    // короткий type-label, чтобы пузырь не был пустым.
-    text: text || (mediaThumb ? "" : fallbackLabel(m.content._)),
+    // короткий type-label, чтобы пузырь не был пустым. Документ рендерится
+    // отдельным пузырём → fallback-label не нужен.
+    text: text || (mediaThumb || document ? "" : fallbackLabel(m.content._)),
     entities,
     mediaThumb,
+    document,
     replyMarkup: mapReplyMarkup(m.reply_markup),
     albumId:
       m.media_album_id && String(m.media_album_id) !== "0"
@@ -1148,6 +1154,40 @@ app.post("/v1/workspaces/:wsId/contacts/:id/send-document", async (c) => {
   const bytes = new Uint8Array(await file.arrayBuffer());
   await sendDocument(client, Number(tgUserId), bytes, file.name, caption);
   return c.body(null, 204);
+});
+
+// Скачивание файла-документа из чата. Plain-роут (бинарь). fileId/name/mime берём
+// из истории (фронт уже их получил), байты тянем on-demand с TDLib, не храним.
+app.get("/v1/workspaces/:wsId/contacts/:id/chat-file", async (c) => {
+  const wsId = c.get("workspaceId");
+  const accountId = c.req.query("accountId");
+  const fileId = Number(c.req.query("fileId"));
+  const name = c.req.query("name") || "file";
+  const mime = c.req.query("mime") || "application/octet-stream";
+  if (typeof accountId !== "string" || !Number.isFinite(fileId)) {
+    throw new HTTPException(400, { message: "accountId & fileId required" });
+  }
+  // accountId из query → проверяем принадлежность воркспейсу (как в send-document).
+  const [acc] = await db
+    .select({ id: outreachAccounts.id })
+    .from(outreachAccounts)
+    .where(
+      and(eq(outreachAccounts.id, accountId), eq(outreachAccounts.workspaceId, wsId)),
+    )
+    .limit(1);
+  if (!acc) throw new HTTPException(404, { message: "account not found" });
+  const client = await getOutreachWorkerClient({ id: accountId, workspaceId: wsId });
+  if (!client) throw new HTTPException(503, { message: "tg client unavailable" });
+  const bytes = await downloadToBytes(client, fileId);
+  if (!bytes) throw new HTTPException(404, { message: "file unavailable" });
+  return new Response(bytes, {
+    status: 200,
+    headers: {
+      "Content-Type": mime,
+      "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(name)}`,
+      "Cache-Control": "private, max-age=300",
+    },
+  });
 });
 
 export default app;

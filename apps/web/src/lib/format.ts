@@ -12,3 +12,10 @@ export function formatViews(n: number | null): string {
   if (n >= 1000) return (n / 1000).toFixed(0) + "k";
   return String(n);
 }
+
+export function formatFileSize(bytes: number): string {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} Б`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} КБ`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
+}

@@ -24,6 +24,7 @@ import {
   mapChannelHistoryItems,
   readChannelPreview,
 } from "../lib/channel-history.ts";
+import { respondWithCreativeMedia } from "../lib/creative-media-response.ts";
 import {
   channelAdmins,
   channelSubscriptions,
@@ -1325,6 +1326,15 @@ const ChannelHistoryItem = z.object({
   text: z.string(),
   entities: z.array(TdMessageEntitySchema),
   mediaThumb: TdMediaThumbSchema.nullable(),
+  // full-res дескриптор (фото/видео-постер); байты — через post-media роут по
+  // id сообщения. null если медиа нет. Блюр-thumb остаётся placeholder'ом.
+  media: z
+    .object({
+      kind: z.enum(["photo", "video"]),
+      width: z.number().int(),
+      height: z.number().int(),
+    })
+    .nullable(),
   // messageInteractionInfo (td_api.tl:2730). У постов в каналах view_count
   // почти всегда есть; forward_count и replies — опционально (репост только
   // если кто-то форварднул, replies — только если у канала есть linked-чат).
@@ -1463,7 +1473,7 @@ app.openapi(
       await clearChannelUnavailable(id);
     }
 
-    const items = mapChannelHistoryItems(aggregated);
+    const items = mapChannelHistoryItems(aggregated, { withMedia: true });
 
     // Авто-метрики из этой же ленты (этап 16.10) — без отдельного TDLib-вызова.
     // Пишем в meta: центр и правый рельс показывают, «Согласован» снапшотит в
@@ -1486,6 +1496,34 @@ app.openapi(
     }
 
     return c.json({ messages: items });
+  },
+);
+
+// Байты медиа поста канала (full-res) — плейн-роут (бинарь). Скачиваем on-demand
+// по messageId (фронт берёт его из ленты), не храним. Блюр-thumb на фронте —
+// мгновенный placeholder, это грузится лениво поверх.
+app.get(
+  "/v1/workspaces/:wsId/channels/:id/post-media/:messageId",
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const id = c.req.param("id");
+    const messageId = c.req.param("messageId");
+    const channel = await assertChannelAccess(id, wsId);
+    if (!channel.externalId) {
+      throw new HTTPException(404, { message: "not synced" });
+    }
+    const picked = await pickChannelReader(id, wsId, userId, role);
+    if (!picked) throw new HTTPException(404, { message: "no reader" });
+    // БЕЗ searchPublicChat-прогрева: картинку грузят из уже открытой ленты
+    // (/history его сделал), чат зарегистрирован в сессии. Холодный прямой
+    // доступ (без ленты) — редкость, просто не отдаст медиа (фронт → блюр).
+    return respondWithCreativeMedia(
+      picked.client,
+      { chatId: String(channel.externalId), messageId, albumId: null },
+      0,
+    );
   },
 );
 

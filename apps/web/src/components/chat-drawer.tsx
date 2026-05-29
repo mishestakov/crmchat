@@ -5,6 +5,8 @@ import {
   AlertTriangle,
   Check,
   CheckCheck,
+  Download,
+  FileText,
   MessageCircle,
   Pin,
   Send,
@@ -21,6 +23,7 @@ import {
   formatRelative,
 } from "../lib/date-utils";
 import { errorMessage } from "../lib/errors";
+import { formatFileSize } from "../lib/format";
 import { useEventSourceEvent } from "../lib/hooks";
 import {
   type MessageEntity,
@@ -60,6 +63,12 @@ type ReplyButton = {
 };
 type ReplyMarkup = { kind: "inline" | "keyboard"; rows: ReplyButton[][] };
 
+type ChatDocument = {
+  fileId: number;
+  fileName: string;
+  mimeType: string;
+  size: number;
+};
 type ChatMessage = {
   id: string;
   date: string;
@@ -67,6 +76,7 @@ type ChatMessage = {
   text: string;
   entities: MessageEntity[];
   mediaThumb: MessageThumb | null;
+  document: ChatDocument | null;
   replyMarkup: ReplyMarkup | null;
   albumId: string | null;
 };
@@ -133,6 +143,9 @@ export function ChatPanel(props: {
   // albumId. taggedKindByMessageId рисует бейдж на уже помеченных.
   onTagMessage?: (kind: MessageTagKind, ref: MessageTagRef) => void;
   taggedKindByMessageId?: Record<string, MessageTagKind>;
+  // Прыжок к сообщению (фаза «Запуск»: клик «открыть в чате» из карточки). nonce
+  // меняется при каждом клике, чтобы повторный прыжок к тому же id сработал.
+  jumpTo?: { messageId: string; nonce: number } | null;
 }) {
   const qc = useQueryClient();
   const accountById = new Map(props.accounts.map((a) => [a.id, a]));
@@ -346,6 +359,9 @@ export function ChatPanel(props: {
   // Был ли юзер «у дна» в момент последнего scroll-event'а — для auto-scroll
   // на новое входящее/исходящее сообщение из SSE.
   const wasNearBottomRef = useRef(true);
+  // Прыжок к сообщению: refs по messageId + подсветка скроллнутого пузыря.
+  const msgRefs = useRef(new Map<string, HTMLDivElement>());
+  const [highlightId, setHighlightId] = useState<string | null>(null);
 
   useEffect(() => {
     setOlderPages([]);
@@ -390,6 +406,20 @@ export function ChatPanel(props: {
     el.scrollTop = el.scrollHeight;
     didAutoScrollRef.current = true;
   }, [initialQ.isSuccess]);
+
+  // Прыжок к сообщению по клику «открыть в чате». Сообщение должно быть в окне
+  // (свежий договор — в последних 50); если не подгружено — тихо ничего.
+  const jumpNonce = props.jumpTo?.nonce;
+  const jumpMessageId = props.jumpTo?.messageId;
+  useEffect(() => {
+    if (jumpNonce == null || !jumpMessageId) return;
+    const el = msgRefs.current.get(jumpMessageId);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightId(jumpMessageId);
+    const t = setTimeout(() => setHighlightId(null), 1800);
+    return () => clearTimeout(t);
+  }, [jumpNonce, jumpMessageId]);
 
   // Auto-scroll к низу на новое сообщение, только если юзер уже у дна.
   const newestId = initialQ.data?.messages[0]?.id ?? null;
@@ -649,6 +679,11 @@ export function ChatPanel(props: {
                     return (
                       <div
                         key={m.id}
+                        ref={(el) => {
+                          const map = msgRefs.current;
+                          if (el) map.set(m.id, el);
+                          else map.delete(m.id);
+                        }}
                         className={
                           "group flex max-w-[85%] flex-col gap-1 " +
                           (m.isOutgoing
@@ -658,16 +693,50 @@ export function ChatPanel(props: {
                       >
                         <div
                           className={
-                            "overflow-hidden rounded-lg text-sm " +
+                            "overflow-hidden rounded-lg text-sm transition-shadow " +
                             (m.isOutgoing
-                              ? "bg-emerald-600 text-white"
-                              : "bg-white text-zinc-900 ring-1 ring-zinc-200")
+                              ? "bg-emerald-600 text-white "
+                              : "bg-white text-zinc-900 ") +
+                            (highlightId === m.id
+                              ? "ring-2 ring-amber-400"
+                              : m.isOutgoing
+                                ? ""
+                                : "ring-1 ring-zinc-200")
                           }
                         >
                           {m.mediaThumb && (
                             <MessageMediaThumb thumb={m.mediaThumb} />
                           )}
                           <div className="px-3 py-2">
+                            {m.document && (
+                              <a
+                                href={
+                                  `/v1/workspaces/${props.wsId}/contacts/${props.contact.id}/chat-file` +
+                                  `?accountId=${encodeURIComponent(props.accountId)}` +
+                                  `&fileId=${m.document.fileId}` +
+                                  `&name=${encodeURIComponent(m.document.fileName)}` +
+                                  `&mime=${encodeURIComponent(m.document.mimeType)}`
+                                }
+                                download={m.document.fileName}
+                                className={
+                                  "mb-1 flex items-center gap-2 rounded-md px-2 py-1.5 " +
+                                  (m.isOutgoing
+                                    ? "bg-emerald-700/40 hover:bg-emerald-700/70"
+                                    : "bg-zinc-100 hover:bg-zinc-200")
+                                }
+                              >
+                                <FileText size={18} className="mt-0.5 shrink-0" />
+                                <span className="min-w-0 flex-1">
+                                  <span className="block break-all font-medium">
+                                    {m.document.fileName}
+                                  </span>
+                                  <span className="block text-[10px] opacity-70">
+                                    {formatFileSize(m.document.size)}
+                                  </span>
+                                </span>
+                                <Download size={15} className="mt-0.5 shrink-0 opacity-70" />
+                              </a>
+                            )}
                             {m.text && (
                               <div className="whitespace-pre-wrap break-words">
                                 {renderMessageEntities(m.text, m.entities)}
