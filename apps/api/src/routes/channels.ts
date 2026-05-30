@@ -12,7 +12,7 @@ import { db, sql as sqlClient } from "../db/client.ts";
 import { contactUsernameLowerSql } from "../lib/contact-sql.ts";
 import { extractUsername } from "../lib/tg-username.ts";
 import { median } from "../lib/median.ts";
-import { errMsg } from "../lib/errors.ts";
+import { errMsg, isUniqueViolation } from "../lib/errors.ts";
 import {
   type TdContent,
   TdMediaThumbSchema,
@@ -331,10 +331,7 @@ app.openapi(
     } catch (e) {
       // Площадка с таким @username уже есть в воркспейсе (uniq ws+platform+
       // lower(username)). Не 500 — возвращаем существующую (менеджер её и искал).
-      // Drizzle оборачивает PG-ошибку: код 23505 лежит на cause.code (не code).
-      const err = e as { code?: string; cause?: { code?: string } } | null;
-      const isDup = err?.code === "23505" || err?.cause?.code === "23505";
-      if (isDup && body.username) {
+      if (isUniqueViolation(e) && body.username) {
         const [existing] = await db
           .select()
           .from(channels)

@@ -7,6 +7,7 @@ import {
   UpdatePropertySchema as BaseUpdate,
 } from "@repo/core";
 import { db } from "../db/client.ts";
+import { isUniqueViolation } from "../lib/errors.ts";
 import { contacts, properties } from "../db/schema.ts";
 import type { WorkspaceVars } from "../middleware/assert-member.ts";
 
@@ -98,8 +99,8 @@ app.openapi(
         .returning();
       return c.json(serialize(row!), 201);
     } catch (e) {
-      // 23505 = unique_violation в Postgres — стабильнее, чем грепать имя констрейнта.
-      if (e && typeof e === "object" && (e as { code?: string }).code === "23505") {
+      // 23505 = unique_violation — стабильнее, чем грепать имя констрейнта.
+      if (isUniqueViolation(e)) {
         throw new HTTPException(409, { message: "key already exists" });
       }
       throw e;

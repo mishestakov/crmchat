@@ -20,7 +20,7 @@ import {
 } from "./contact-properties.ts";
 import { emitContactChanged, emitProjectChanged } from "./events.ts";
 import { FINAL_OFFER_MSG_IDX } from "./project-scheduling.ts";
-import { errMsg } from "./errors.ts";
+import { errMsg, isUniqueViolation } from "./errors.ts";
 import type { TdClient } from "./tdlib/index.ts";
 import { extractActiveUsername, extractFullName } from "./tdlib/td-user.ts";
 
@@ -44,9 +44,6 @@ export function rememberPendingSend(a: string, c: string, p: string, id: string)
 // лид нам ещё не написан — нет tgUserId — нет матча. «остановить sequence на
 // ответ» имеет смысл только когда мы УЖЕ что-то послали.
 
-function isUniqueViolation(e: unknown): boolean {
-  return (e as { code?: string } | null)?.code === "23505";
-}
 
 // Минимальные локальные типы для updates, которые мы реально используем.
 // Полная схема — в `tdlib-types`, но цеплять её здесь не обязательно.
