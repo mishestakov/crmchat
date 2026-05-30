@@ -1,15 +1,24 @@
 import { z } from "zod";
 
-// Площадка = канал/группа в соцсети. Сейчас Telegram, в будущем MAX.
+// Площадка = аккаунт блогера в соцсети: Telegram-канал, YouTube-канал,
+// TikTok-аккаунт (MAX — задел). Связь с блогером — всегда через Telegram
+// (contact), площадка лишь «где выходит пост и откуда снимаем метрики»
+// (см. specs/etap-17-multiplatform.md).
 // Раскладка хранилища:
 //   - типизированные поля (title, description, username, link, member_count,
-//     external_id) — универсальные для любой соцсети
-//   - `meta` jsonb — proprietary поля соцсети (TG: boost_level, is_verified,
-//     has_dm, photo_*_id, linked_chat_id, …). Перезатирается соц-pull'ом
-//   - `properties` jsonb — наши computed/csv-импорт поля (ER, ниша, is_rkn).
-//     Соц-pull их НЕ ТРОГАЕТ
+//     external_id) — универсальные для любой соцсети; member_count =
+//     нормализованная аудитория (TG members / YT subscribers / TT followers)
+//   - `meta` jsonb — сырые поля соцсети + вычисленные сигналы (avgViews,
+//     medianViews, engagementRate, lastPostAt, …). Перезатирается соц-pull'ом
+//   - `properties` jsonb — наши computed/csv-импорт поля (ручной ER, ниша,
+//     is_rkn). Соц-pull их НЕ ТРОГАЕТ
 //   - `synced_at` — когда последний раз пулили соцсеть. NULL = ни разу
-export const ChannelPlatformSchema = z.enum(["telegram", "max"]);
+export const ChannelPlatformSchema = z.enum([
+  "telegram",
+  "youtube",
+  "tiktok",
+  "max",
+]);
 export type ChannelPlatform = z.infer<typeof ChannelPlatformSchema>;
 
 export const ChannelSchema = z.object({

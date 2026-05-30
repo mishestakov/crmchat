@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import type { Channel } from "@repo/core";
 import { api } from "../lib/api";
+import { PLATFORMS } from "../lib/platforms";
 import { formatRelative } from "../lib/date-utils";
 import { errorMessage } from "../lib/errors";
 import { useOutreachAccounts } from "../lib/outreach-queries";
@@ -260,7 +261,9 @@ function ChannelHero(props: {
 }) {
   const { channel, compact } = props;
   const meta = channel.meta as Record<string, unknown>;
-  const isVerified = meta?.is_verified === true;
+  // TG пишет is_verified, провайдеры (YT/TikTok) — verified.
+  const isVerified = meta?.is_verified === true || meta?.verified === true;
+  const platform = PLATFORMS[channel.platform];
   const boostLevel =
     typeof meta?.boost_level === "number" ? meta.boost_level : 0;
   const createdAtTg =
@@ -302,6 +305,11 @@ function ChannelHero(props: {
             }
           >
             <span className="truncate">{channel.title}</span>
+            <platform.Icon
+              size={15}
+              className={`shrink-0 ${platform.color}`}
+              aria-label={platform.label}
+            />
             {isVerified && (
               <BadgeCheck
                 size={18}
@@ -312,7 +320,7 @@ function ChannelHero(props: {
           </h2>
           {channel.username && (
             <a
-              href={`https://t.me/${channel.username}`}
+              href={platform.url(channel.username)}
               target="_blank"
               rel="noreferrer"
               className="mt-0.5 inline-flex items-center gap-1 text-sm text-zinc-500 hover:text-emerald-700"

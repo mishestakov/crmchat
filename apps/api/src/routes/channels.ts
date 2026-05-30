@@ -11,6 +11,7 @@ import {
 import { db, sql as sqlClient } from "../db/client.ts";
 import { contactUsernameLowerSql } from "../lib/contact-sql.ts";
 import { extractUsername } from "../lib/tg-username.ts";
+import { median } from "../lib/median.ts";
 import { errMsg } from "../lib/errors.ts";
 import {
   type TdContent,
@@ -25,6 +26,10 @@ import {
   readChannelPreview,
 } from "../lib/channel-history.ts";
 import { respondWithCreativeMedia } from "../lib/creative-media-response.ts";
+import {
+  isProviderPlatform,
+  syncChannelFromProvider,
+} from "../lib/channel-providers/index.ts";
 import {
   channelAdmins,
   channelSubscriptions,
@@ -307,19 +312,47 @@ app.openapi(
     const { wsId } = c.req.valid("param");
     const userId = c.get("userId");
     const body = c.req.valid("json");
+    const platform = body.platform ?? "telegram";
 
-    const [created] = await db
-      .insert(channels)
-      .values({
-        workspaceId: wsId,
-        platform: body.platform ?? "telegram",
-        title: body.title,
-        link: body.link ?? null,
-        username: body.username ?? null,
-        externalId: body.externalId ?? null,
-        createdBy: userId,
-      })
-      .returning();
+    let created: typeof channels.$inferSelect | undefined;
+    try {
+      [created] = await db
+        .insert(channels)
+        .values({
+          workspaceId: wsId,
+          platform,
+          title: body.title,
+          link: body.link ?? null,
+          username: body.username ?? null,
+          externalId: body.externalId ?? null,
+          createdBy: userId,
+        })
+        .returning();
+    } catch (e) {
+      // Площадка с таким @username уже есть в воркспейсе (uniq ws+platform+
+      // lower(username)). Не 500 — возвращаем существующую (менеджер её и искал).
+      // Drizzle оборачивает PG-ошибку: код 23505 лежит на cause.code (не code).
+      const err = e as { code?: string; cause?: { code?: string } } | null;
+      const isDup = err?.code === "23505" || err?.cause?.code === "23505";
+      if (isDup && body.username) {
+        const [existing] = await db
+          .select()
+          .from(channels)
+          .where(
+            and(
+              eq(channels.workspaceId, wsId),
+              eq(channels.platform, platform),
+              sql`lower(${channels.username}) = lower(${body.username})`,
+            ),
+          )
+          .limit(1);
+        if (existing) {
+          const [s] = await joinAdmins([existing]);
+          return c.json(s!, 201);
+        }
+      }
+      throw e;
+    }
     if (!created) throw new HTTPException(500, { message: "insert failed" });
 
     if (body.adminContactIds?.length) {
@@ -797,13 +830,6 @@ app.openapi(
   },
 );
 
-function median(nums: number[]): number {
-  if (nums.length === 0) return 0;
-  const s = [...nums].sort((a, b) => a - b);
-  const mid = Math.floor(s.length / 2);
-  return s.length % 2 === 1 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
-}
-
 type TdHistMsg = {
   id: number;
   is_pinned?: boolean;
@@ -830,7 +856,8 @@ function metricsFromMessages(
   );
   if (posts.length < 3) return null;
   const recent = posts.slice(0, 15);
-  const avgReach = median(recent.map((m) => m.interaction_info!.view_count!));
+  // recent.length ≥ 3 здесь → median не вернёт null, но ?? 0 для типа.
+  const avgReach = median(recent.map((m) => m.interaction_info!.view_count!)) ?? 0;
   const ers = recent.map((m) => {
     const ii = m.interaction_info!;
     const reactions = (ii.reactions?.reactions ?? []).reduce(
@@ -841,7 +868,7 @@ function metricsFromMessages(
       reactions + (ii.forward_count ?? 0) + (ii.reply_info?.reply_count ?? 0);
     return ii.view_count! > 0 ? eng / ii.view_count! : 0;
   });
-  const err = median(ers) * 100;
+  const err = (median(ers) ?? 0) * 100;
   return {
     avgReach: Math.round(avgReach),
     err: Math.round(err * 10) / 10,
@@ -1013,6 +1040,19 @@ app.openapi(
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
     const channel = await assertChannelAccess(id, wsId);
+
+    // YouTube/TikTok: внешний HTTP-провайдер (не TDLib, аккаунт не нужен).
+    // Кэш = synced_at, TTL 1ч: свежий канал не дёргаем в апиху, если не force.
+    if (isProviderPlatform(channel.platform)) {
+      const SYNC_TTL_MS = 60 * 60 * 1000;
+      const fresh =
+        !force &&
+        channel.syncedAt != null &&
+        Date.now() - channel.syncedAt.getTime() < SYNC_TTL_MS;
+      const row = fresh ? channel : await syncChannelFromProvider(channel);
+      const [serialized] = await joinAdmins([row]);
+      return c.json(serialized!);
+    }
 
     if (channel.platform !== "telegram") {
       throw new HTTPException(400, {

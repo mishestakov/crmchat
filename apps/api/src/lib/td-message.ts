@@ -213,13 +213,23 @@ export function extractDocument(content: TdContent): MappedDocument | null {
 // для дозагрузки full-res пока пост жив, и метрики на момент снимка. Файлы НЕ
 // храним — медиа тянем on-demand, нет — остаётся тамбнейл.
 export const PostSnapshotSchema = z.object({
-  messageId: z.string(),
-  chatId: z.string(),
+  // Платформа поста. Отсутствует/undefined у старых TG-снимков — трактуем как
+  // 'telegram'. У YouTube/TikTok — соответственно.
+  platform: z.enum(["telegram", "youtube", "tiktok"]).optional(),
+  // messageId/chatId — TG-специфика (дозагрузка full-res медиа). У провайдеров
+  // (YT/TikTok) их нет.
+  messageId: z.string().optional(),
+  chatId: z.string().optional(),
   text: z.string(),
   entities: z.array(TdMessageEntitySchema),
+  // thumbB64 — TG-минитамбнейл (base64). coverUrl — обложка YT/TikTok (URL,
+  // у TikTok с TTL). Рендер берёт coverUrl, иначе thumbB64.
   thumbB64: z.string().nullable(),
   thumbW: z.number().int().nullable(),
   thumbH: z.number().int().nullable(),
+  coverUrl: z.string().nullable().optional(),
+  // Ссылка на пост (у провайдеров дублирует postUrl размещения, для самодостаточности снимка).
+  url: z.string().nullable().optional(),
   media: z
     .object({
       kind: z.enum(["photo", "video"]),

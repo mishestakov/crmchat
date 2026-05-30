@@ -182,8 +182,9 @@ const PlacementSchema = z
     // отчёт (фаза 6) — снимок метрик поста через TDLib
     metricsStatus: z.enum(placementMetricsStatus.enumValues),
     metricsViews: z.number().int().nullable(),
-    metricsForwards: z.number().int().nullable(),
-    metricsReactions: z.number().int().nullable(),
+    metricsLikes: z.number().int().nullable(),
+    metricsComments: z.number().int().nullable(),
+    metricsShares: z.number().int().nullable(),
     metricsCollectedAt: z.iso.datetime().nullable(),
     metricsError: z.string().nullable(),
     postSnapshot: PostSnapshotSchema.nullable(),
@@ -253,8 +254,11 @@ function chainStatus(
   sentCount: number,
   read: boolean,
 ): z.infer<typeof ChainStatusSchema> {
-  if (repliedAt) return "replied";
+  // Ручной отказ менеджера перебивает авто-статус: блогер мог ответить
+  // («дорого/не интересно»), но «Отказ» — финальное решение, строка должна
+  // уйти из лонглиста независимо от repliedAt.
   if (available === false) return "declined";
+  if (repliedAt) return "replied";
   if (read) return "read";
   if (sentCount > 0) return "sent";
   return "not_sent";
@@ -1041,8 +1045,9 @@ function placementColumns() {
     creativeClientSentAt: projectItems.creativeClientSentAt,
     metricsStatus: projectItems.metricsStatus,
     metricsViews: projectItems.metricsViews,
-    metricsForwards: projectItems.metricsForwards,
-    metricsReactions: projectItems.metricsReactions,
+    metricsLikes: projectItems.metricsLikes,
+    metricsComments: projectItems.metricsComments,
+    metricsShares: projectItems.metricsShares,
     metricsCollectedAt: projectItems.metricsCollectedAt,
     metricsError: projectItems.metricsError,
     postSnapshot: projectItems.postSnapshot,
@@ -1157,8 +1162,9 @@ function serializePlacement(
     creativeClientSentAt: Date | null;
     metricsStatus: (typeof placementMetricsStatus.enumValues)[number];
     metricsViews: number | null;
-    metricsForwards: number | null;
-    metricsReactions: number | null;
+    metricsLikes: number | null;
+    metricsComments: number | null;
+    metricsShares: number | null;
     metricsCollectedAt: Date | null;
     metricsError: string | null;
     postSnapshot: PostSnapshot | null;
@@ -1263,8 +1269,9 @@ function serializePlacement(
     creativeClientSentAt: row.creativeClientSentAt?.toISOString() ?? null,
     metricsStatus: row.metricsStatus,
     metricsViews: row.metricsViews,
-    metricsForwards: row.metricsForwards,
-    metricsReactions: row.metricsReactions,
+    metricsLikes: row.metricsLikes,
+    metricsComments: row.metricsComments,
+    metricsShares: row.metricsShares,
     metricsCollectedAt: row.metricsCollectedAt?.toISOString() ?? null,
     metricsError: row.metricsError,
     postSnapshot: row.postSnapshot,

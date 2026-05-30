@@ -94,7 +94,7 @@ function AuthLayout() {
                     контакта (/contacts/$id) остаётся — на неё deep-link из
                     канала/канбана/лидов. */}
                 <SidebarLink to="/w/$wsId/channels" wsId={wsId}>
-                  Каналы
+                  Площадки
                 </SidebarLink>
               </SidebarGroup>
               <SidebarGroup title="Работа">

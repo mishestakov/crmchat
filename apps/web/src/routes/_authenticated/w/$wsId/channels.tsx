@@ -1,8 +1,9 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Plus, X } from "lucide-react";
 import type { Channel, ImportChannelsMapping } from "@repo/core";
+import { ADDABLE, PLATFORMS, PlatformBadge, type Platform } from "../../../../lib/platforms";
 import { api } from "../../../../lib/api";
 import { formatMembers } from "../../../../components/channel-card";
 import { ChannelDrawer } from "../../../../components/channel-drawer";
@@ -136,6 +137,10 @@ function ChannelsPage() {
   });
 
   const [openChannelId, setOpenChannelId] = useState<string | null>(null);
+  const [showAddPlatform, setShowAddPlatform] = useState(false);
+  // Фильтр по платформе (клиентский — platform всегда задан, в отличие от
+  // memberCount/meta, см. коммент к ChannelsSearch). "all" = без фильтра.
+  const [platformFilter, setPlatformFilter] = useState<Platform | "all">("all");
   // Клик по админу в строке → чат с ним (переписка через аккаунт, у кого диалог).
   const [adminChat, setAdminChat] = useState<{
     contactId: string;
@@ -151,7 +156,17 @@ function ChannelsPage() {
     return a ? formatAccount(a) : id;
   };
 
-  const rows = channelsQ.data ?? [];
+  const allRows = channelsQ.data ?? [];
+  const rows =
+    platformFilter === "all"
+      ? allRows
+      : allRows.filter((c) => c.platform === platformFilter);
+  // Какие платформы реально присутствуют — чтобы не рисовать пустые вкладки.
+  const presentPlatforms = useMemo(() => {
+    const set = new Set<Platform>();
+    for (const c of allRows) set.add(c.platform);
+    return set;
+  }, [allRows]);
 
   // CSV-импорт: парсим локально → открываем wizard. Wizard сам делает POST.
   const fileRef = useRef<HTMLInputElement>(null);
@@ -180,7 +195,7 @@ function ChannelsPage() {
   return (
     <div className="flex h-full flex-col gap-4 overflow-hidden p-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Каналы</h1>
+        <h1 className="text-2xl font-semibold">Площадки</h1>
         <div className="flex items-center gap-3">
           <input
             ref={fileRef}
@@ -192,6 +207,13 @@ function ChannelsPage() {
               if (f) void onFile(f);
             }}
           />
+          <button
+            type="button"
+            onClick={() => setShowAddPlatform(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+          >
+            <Plus size={15} /> Добавить площадку
+          </button>
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
@@ -229,6 +251,27 @@ function ChannelsPage() {
         placeholder="Поиск по названию или @username…"
       />
 
+      {presentPlatforms.size > 1 && (
+        <div className="flex items-center gap-1.5">
+          <FilterChip
+            label="Все"
+            active={platformFilter === "all"}
+            onClick={() => setPlatformFilter("all")}
+          />
+          {(Object.keys(PLATFORMS) as Platform[])
+            .filter((p) => presentPlatforms.has(p))
+            .map((p) => (
+              <FilterChip
+                key={p}
+                label={PLATFORMS[p].label}
+                icon={<PlatformBadge platform={p} />}
+                active={platformFilter === p}
+                onClick={() => setPlatformFilter(p)}
+              />
+            ))}
+        </div>
+      )}
+
       {channelsQ.isLoading && <p>Загрузка…</p>}
       {channelsQ.error && (
         <p className="text-red-600">{errorMessage(channelsQ.error)}</p>
@@ -259,9 +302,9 @@ function ChannelsPage() {
                     colSpan={7}
                     className="px-3 py-12 text-center text-zinc-400"
                   >
-                    {search
-                      ? "По запросу ничего не найдено"
-                      : "Каналов пока нет — импортируйте CSV"}
+                    {search || platformFilter !== "all"
+                      ? "По фильтру ничего не найдено"
+                      : "Площадок пока нет — импортируйте CSV или добавьте по ссылке"}
                   </td>
                 </tr>
               )}
@@ -272,6 +315,11 @@ function ChannelsPage() {
                 const avgReach =
                   typeof meta.avg_reach === "number" ? meta.avg_reach : null;
                 const err = typeof meta.err === "number" ? meta.err : null;
+                // Последний пост: TG пишет в lastMessageAt, провайдеры (YT) — в
+                // meta.lastPostAt (TikTok без дат → null).
+                const lastPost =
+                  c.lastMessageAt ??
+                  (typeof meta.lastPostAt === "string" ? meta.lastPostAt : null);
                 return (
                   <tr
                     key={c.id}
@@ -280,6 +328,7 @@ function ChannelsPage() {
                   >
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-2">
+                        <PlatformBadge platform={c.platform} />
                         <span className="font-medium text-zinc-900">
                           {c.title}
                         </span>
@@ -302,7 +351,7 @@ function ChannelsPage() {
                       </div>
                       {c.username && (
                         <a
-                          href={`https://t.me/${c.username}`}
+                          href={PLATFORMS[c.platform].url(c.username)}
                           target="_blank"
                           rel="noreferrer"
                           onClick={(e) => e.stopPropagation()}
@@ -332,7 +381,7 @@ function ChannelsPage() {
                       />
                     </td>
                     <td className="px-3 py-2 text-zinc-600">
-                      {c.lastMessageAt ? formatRelative(c.lastMessageAt) : "—"}
+                      {lastPost ? formatRelative(lastPost) : "—"}
                     </td>
                   </tr>
                 );
@@ -340,6 +389,18 @@ function ChannelsPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {showAddPlatform && (
+        <AddPlatformModal
+          wsId={wsId}
+          onClose={() => setShowAddPlatform(false)}
+          onSuccess={(channelId) => {
+            setShowAddPlatform(false);
+            qc.invalidateQueries({ queryKey: ["channels", wsId] });
+            setOpenChannelId(channelId);
+          }}
+        />
       )}
 
       {openChannelId && (
@@ -363,6 +424,199 @@ function ChannelsPage() {
         />
       )}
     </div>
+  );
+}
+
+function FilterChip({
+  label,
+  icon,
+  active,
+  onClick,
+}: {
+  label: string;
+  icon?: ReactNode;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 transition-colors " +
+        (active
+          ? "bg-zinc-900 text-white ring-zinc-900"
+          : "bg-white text-zinc-600 ring-zinc-200 hover:bg-zinc-50")
+      }
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+// Добавление YouTube/TikTok-площадки по ссылке. Создаём канал с placeholder-
+// title (= хэндл) и сразу синкаем — провайдер заполнит название/аудиторию/охват
+// (см. specs/etap-17-multiplatform.md). Telegram сюда не кладём: он заводится
+// импортом/из трафика.
+function AddPlatformModal({
+  wsId,
+  onClose,
+  onSuccess,
+}: {
+  wsId: string;
+  onClose: () => void;
+  onSuccess: (channelId: string) => void;
+}) {
+  const [platform, setPlatform] = useState<Platform>("youtube");
+  const [input, setInput] = useState("");
+
+  // Разбор ввода. username отправляем ТОЛЬКО если уверенно извлекли @handle
+  // (голое имя или /@handle в URL). Для youtube.com/channel/UC…, /c/…, /user/…
+  // username НЕ угадываем — шлём только link, провайдер сам резолвит (иначе
+  // мусорный username вроде 'channel' перебьёт link в syncChannelFromProvider).
+  const parsed = useMemo(() => {
+    const s = input.trim();
+    if (!s) return { username: null as string | null, link: null as string | null, title: "" };
+    // URL-форма: есть слэш или явный домен (в т.ч. без протокола, youtube.com/@x).
+    const looksLikeUrl = s.includes("/") || /(youtube\.com|youtu\.be|tiktok\.com)/i.test(s);
+    if (!looksLikeUrl) {
+      // голый @handle (или UC-id — провайдер распознает сам)
+      const h = s.replace(/^@/, "");
+      return { username: h || null, link: null, title: h };
+    }
+    const withProto = /^https?:\/\//i.test(s) ? s : `https://${s}`;
+    let path = "";
+    try {
+      path = new URL(withProto).pathname;
+    } catch {
+      return { username: null, link: withProto, title: s };
+    }
+    const seg = path.split("/").filter(Boolean);
+    const at = seg.find((x) => x.startsWith("@"));
+    if (at) {
+      const h = at.replace(/^@/, "");
+      return { username: h, link: withProto, title: h };
+    }
+    // /channel/UC…, /c/Name, /user/Name — username не угадываем, резолв по link.
+    return { username: null, link: withProto, title: seg[seg.length - 1] ?? s };
+  }, [input]);
+  const canSubmit = Boolean(parsed.username || parsed.link);
+
+  const addMut = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.POST("/v1/workspaces/{wsId}/channels", {
+        params: { path: { wsId } },
+        body: {
+          // title — placeholder до синка (провайдер перезапишет реальным).
+          title: parsed.title || parsed.username || "—",
+          platform,
+          username: parsed.username ?? undefined,
+          link: parsed.link ?? undefined,
+        },
+      });
+      if (error) throw error;
+      // Синхронный pull через провайдер: заполнит карточку из соцсети.
+      const { error: syncError } = await api.POST(
+        "/v1/workspaces/{wsId}/channels/{id}/sync",
+        { params: { path: { wsId, id: data!.id }, query: { force: true } } },
+      );
+      // Канал создан, но pull упал (битая ссылка / нет YOUTUBE_KEY) —
+      // пробрасываем причину; сам канал уже в списке.
+      if (syncError) throw syncError;
+      return data!.id;
+    },
+    onSuccess: (id) => onSuccess(id),
+  });
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !addMut.isPending) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, addMut.isPending]);
+
+  return (
+    <>
+      <div
+        className="fixed inset-0 z-40 bg-zinc-900/40"
+        onClick={() => !addMut.isPending && onClose()}
+      />
+      <div className="fixed inset-x-0 top-1/2 z-50 mx-auto w-[min(440px,95vw)] -translate-y-1/2 rounded-2xl bg-white p-6 shadow-2xl">
+        <div className="mb-4 flex items-start justify-between">
+          <h2 className="text-lg font-semibold">Добавить площадку</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={addMut.isPending}
+            className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 disabled:opacity-50"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="mb-3 flex gap-2">
+          {ADDABLE.map((p) => {
+            const { Icon, label } = PLATFORMS[p];
+            return (
+              <button
+                key={p}
+                type="button"
+                onClick={() => setPlatform(p)}
+                className={
+                  "inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors " +
+                  (platform === p
+                    ? "border-emerald-500 bg-emerald-50 text-emerald-700"
+                    : "border-zinc-300 text-zinc-600 hover:bg-zinc-50")
+                }
+              >
+                <Icon size={16} /> {label}
+              </button>
+            );
+          })}
+        </div>
+
+        <input
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          autoFocus
+          placeholder={
+            platform === "youtube"
+              ? "@handle или youtube.com/@…"
+              : "@handle или tiktok.com/@…"
+          }
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && canSubmit && !addMut.isPending) addMut.mutate();
+          }}
+          className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
+        />
+
+        {addMut.error && (
+          <p className="mt-2 text-xs text-red-700">{errorMessage(addMut.error)}</p>
+        )}
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={addMut.isPending}
+            className="rounded-md px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100 disabled:opacity-50"
+          >
+            Отменить
+          </button>
+          <button
+            type="button"
+            onClick={() => addMut.mutate()}
+            disabled={!canSubmit || addMut.isPending}
+            className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+          >
+            {addMut.isPending ? "Добавляю…" : "Добавить и собрать"}
+          </button>
+        </div>
+      </div>
+    </>
   );
 }
 

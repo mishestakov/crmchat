@@ -1820,9 +1820,16 @@ function PublishStep({
               width={snap.media.width}
               height={snap.media.height}
             />
-          ) : (
-            thumb && <MessageMediaThumb thumb={thumb} />
-          )}
+          ) : thumb ? (
+            <MessageMediaThumb thumb={thumb} />
+          ) : snap.coverUrl ? (
+            // YouTube/TikTok: обложка приходит URL'ом (у TikTok с TTL).
+            <img
+              src={snap.coverUrl}
+              alt=""
+              className="aspect-video w-full object-cover"
+            />
+          ) : null}
           {snap.text && (
             <div className="whitespace-pre-wrap break-words px-2 py-1.5 text-xs text-zinc-700">
               {renderMessageEntities(

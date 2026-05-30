@@ -838,9 +838,16 @@ export const projectItems = pgTable(
     metricsStatus: placementMetricsStatus("metrics_status")
       .notNull()
       .default("idle"),
+    // Платформо-нейтральная витрина метрик публикации. Каждая платформа
+    // мапит свой словарь в эти 4 поля (см. specs/etap-17-multiplatform.md):
+    //   views    = TG view_count / YT viewCount / TikTok playCount
+    //   likes    = TG Σreactions / YT likeCount / TikTok diggCount
+    //   comments = — (TG) / YT commentCount / TikTok commentCount
+    //   shares   = TG forward_count / — (YT) / TikTok shareCount
     metricsViews: integer("metrics_views"),
-    metricsForwards: integer("metrics_forwards"),
-    metricsReactions: integer("metrics_reactions"),
+    metricsLikes: integer("metrics_likes"),
+    metricsComments: integer("metrics_comments"),
+    metricsShares: integer("metrics_shares"),
     metricsCollectedAt: timestamp("metrics_collected_at", { withTimezone: true }),
     metricsError: text("metrics_error"),
     postSnapshot: jsonb("post_snapshot").$type<PostSnapshot>(),
@@ -958,7 +965,12 @@ export const activities = pgTable(
 // `synced_at` — общий timestamp последнего pull'а из соцсети. NULL = ни разу
 // не синхронизировались, CSV-импорт пишет всё. NOT NULL = свежие данные из
 // соцсети, CSV пишет только properties + admin_username (TG этого не знает).
-export const channelPlatform = pgEnum("channel_platform", ["telegram", "max"]);
+export const channelPlatform = pgEnum("channel_platform", [
+  "telegram",
+  "youtube",
+  "tiktok",
+  "max",
+]);
 
 export const channels = pgTable(
   "channels",

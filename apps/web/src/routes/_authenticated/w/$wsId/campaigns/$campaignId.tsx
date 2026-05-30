@@ -1990,10 +1990,13 @@ function WrapupPhase({ wsId, campaign }: { wsId: string; campaign: Campaign }) {
                   <Eye size={13} className="inline" />
                 </Th>
                 <Th className="text-right">
-                  <Repeat2 size={13} className="inline" />
+                  <Heart size={13} className="inline" />
                 </Th>
                 <Th className="text-right">
-                  <Heart size={13} className="inline" />
+                  <MessageCircle size={13} className="inline" />
+                </Th>
+                <Th className="text-right">
+                  <Repeat2 size={13} className="inline" />
                 </Th>
                 <Th className="text-right">CPV</Th>
                 <Th>Снято</Th>
@@ -2012,10 +2015,13 @@ function WrapupPhase({ wsId, campaign }: { wsId: string; campaign: Campaign }) {
                     {p.metricsViews === null ? "—" : formatViews(p.metricsViews)}
                   </td>
                   <td className="px-4 py-2.5 text-right tabular-nums text-zinc-700">
-                    {p.metricsForwards ?? "—"}
+                    {p.metricsLikes ?? "—"}
                   </td>
                   <td className="px-4 py-2.5 text-right tabular-nums text-zinc-700">
-                    {p.metricsReactions ?? "—"}
+                    {p.metricsComments ?? "—"}
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums text-zinc-700">
+                    {p.metricsShares ?? "—"}
                   </td>
                   <td className="px-4 py-2.5 text-right tabular-nums text-zinc-700">
                     {cpv(p.priceAmount, p.metricsViews)}
@@ -2045,11 +2051,17 @@ function Stat({ label, value }: { label: string; value: string }) {
 // Карточка вышедшего поста: минитамбнейл (base64 jpeg из TDLib payload) + текст.
 function PostSnapshotCell({ placement }: { placement: Placement }) {
   const snap = placement.postSnapshot;
+  // Обложка: YT/TikTok отдают URL (coverUrl), TG — base64-минитамбнейл.
+  const cover = snap?.coverUrl
+    ? snap.coverUrl
+    : snap?.thumbB64
+      ? `data:image/jpeg;base64,${snap.thumbB64}`
+      : null;
   return (
     <div className="flex items-start gap-2">
-      {snap?.thumbB64 ? (
+      {cover ? (
         <img
-          src={`data:image/jpeg;base64,${snap.thumbB64}`}
+          src={cover}
           alt=""
           className="h-10 w-10 shrink-0 rounded object-cover"
         />

@@ -1,6 +1,6 @@
-import { and, asc, eq, isNotNull, isNull, lte, or } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, lte, or } from "drizzle-orm";
 import { db } from "../db/client.ts";
-import { outreachAccounts, projectItems } from "../db/schema.ts";
+import { channels, outreachAccounts, projectItems } from "../db/schema.ts";
 import { errMsg } from "./errors.ts";
 import {
   findSubscribedReaderAccount,
@@ -11,6 +11,15 @@ import {
 import { emitProjectChanged } from "./events.ts";
 import { buildPostSnapshot, type TdContent } from "./td-message.ts";
 import type { TdClient } from "./tdlib/index.ts";
+import {
+  fetchYoutubeVideoMetrics,
+  parseYoutubeVideoId,
+} from "./channel-providers/youtube.ts";
+import {
+  fetchTiktokVideoMetrics,
+  parseTiktokVideoId,
+  resolveTiktokShortlink,
+} from "./channel-providers/tiktok.ts";
 
 // Воркер снятия метрик опубликованных постов (фаза «Отчёт»). Менеджер жмёт
 // «снять статистику» → размещения уходят в metrics_status='pending' → этот
@@ -85,7 +94,11 @@ async function tick() {
   try {
     const now = Date.now();
     state.hourly = state.hourly.filter((t) => now - t < 3_600_000);
-    if (state.hourly.length >= HOURLY_CAP) return;
+    // Часовой кап — защита TDLib от FloodWait, касается ТОЛЬКО Telegram.
+    // Если TG исчерпан, не стопаем весь воркер, а берём только провайдерские
+    // строки (YouTube/TikTok — обычный HTTP, флуд-лимита нет): они не едят и не
+    // блокируются TG-капом.
+    const tgCapped = state.hourly.length >= HOURLY_CAP;
 
     const [row] = await db
       .select({
@@ -94,23 +107,27 @@ async function tick() {
         workspaceId: projectItems.workspaceId,
         channelId: projectItems.channelId,
         postUrl: projectItems.postUrl,
+        platform: channels.platform,
       })
       .from(projectItems)
+      .leftJoin(channels, eq(channels.id, projectItems.channelId))
       .where(
         and(
           eq(projectItems.kind, "placement"),
           eq(projectItems.metricsStatus, "pending"),
           isNotNull(projectItems.postUrl),
+          tgCapped ? inArray(channels.platform, ["youtube", "tiktok"]) : undefined,
         ),
       )
       .orderBy(asc(projectItems.createdAt))
       .limit(1);
     if (!row) return;
 
-    // Резервируем слот в часовом окне ДО обращения к TG: лимит считает
-    // попытки (и успех, и фейл — нагрузка на сеть одинаковая).
-    state.hourly.push(Date.now());
-    await runOne(row);
+    const platform = resolvePlatform(row);
+    // Слот часового окна резервируем только для Telegram (и успех, и фейл —
+    // нагрузка на TDLib одинаковая). Провайдеры кап не трогают.
+    if (platform === "telegram") state.hourly.push(Date.now());
+    await runOne(row, platform);
   } catch (e) {
     console.error("[metrics-worker] tick failed:", errMsg(e));
   } finally {
@@ -153,13 +170,116 @@ async function pickReaderAccount(workspaceId: string, channelId: string | null) 
   return acc ?? null;
 }
 
-async function runOne(row: {
+type CollectorPlatform = "youtube" | "tiktok" | "telegram";
+
+type MetricsRow = {
   id: string;
   projectId: string;
   workspaceId: string;
   channelId: string | null;
   postUrl: string | null;
-}) {
+  // platform канала-площадки (авторитетный источник). null — у размещения нет
+  // канала; тогда падаем на URL-детект.
+  platform: "telegram" | "youtube" | "tiktok" | "max" | null;
+};
+
+// Fallback-детект по ссылке, когда у размещения нет канала (channelId null).
+function detectPlatformFromUrl(url: string): CollectorPlatform {
+  if (/youtube\.com|youtu\.be/i.test(url)) return "youtube";
+  if (/tiktok\.com/i.test(url)) return "tiktok";
+  return "telegram";
+}
+
+// Какой коллектор использовать. channel.platform — источник истины; URL-детект
+// только если канала нет. max/прочее → TDLib-ветка (там и упрётся в «нет
+// коллектора», коллектора для max пока нет).
+function resolvePlatform(row: MetricsRow): CollectorPlatform {
+  if (row.platform === "youtube" || row.platform === "tiktok") return row.platform;
+  if (row.platform == null && row.postUrl) return detectPlatformFromUrl(row.postUrl);
+  return "telegram";
+}
+
+// Диспетчер: YT/TikTok идут своим путём, Telegram — через TDLib (runTgMetrics).
+async function runOne(row: MetricsRow, platform: CollectorPlatform) {
+  if (platform === "youtube" || platform === "tiktok") {
+    return runProviderMetrics(row, platform);
+  }
+  return runTgMetrics(row);
+}
+
+// Снятие метрик YouTube/TikTok-видео по ссылке. Аккаунт не нужен, флуд-логики
+// нет — просто HTTP к провайдеру → запись витрины. postSnapshot пока не пишем
+// (обобщение снимка — этап 17.5).
+async function runProviderMetrics(
+  row: MetricsRow,
+  platform: "youtube" | "tiktok",
+) {
+  try {
+    if (!row.postUrl) throw new Error("у размещения нет ссылки на пост");
+    // TikTok-шортлинк (vm./vt.tiktok.com) не парсится напрямую — резолвим 302 в
+    // каноническую и сохраняем её в postUrl, чтобы редирект не гонять повторно.
+    let effectiveUrl = row.postUrl;
+    let videoId =
+      platform === "youtube"
+        ? parseYoutubeVideoId(effectiveUrl)
+        : parseTiktokVideoId(effectiveUrl);
+    if (!videoId && platform === "tiktok") {
+      effectiveUrl = await resolveTiktokShortlink(effectiveUrl);
+      videoId = parseTiktokVideoId(effectiveUrl);
+    }
+    if (!videoId) {
+      throw new Error(`не удалось извлечь id видео из ссылки: ${row.postUrl}`);
+    }
+    const m =
+      platform === "youtube"
+        ? await fetchYoutubeVideoMetrics(videoId)
+        : await fetchTiktokVideoMetrics(videoId);
+
+    await db
+      .update(projectItems)
+      .set({
+        metricsStatus: "done",
+        metricsViews: m.views,
+        metricsLikes: m.likes,
+        metricsComments: m.comments,
+        metricsShares: m.shares,
+        metricsCollectedAt: new Date(),
+        metricsError: null,
+        // Сохраняем разрезолвленную каноническую ссылку (для TikTok-шортлинков).
+        postUrl: effectiveUrl,
+        // Снимок-карточка поста: обложка (URL) + caption + ссылка. Метрики
+        // живут в колонках выше; в снимке дублируем только views.
+        postSnapshot: {
+          platform,
+          text: m.title ?? "",
+          entities: [],
+          thumbB64: null,
+          thumbW: null,
+          thumbH: null,
+          coverUrl: m.coverUrl,
+          url: effectiveUrl,
+          media: null,
+          views: m.views,
+          forwards: null,
+          reactions: [],
+          capturedAt: new Date().toISOString(),
+        },
+      })
+      .where(eq(projectItems.id, row.id));
+  } catch (e) {
+    await db
+      .update(projectItems)
+      .set({
+        metricsStatus: "error",
+        metricsError: errMsg(e),
+        metricsCollectedAt: new Date(),
+      })
+      .where(eq(projectItems.id, row.id));
+  }
+  emitProjectChanged(row.projectId);
+}
+
+async function runTgMetrics(row: MetricsRow) {
   let accountId: string | null = null;
   try {
     if (!row.postUrl) throw new Error("у размещения нет ссылки на пост");
@@ -211,9 +331,12 @@ async function runOne(row: {
       .update(projectItems)
       .set({
         metricsStatus: "done",
+        // TG-словарь → нейтральная витрина: reactions→likes, forwards→shares.
+        // У Telegram-поста нет счётчика комментариев в interaction_info.
         metricsViews: info?.view_count ?? null,
-        metricsForwards: info?.forward_count ?? null,
-        metricsReactions: reactions,
+        metricsLikes: reactions,
+        metricsComments: null,
+        metricsShares: info?.forward_count ?? null,
         metricsCollectedAt: new Date(),
         metricsError: null,
         postSnapshot: buildPostSnapshot({
