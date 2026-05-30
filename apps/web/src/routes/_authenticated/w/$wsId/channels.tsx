@@ -1,9 +1,9 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Plus, X } from "lucide-react";
+import { X } from "lucide-react";
 import type { Channel, ImportChannelsMapping } from "@repo/core";
-import { ADDABLE, PLATFORMS, PlatformBadge, type Platform } from "../../../../lib/platforms";
+import { PLATFORMS, PlatformBadge, type Platform } from "../../../../lib/platforms";
 import { api } from "../../../../lib/api";
 import { formatMembers } from "../../../../components/channel-card";
 import { ChannelDrawer } from "../../../../components/channel-drawer";
@@ -137,7 +137,6 @@ function ChannelsPage() {
   });
 
   const [openChannelId, setOpenChannelId] = useState<string | null>(null);
-  const [showAddPlatform, setShowAddPlatform] = useState(false);
   // Фильтр по платформе (клиентский — platform всегда задан, в отличие от
   // memberCount/meta, см. коммент к ChannelsSearch). "all" = без фильтра.
   const [platformFilter, setPlatformFilter] = useState<Platform | "all">("all");
@@ -207,13 +206,6 @@ function ChannelsPage() {
               if (f) void onFile(f);
             }}
           />
-          <button
-            type="button"
-            onClick={() => setShowAddPlatform(true)}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
-          >
-            <Plus size={15} /> Добавить площадку
-          </button>
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
@@ -391,18 +383,6 @@ function ChannelsPage() {
         </div>
       )}
 
-      {showAddPlatform && (
-        <AddPlatformModal
-          wsId={wsId}
-          onClose={() => setShowAddPlatform(false)}
-          onSuccess={(channelId) => {
-            setShowAddPlatform(false);
-            qc.invalidateQueries({ queryKey: ["channels", wsId] });
-            setOpenChannelId(channelId);
-          }}
-        />
-      )}
-
       {openChannelId && (
         <ChannelDrawer
           wsId={wsId}
@@ -452,171 +432,6 @@ function FilterChip({
       {icon}
       {label}
     </button>
-  );
-}
-
-// Добавление YouTube/TikTok-площадки по ссылке. Создаём канал с placeholder-
-// title (= хэндл) и сразу синкаем — провайдер заполнит название/аудиторию/охват
-// (см. specs/etap-17-multiplatform.md). Telegram сюда не кладём: он заводится
-// импортом/из трафика.
-function AddPlatformModal({
-  wsId,
-  onClose,
-  onSuccess,
-}: {
-  wsId: string;
-  onClose: () => void;
-  onSuccess: (channelId: string) => void;
-}) {
-  const [platform, setPlatform] = useState<Platform>("youtube");
-  const [input, setInput] = useState("");
-
-  // Разбор ввода. username отправляем ТОЛЬКО если уверенно извлекли @handle
-  // (голое имя или /@handle в URL). Для youtube.com/channel/UC…, /c/…, /user/…
-  // username НЕ угадываем — шлём только link, провайдер сам резолвит (иначе
-  // мусорный username вроде 'channel' перебьёт link в syncChannelFromProvider).
-  const parsed = useMemo(() => {
-    const s = input.trim();
-    if (!s) return { username: null as string | null, link: null as string | null, title: "" };
-    // URL-форма: есть слэш или явный домен (в т.ч. без протокола, youtube.com/@x).
-    const looksLikeUrl = s.includes("/") || /(youtube\.com|youtu\.be|tiktok\.com)/i.test(s);
-    if (!looksLikeUrl) {
-      // голый @handle (или UC-id — провайдер распознает сам)
-      const h = s.replace(/^@/, "");
-      return { username: h || null, link: null, title: h };
-    }
-    const withProto = /^https?:\/\//i.test(s) ? s : `https://${s}`;
-    let path = "";
-    try {
-      path = new URL(withProto).pathname;
-    } catch {
-      return { username: null, link: withProto, title: s };
-    }
-    const seg = path.split("/").filter(Boolean);
-    const at = seg.find((x) => x.startsWith("@"));
-    if (at) {
-      const h = at.replace(/^@/, "");
-      return { username: h, link: withProto, title: h };
-    }
-    // /channel/UC…, /c/Name, /user/Name — username не угадываем, резолв по link.
-    return { username: null, link: withProto, title: seg[seg.length - 1] ?? s };
-  }, [input]);
-  const canSubmit = Boolean(parsed.username || parsed.link);
-
-  const addMut = useMutation({
-    mutationFn: async () => {
-      const { data, error } = await api.POST("/v1/workspaces/{wsId}/channels", {
-        params: { path: { wsId } },
-        body: {
-          // title — placeholder до синка (провайдер перезапишет реальным).
-          title: parsed.title || parsed.username || "—",
-          platform,
-          username: parsed.username ?? undefined,
-          link: parsed.link ?? undefined,
-        },
-      });
-      if (error) throw error;
-      // Синхронный pull через провайдер: заполнит карточку из соцсети.
-      const { error: syncError } = await api.POST(
-        "/v1/workspaces/{wsId}/channels/{id}/sync",
-        { params: { path: { wsId, id: data!.id }, query: { force: true } } },
-      );
-      // Канал создан, но pull упал (битая ссылка / нет YOUTUBE_KEY) —
-      // пробрасываем причину; сам канал уже в списке.
-      if (syncError) throw syncError;
-      return data!.id;
-    },
-    onSuccess: (id) => onSuccess(id),
-  });
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !addMut.isPending) onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, addMut.isPending]);
-
-  return (
-    <>
-      <div
-        className="fixed inset-0 z-40 bg-zinc-900/40"
-        onClick={() => !addMut.isPending && onClose()}
-      />
-      <div className="fixed inset-x-0 top-1/2 z-50 mx-auto w-[min(440px,95vw)] -translate-y-1/2 rounded-2xl bg-white p-6 shadow-2xl">
-        <div className="mb-4 flex items-start justify-between">
-          <h2 className="text-lg font-semibold">Добавить площадку</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={addMut.isPending}
-            className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 disabled:opacity-50"
-          >
-            <X size={18} />
-          </button>
-        </div>
-
-        <div className="mb-3 flex gap-2">
-          {ADDABLE.map((p) => {
-            const { Icon, label } = PLATFORMS[p];
-            return (
-              <button
-                key={p}
-                type="button"
-                onClick={() => setPlatform(p)}
-                className={
-                  "inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors " +
-                  (platform === p
-                    ? "border-emerald-500 bg-emerald-50 text-emerald-700"
-                    : "border-zinc-300 text-zinc-600 hover:bg-zinc-50")
-                }
-              >
-                <Icon size={16} /> {label}
-              </button>
-            );
-          })}
-        </div>
-
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          autoFocus
-          placeholder={
-            platform === "youtube"
-              ? "@handle или youtube.com/@…"
-              : "@handle или tiktok.com/@…"
-          }
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && canSubmit && !addMut.isPending) addMut.mutate();
-          }}
-          className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
-        />
-
-        {addMut.error && (
-          <p className="mt-2 text-xs text-red-700">{errorMessage(addMut.error)}</p>
-        )}
-
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={addMut.isPending}
-            className="rounded-md px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100 disabled:opacity-50"
-          >
-            Отменить
-          </button>
-          <button
-            type="button"
-            onClick={() => addMut.mutate()}
-            disabled={!canSubmit || addMut.isPending}
-            className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-          >
-            {addMut.isPending ? "Добавляю…" : "Добавить и собрать"}
-          </button>
-        </div>
-      </div>
-    </>
   );
 }
 
@@ -736,6 +551,11 @@ function ImportWizard(props: {
 }) {
   const { parsed } = props;
 
+  // Платформа всего импорта — выбирается явно, не угадывается по URL построчно.
+  // Один импорт = одна площадка (надёжнее смешанного автодетекта). Прокидывается
+  // в API; дедуп и lower(username)-uniq считаются в разрезе платформы.
+  const [platform, setPlatform] = useState<Platform>("telegram");
+
   // Init: для каждого header — auto-detect или 'ignore'. Используем заголовок
   // как ключ state'а; все равенство по строке.
   const [mappings, setMappings] = useState<Record<string, ColMapping>>(() => {
@@ -833,7 +653,7 @@ function ImportWizard(props: {
           body: {
             rows: parsed.rows,
             mapping: apiMapping,
-            platform: "telegram",
+            platform,
           },
         },
       );
@@ -884,20 +704,45 @@ function ImportWizard(props: {
       <div className="fixed inset-x-0 top-1/2 z-50 mx-auto max-h-[85vh] w-[min(1100px,95vw)] -translate-y-1/2 overflow-hidden rounded-2xl bg-white shadow-2xl">
         <div className="flex items-start justify-between border-b border-zinc-200 px-6 py-4">
           <div>
-            <h2 className="text-lg font-semibold">Импорт каналов</h2>
+            <h2 className="text-lg font-semibold">Импорт площадок</h2>
             <p className="text-xs text-zinc-500">
               {props.fileName} · {parsed.rows.length.toLocaleString("ru-RU")} строк ·{" "}
               {parsed.headers.length} колонок
             </p>
           </div>
-          <button
-            type="button"
-            onClick={props.onClose}
-            disabled={submitMut.isPending}
-            className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 disabled:opacity-50"
-          >
-            <X size={18} />
-          </button>
+          <div className="flex items-center gap-3">
+            {/* Платформа всего импорта. YouTube/TikTok заполнятся данными лениво
+                при открытии площадки (provider-sync), здесь нужен только хэндл/ссылка. */}
+            <div className="flex items-center gap-1.5">
+              {(["telegram", "youtube", "tiktok"] as Platform[]).map((p) => {
+                const cfg = PLATFORMS[p];
+                const active = platform === p;
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setPlatform(p)}
+                    className={
+                      "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors " +
+                      (active
+                        ? "border-emerald-500 bg-emerald-50 text-emerald-700"
+                        : "border-zinc-300 text-zinc-600 hover:bg-zinc-50")
+                    }
+                  >
+                    <cfg.Icon size={14} /> {cfg.label}
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              onClick={props.onClose}
+              disabled={submitMut.isPending}
+              className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 disabled:opacity-50"
+            >
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
         <div className="max-h-[60vh] overflow-auto p-4">

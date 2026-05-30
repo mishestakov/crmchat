@@ -59,6 +59,11 @@ export function ChannelCard(props: {
   const needsSync =
     !channel.syncedAt ||
     Date.now() - new Date(channel.syncedAt).getTime() > SYNC_TTL_MS;
+  // YouTube/TikTok синкаются внешним провайдером без TDLib-аккаунта — для них
+  // не требуем hasActiveAccount (иначе площадки воркспейса без TG-аккаунта
+  // никогда не наполнятся ленивым синком после импорта).
+  const isProviderPlatform =
+    channel.platform === "youtube" || channel.platform === "tiktok";
 
   const inUnavailableCooldown =
     !!channel.unavailableLastCheckAt &&
@@ -129,7 +134,7 @@ export function ChannelCard(props: {
     if (
       needsSync &&
       !inUnavailableCooldown &&
-      hasActiveAccount &&
+      (isProviderPlatform || hasActiveAccount) &&
       syncedForRef.current !== channel.id &&
       !syncMut.isPending
     ) {
