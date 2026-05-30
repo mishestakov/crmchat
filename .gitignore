@@ -55,3 +55,13 @@ coverage.ui-gaps*.txt
 # mkdocs
 _site/
 specs/_screenshots
+debug.json
+.tanstack/
+# локальные спеки-черновики и аудиты (вне версионирования)
+specs/etap-12-projects.md
+specs/agency-mediaplan-audit.md
+specs/db-audit/
+# локальный тулинг, прототипы, промпты
+prompts/
+prototypes/
+scripts/
