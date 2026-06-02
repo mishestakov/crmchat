@@ -2,18 +2,29 @@ import { randomBytes } from "node:crypto";
 import { db } from "../db/client.ts";
 import { users } from "../db/schema.ts";
 import { issueBridgeToken } from "./bridge-tokens.ts";
+import {
+  attachAuthStateBus,
+  createTdClient,
+  extractActiveUsername,
+  type TdClient,
+  type TdUser,
+  waitForAuthState,
+} from "./tdlib/index.ts";
 
-// Telegram Bot deep-link login flow — обход RKN-блокировки oauth.telegram.org.
-// SPA → start: получаем authToken + t.me deep-link → юзер открывает в TG → бот
-// шлёт inline-кнопку «Подтвердить» → callback_query помечает entry approved +
-// создаёт bridge-token → SPA poll'ит и редиректит на /auth/finish?bt=...
-// Pending-tokens живут в памяти 5 минут, рестарт api сбрасывает их.
+// Telegram bot login через TDLib (MTProto), а не Bot API/webhook. На RU-сервере
+// Bot API ненадёжен (webhook не доставляется входящим к RU-IP, исходящий
+// RKN-троттлится), а TDLib идёт через тот же MTProto-прокси, что и outreach-
+// аккаунты. Бот логинится по bot-token (checkAuthenticationBotToken), апдейты
+// (updateNewMessage / updateNewCallbackQuery) приходят по MTProto.
+//
+// Флоу: SPA → start: authToken + tg deep-link → юзер открывает в TG → бот ловит
+// /start <token> → шлёт inline «Подтвердить» → callback помечает entry approved
+// + создаёт bridge-token → SPA poll'ит checkAuthToken и редиректит на finish.
+// Pending-tokens живут в памяти 5 минут, рестарт api их сбрасывает.
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "";
 const BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME ?? "";
 const WEB_ORIGIN = (process.env.WEB_ORIGIN ?? "").replace(/\/$/, "");
-const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET ?? "";
-const API_BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
 const TTL_MS = 5 * 60 * 1000;
 
@@ -40,11 +51,8 @@ export function issueAuthToken(): {
   authStore.set(token, { status: "pending", createdAt: Date.now() });
   return {
     token,
-    // tg://-scheme отдаётся ОС прямо в TG-приложение, минуя t.me-страницу
-    // (которая может быть RKN-чувствительна на некоторых провайдерах).
+    // tg://-scheme отдаётся ОС прямо в TG-приложение, минуя t.me-страницу.
     deepLink: `tg://resolve?domain=${BOT_USERNAME}&start=${token}`,
-    // Fallback на t.me для тех, у кого TG не установлен или браузер не
-    // поддержал tg:// scheme.
     webLink: `https://t.me/${BOT_USERNAME}?start=${token}`,
   };
 }
@@ -63,8 +71,6 @@ export function checkAuthToken(token: string): AuthCheckResult {
     return { status: "expired" };
   }
   if (entry.status === "approved") {
-    // approve — одноразовый consume: bridge-token сам имеет TTL 60s, дальше его
-    // съест /v1/auth/finish.
     authStore.delete(token);
     return { status: "approved", bridgeToken: entry.bridgeToken! };
   }
@@ -75,233 +81,283 @@ export function checkAuthToken(token: string): AuthCheckResult {
   return { status: "pending" };
 }
 
-type TgUser = {
-  id: number;
-  username?: string;
-  first_name: string;
-  last_name?: string;
-};
-type TgMessage = {
-  message_id: number;
-  chat: { id: number };
-  from?: TgUser;
-  text?: string;
-};
-type TgCallbackQuery = {
-  id: string;
-  from: TgUser;
-  message?: TgMessage;
-  data?: string;
-};
-export type TgUpdate = {
-  update_id: number;
-  message?: TgMessage;
-  callback_query?: TgCallbackQuery;
-};
-
-async function tgApi<T>(
-  method: string,
-  params: Record<string, unknown>,
-): Promise<T> {
-  const res = await fetch(`${API_BASE}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params),
-    // Без таймаута hung-запрос в TG зависит webhook-хендлер навсегда,
-    // и TG ретрайит → дубликаты updates. Idempotency проверкой по
-    // status защищаемся, но дешевле сразу отрезать по таймауту.
-    signal: AbortSignal.timeout(10_000),
-  });
-  const json = (await res.json()) as {
-    ok: boolean;
-    result: T;
-    description?: string;
-  };
-  if (!json.ok) throw new Error(`tg ${method}: ${json.description}`);
-  return json.result;
-}
-
 export function isBotConfigured(): boolean {
-  return !!BOT_TOKEN && !!BOT_USERNAME && !!WEBHOOK_SECRET && !!WEB_ORIGIN;
+  return !!BOT_TOKEN && !!BOT_USERNAME && !!WEB_ORIGIN;
 }
 
-export function getWebhookSecret(): string {
-  return WEBHOOK_SECRET;
-}
+// --- TDLib I/O (сверено с td_api.tl) ---------------------------------------
+// Поля без провайдер-аналога (topic_id / reply_to / options и т.п.) опускаем —
+// td_json подставляет дефолты.
 
-// Идемпотентно: повторный setWebhook просто перестанавливает URL/secret.
-export async function setupWebhook(): Promise<void> {
-  if (!isBotConfigured()) {
-    console.warn(
-      "[tg-bot] TELEGRAM_BOT_TOKEN / TELEGRAM_BOT_USERNAME / TELEGRAM_WEBHOOK_SECRET / WEB_ORIGIN не заданы — webhook не регистрируется",
-    );
-    return;
-  }
-  const url = `${WEB_ORIGIN}/v1/webhooks/tg-bot`;
-  await tgApi("setWebhook", {
-    url,
-    secret_token: WEBHOOK_SECRET,
-    allowed_updates: ["message", "callback_query"],
-  });
-  console.log(`[tg-bot] webhook registered: ${url}`);
-}
-
-// Long-polling вместо webhook. На RU-сервере webhook не работает: Telegram не
-// может достучаться входящим к RU-IP (getWebhookInfo → «Connection timed out»).
-// Исходящий же Bot API живой (DC2-пин + IPv4-first), поэтому сами ТЯНЕМ апдейты
-// через getUpdates. Те же Update-объекты, что слал webhook → handleUpdate как был.
-const POLL_TIMEOUT_S = 25;
-let polling = false;
-
-async function fetchUpdates(offset: number): Promise<TgUpdate[]> {
-  const res = await fetch(`${API_BASE}/getUpdates`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      offset,
-      timeout: POLL_TIMEOUT_S,
-      allowed_updates: ["message", "callback_query"],
-    }),
-    // Клиентский таймаут с запасом над серверным long-poll'ом.
-    signal: AbortSignal.timeout((POLL_TIMEOUT_S + 10) * 1000),
-  });
-  const json = (await res.json()) as {
-    ok: boolean;
-    result: TgUpdate[];
-    description?: string;
+// inputMessageText (td_api.tl:5477) — только text; link_preview_options/
+// clear_draft опускаем (TDLib подставит дефолты).
+function inputText(text: string): unknown {
+  return {
+    _: "inputMessageText",
+    text: { _: "formattedText", text, entities: [] },
   };
-  if (!json.ok) throw new Error(`getUpdates: ${json.description}`);
-  return json.result;
 }
 
-export async function startBotPolling(): Promise<void> {
-  if (!isBotConfigured()) {
-    console.warn(
-      "[tg-bot] TELEGRAM_BOT_TOKEN / TELEGRAM_BOT_USERNAME / TELEGRAM_WEBHOOK_SECRET / WEB_ORIGIN не заданы — long-polling не запускается",
-    );
-    return;
-  }
-  if (polling) return;
-  polling = true;
-  // getUpdates и webhook взаимоисключающи — снимаем webhook на старте.
-  await tgApi("deleteWebhook", { drop_pending_updates: false }).catch(() => {});
-  console.log("[tg-bot] long-polling started");
-  let offset = 0;
-  while (polling) {
-    try {
-      const updates = await fetchUpdates(offset);
-      for (const u of updates) {
-        offset = u.update_id + 1;
-        await handleUpdate(u).catch((e: unknown) =>
-          console.error("[tg-bot] handleUpdate failed:", e),
-        );
-      }
-    } catch (e) {
-      // Сетевой сбой / RKN-троттл исходящего — backoff и повтор, offset не теряем.
-      console.error("[tg-bot] getUpdates failed:", e);
-      await new Promise((r) => setTimeout(r, 3000));
-    }
-  }
+async function sendText(
+  client: TdClient,
+  chatId: number,
+  text: string,
+  replyMarkup?: unknown,
+): Promise<void> {
+  await client.invoke({
+    _: "sendMessage",
+    chat_id: chatId,
+    input_message_content: inputText(text),
+    ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+  } as never);
 }
 
-export async function handleUpdate(update: TgUpdate): Promise<void> {
-  if (update.message?.text?.startsWith("/start")) {
-    await onStart(update.message);
-    return;
-  }
-  if (update.callback_query?.data) {
-    await onCallback(update.callback_query);
-  }
+async function editText(
+  client: TdClient,
+  chatId: number,
+  messageId: number,
+  text: string,
+): Promise<void> {
+  await client.invoke({
+    _: "editMessageText",
+    chat_id: chatId,
+    message_id: messageId,
+    input_message_content: inputText(text),
+  } as never);
 }
 
-async function onStart(message: TgMessage): Promise<void> {
-  const parts = message.text!.split(/\s+/, 2);
-  const authToken = parts[1] ?? "";
+async function answerCallback(
+  client: TdClient,
+  callbackQueryId: string, // int64 → строка
+  text: string,
+  showAlert = false,
+): Promise<void> {
+  await client.invoke({
+    _: "answerCallbackQuery",
+    callback_query_id: callbackQueryId,
+    text,
+    show_alert: showAlert,
+  } as never);
+}
+
+// Inline-клавиатура подтверждения. callback-data у TDLib — bytes → base64.
+function confirmKeyboard(authToken: string): unknown {
+  const cb = (s: string) => ({
+    _: "inlineKeyboardButtonTypeCallback",
+    data: Buffer.from(s, "utf8").toString("base64"),
+  });
+  // inlineKeyboardButton (td_api.tl:3514) имеет ещё icon_custom_emoji_id/style —
+  // это поздние ОПЦИОНАЛЬНЫЕ поля (кнопки существовали до них). Намеренно их не
+  // задаём: TDLib подставит дефолты, а мы не привязываемся к конкретной версии
+  // схемы (меньше шансов сломаться при апгрейде prebuilt-tdlib).
+  const btn = (text: string, data: string) => ({
+    _: "inlineKeyboardButton",
+    text,
+    type: cb(data),
+  });
+  return {
+    _: "replyMarkupInlineKeyboard",
+    rows: [
+      [
+        btn("✅ Подтвердить", `approve:${authToken}`),
+        btn("❌ Отмена", `reject:${authToken}`),
+      ],
+    ],
+  };
+}
+
+async function getUser(
+  client: TdClient,
+  userId: number,
+): Promise<{ name: string; username: string | null }> {
+  const u = (await client.invoke({
+    _: "getUser",
+    user_id: userId,
+  } as never)) as TdUser;
+  const username = extractActiveUsername(u);
+  const name =
+    [u.first_name, u.last_name].filter(Boolean).join(" ") || username || "?";
+  return { name, username };
+}
+
+// --- Обработка апдейтов -----------------------------------------------------
+
+async function onStart(
+  client: TdClient,
+  chatId: number,
+  userId: number,
+  text: string,
+): Promise<void> {
+  const authToken = text.split(/\s+/, 2)[1] ?? "";
   const entry = authToken ? authStore.get(authToken) : undefined;
   if (!entry || entry.status !== "pending") {
-    await tgApi("sendMessage", {
-      chat_id: message.chat.id,
-      text: "Эта ссылка для входа недействительна или истекла. Запросите новую на странице логина.",
-    });
+    await sendText(
+      client,
+      chatId,
+      "Эта ссылка для входа недействительна или истекла. Запросите новую на странице логина.",
+    );
     return;
   }
-  const from = message.from;
-  const displayName = from
-    ? [from.first_name, from.last_name].filter(Boolean).join(" ") || from.username || "?"
-    : "?";
-  await tgApi("sendMessage", {
-    chat_id: message.chat.id,
-    text: `Подтвердить вход в CRM как «${displayName}»?`,
-    reply_markup: {
-      inline_keyboard: [
-        [
-          { text: "✅ Подтвердить", callback_data: `approve:${authToken}` },
-          { text: "❌ Отмена", callback_data: `reject:${authToken}` },
-        ],
-      ],
-    },
-  });
+  const { name } = await getUser(client, userId);
+  await sendText(
+    client,
+    chatId,
+    `Подтвердить вход в CRM как «${name}»?`,
+    confirmKeyboard(authToken),
+  );
 }
 
-async function onCallback(cb: TgCallbackQuery): Promise<void> {
-  const sep = cb.data!.indexOf(":");
-  const action = sep > 0 ? cb.data!.slice(0, sep) : cb.data!;
-  const authToken = sep > 0 ? cb.data!.slice(sep + 1) : "";
+async function onCallback(
+  client: TdClient,
+  cb: {
+    id: string;
+    userId: number;
+    chatId: number;
+    messageId: number;
+    data: string;
+  },
+): Promise<void> {
+  const sep = cb.data.indexOf(":");
+  const action = sep > 0 ? cb.data.slice(0, sep) : cb.data;
+  const authToken = sep > 0 ? cb.data.slice(sep + 1) : "";
   const entry = authStore.get(authToken);
 
   if (!entry || entry.status !== "pending") {
-    await tgApi("answerCallbackQuery", {
-      callback_query_id: cb.id,
-      text: "Ссылка истекла или уже использована. Запросите новую.",
-      show_alert: true,
-    });
+    await answerCallback(
+      client,
+      cb.id,
+      "Ссылка истекла или уже использована. Запросите новую.",
+      true,
+    );
     return;
   }
 
   if (action === "reject") {
     authStore.set(authToken, { ...entry, status: "rejected" });
-    await tgApi("answerCallbackQuery", { callback_query_id: cb.id, text: "Отменено" });
-    if (cb.message) {
-      await tgApi("editMessageText", {
-        chat_id: cb.message.chat.id,
-        message_id: cb.message.message_id,
-        text: "Вход отменён.",
-      });
-    }
+    await answerCallback(client, cb.id, "Отменено");
+    await editText(client, cb.chatId, cb.messageId, "Вход отменён.");
     return;
   }
 
   if (action === "approve") {
-    const tgUser = cb.from;
-    const fullName =
-      [tgUser.first_name, tgUser.last_name].filter(Boolean).join(" ") || tgUser.username || "?";
+    const { name, username } = await getUser(client, cb.userId);
     const [row] = await db
       .insert(users)
-      .values({
-        tgUserId: String(tgUser.id),
-        name: fullName,
-        username: tgUser.username ?? null,
-      })
+      .values({ tgUserId: String(cb.userId), name, username })
       .onConflictDoUpdate({
         target: users.tgUserId,
-        set: {
-          name: fullName,
-          username: tgUser.username ?? null,
-          updatedAt: new Date(),
-        },
+        set: { name, username, updatedAt: new Date() },
       })
       .returning({ id: users.id });
 
     const bt = issueBridgeToken(row!.id);
     authStore.set(authToken, { ...entry, status: "approved", bridgeToken: bt });
 
-    await tgApi("answerCallbackQuery", { callback_query_id: cb.id, text: "Готово" });
-    if (cb.message) {
-      await tgApi("editMessageText", {
-        chat_id: cb.message.chat.id,
-        message_id: cb.message.message_id,
-        text: "Вход подтверждён ✅ Вернитесь в браузер.",
-      });
-    }
+    await answerCallback(client, cb.id, "Готово");
+    await editText(
+      client,
+      cb.chatId,
+      cb.messageId,
+      "Вход подтверждён ✅ Вернитесь в браузер.",
+    );
   }
+}
+
+type TdUpdate = { _: string; [k: string]: unknown };
+
+async function onUpdate(client: TdClient, u: TdUpdate): Promise<void> {
+  if (u._ === "updateNewMessage") {
+    const m = u.message as {
+      chat_id: number;
+      is_outgoing: boolean;
+      sender_id?: { _: string; user_id?: number };
+      content?: { _: string; text?: { text?: string } };
+    };
+    if (m.is_outgoing) return; // свои сообщения не обрабатываем
+    if (m.content?._ !== "messageText") return;
+    const text = m.content.text?.text ?? "";
+    if (!text.startsWith("/start")) return;
+    // Отправитель: messageSenderUser.user_id (td_api.tl:2572). Личке боту это и
+    // есть юзер; chat_id используем только чтобы ответить.
+    const userId =
+      m.sender_id?._ === "messageSenderUser" ? m.sender_id.user_id : undefined;
+    if (userId == null) return;
+    await onStart(client, m.chat_id, userId, text);
+    return;
+  }
+  if (u._ === "updateNewCallbackQuery") {
+    const payload = u.payload as { _: string; data?: string } | undefined;
+    if (payload?._ !== "callbackQueryPayloadData" || !payload.data) return;
+    await onCallback(client, {
+      id: String(u.id),
+      userId: u.sender_user_id as number,
+      chatId: u.chat_id as number,
+      messageId: u.message_id as number,
+      // bytes → base64 → utf8 ("approve:<token>")
+      data: Buffer.from(payload.data, "base64").toString("utf8"),
+    });
+  }
+}
+
+// --- Запуск -----------------------------------------------------------------
+
+let botClient: TdClient | null = null;
+
+// Поднимает TDLib-клиент бота: на свежей сессии логинится по bot-token, затем
+// подписывается на апдейты. Сессия (auth-key, peer cache) живёт в
+// .td-database/login-bot между рестартами → повторный старт уедет в ready сам.
+export async function startBotClient(): Promise<void> {
+  if (!isBotConfigured()) {
+    console.warn(
+      "[tg-bot] TELEGRAM_BOT_TOKEN / TELEGRAM_BOT_USERNAME / WEB_ORIGIN не заданы — бот не запускается",
+    );
+    return;
+  }
+  if (botClient) return;
+
+  const client = createTdClient({
+    key: { kind: "raw", key: "login-bot" },
+    deviceModel: "CRM Login Bot",
+  });
+  botClient = client;
+  const authBus = attachAuthStateBus(client);
+  client.on("error", (e: unknown) =>
+    console.error("[tg-bot] tdlib error:", e),
+  );
+
+  // Свежая сессия: на wait_phone_or_qr логинимся ботом по токену. Флаг — чтобы
+  // не отправить токен дважды (subscribe + current при гонке инициализации;
+  // второй checkAuthenticationBotToken TDLib отвергает).
+  let tokenSent = false;
+  const driveBotLogin = (s: { kind: string }): void => {
+    if (s.kind === "wait_phone_or_qr" && !tokenSent) {
+      tokenSent = true;
+      void client
+        .invoke({ _: "checkAuthenticationBotToken", token: BOT_TOKEN } as never)
+        .catch((e: unknown) =>
+          console.error("[tg-bot] checkAuthenticationBotToken failed:", e),
+        );
+    }
+  };
+  authBus.subscribe(driveBotLogin);
+  driveBotLogin(authBus.current()); // если состояние проскочило до подписки
+
+  try {
+    await waitForAuthState(authBus, (s) => s.kind === "ready", 30_000);
+  } catch (e) {
+    // Прокси мёртв/медленный или токен невалиден → не залипаем: сбрасываем
+    // botClient, чтобы повторный вызов startBotClient мог попробовать заново.
+    botClient = null;
+    throw e;
+  }
+
+  // skipOldUpdates (createTdClient) — backlog за время offline пропускается:
+  // /start, посланный пока бот лежал, теряется (юзер повторит). Это плата за
+  // MTProto vs server-side очередь getUpdates.
+  client.on("update", (u: unknown) =>
+    void onUpdate(client, u as TdUpdate).catch((e: unknown) =>
+      console.error("[tg-bot] onUpdate failed:", e),
+    ),
+  );
+  console.log("[tg-bot] TDLib bot client ready");
 }

@@ -16,10 +16,7 @@ import { issueBridgeToken, consumeBridgeToken } from "../lib/bridge-tokens.ts";
 import {
   issueAuthToken,
   checkAuthToken,
-  handleUpdate,
-  getWebhookSecret,
   isBotConfigured,
-  type TgUpdate,
 } from "../lib/tg-bot.ts";
 
 const app = new OpenAPIHono();
@@ -206,25 +203,6 @@ app.get("/v1/auth/tg-bot/poll", async (c) => {
   if (!token) throw new HTTPException(400, { message: "token required" });
   const result = checkAuthToken(token);
   return c.json(result);
-});
-
-// Webhook от Telegram Bot API. Защищён secret_token, который TG ставит в
-// X-Telegram-Bot-Api-Secret-Token (см. setWebhook params).
-app.post("/v1/webhooks/tg-bot", async (c) => {
-  // Если secret в env пустой — ручка глобально закрыта (защита от случайной
-  // публикации webhook'а без anti-spoof, где `provided === ""` иначе матчил бы).
-  const secret = getWebhookSecret();
-  const provided = c.req.header("X-Telegram-Bot-Api-Secret-Token");
-  if (!secret || !provided || provided !== secret) {
-    return c.body(null, 403);
-  }
-  const update = (await c.req.json()) as TgUpdate;
-  try {
-    await handleUpdate(update);
-  } catch (e) {
-    console.error("[tg-bot] handleUpdate failed:", e);
-  }
-  return c.body(null, 200);
 });
 
 app.openapi(
