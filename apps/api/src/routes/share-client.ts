@@ -56,6 +56,9 @@ const ClientPlacementSchema = z
     // (priceAmount). Менеджер задаёт clientPrice в кабинете, если хочет скрыть
     // реальную закупку; не задал — клиент видит закупочную (его осознанный выбор).
     price: z.number().nullable(),
+    // Прогноз охвата (снапшот на согласовании, менеджер может править) — знаменатель
+    // прогнозного CPV, главного фильтра клиента. null → не зафиксировали.
+    forecastViews: z.number().int().nullable(),
     clientStatus: z.enum(["pending", "approved", "rejected"]),
     clientStatusComment: z.string().nullable(),
   })
@@ -67,6 +70,8 @@ const ClientProjectSchema = z
     clientName: z.string(),
     agencyName: z.string(),
     brief: z.string().nullable(),
+    // Бюджет кампании (клиентский) — чтобы клиент видел, попадаем ли в него.
+    budget: z.number().nullable(),
     // Клиент финализировал медиаплан → решения заморожены, фронт переключается
     // в read-only. null = ещё правит.
     finalizedAt: z.iso.datetime().nullable(),
@@ -131,6 +136,7 @@ app.openapi(
       .select({
         name: projects.name,
         brief: projects.brief,
+        budgetAmount: projects.budgetAmount,
         finalizedAt: projects.clientFinalizedAt,
         clientName: tracks.name,
         agencyName: workspaces.name,
@@ -148,6 +154,7 @@ app.openapi(
         id: projectItems.id,
         priceAmount: projectItems.priceAmount,
         clientPrice: projectItems.clientPrice,
+        forecastViews: projectItems.forecastViews,
         clientStatus: projectItems.clientStatus,
         clientStatusComment: projectItems.clientStatusComment,
         channelTitle: channels.title,
@@ -173,6 +180,8 @@ app.openapi(
       clientName: project.clientName,
       agencyName: project.agencyName,
       brief: project.brief,
+      budget:
+        project.budgetAmount === null ? null : Number(project.budgetAmount),
       finalizedAt: project.finalizedAt?.toISOString() ?? null,
       placements: rows.map((r) => ({
         id: r.id,
@@ -190,6 +199,7 @@ app.openapi(
           const eff = r.clientPrice ?? r.priceAmount;
           return eff === null ? null : Number(eff);
         })(),
+        forecastViews: r.forecastViews,
         clientStatus: r.clientStatus,
         clientStatusComment: r.clientStatusComment,
       })),
@@ -403,9 +413,15 @@ app.openapi(
 // выглядеть» и жмёт Согласовать / На правки. Медиа тянем с TDLib on-demand в
 // норм-разрешении (downloadToBytes), файлы не храним.
 
-// Клиент в портале видит только то, что ждёт его решения (одобренные и ушедшие
-// на правки уходят из списка). На правки/одобрение клиент действует только из
-// client_review.
+// В списке клиент видит и ждущие решения, и уже одобренные/на-правках — чтобы
+// согласованные креативы не «исчезали» (стадия выглядела бы непройденной).
+// Действовать (одобрить/на правки) клиент может ТОЛЬКО из client_review —
+// отдельный, более узкий гейт ниже на decision-эндпоинте.
+const CLIENT_CREATIVE_VISIBLE = [
+  "client_review",
+  "approved",
+  "revising",
+] as const;
 const CLIENT_CREATIVE_STATUSES = ["client_review"] as const;
 
 const ClientCreativeSchema = z
@@ -455,7 +471,7 @@ app.openapi(
           eq(projectItems.kind, "placement"),
           sql`${projectItems.shortlistedAt} IS NOT NULL`,
           sql`${projectItems.stepMessages} -> 'creative' IS NOT NULL`,
-          inArray(projectItems.creativeStatus, CLIENT_CREATIVE_STATUSES),
+          inArray(projectItems.creativeStatus, CLIENT_CREATIVE_VISIBLE),
         ),
       )
       .orderBy(asc(projectItems.createdAt));
@@ -559,6 +575,112 @@ app.openapi(
       .returning({ id: projectItems.id });
     if (!row) throw new HTTPException(404, { message: "creative not found" });
     return c.body(null, 204);
+  },
+);
+
+// Шаг 3 клиента — отчёт: вышедшие посты (postUrl задан) + собранные метрики +
+// мини-превью (как карточка у менеджера). Цена — clientPrice ?? priceAmount
+// (без внутренней наценки, как в шортлисте). Появляется, когда есть публикации.
+const ClientReportItemSchema = z
+  .object({
+    id: z.string(),
+    channel: z
+      .object({ title: z.string(), username: z.string().nullable() })
+      .nullable(),
+    postUrl: z.string().nullable(),
+    publishedAt: z.iso.datetime().nullable(),
+    views: z.number().int().nullable(),
+    likes: z.number().int().nullable(),
+    comments: z.number().int().nullable(),
+    shares: z.number().int().nullable(),
+    price: z.number().nullable(),
+    // Мини-превью вышедшего поста: обложка (URL у провайдеров / data-URI из
+    // base64-тамбнейла у TG) + текст.
+    preview: z
+      .object({ cover: z.string().nullable(), text: z.string().nullable() })
+      .nullable(),
+  })
+  .openapi("ClientReportItem");
+
+app.openapi(
+  createRoute({
+    method: "get",
+    path: "/v1/share/{token}/report",
+    tags: ["share-client"],
+    request: { params: TokenParam },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({ items: z.array(ClientReportItemSchema) }),
+          },
+        },
+        description: "Client report: published posts + collected metrics",
+      },
+    },
+  }),
+  async (c) => {
+    const { token } = c.req.valid("param");
+    const share = await resolveShare(token);
+    const rows = await db
+      .select({
+        id: projectItems.id,
+        priceAmount: projectItems.priceAmount,
+        clientPrice: projectItems.clientPrice,
+        postUrl: projectItems.postUrl,
+        publishedAt: projectItems.publishedAt,
+        scheduledAt: projectItems.scheduledAt,
+        views: projectItems.metricsViews,
+        likes: projectItems.metricsLikes,
+        comments: projectItems.metricsComments,
+        shares: projectItems.metricsShares,
+        postSnapshot: projectItems.postSnapshot,
+        channelTitle: channels.title,
+        channelUsername: channels.username,
+        channelId: channels.id,
+      })
+      .from(projectItems)
+      .leftJoin(channels, eq(channels.id, projectItems.channelId))
+      .where(
+        and(
+          eq(projectItems.projectId, share.projectId),
+          eq(projectItems.kind, "placement"),
+          // Только реально вышедшие размещения медиаплана: одобрено клиентом +
+          // в шортлисте + есть ссылка на пост (как отчёт менеджера в WrapupPhase).
+          // Иначе отклонённое/недошортлиженное с проставленным post_url утекло бы
+          // в клиентский отчёт и итоги.
+          eq(projectItems.clientStatus, "approved"),
+          sql`${projectItems.shortlistedAt} IS NOT NULL`,
+          sql`${projectItems.postUrl} IS NOT NULL`,
+        ),
+      )
+      .orderBy(asc(projectItems.createdAt));
+
+    return c.json({
+      items: rows.map((r) => {
+        const snap = r.postSnapshot;
+        const cover = snap?.coverUrl
+          ? snap.coverUrl
+          : snap?.thumbB64
+            ? `data:image/jpeg;base64,${snap.thumbB64}`
+            : null;
+        const eff = r.clientPrice ?? r.priceAmount;
+        return {
+          id: r.id,
+          channel: r.channelId
+            ? { title: r.channelTitle ?? "—", username: r.channelUsername }
+            : null,
+          postUrl: r.postUrl,
+          publishedAt: (r.publishedAt ?? r.scheduledAt)?.toISOString() ?? null,
+          views: r.views,
+          likes: r.likes,
+          comments: r.comments,
+          shares: r.shares,
+          price: eff === null ? null : Number(eff),
+          preview: snap ? { cover, text: snap.text ?? null } : null,
+        };
+      }),
+    });
   },
 );
 

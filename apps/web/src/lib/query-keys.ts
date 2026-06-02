@@ -36,6 +36,8 @@ export const OUTREACH_QK = {
   sampleLead: (wsId: string, projectId: string, seed: number) =>
     ["project-sample-lead", wsId, projectId, seed] as const,
   schedule: (wsId: string) => ["outreach-schedule", wsId] as const,
+  shares: (wsId: string, projectId: string) =>
+    ["shares", wsId, projectId] as const,
 };
 
 export const WS_QK = {

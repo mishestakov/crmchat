@@ -3,7 +3,8 @@ import type { components } from "@repo/api-client";
 // Доменные типы агентского флоу берём из api-client (single source of truth —
 // OpenAPI). Локально — только конфиг фаз. formatRub/formatViews переехали в
 // lib/format (шарятся с публичной share-страницей), реэкспорт для совместимости.
-export { formatRub, formatViews } from "../../../../../lib/format";
+export { formatRub, formatViews, cpv } from "../../../../../lib/format";
+import type { ShareStep } from "../../../../../lib/share-steps";
 
 export type Placement = components["schemas"]["Placement"];
 export type ChainStatus = Placement["chainStatus"]; // not_sent|sent|replied|declined
@@ -29,8 +30,12 @@ export function phaseLabel(key: string): string {
   return CAMPAIGN_PHASES.find((p) => p.key === key)?.label ?? key;
 }
 
-// CPV (cost per view) = цена / прогнозный охват, ₽ за просмотр.
-export function cpv(price: number | null, views: number | null): string {
-  if (price === null || views === null || views === 0) return "—";
-  return (price / views).toFixed(2) + " ₽";
-}
+// На каком клиентском этапе открывается портал по ссылке, скопированной из этой
+// фазы кабинета. Партиал: бриф/лонглист/подтверждение клиент по ссылке не видит.
+// Один типизированный словарь вместо трёх голых литералов по компонентам —
+// переименование фазы/шага ловит компилятор.
+export const PHASE_CLIENT_STEP: Partial<Record<PhaseKey, ShareStep>> = {
+  review: "bloggers",
+  production: "creatives",
+  wrapup: "report",
+};

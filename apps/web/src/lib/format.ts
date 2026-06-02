@@ -13,6 +13,13 @@ export function formatViews(n: number | null): string {
   return String(n);
 }
 
+// CPV (cost per view) = цена / просмотры, ₽ за просмотр. Главный фильтр клиента;
+// должен совпадать в кабинете и на клиентском портале — поэтому здесь.
+export function cpv(price: number | null, views: number | null): string {
+  if (price === null || views === null || views === 0) return "—";
+  return (price / views).toFixed(2) + " ₽";
+}
+
 export function formatFileSize(bytes: number): string {
   if (!bytes) return "";
   if (bytes < 1024) return `${bytes} Б`;

@@ -27,13 +27,22 @@ import {
 import { api } from "../../../../../lib/api";
 import { errorMessage } from "../../../../../lib/errors";
 import { useEventSourceEvent } from "../../../../../lib/hooks";
-import { useOutreachAccounts } from "../../../../../lib/outreach-queries";
+import {
+  useOutreachAccounts,
+  useProjectShares,
+} from "../../../../../lib/outreach-queries";
+import { OUTREACH_QK } from "../../../../../lib/query-keys";
+import {
+  type ShareStep,
+  shareDeepLink,
+} from "../../../../../lib/share-steps";
 import { LeadChatDrawer } from "../../../../../components/lead-chat-drawer";
 import { formatPastRelative } from "../../../../../lib/date-utils";
 import {
   type PhaseKey,
   type Placement,
   type Campaign,
+  PHASE_CLIENT_STEP,
   formatRub,
   formatViews,
   cpv,
@@ -1068,7 +1077,11 @@ function ReviewPhase({
 
   return (
     <div className="space-y-4">
-      <ShareAccessBlock wsId={wsId} projectId={projectId} />
+      <ShareAccessBlock
+        wsId={wsId}
+        projectId={projectId}
+        clientStep={PHASE_CLIENT_STEP.review!}
+      />
 
       {finalizedAt && (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm">
@@ -1186,27 +1199,54 @@ function ReviewPhase({
 }
 
 // Блок выдачи magic-link: создать ссылку (без email), скопировать, отозвать.
-function ShareAccessBlock({
+// Кнопка «скопировать ссылку клиенту» с deep-link на нужный этап портала.
+// Используется в фазах Запуск/Отчёт; запрос shares кэш-дедуплится с другими.
+function CopyShareLink({
   wsId,
   projectId,
+  step,
+  label,
+  className,
 }: {
   wsId: string;
   projectId: string;
+  step: ShareStep;
+  label: string;
+  className: string;
+}) {
+  const sharesQ = useProjectShares(wsId, projectId);
+  const share = sharesQ.data?.[0];
+  const [copied, setCopied] = useState(false);
+  if (!share) return null;
+  const link = shareDeepLink(window.location.origin + share.url, step);
+  const copy = () => {
+    void navigator.clipboard.writeText(link);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <button type="button" onClick={copy} title={link} className={className}>
+      <Link2 size={13} />
+      {copied ? "Скопировано" : label}
+    </button>
+  );
+}
+
+function ShareAccessBlock({
+  wsId,
+  projectId,
+  clientStep,
+}: {
+  wsId: string;
+  projectId: string;
+  // Этап, на который откроется клиентский портал по этой ссылке (на каком этапе
+  // менеджер копирует, тот и будет). На «Согласовании» это блогеры.
+  clientStep: ShareStep;
 }) {
   const qc = useQueryClient();
   const [copied, setCopied] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
-  const sharesQ = useQuery({
-    queryKey: ["shares", wsId, projectId] as const,
-    queryFn: async () => {
-      const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/projects/{projectId}/shares",
-        { params: { path: { wsId, projectId } } },
-      );
-      if (error) throw error;
-      return data;
-    },
-  });
+  const sharesQ = useProjectShares(wsId, projectId);
   const create = useMutation({
     mutationFn: async () => {
       const { error } = await api.POST(
@@ -1216,7 +1256,7 @@ function ShareAccessBlock({
       if (error) throw error;
     },
     onSuccess: () =>
-      qc.invalidateQueries({ queryKey: ["shares", wsId, projectId] }),
+      qc.invalidateQueries({ queryKey: OUTREACH_QK.shares(wsId, projectId) }),
   });
   const revoke = useMutation({
     mutationFn: async (shareId: string) => {
@@ -1227,12 +1267,13 @@ function ShareAccessBlock({
       if (error) throw error;
     },
     onSuccess: () =>
-      qc.invalidateQueries({ queryKey: ["shares", wsId, projectId] }),
+      qc.invalidateQueries({ queryKey: OUTREACH_QK.shares(wsId, projectId) }),
   });
 
   const shares = sharesQ.data ?? [];
   const primary = shares[0] ?? null;
-  const fullUrl = (url: string) => window.location.origin + url;
+  const fullUrl = (url: string) =>
+    shareDeepLink(window.location.origin + url, clientStep);
   const primaryUrl = primary ? fullUrl(primary.url) : "";
   const copy = (rawUrl: string) => {
     const f = fullUrl(rawUrl);
@@ -1565,27 +1606,6 @@ function ProductionPhase({
     );
 
   // Ссылка клиенту — под рукой и на «Запуске» (согласование креативов идёт здесь).
-  const sharesQ = useQuery({
-    queryKey: ["shares", wsId, projectId] as const,
-    queryFn: async () => {
-      const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/projects/{projectId}/shares",
-        { params: { path: { wsId, projectId } } },
-      );
-      if (error) throw error;
-      return data;
-    },
-  });
-  const clientLink = sharesQ.data?.[0]
-    ? window.location.origin + sharesQ.data[0].url
-    : null;
-  const [linkCopied, setLinkCopied] = useState(false);
-  const copyClientLink = () => {
-    if (!clientLink) return;
-    void navigator.clipboard.writeText(clientLink);
-    setLinkCopied(true);
-    setTimeout(() => setLinkCopied(false), 1500);
-  };
 
   const pickView = (v: "matrix" | "inbox") => {
     setView(v);
@@ -1637,17 +1657,13 @@ function ProductionPhase({
             </span>
           ))}
         </div>
-        {clientLink && (
-          <button
-            type="button"
-            onClick={copyClientLink}
-            title={clientLink}
-            className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-50"
-          >
-            <Link2 size={13} />
-            {linkCopied ? "Скопировано" : "Ссылка клиенту"}
-          </button>
-        )}
+        <CopyShareLink
+          wsId={wsId}
+          projectId={projectId}
+          step={PHASE_CLIENT_STEP.production!}
+          label="Ссылка клиенту"
+          className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-50"
+        />
       </div>
 
       {rows.length === 0 ? (
@@ -1928,15 +1944,24 @@ function WrapupPhase({ wsId, campaign }: { wsId: string; campaign: Campaign }) {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold">Отчёт по кампании</h2>
-        <button
-          type="button"
-          onClick={() => collect.mutate()}
-          disabled={collect.isPending || pendingCount > 0 || rows.length === 0}
-          className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-        >
-          <RefreshCw size={15} className={pendingCount > 0 ? "animate-spin" : ""} />
-          {pendingCount > 0 ? `Снимаем… ${pendingCount}` : "Снять статистику со всех"}
-        </button>
+        <div className="flex items-center gap-2">
+          <CopyShareLink
+            wsId={wsId}
+            projectId={projectId}
+            step={PHASE_CLIENT_STEP.wrapup!}
+            label="Ссылка на отчёт"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+          />
+          <button
+            type="button"
+            onClick={() => collect.mutate()}
+            disabled={collect.isPending || pendingCount > 0 || rows.length === 0}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+          >
+            <RefreshCw size={15} className={pendingCount > 0 ? "animate-spin" : ""} />
+            {pendingCount > 0 ? `Снимаем… ${pendingCount}` : "Снять статистику со всех"}
+          </button>
+        </div>
       </div>
 
       {pendingCount > 0 &&
