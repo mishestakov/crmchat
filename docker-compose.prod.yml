@@ -59,6 +59,8 @@ services:
       TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
       TG_PROXY_URL: ${TG_PROXY_URL:-}
       TDLIB_DATA_DIR: /data/td
+      # YouTube Data API v3 key — синк/метрики YouTube-каналов (TikTok без ключа).
+      YOUTUBE_KEY: ${YOUTUBE_KEY:-}
     sysctls:
       # enable_ipv6:false на bridge оставляет ::1 loopback в контейнере, и
       # glibc AI_ADDRCONFIG всё равно возвращает AAAA → fetch висит.
