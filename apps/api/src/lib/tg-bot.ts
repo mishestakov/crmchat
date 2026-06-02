@@ -146,6 +146,64 @@ export async function setupWebhook(): Promise<void> {
   console.log(`[tg-bot] webhook registered: ${url}`);
 }
 
+// Long-polling вместо webhook. На RU-сервере webhook не работает: Telegram не
+// может достучаться входящим к RU-IP (getWebhookInfo → «Connection timed out»).
+// Исходящий же Bot API живой (DC2-пин + IPv4-first), поэтому сами ТЯНЕМ апдейты
+// через getUpdates. Те же Update-объекты, что слал webhook → handleUpdate как был.
+const POLL_TIMEOUT_S = 25;
+let polling = false;
+
+async function fetchUpdates(offset: number): Promise<TgUpdate[]> {
+  const res = await fetch(`${API_BASE}/getUpdates`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      offset,
+      timeout: POLL_TIMEOUT_S,
+      allowed_updates: ["message", "callback_query"],
+    }),
+    // Клиентский таймаут с запасом над серверным long-poll'ом.
+    signal: AbortSignal.timeout((POLL_TIMEOUT_S + 10) * 1000),
+  });
+  const json = (await res.json()) as {
+    ok: boolean;
+    result: TgUpdate[];
+    description?: string;
+  };
+  if (!json.ok) throw new Error(`getUpdates: ${json.description}`);
+  return json.result;
+}
+
+export async function startBotPolling(): Promise<void> {
+  if (!isBotConfigured()) {
+    console.warn(
+      "[tg-bot] TELEGRAM_BOT_TOKEN / TELEGRAM_BOT_USERNAME / TELEGRAM_WEBHOOK_SECRET / WEB_ORIGIN не заданы — long-polling не запускается",
+    );
+    return;
+  }
+  if (polling) return;
+  polling = true;
+  // getUpdates и webhook взаимоисключающи — снимаем webhook на старте.
+  await tgApi("deleteWebhook", { drop_pending_updates: false }).catch(() => {});
+  console.log("[tg-bot] long-polling started");
+  let offset = 0;
+  while (polling) {
+    try {
+      const updates = await fetchUpdates(offset);
+      for (const u of updates) {
+        offset = u.update_id + 1;
+        await handleUpdate(u).catch((e: unknown) =>
+          console.error("[tg-bot] handleUpdate failed:", e),
+        );
+      }
+    } catch (e) {
+      // Сетевой сбой / RKN-троттл исходящего — backoff и повтор, offset не теряем.
+      console.error("[tg-bot] getUpdates failed:", e);
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
+}
+
 export async function handleUpdate(update: TgUpdate): Promise<void> {
   if (update.message?.text?.startsWith("/start")) {
     await onStart(update.message);
