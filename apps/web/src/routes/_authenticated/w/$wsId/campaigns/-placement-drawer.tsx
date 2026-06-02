@@ -323,14 +323,12 @@ function RemovePlacementButton({
   placementId,
   onRemoved,
   className = "",
-  text,
 }: {
   wsId: string;
   projectId: string;
   placementId: string;
   onRemoved: () => void;
   className?: string;
-  text?: boolean;
 }) {
   const qc = useQueryClient();
   const remove = useMutation({
@@ -349,22 +347,6 @@ function RemovePlacementButton({
   const onClick = () => {
     if (window.confirm("Убрать этот канал из лонглиста?")) remove.mutate();
   };
-  if (text) {
-    return (
-      <button
-        type="button"
-        onClick={onClick}
-        disabled={remove.isPending}
-        className={
-          "inline-flex items-center justify-center gap-1.5 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-600 hover:bg-red-50 hover:text-red-600 disabled:opacity-50 " +
-          className
-        }
-      >
-        <Trash2 size={15} />
-        Убрать канал из лонглиста
-      </button>
-    );
-  }
   return (
     <button
       type="button"
@@ -492,13 +474,26 @@ function Resolver({
             ← к переписке
           </button>
         )}
-        <div className="text-sm font-semibold text-zinc-900">
-          {onClose ? "Сменить контакт" : "Контакт админа"}
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-zinc-900">
+              {onClose ? "Сменить контакт" : "Контакт админа"}
+            </div>
+            <p className="mt-0.5 text-xs text-zinc-500">
+              Кого слушаем по этому каналу. Меняется глобально — у канала во всех
+              кампаниях.
+            </p>
+          </div>
+          {/* Удаление канала — всегда вверху справа (как в режиме с контактом),
+              чтобы кнопка не «прыгала» верх-иконкой / низ-футером. */}
+          <RemovePlacementButton
+            wsId={wsId}
+            projectId={projectId}
+            placementId={placement.id}
+            onRemoved={onRemoved}
+            className="shrink-0"
+          />
         </div>
-        <p className="mt-0.5 text-xs text-zinc-500">
-          Кого слушаем по этому каналу. Меняется глобально — у канала во всех
-          кампаниях.
-        </p>
       </div>
 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3">
@@ -592,17 +587,6 @@ function Resolver({
         {setAdmin.error && (
           <p className="text-xs text-red-600">{errorMessage(setAdmin.error)}</p>
         )}
-      </div>
-
-      <div className="border-t border-zinc-200 px-4 py-3">
-        <RemovePlacementButton
-          wsId={wsId}
-          projectId={projectId}
-          placementId={placement.id}
-          onRemoved={onRemoved}
-          className="w-full"
-          text
-        />
       </div>
     </div>
   );
