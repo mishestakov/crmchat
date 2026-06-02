@@ -14,7 +14,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { shortId } from "./short-id.ts";
-import type { PostSnapshot } from "../lib/td-message.ts";
+import type { PostSnapshot, CreativeSnapshot } from "../lib/td-message.ts";
 
 // Все PK — короткие 12-hex id (см. short-id.ts). Раньше были UUID-36, в URL'ах
 // и логах слишком длинно для нашей шкалы. Тип в БД — обычный text.
@@ -825,6 +825,10 @@ export const projectItems = pgTable(
     // Комментарий клиента к креативу (запрос правок) из клиентского портала —
     // Фаза B (клиентское согласование креативов). Shape сразу финальный.
     creativeClientComment: text("creative_client_comment"),
+    // Снимок согласованного креатива (текст+медиа-дескрипторы) — чтобы портал не
+    // вычитывал его из TG живьём на каждую загрузку. Складывается лениво при
+    // первом чтении стабильного (approved/revising) креатива.
+    creativeSnapshot: jsonb("creative_snapshot").$type<CreativeSnapshot>(),
     // Когда креатив последний раз отправлен клиенту на согласование (статус →
     // client_review). Сравниваем с edit_date сообщения: если блогер отредактировал
     // креатив ПОСЛЕ — подсвечиваем менеджеру красным.

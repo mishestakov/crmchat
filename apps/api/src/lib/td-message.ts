@@ -244,6 +244,15 @@ export const PostSnapshotSchema = z.object({
 });
 export type PostSnapshot = z.infer<typeof PostSnapshotSchema>;
 
+// Снимок согласованного креатива (текст + дескрипторы медиа) — чтобы не читать
+// его из TG живьём на каждую загрузку клиентского портала. Складывается из того
+// же чтения, что и так делает /creatives, в момент стабильного статуса
+// (approved/revising). Картинки по-прежнему качаются по ссылке on-demand.
+export type CreativeSnapshot = {
+  text: string;
+  media: z.infer<typeof CreativeMediaSchema>[];
+};
+
 export function buildPostSnapshot(p: {
   messageId: string;
   chatId: string;

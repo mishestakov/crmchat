@@ -462,6 +462,7 @@ app.openapi(
         stepMessages: projectItems.stepMessages,
         status: projectItems.creativeStatus,
         comment: projectItems.creativeClientComment,
+        snapshot: projectItems.creativeSnapshot,
       })
       .from(projectItems)
       .leftJoin(channels, eq(channels.id, projectItems.channelId))
@@ -480,16 +481,36 @@ app.openapi(
     for (const r of rows) {
       const ref = r.stepMessages?.creative;
       if (!ref) continue;
-      const client = await getOutreachWorkerClient({
-        id: ref.accountId,
-        workspaceId: share.workspaceId,
-      });
-      const msgs = client ? await readTaggedMessages(client, ref) : [];
-      const text = msgs
-        .map((m) => extractFormattedText(m.content).text)
-        .filter((t) => t.length > 0)
-        .join("\n");
-      const media = mapCreativeMediaList(msgs);
+      // Стабильный креатив (клиент уже решил) неизменен → отдаём из снимка, не
+      // читая TG. client_review ещё может поменяться (блогер правит) — всегда
+      // живьём.
+      const stable = r.status === "approved" || r.status === "revising";
+      let text: string;
+      let media: z.infer<typeof CreativeMediaSchema>[];
+      if (stable && r.snapshot) {
+        text = r.snapshot.text;
+        media = r.snapshot.media;
+      } else {
+        const client = await getOutreachWorkerClient({
+          id: ref.accountId,
+          workspaceId: share.workspaceId,
+        });
+        const msgs = client ? await readTaggedMessages(client, ref) : [];
+        text = msgs
+          .map((m) => extractFormattedText(m.content).text)
+          .filter((t) => t.length > 0)
+          .join("\n");
+        media = mapCreativeMediaList(msgs);
+        // Снимок складываем из уже прочитанного — без лишних TG-вызовов — только
+        // если креатив стабилен и реально прочитан (не морозим пустой/недоступный).
+        if (stable && msgs.length > 0) {
+          void db
+            .update(projectItems)
+            .set({ creativeSnapshot: { text, media } })
+            .where(eq(projectItems.id, r.id))
+            .catch(() => {});
+        }
+      }
       creatives.push({
         placementId: r.id,
         channelTitle: r.channelTitle ?? "—",
