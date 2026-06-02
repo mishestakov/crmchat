@@ -27,6 +27,8 @@ import {
   renderMessageEntities,
 } from "../lib/tg-message";
 import { ContactPicker } from "./contact-picker";
+import { MethodChatPanel } from "./method-chat-panel";
+import { channelDm } from "../lib/channel-dm";
 
 // Карточка канала: sticky-hero (avatar/title/key stats/description/meta-grid/
 // admins) + scrollable feed постов (TG-style: bubble + views/forwards/replies/
@@ -44,9 +46,15 @@ export function ChannelCard(props: {
   // compact — превью канала в центре лонглиста (этап 16.10): тонкая шапка,
   // description мелким+clamp, без бейджей/админов — только канал и его посты.
   compact?: boolean;
+  // initialDmOpen — открыть карточку сразу с раскрытым тредом лички (клик по
+  // DM-бейджу в каталоге каналов).
+  initialDmOpen?: boolean;
 }) {
   const { wsId, channel, compact } = props;
   const qc = useQueryClient();
+  const [dmOpen, setDmOpen] = useState(props.initialDmOpen ?? false);
+  // Личка канала (этап 16.9): 0⭐ → пишем из CRM, >0 → тред read-only (вручную).
+  const { hasDm: hasDmGroup, starCost: dmStarCost } = channelDm(channel.meta);
   const accountsQ = useOutreachAccounts(wsId);
   const hasActiveAccount =
     !!accountsQ.data && accountsQ.data.some((a) => a.status === "active");
@@ -144,6 +152,19 @@ export function ChannelCard(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channel.id, hasActiveAccount]);
 
+  // Открытие треда лички = момент «сейчас напишу» → освежаем цену сообщения
+  // force-sync'ом (outgoing_paid_message_star_count мог измениться после скана:
+  // личка стала платной/бесплатной). Один sync на открытие; сбрасываем на закрытие.
+  const dmSyncedRef = useRef(false);
+  useEffect(() => {
+    if (dmOpen && !dmSyncedRef.current && hasActiveAccount && !syncMut.isPending) {
+      dmSyncedRef.current = true;
+      syncMut.mutate({ force: true });
+    }
+    if (!dmOpen) dmSyncedRef.current = false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dmOpen, hasActiveAccount]);
+
   // Плашка причины из БД сразу при render'е, чтобы не было мерцания
   // «пустой sidebar → 410 → плашка». Незнакомый код или null reason →
   // нейтральный текст; не светим raw-код TG в UI.
@@ -177,8 +198,21 @@ export function ChannelCard(props: {
         </div>
       )}
       <ChannelHero channel={channel} syncing={syncMut.isPending} compact={compact} />
-      {!compact && <MetaBadges channel={channel} />}
+      {!compact && (
+        <MetaBadges
+          channel={channel}
+          onDmClick={hasDmGroup ? () => setDmOpen((v) => !v) : undefined}
+        />
+      )}
       {!compact && <AdminsSection wsId={wsId} channel={channel} />}
+      {!compact && dmOpen && hasDmGroup && (
+        <ChannelDmSection
+          wsId={wsId}
+          channelId={channel.id}
+          dmStarCost={dmStarCost}
+          onClose={() => setDmOpen(false)}
+        />
+      )}
       <PostsFeed
         wsId={wsId}
         channelId={channel.id}
@@ -390,18 +424,17 @@ function Stat(props: {
   );
 }
 
-function MetaBadges({ channel }: { channel: Channel }) {
+function MetaBadges({
+  channel,
+  onDmClick,
+}: {
+  channel: Channel;
+  onDmClick?: () => void;
+}) {
   const meta = channel.meta as Record<string, unknown>;
   const props = channel.properties as Record<string, unknown>;
-  // Личка канала по direct_messages_chat_id (надёжно кладёт sync), не по has_dm
-  // (репликатор пишет асинхронно). Стоимость: 0 → бесплатно (готовый контакт),
-  // >0 → менеджер пишет руками, null → ещё не синкали.
-  const dmChatId = meta?.direct_messages_chat_id;
-  const hasDmGroup = dmChatId != null && String(dmChatId) !== "0";
-  const dmStarCost =
-    typeof meta?.outgoing_paid_message_star_count === "number"
-      ? meta.outgoing_paid_message_star_count
-      : null;
+  // Личка канала: 0 → бесплатно (готовый контакт), >0 → вручную, null → не синкали.
+  const { hasDm: hasDmGroup, starCost: dmStarCost } = channelDm(meta);
   const hasLinkedChat = meta?.has_linked_chat === true;
   const giftCount =
     typeof meta?.gift_count === "number" ? meta.gift_count : 0;
@@ -416,10 +449,15 @@ function MetaBadges({ channel }: { channel: Channel }) {
       (typeof v === "number" && Number.isFinite(v)),
   );
 
-  const badges: { key: string; node: React.ReactNode }[] = [];
+  const badges: {
+    key: string;
+    node: React.ReactNode;
+    onClick?: () => void;
+  }[] = [];
   if (hasDmGroup) {
     badges.push({
       key: "dm",
+      onClick: onDmClick,
       node:
         dmStarCost === 0 ? (
           <Badge tone="emerald" icon={Send}>
@@ -477,9 +515,59 @@ function MetaBadges({ channel }: { channel: Channel }) {
   if (badges.length === 0) return null;
   return (
     <div className="flex flex-wrap gap-1.5 border-b border-zinc-100 px-6 py-3">
-      {badges.map((b) => (
-        <span key={b.key}>{b.node}</span>
-      ))}
+      {badges.map((b) =>
+        b.onClick ? (
+          <button
+            key={b.key}
+            type="button"
+            onClick={b.onClick}
+            title="Открыть личку канала"
+            className="rounded-full transition hover:brightness-95 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+          >
+            {b.node}
+          </button>
+        ) : (
+          <span key={b.key}>{b.node}</span>
+        ),
+      )}
+    </div>
+  );
+}
+
+// Тред лички канала в карточке (этап 16.9): открывается по DM-бейджу. Пишем
+// прямо из каталога — без привязки к кампании (ручка method-* резолвит chat_id
+// из meta.direct_messages_chat_id и берёт любой активный аккаунт). Платная
+// личка — read-only (звёзды тратятся вручную в Telegram).
+function ChannelDmSection(props: {
+  wsId: string;
+  channelId: string;
+  dmStarCost: number | null;
+  onClose: () => void;
+}) {
+  const paid = props.dmStarCost != null && props.dmStarCost > 0;
+  return (
+    <div className="flex h-80 shrink-0 flex-col border-b border-zinc-200">
+      <div className="flex items-center justify-between border-b border-zinc-100 bg-zinc-50 px-4 py-2">
+        <span className="text-xs font-semibold text-zinc-700">
+          Личка канала
+          {paid ? ` · ${props.dmStarCost}⭐/сообщ` : " · бесплатно"}
+        </span>
+        <button
+          type="button"
+          onClick={props.onClose}
+          className="text-xs text-zinc-400 hover:text-zinc-600"
+        >
+          Свернуть
+        </button>
+      </div>
+      <div className="min-h-0 flex-1">
+        <MethodChatPanel
+          wsId={props.wsId}
+          channelId={props.channelId}
+          target="dm"
+          starCost={props.dmStarCost}
+        />
+      </div>
     </div>
   );
 }

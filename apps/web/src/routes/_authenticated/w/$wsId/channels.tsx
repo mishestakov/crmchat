@@ -12,8 +12,14 @@ import { SearchInput } from "../../../../components/search-input";
 import { TruncationBanner } from "../../../../components/truncation-banner";
 import { parseCsv, type ParsedCsv } from "../../../../lib/csv";
 import { formatRelative } from "../../../../lib/date-utils";
+import { channelDm } from "../../../../lib/channel-dm";
 import { errorMessage } from "../../../../lib/errors";
 import { useOutreachAccounts } from "../../../../lib/outreach-queries";
+
+// Пилюля DM-бейджа в строке каталога (кликабельная кнопка vs span-плейсхолдер
+// при ещё не синкнутом chat_id) — общий класс, чтобы не расходился вид.
+const DM_PILL =
+  "inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-700 ring-1 ring-emerald-200";
 
 // Slot'ы для column-mapping в импорте. value ∈ ImportChannelsMapping ключи +
 // 'ignore' + 'property'. Порядок = порядок в select-dropdown'е.
@@ -137,6 +143,8 @@ function ChannelsPage() {
   });
 
   const [openChannelId, setOpenChannelId] = useState<string | null>(null);
+  // Открыть карточку сразу с раскрытым тредом лички (клик по DM-бейджу строки).
+  const [openWithDm, setOpenWithDm] = useState(false);
   // Фильтр по платформе (клиентский — platform всегда задан, в отличие от
   // memberCount/meta, см. коммент к ChannelsSearch). "all" = без фильтра.
   const [platformFilter, setPlatformFilter] = useState<Platform | "all">("all");
@@ -312,10 +320,17 @@ function ChannelsPage() {
                 const lastPost =
                   c.lastMessageAt ??
                   (typeof meta.lastPostAt === "string" ? meta.lastPostAt : null);
+                // Личка канала: для клика «написать» нужен реальный chat_id
+                // (direct_messages_chat_id кладёт sync), а не has_dm-флаг
+                // репликатора — иначе откроем тред без чата.
+                const { hasDm: hasDmGroup } = channelDm(meta);
                 return (
                   <tr
                     key={c.id}
-                    onClick={() => setOpenChannelId(c.id)}
+                    onClick={() => {
+                      setOpenWithDm(false);
+                      setOpenChannelId(c.id);
+                    }}
                     className="cursor-pointer border-t border-zinc-100 hover:bg-zinc-50"
                   >
                     <td className="px-3 py-2">
@@ -324,13 +339,28 @@ function ChannelsPage() {
                         <span className="font-medium text-zinc-900">
                           {c.title}
                         </span>
-                        {c.meta?.has_dm === true && (
-                          <span
-                            title="Канал принимает прямые сообщения в личку"
-                            className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-700 ring-1 ring-emerald-200"
+                        {hasDmGroup ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpenChannelId(c.id);
+                              setOpenWithDm(true);
+                            }}
+                            title="Написать в личку канала"
+                            className={DM_PILL + " hover:bg-emerald-100"}
                           >
                             DM
-                          </span>
+                          </button>
+                        ) : (
+                          c.meta?.has_dm === true && (
+                            <span
+                              title="Канал принимает прямые сообщения в личку (синхронизируется)"
+                              className={DM_PILL}
+                            >
+                              DM
+                            </span>
+                          )
                         )}
                         {c.unavailableSince && (
                           <span
@@ -387,7 +417,11 @@ function ChannelsPage() {
         <ChannelDrawer
           wsId={wsId}
           channelId={openChannelId}
-          onClose={() => setOpenChannelId(null)}
+          initialDmOpen={openWithDm}
+          onClose={() => {
+            setOpenChannelId(null);
+            setOpenWithDm(false);
+          }}
         />
       )}
 

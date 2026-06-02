@@ -16,6 +16,8 @@ import { errorMessage } from "../../../../../lib/errors";
 import { formatPastRelative } from "../../../../../lib/date-utils";
 import { useOutreachAccounts } from "../../../../../lib/outreach-queries";
 import { LeadChatPanel } from "../../../../../components/lead-chat-drawer";
+import { MethodChatPanel } from "../../../../../components/method-chat-panel";
+import { channelDm } from "../../../../../lib/channel-dm";
 import {
   MESSAGE_TAG_LABEL,
   type MessageTagKind,
@@ -285,19 +287,16 @@ export function PlacementPane({
                   }
                   onChange={() => setChanging(true)}
                 />
-                {methodKind === "group" && placement.channel ? (
+                {placement.channel ? (
                   <div className="min-h-0 flex-1">
-                    <GroupChatPanel
+                    <MethodChatPanel
                       wsId={wsId}
                       channelId={placement.channel.id}
+                      target={methodKind === "group" ? "group" : "dm"}
+                      starCost={placement.channel.dmStarCost}
                     />
                   </div>
-                ) : (
-                  <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-sm text-zinc-400">
-                    Личка канала — пишите в Telegram (чат в приложении добавим
-                    позже).
-                  </div>
-                )}
+                ) : null}
               </>
             )}
           </>
@@ -477,16 +476,9 @@ function Resolver({
     [channel?.description, channel?.username],
   );
 
-  const meta = (channel?.meta ?? {}) as Record<string, unknown>;
-  // Личка канала по direct_messages_chat_id (синкается на скане), не по has_dm
-  // (его пишет репликатор асинхронно). Стоимость null = ещё не синкали → не
-  // утверждаем «бесплатно».
-  const dmChatId = meta.direct_messages_chat_id;
-  const hasDmGroup = dmChatId != null && String(dmChatId) !== "0";
-  const dmStar =
-    typeof meta.outgoing_paid_message_star_count === "number"
-      ? meta.outgoing_paid_message_star_count
-      : null;
+  // Личка канала по direct_messages_chat_id (синкается на скане), не по has_dm.
+  // Стоимость null = ещё не синкали → не утверждаем «бесплатно».
+  const { hasDm: hasDmGroup, starCost: dmStar } = channelDm(channel?.meta);
 
   return (
     <div className="flex h-full flex-col">
@@ -612,121 +604,6 @@ function Resolver({
           text
         />
       </div>
-    </div>
-  );
-}
-
-// Чат группы (этап 16.9, G3): история с отправителями + отправка через
-// аккаунт-участника. В отличие от 1:1-переписки — видно, кто из участников
-// пишет (senderName на входящих).
-function GroupChatPanel({
-  wsId,
-  channelId,
-}: {
-  wsId: string;
-  channelId: string;
-}) {
-  const qc = useQueryClient();
-  const [text, setText] = useState("");
-  const historyQ = useQuery({
-    queryKey: ["group-history", wsId, channelId] as const,
-    queryFn: async () => {
-      const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/channels/{id}/group-history",
-        { params: { path: { wsId, id: channelId }, query: { limit: 50 } } },
-      );
-      if (error) throw error;
-      return data.messages;
-    },
-    staleTime: 60 * 1000,
-  });
-  const send = useMutation({
-    mutationFn: async () => {
-      const { error } = await api.POST(
-        "/v1/workspaces/{wsId}/channels/{id}/group-send",
-        { params: { path: { wsId, id: channelId } }, body: { text: text.trim() } },
-      );
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      setText("");
-      qc.invalidateQueries({ queryKey: ["group-history", wsId, channelId] });
-    },
-  });
-  // TDLib отдаёт newest-first → разворачиваем в oldest-first для рендера.
-  const ordered = [...(historyQ.data ?? [])].reverse();
-
-  return (
-    <div className="flex h-full flex-col">
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto bg-zinc-50 px-3 py-3">
-        {historyQ.isLoading ? (
-          <p className="text-center text-sm text-zinc-400">Загрузка…</p>
-        ) : historyQ.error ? (
-          <div className="px-2 py-4 text-center text-sm text-red-600">
-            <p>Группа недоступна через привязанный аккаунт.</p>
-            <p className="mt-1 text-xs text-zinc-500">
-              Возможно, аккаунт вышел из группы — перепривяжите группу или
-              выберите другой способ связи.
-            </p>
-            <p className="mt-1 text-[11px] text-zinc-400">
-              {errorMessage(historyQ.error)}
-            </p>
-          </div>
-        ) : ordered.length === 0 ? (
-          <p className="text-center text-sm text-zinc-400">Сообщений нет</p>
-        ) : (
-          ordered.map((m) => (
-            <div
-              key={m.id}
-              className={"flex " + (m.isOutgoing ? "justify-end" : "justify-start")}
-            >
-              <div
-                className={
-                  "max-w-[80%] rounded-2xl px-3 py-1.5 text-sm " +
-                  (m.isOutgoing
-                    ? "bg-emerald-100 text-zinc-900"
-                    : "bg-white ring-1 ring-zinc-200")
-                }
-              >
-                {!m.isOutgoing && (
-                  <div className="text-[11px] font-medium text-emerald-700">
-                    {m.senderName}
-                  </div>
-                )}
-                <div className="whitespace-pre-wrap break-words">{m.text}</div>
-                <div className="mt-0.5 text-right text-[10px] text-zinc-400">
-                  {new Date(m.date).toLocaleString("ru-RU", {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
-                </div>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-      <div className="flex items-end gap-2 border-t border-zinc-200 p-2">
-        <textarea
-          rows={1}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Сообщение в группу…"
-          className="min-h-0 flex-1 resize-none rounded-lg border border-zinc-300 px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
-        />
-        <button
-          type="button"
-          onClick={() => send.mutate()}
-          disabled={!text.trim() || send.isPending}
-          className="rounded-lg bg-emerald-600 p-2 text-white hover:bg-emerald-700 disabled:opacity-50"
-        >
-          <Send size={16} />
-        </button>
-      </div>
-      {send.error && (
-        <p className="px-2 pb-1 text-xs text-red-600">
-          {errorMessage(send.error)}
-        </p>
-      )}
     </div>
   );
 }

@@ -1593,23 +1593,125 @@ app.openapi(
   },
 );
 
-// Чат группы как способа связи (этап 16.9, G3): читаем/пишем историю группы
-// (chat_id из meta.contact_method) через аккаунт-участника (account_id оттуда же).
-// В отличие от /history (broadcast-канал) — групповые сообщения от разных
-// участников, поэтому возвращаем senderName на каждом.
-function groupMethodOrThrow(channel: typeof channels.$inferSelect): {
-  chatId: number;
-  accountId: string;
-} {
-  const cm = (channel.meta as Record<string, unknown>)?.contact_method as
+// Выбор активного аккаунта workspace'а БЕЗ подъёма TdClient (только id) —
+// клиент всё равно поднимается ниже в ручке, незачем бутить дважды.
+async function pickActiveAccountId(
+  wsId: string,
+  userId: string,
+  role: WorkspaceRole,
+): Promise<string | null> {
+  const [acc] = await db
+    .select({ id: outreachAccounts.id })
+    .from(outreachAccounts)
+    .where(
+      and(
+        accountAccessClause(wsId, userId, role),
+        eq(outreachAccounts.status, "active"),
+      ),
+    )
+    .orderBy(outreachAccounts.createdAt)
+    .limit(1);
+  return acc?.id ?? null;
+}
+
+// Аккаунт-«хозяин» лички канала. В личка-группе канала у КАЖДОГО аккаунта свой
+// per-sender топик, поэтому чтение и отправка обязаны идти через один аккаунт —
+// иначе тред раздваивается (ответ уходит от другого имени в отдельную
+// переписку). Закрепляем первый написавший аккаунт в meta.dm_account_id и
+// держимся за него, пока он существует. Тенанси по нему — как у группы: ручка
+// зовёт assertAccountAccess (404 для чужого аккаунта не-админу).
+async function resolveDmAccountId(
+  channel: typeof channels.$inferSelect,
+  wsId: string,
+  userId: string,
+  role: WorkspaceRole,
+): Promise<string | null> {
+  const meta = (channel.meta ?? {}) as Record<string, unknown>;
+  const pinned =
+    typeof meta.dm_account_id === "string" ? meta.dm_account_id : null;
+  if (pinned) {
+    const [exists] = await db
+      .select({ id: outreachAccounts.id })
+      .from(outreachAccounts)
+      .where(
+        and(
+          eq(outreachAccounts.id, pinned),
+          eq(outreachAccounts.workspaceId, wsId),
+        ),
+      )
+      .limit(1);
+    if (exists) return pinned;
+  }
+  const picked = await pickActiveAccountId(wsId, userId, role);
+  if (!picked) return null;
+  if (picked !== pinned) {
+    await db
+      .update(channels)
+      .set({
+        meta: sql`${channels.meta} || jsonb_build_object('dm_account_id', ${picked}::text)`,
+      })
+      .where(eq(channels.id, channel.id));
+  }
+  return picked;
+}
+
+// Чат «способа связи через чат» (этап 16.9): читаем/пишем историю группы
+// обсуждения ИЛИ лички канала через аккаунт-участника. В отличие от /history
+// (broadcast-канал) — сообщения от разных участников, поэтому возвращаем
+// senderName на каждом.
+//
+// `target` задаёт намерение вызывающего и разрешается ОДНОЗНАЧНО — каждая точка
+// входа ведёт ровно туда, что на ней написано (каталоговая «личка» != группа):
+//   • "group" — chat_id + аккаунт-участник из meta.contact_method (их кладёт
+//     set-admin при выборе группы; вывести из канала их нельзя).
+//   • "dm" — личка-группа канала (meta.direct_messages_chat_id, кладёт sync);
+//     sendMessage туда = как в обычную группу; аккаунт закреплён (resolveDmAccountId).
+//   • undefined — дефолт по факту выбранного способа (группа если выбрана, иначе
+//     личка) — для совместимости; новые вызовы передают target явно.
+// dmStarCost != null → платная личка: чтение разрешаем, отправку блокирует
+// вызывающий (платное = вручную, см. spec §16.9).
+async function resolveMethodChat(
+  channel: typeof channels.$inferSelect,
+  wsId: string,
+  userId: string,
+  role: WorkspaceRole,
+  target?: "group" | "dm",
+): Promise<{ chatId: number; accountId: string; dmStarCost: number | null }> {
+  const meta = (channel.meta ?? {}) as Record<string, unknown>;
+  const cm = meta.contact_method as
     | { kind?: string; chat_id?: string | number; account_id?: string }
     | undefined;
-  if (cm?.kind !== "group" || cm.chat_id == null || !cm.account_id) {
+  const wantGroup =
+    target === "group" || (target === undefined && cm?.kind === "group");
+  if (wantGroup) {
+    if (cm?.kind === "group" && cm.chat_id != null && cm.account_id) {
+      return {
+        chatId: Number(cm.chat_id),
+        accountId: cm.account_id,
+        dmStarCost: null,
+      };
+    }
     throw new HTTPException(400, {
       message: "у канала не выбрана группа как способ связи",
     });
   }
-  return { chatId: Number(cm.chat_id), accountId: cm.account_id };
+  const dmChatId = meta.direct_messages_chat_id;
+  if (dmChatId != null && String(dmChatId) !== "0") {
+    const accountId = await resolveDmAccountId(channel, wsId, userId, role);
+    if (!accountId) {
+      throw new HTTPException(503, {
+        message: "нет активного Telegram-аккаунта для лички канала",
+      });
+    }
+    const star =
+      typeof meta.outgoing_paid_message_star_count === "number"
+        ? meta.outgoing_paid_message_star_count
+        : null;
+    return { chatId: Number(dmChatId), accountId, dmStarCost: star };
+  }
+  throw new HTTPException(400, {
+    message: "у канала не выбран способ связи через чат (группа/личка)",
+  });
 }
 
 const GroupHistoryItem = z.object({
@@ -1626,13 +1728,16 @@ const GroupHistoryResponse = z.object({
 app.openapi(
   createRoute({
     method: "get",
-    path: "/v1/workspaces/{wsId}/channels/{id}/group-history",
+    path: "/v1/workspaces/{wsId}/channels/{id}/method-history",
     tags: ["channels"],
     request: {
       params: WsIdParam,
       query: z.object({
         limit: z.coerce.number().int().min(1).max(100).default(50),
         fromMessageId: z.coerce.number().int().nonnegative().optional(),
+        // Намерение: "group" — чат обсуждения, "dm" — личка канала. Каталог
+        // лички шлёт "dm" явно (иначе при выбранной группе ушли бы в группу).
+        target: z.enum(["group", "dm"]).optional(),
       }),
     },
     responses: {
@@ -1646,13 +1751,20 @@ app.openapi(
   }),
   async (c) => {
     const { wsId, id } = c.req.valid("param");
-    const { limit, fromMessageId } = c.req.valid("query");
+    const { limit, fromMessageId, target } = c.req.valid("query");
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
     const channel = await assertChannelAccess(id, wsId);
-    const { chatId, accountId } = groupMethodOrThrow(channel);
-    // Tenancy: аккаунт-участник из meta доступен пользователю (404 иначе —
-    // нельзя читать чужую группу через чужой аккаунт).
+    const { chatId, accountId } = await resolveMethodChat(
+      channel,
+      wsId,
+      userId,
+      role,
+      target,
+    );
+    // Tenancy: аккаунт-участник доступен пользователю (404 иначе — нельзя читать
+    // чужой чат через чужой аккаунт). Закреплённый аккаунт лички тоже проходит
+    // через эту проверку — чужой колеги-аккаунт даст честный 404, не форк треда.
     await assertAccountAccess(accountId, wsId, userId, role);
     const client = await getOutreachWorkerClient({ id: accountId, workspaceId: wsId });
     if (!client) {
@@ -1753,12 +1865,16 @@ app.openapi(
   },
 );
 
-const GroupSendBody = z.object({ text: z.string().min(1).max(4096) });
+const GroupSendBody = z.object({
+  text: z.string().min(1).max(4096),
+  // Намерение: "group" — чат обсуждения, "dm" — личка канала (см. method-history).
+  target: z.enum(["group", "dm"]).optional(),
+});
 
 app.openapi(
   createRoute({
     method: "post",
-    path: "/v1/workspaces/{wsId}/channels/{id}/group-send",
+    path: "/v1/workspaces/{wsId}/channels/{id}/method-send",
     tags: ["channels"],
     request: {
       params: WsIdParam,
@@ -1771,11 +1887,25 @@ app.openapi(
   }),
   async (c) => {
     const { wsId, id } = c.req.valid("param");
-    const { text } = c.req.valid("json");
+    const { text, target } = c.req.valid("json");
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
     const channel = await assertChannelAccess(id, wsId);
-    const { chatId, accountId } = groupMethodOrThrow(channel);
+    const { chatId, accountId, dmStarCost } = await resolveMethodChat(
+      channel,
+      wsId,
+      userId,
+      role,
+      target,
+    );
+    // Платная личка канала = ручной способ: не списываем звёзды с аккаунта из
+    // CRM, менеджер пишет сам в Telegram (spec §16.9). Чтение (history) при этом
+    // разрешено.
+    if (dmStarCost != null && dmStarCost > 0) {
+      throw new HTTPException(400, {
+        message: `Личка канала платная (${dmStarCost}⭐) — отправьте вручную в Telegram`,
+      });
+    }
     // Tenancy: аккаунт-участник доступен пользователю.
     await assertAccountAccess(accountId, wsId, userId, role);
     const client = await getOutreachWorkerClient({ id: accountId, workspaceId: wsId });

@@ -10,6 +10,8 @@ export function ChannelDrawer(props: {
   wsId: string;
   channelId: string;
   onClose: () => void;
+  // Открыть карточку сразу с тредом лички (клик по DM-бейджу в каталоге).
+  initialDmOpen?: boolean;
 }) {
   useEscapeKey(props.onClose);
 
@@ -51,7 +53,12 @@ export function ChannelDrawer(props: {
           </p>
         )}
         {channelQ.data && (
-          <ChannelCard wsId={props.wsId} channel={channelQ.data} />
+          <ChannelCard
+            key={props.channelId}
+            wsId={props.wsId}
+            channel={channelQ.data}
+            initialDmOpen={props.initialDmOpen}
+          />
         )}
       </aside>
     </>
