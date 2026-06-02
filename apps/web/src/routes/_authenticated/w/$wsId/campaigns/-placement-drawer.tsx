@@ -1646,6 +1646,12 @@ function PublishStep({
   const [url, setUrl] = useState(placement.postUrl ?? "");
   const snap = placement.postSnapshot;
   const channelId = placement.channel?.id;
+  const urlPlaceholder =
+    placement.channel?.platform === "youtube"
+      ? "https://youtube.com/watch?v=…"
+      : placement.channel?.platform === "tiktok"
+        ? "https://tiktok.com/@user/video/…"
+        : "https://t.me/channel/123";
   const capture = useMutation({
     mutationFn: async () => {
       const { data, error } = await api.POST(
@@ -1675,7 +1681,7 @@ function PublishStep({
         <input
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://t.me/channel/123"
+          placeholder={urlPlaceholder}
           className="min-w-0 flex-1 rounded-md border border-zinc-300 px-2 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
         />
         <button

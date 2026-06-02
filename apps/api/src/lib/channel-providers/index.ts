@@ -1,9 +1,19 @@
 import { eq, sql } from "drizzle-orm";
 import { db } from "../../db/client.ts";
 import { channels } from "../../db/schema.ts";
-import { fetchTiktokProfile } from "./tiktok.ts";
-import { fetchYoutubeProfile } from "./youtube.ts";
-import type { ChannelProfile } from "./types.ts";
+import {
+  fetchTiktokProfile,
+  fetchTiktokVideoMetrics,
+  parseTiktokVideoId,
+  resolveTiktokShortlink,
+} from "./tiktok.ts";
+import {
+  fetchYoutubeProfile,
+  fetchYoutubeVideoMetrics,
+  parseYoutubeVideoId,
+} from "./youtube.ts";
+import type { ChannelProfile, VideoMetrics } from "./types.ts";
+import type { PostSnapshot } from "../td-message.ts";
 
 export type { ChannelProfile } from "./types.ts";
 
@@ -24,6 +34,51 @@ export function detectChannelPlatform(
   if (/youtube\.com|youtu\.be/i.test(input)) return "youtube";
   if (/tiktok\.com/i.test(input)) return "tiktok";
   return "telegram";
+}
+
+// Метрики вышедшего поста YouTube/TikTok по ссылке: парсим videoId (TikTok-
+// шортлинк резолвим через 302), бьём по конкретному видео, собираем снимок-
+// карточку (общая витрина PostSnapshot, как у TG; поля без провайдер-аналога
+// занулены). Общий путь для metrics-worker (съём статистики) и capture-post
+// (вставка ссылки на пост). Бросает — вызывающий маппит в 4xx/error.
+export async function fetchProviderPost(
+  platform: ProviderPlatform,
+  url: string,
+): Promise<{
+  effectiveUrl: string;
+  metrics: VideoMetrics;
+  snapshot: PostSnapshot;
+}> {
+  let effectiveUrl = url;
+  let videoId =
+    platform === "youtube" ? parseYoutubeVideoId(url) : parseTiktokVideoId(url);
+  if (!videoId && platform === "tiktok") {
+    effectiveUrl = await resolveTiktokShortlink(url);
+    videoId = parseTiktokVideoId(effectiveUrl);
+  }
+  if (!videoId) {
+    throw new Error(`не удалось извлечь id видео из ссылки: ${url}`);
+  }
+  const metrics =
+    platform === "youtube"
+      ? await fetchYoutubeVideoMetrics(videoId)
+      : await fetchTiktokVideoMetrics(videoId);
+  const snapshot: PostSnapshot = {
+    platform,
+    text: metrics.title ?? "",
+    entities: [],
+    thumbB64: null,
+    thumbW: null,
+    thumbH: null,
+    coverUrl: metrics.coverUrl,
+    url: effectiveUrl,
+    media: null,
+    views: metrics.views,
+    forwards: null,
+    reactions: [],
+    capturedAt: new Date().toISOString(),
+  };
+  return { effectiveUrl, metrics, snapshot };
 }
 
 // Под какой ключ в meta кладём платформо-сырьё (meta.yt / meta.tt).

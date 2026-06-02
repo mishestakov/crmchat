@@ -35,6 +35,10 @@ export type VideoMetrics = {
   // Дата публикации видео (ISO). YouTube — snippet.publishedAt, TikTok —
   // itemInfos.createTime. Для авто-«даты выхода» в отчёте.
   publishedAt: string | null;
+  // ID канала-автора видео (YouTube — snippet.channelId, TikTok —
+  // itemInfos.authorId). Сверяем с channels.external_id при вставке ссылки на
+  // пост (capture-post), чтобы нельзя было приклеить пост чужого канала.
+  authorExternalId: string | null;
 };
 
 // Карточка видео для ленты канала (YouTube/TikTok). Обложку НЕ храним —

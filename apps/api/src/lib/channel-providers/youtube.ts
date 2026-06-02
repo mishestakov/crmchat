@@ -257,6 +257,7 @@ export async function fetchYoutubeVideoMetrics(
         snippet?: {
           title?: string;
           publishedAt?: string;
+          channelId?: string;
           thumbnails?: { medium?: { url?: string } };
         };
         statistics?: YtVideo["statistics"];
@@ -272,5 +273,6 @@ export async function fetchYoutubeVideoMetrics(
     title: v.snippet?.title ?? null,
     coverUrl: v.snippet?.thumbnails?.medium?.url ?? null,
     publishedAt: v.snippet?.publishedAt ?? null,
+    authorExternalId: v.snippet?.channelId ?? null,
   };
 }

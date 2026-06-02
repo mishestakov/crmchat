@@ -31,6 +31,7 @@ function extractState(html: string): Record<string, unknown> {
 type TtVideoData = {
   itemInfos?: {
     text?: string;
+    authorId?: string; // user_id автора видео — сверяем с каналом
     diggCount?: number;
     commentCount?: number;
     shareCount?: number;
@@ -182,5 +183,6 @@ export async function fetchTiktokVideoMetrics(
     publishedAt: Number.isFinite(createTs)
       ? new Date(createTs * 1000).toISOString()
       : null,
+    authorExternalId: ii.authorId ?? null,
   };
 }

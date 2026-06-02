@@ -31,7 +31,11 @@ import {
 import { substituteVariables } from "../lib/substitute-variables.ts";
 import { pickDefined } from "../lib/pick-defined.ts";
 import { extractUsername } from "../lib/tg-username.ts";
-import { detectChannelPlatform } from "../lib/channel-providers/index.ts";
+import {
+  detectChannelPlatform,
+  fetchProviderPost,
+} from "../lib/channel-providers/index.ts";
+import { errMsg } from "../lib/errors.ts";
 import { resolveAdminRecipient } from "../lib/placement-recipient.ts";
 import { getOutreachWorkerClient } from "../lib/outreach-account-client.ts";
 import {
@@ -1538,7 +1542,10 @@ app.openapi(
     const { url } = c.req.valid("json");
     await assertProjectAccess(projectId, wsId, userId, role);
     const [row] = await db
-      .select({ externalId: channels.externalId })
+      .select({
+        externalId: channels.externalId,
+        platform: channels.platform,
+      })
       .from(projectItems)
       .leftJoin(channels, eq(channels.id, projectItems.channelId))
       .where(
@@ -1550,6 +1557,52 @@ app.openapi(
       )
       .limit(1);
     if (!row) throw new HTTPException(404, { message: "placement not found" });
+
+    // Провайдер-площадки (YouTube/TikTok): без TDLib — бьём по конкретному видео
+    // напрямую. Парсинг id по платформе канала = проверка соответствия площадки
+    // (не youtube-ссылка на youtube-канале → 422). Снимок отдаём сразу; точные
+    // метрики позже снимет воркер (как у TG).
+    if (row.platform === "youtube" || row.platform === "tiktok") {
+      let post: Awaited<ReturnType<typeof fetchProviderPost>>;
+      try {
+        post = await fetchProviderPost(row.platform, url);
+      } catch (e) {
+        throw new HTTPException(422, {
+          message: `Не похоже на пост ${row.platform}: ${errMsg(e)}`,
+        });
+      }
+      // Сверяем автора видео с каналом — нельзя приклеить чужой пост. Fail-
+      // closed: не можем подтвердить (канал не синкан → нет external_id, или
+      // провайдер не отдал автора) — отказываем, а не пропускаем втихую.
+      if (!row.externalId) {
+        throw new HTTPException(422, {
+          message:
+            "Канал ещё не синхронизирован — откройте его карточку, чтобы подтянуть профиль, затем вставьте ссылку",
+        });
+      }
+      if (post.metrics.authorExternalId !== row.externalId) {
+        throw new HTTPException(422, {
+          message: "Ссылка не из этого канала — проверьте, что пост вышел тут",
+        });
+      }
+      // Дата выхода — сразу реальная из видео (не заглушка-now() в расчёте на
+      // воркер): COALESCE бережёт уже проставленную/ручную, иначе real|now.
+      const pubDate = post.metrics.publishedAt
+        ? new Date(post.metrics.publishedAt)
+        : null;
+      await db
+        .update(projectItems)
+        .set({
+          postUrl: post.effectiveUrl,
+          publishedAt: pubDate
+            ? sql`COALESCE(${projectItems.publishedAt}, ${pubDate})`
+            : sql`COALESCE(${projectItems.publishedAt}, now())`,
+          postSnapshot: post.snapshot,
+        })
+        .where(eq(projectItems.id, placementId));
+      return c.json({ snapshot: post.snapshot });
+    }
+
     const [acc] = await db
       .select({ id: outreachAccounts.id })
       .from(outreachAccounts)

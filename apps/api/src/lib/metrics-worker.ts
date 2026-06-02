@@ -12,15 +12,9 @@ import { emitProjectChanged } from "./events.ts";
 import { buildPostSnapshot, type TdContent } from "./td-message.ts";
 import type { TdClient } from "./tdlib/index.ts";
 import {
-  fetchYoutubeVideoMetrics,
-  parseYoutubeVideoId,
-} from "./channel-providers/youtube.ts";
-import {
-  fetchTiktokVideoMetrics,
-  parseTiktokVideoId,
-  resolveTiktokShortlink,
-} from "./channel-providers/tiktok.ts";
-import { detectChannelPlatform } from "./channel-providers/index.ts";
+  detectChannelPlatform,
+  fetchProviderPost,
+} from "./channel-providers/index.ts";
 
 // Воркер снятия метрик опубликованных постов (фаза «Отчёт»). Менеджер жмёт
 // «снять статистику» → размещения уходят в metrics_status='pending' → этот
@@ -202,33 +196,18 @@ async function runOne(row: MetricsRow, platform: CollectorPlatform) {
 }
 
 // Снятие метрик YouTube/TikTok-видео по ссылке. Аккаунт не нужен, флуд-логики
-// нет — просто HTTP к провайдеру → запись витрины. postSnapshot пока не пишем
-// (обобщение снимка — этап 17.5).
+// нет — просто HTTP к провайдеру → запись витрины. Парс/резолв/фетч/снимок —
+// общий fetchProviderPost (тот же путь, что capture-post при вставке ссылки).
 async function runProviderMetrics(
   row: MetricsRow,
   platform: "youtube" | "tiktok",
 ) {
   try {
     if (!row.postUrl) throw new Error("у размещения нет ссылки на пост");
-    // TikTok-шортлинк (vm./vt.tiktok.com) не парсится напрямую — резолвим 302 в
-    // каноническую и сохраняем её в postUrl, чтобы редирект не гонять повторно.
-    let effectiveUrl = row.postUrl;
-    let videoId =
-      platform === "youtube"
-        ? parseYoutubeVideoId(effectiveUrl)
-        : parseTiktokVideoId(effectiveUrl);
-    if (!videoId && platform === "tiktok") {
-      effectiveUrl = await resolveTiktokShortlink(effectiveUrl);
-      videoId = parseTiktokVideoId(effectiveUrl);
-    }
-    if (!videoId) {
-      throw new Error(`не удалось извлечь id видео из ссылки: ${row.postUrl}`);
-    }
-    const m =
-      platform === "youtube"
-        ? await fetchYoutubeVideoMetrics(videoId)
-        : await fetchTiktokVideoMetrics(videoId);
-
+    const { effectiveUrl, metrics: m, snapshot } = await fetchProviderPost(
+      platform,
+      row.postUrl,
+    );
     await db
       .update(projectItems)
       .set({
@@ -242,25 +221,9 @@ async function runProviderMetrics(
         // createTime), автоматически, не вручную.
         ...(m.publishedAt ? { publishedAt: new Date(m.publishedAt) } : {}),
         metricsError: null,
-        // Сохраняем разрезолвленную каноническую ссылку (для TikTok-шортлинков).
+        // Каноническая ссылка (резолв TikTok-шортлинков) + снимок-карточка.
         postUrl: effectiveUrl,
-        // Снимок-карточка поста: обложка (URL) + caption + ссылка. Метрики
-        // живут в колонках выше; в снимке дублируем только views.
-        postSnapshot: {
-          platform,
-          text: m.title ?? "",
-          entities: [],
-          thumbB64: null,
-          thumbW: null,
-          thumbH: null,
-          coverUrl: m.coverUrl,
-          url: effectiveUrl,
-          media: null,
-          views: m.views,
-          forwards: null,
-          reactions: [],
-          capturedAt: new Date().toISOString(),
-        },
+        postSnapshot: snapshot,
       })
       .where(eq(projectItems.id, row.id));
   } catch (e) {
