@@ -31,6 +31,7 @@ import {
 import { substituteVariables } from "../lib/substitute-variables.ts";
 import { pickDefined } from "../lib/pick-defined.ts";
 import { extractUsername } from "../lib/tg-username.ts";
+import { detectChannelPlatform } from "../lib/channel-providers/index.ts";
 import { resolveAdminRecipient } from "../lib/placement-recipient.ts";
 import { getOutreachWorkerClient } from "../lib/outreach-account-client.ts";
 import {
@@ -104,6 +105,7 @@ const PlacementSchema = z
         id: z.string(),
         title: z.string(),
         username: z.string().nullable(),
+        platform: z.enum(["telegram", "youtube", "tiktok", "max"]),
         memberCount: z.number().int().nullable(),
         // Авто-метрики из ленты (этап 16.10): ср.охват + ERR. Живые из
         // channels.meta — на согласовании клиент видит актуальные, а не снимок.
@@ -584,53 +586,92 @@ app.openapi(
     // До вставки: на активной кампании проверяем, что доливку есть чем слать.
     const dolivkaAccounts = await dolivkaAccountsOrThrow(wsId, project);
 
-    const parsed = identifiers.map(extractUsername);
-    const skippedInvalid = parsed.filter((u) => u === null).length;
-    const usernames = [...new Set(parsed.filter((u): u is string => u !== null))];
+    // Платформу детектим на КАЖДУЮ строку: ссылка YouTube/TikTok → провайдер-
+    // канал (профиль резолвит ленивый sync), иначе TG @username (как раньше).
+    // Ключ дедупа — platform + нормализованный идентификатор.
+    type ParsedAdd =
+      | { platform: "telegram"; key: string; uname: string }
+      | { platform: "youtube" | "tiktok"; key: string; link: string };
+    let skippedInvalid = 0;
+    const seen = new Set<string>();
+    const adds: ParsedAdd[] = [];
+    for (const raw of identifiers) {
+      const platform = detectChannelPlatform(raw);
+      let entry: ParsedAdd | null;
+      if (platform === "telegram") {
+        const uname = extractUsername(raw);
+        if (!uname) {
+          skippedInvalid++;
+          continue;
+        }
+        entry = { platform, key: `telegram:${uname}`, uname };
+      } else {
+        const link = raw.trim();
+        entry = { platform, key: `${platform}:${link.toLowerCase()}`, link };
+      }
+      if (seen.has(entry.key)) continue;
+      seen.add(entry.key);
+      adds.push(entry);
+    }
 
     let added = 0;
     let channelsCreated = 0;
     let skippedDuplicate = 0;
     const insertedItems: InsertedPlacement[] = [];
 
-    for (const uname of usernames) {
-      // find-or-create канал (username unique по ws+platform, case-insensitive).
+    for (const a of adds) {
+      // find-or-create канал: TG по lower(username), провайдер по lower(link).
+      const matchCh =
+        a.platform === "telegram"
+          ? sql`lower(${channels.username}) = ${a.uname}`
+          : sql`lower(${channels.link}) = ${a.link.toLowerCase()}`;
       let [ch] = await db
         .select({ id: channels.id })
         .from(channels)
         .where(
           and(
             eq(channels.workspaceId, wsId),
-            eq(channels.platform, "telegram"),
-            sql`lower(${channels.username}) = ${uname}`,
+            eq(channels.platform, a.platform),
+            matchCh,
           ),
         )
         .limit(1);
       if (!ch) {
         const [created] = await db
           .insert(channels)
-          .values({
-            workspaceId: wsId,
-            title: `@${uname}`,
-            username: uname,
-            platform: "telegram",
-            createdBy: userId,
-          })
+          .values(
+            a.platform === "telegram"
+              ? {
+                  workspaceId: wsId,
+                  title: `@${a.uname}`,
+                  username: a.uname,
+                  platform: "telegram",
+                  createdBy: userId,
+                }
+              : {
+                  workspaceId: wsId,
+                  // title — заглушка по ссылке; sync провайдера перезапишет.
+                  title: a.link,
+                  link: a.link,
+                  platform: a.platform,
+                  createdBy: userId,
+                },
+          )
           .onConflictDoNothing()
           .returning({ id: channels.id });
         if (created) {
           ch = created;
           channelsCreated++;
         } else {
-          // Параллельная вставка тем же username — берём существующий.
+          // Параллельная вставка того же канала — берём существующий.
           [ch] = await db
             .select({ id: channels.id })
             .from(channels)
             .where(
               and(
                 eq(channels.workspaceId, wsId),
-                eq(channels.platform, "telegram"),
-                sql`lower(${channels.username}) = ${uname}`,
+                eq(channels.platform, a.platform),
+                matchCh,
               ),
             )
             .limit(1);
@@ -654,7 +695,11 @@ app.openapi(
         continue;
       }
 
-      const admin = await resolveAdminRecipient(ch.id);
+      // У провайдер-каналов нет TG-админа (общение по DM/почте — отдельно).
+      const admin =
+        a.platform === "telegram"
+          ? await resolveAdminRecipient(ch.id)
+          : { contactId: null, username: null, tgUserId: null };
       const [ins] = await db
         .insert(projectItems)
         .values({
@@ -1058,6 +1103,7 @@ function placementColumns() {
     channelId: channels.id,
     channelTitle: channels.title,
     channelUsername: channels.username,
+    channelPlatform: channels.platform,
     channelMembers: channels.memberCount,
     // Авто-метрики из ленты (meta пишет /history): ср.охват + ERR. Живые.
     channelAvgReach: sql<number | null>`(${channels.meta} ->> 'avg_reach')::int`,
@@ -1175,6 +1221,7 @@ function serializePlacement(
     channelId: string | null;
     channelTitle: string | null;
     channelUsername: string | null;
+    channelPlatform: "telegram" | "youtube" | "tiktok" | "max" | null;
     channelMembers: number | null;
     channelAvgReach: number | null;
     channelErr: number | null;
@@ -1206,6 +1253,8 @@ function serializePlacement(
           id: row.channelId,
           title: row.channelTitle ?? "—",
           username: row.channelUsername,
+          // channelId есть ⇒ канал реальный ⇒ platform (notNull) не null.
+          platform: row.channelPlatform!,
           memberCount: row.channelMembers,
           avgReach: row.channelAvgReach,
           err: row.channelErr,

@@ -91,6 +91,7 @@ const ProjectSchema = z
     periodEnd: z.iso.datetime().nullable(),
     tov: z.string().nullable(),
     constraints: z.string().nullable(),
+    advertiserData: z.string().nullable(),
     stages: z.array(StageSchema),
     accountsMode: AccountsModeSchema,
     accountsSelected: z.array(z.string()),
@@ -130,6 +131,7 @@ const CreateProjectBody = z
     periodEnd: z.iso.datetime().optional(),
     tov: z.string().max(2000).optional(),
     constraints: z.string().max(2000).optional(),
+    advertiserData: z.string().max(2000).optional(),
   })
   .openapi("CreateProject");
 
@@ -151,6 +153,7 @@ const UpdateProjectBody = z
     periodEnd: z.iso.datetime().nullable().optional(),
     tov: z.string().max(2000).nullable().optional(),
     constraints: z.string().max(2000).nullable().optional(),
+    advertiserData: z.string().max(2000).nullable().optional(),
   })
   .openapi("UpdateProject");
 
@@ -384,6 +387,7 @@ app.openapi(
         periodEnd: body.periodEnd ? new Date(body.periodEnd) : null,
         tov: body.tov ?? null,
         constraints: body.constraints ?? null,
+        advertiserData: body.advertiserData ?? null,
         createdBy: userId,
       })
       .returning();
@@ -474,6 +478,7 @@ app.openapi(
           "brief",
           "tov",
           "constraints",
+          "advertiserData",
         ]),
         // numeric/timestamp требуют конверсии — pickDefined не годится.
         ...(body.budgetAmount !== undefined && {
@@ -1531,6 +1536,7 @@ function serializeProject(
     periodEnd: row.periodEnd?.toISOString() ?? null,
     tov: row.tov,
     constraints: row.constraints,
+    advertiserData: row.advertiserData,
     stages: row.stages,
     accountsMode: row.accountsMode,
     accountsSelected: row.accountsSelected,

@@ -67,7 +67,9 @@ export function mapChannelHistoryItems(
 // fetch и отдаёт что успел (td_api.tl §getChatHistory: «can be smaller than the
 // specified limit»). Дозваниваемся пагинацией от oldest_id, пока не наберём
 // limit или TDLib не отдаст empty (конец канала). MAX_ATTEMPTS — стоп от цикла.
-const MAX_ATTEMPTS = 5;
+// 8 даёт окну метрик (до 500 постов) дозвониться даже когда TDLib отдаёт
+// маленькими порциями; фид (limit~50) стопится по aggregated раньше.
+const MAX_ATTEMPTS = 8;
 
 // Сетевое чтение ленты канала: openChat → backfill-loop getChatHistory →
 // closeChat. only_local:false — TDLib ходит на сервер если кэша не хватает.
@@ -78,9 +80,17 @@ const MAX_ATTEMPTS = 5;
 // /history делает его с классификацией ошибок, превью — через readChannelPreview.
 export async function fetchChannelHistory(
   client: TdClient,
-  opts: { chatId: number; limit: number; fromMessageId?: number },
+  opts: {
+    chatId: number;
+    limit: number;
+    fromMessageId?: number;
+    // Окно метрик: дальше постов старше maxAgeMs не листаем (охват считаем за
+    // ~2 недели, см. вызов в /history). Не задан → только по limit.
+    maxAgeMs?: number;
+  },
 ): Promise<TdChannelMessage[]> {
-  const { chatId, limit } = opts;
+  const { chatId, limit, maxAgeMs } = opts;
+  const minDate = maxAgeMs ? (Date.now() - maxAgeMs) / 1000 : 0;
   let aggregated: TdChannelMessage[] = [];
   let from = opts.fromMessageId ?? 0;
   let opened = false;
@@ -99,7 +109,10 @@ export async function fetchChannelHistory(
       if (r.messages.length === 0) break;
       aggregated = [...aggregated, ...r.messages];
       if (aggregated.length >= limit) break;
-      from = Number(r.messages[r.messages.length - 1]!.id);
+      const oldest = r.messages[r.messages.length - 1]!;
+      // Старше окна — дальше листать незачем (история идёт newest→oldest).
+      if (minDate && oldest.date < minDate) break;
+      from = Number(oldest.id);
     }
   } finally {
     if (opened) {

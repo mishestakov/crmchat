@@ -32,6 +32,25 @@ export type VideoMetrics = {
   shares: number | null;
   title: string | null;
   coverUrl: string | null;
+  // Дата публикации видео (ISO). YouTube — snippet.publishedAt, TikTok —
+  // itemInfos.createTime. Для авто-«даты выхода» в отчёте.
+  publishedAt: string | null;
+};
+
+// Карточка видео для ленты канала (YouTube/TikTok). Обложку НЕ храним —
+// coverUrl это прямая ссылка на CDN площадки, картинку грузит браузер (у TikTok
+// с TTL ~часы → рефрешится синком). Просмотр — на площадке по url.
+export type RecentVideo = {
+  id: string; // video_id площадки
+  url: string; // ссылка на видео на площадке
+  title: string | null; // заголовок / подпись (у TikTok — с хэштегами)
+  coverUrl: string | null; // обложка (ссылка на CDN, не байты)
+  views: number | null;
+  // likes/comments: YouTube отдаёт сразу; TikTok-профиль не отдаёт → null.
+  likes: number | null;
+  comments: number | null;
+  publishedAt: string | null;
+  durationSec: number | null; // YouTube — Shorts vs длинное; TikTok — null
 };
 
 // То, что провайдер отдаёт диспетчеру. Платформо-сырьё — в `raw` (ляжет в
@@ -48,5 +67,10 @@ export type ChannelProfile = {
   // YT/TikTok — прямая ссылка, у TikTok с TTL ~часы, потому рефрешим синком).
   avatarUrl: string | null;
   reach: ReachWindow;
+  // Тематика канала (YouTube topicCategories → ["Music","Electronic music"]).
+  // TikTok тем не отдаёт — хэштеги тематику дают в подписях видео.
+  topics: string[];
+  // Последние ~12 видео для ленты карточки (обложка + подпись + клик→площадка).
+  recentVideos: RecentVideo[];
   raw: Record<string, unknown>; // → meta.yt / meta.tt
 };

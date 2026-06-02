@@ -32,12 +32,16 @@ import {
   useProjectShares,
 } from "../../../../../lib/outreach-queries";
 import { OUTREACH_QK } from "../../../../../lib/query-keys";
+import { PlatformBadge } from "../../../../../lib/platforms";
 import {
   type ShareStep,
   shareDeepLink,
 } from "../../../../../lib/share-steps";
 import { LeadChatDrawer } from "../../../../../components/lead-chat-drawer";
-import { formatPastRelative } from "../../../../../lib/date-utils";
+import {
+  formatPastRelative,
+  formatDateTime,
+} from "../../../../../lib/date-utils";
 import {
   type PhaseKey,
   type Placement,
@@ -286,6 +290,7 @@ function BriefPhase({
     periodEnd: toDateInput(campaign.periodEnd),
     tov: campaign.tov ?? "",
     constraints: campaign.constraints ?? "",
+    advertiserData: campaign.advertiserData ?? "",
   }));
   const server = {
     brief: campaign.brief ?? "",
@@ -294,6 +299,7 @@ function BriefPhase({
     periodEnd: toDateInput(campaign.periodEnd),
     tov: campaign.tov ?? "",
     constraints: campaign.constraints ?? "",
+    advertiserData: campaign.advertiserData ?? "",
   };
   const dirty = JSON.stringify(draft) !== JSON.stringify(server);
 
@@ -316,6 +322,7 @@ function BriefPhase({
               : null,
             tov: draft.tov || null,
             constraints: draft.constraints || null,
+            advertiserData: draft.advertiserData || null,
           },
         },
       );
@@ -387,6 +394,19 @@ function BriefPhase({
             }
             className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
           />
+        </BriefField>
+        <BriefField label="Рекламодатель (ИНН + название)">
+          <input
+            value={draft.advertiserData}
+            onChange={(e) =>
+              setDraft((d) => ({ ...d, advertiserData: e.target.value }))
+            }
+            placeholder="ИНН 7700000000, ООО «Рекламодатель»"
+            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
+          />
+          <p className="mt-1 text-xs text-zinc-400">
+            Подставится в ЕРИД-шаг всех размещений кампании.
+          </p>
         </BriefField>
         {dirty && (
           <button
@@ -829,7 +849,7 @@ function AddChannelsModal({
             value={bulkText}
             onChange={(e) => setBulkText(e.target.value)}
             placeholder={
-              "По одной ссылке или @username на строку:\nhttps://t.me/durov\n@telegram\ndurov"
+              "По одной на строку. Telegram — @username, YouTube/TikTok — ссылкой:\n@durov\nhttps://youtube.com/@mkbhd\nhttps://tiktok.com/@khaby.lame"
             }
             className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 font-mono text-sm focus:border-emerald-500 focus:outline-none"
           />
@@ -988,11 +1008,14 @@ function BloggerRow({
             </span>
           )}
         </div>
-        <div className="truncate text-xs text-zinc-400">
-          {ch?.username ? `@${ch.username}` : "—"}
-          {siblingCount > 0 && (
-            <span className="text-zinc-400"> · ещё {siblingCount} у админа</span>
-          )}
+        <div className="flex items-center gap-1 text-xs text-zinc-400">
+          {ch && <PlatformBadge platform={ch.platform} />}
+          <span className="truncate">
+            {ch?.username ? `@${ch.username}` : "—"}
+            {siblingCount > 0 && (
+              <span className="text-zinc-400"> · ещё {siblingCount} у админа</span>
+            )}
+          </span>
         </div>
         <div className="mt-1 flex items-center gap-2">
           <OutreachStatus p={p} />
@@ -1816,6 +1839,9 @@ function ProductionPhase({
                     <span
                       className={"h-1.5 w-1.5 shrink-0 rounded-full " + o.dot}
                     />
+                    {p.channel && (
+                      <PlatformBadge platform={p.channel.platform} />
+                    )}
                     <span className="truncate text-sm font-medium text-zinc-900">
                       {p.channel?.title ?? "Канал удалён"}
                     </span>
@@ -1827,7 +1853,12 @@ function ProductionPhase({
               );
             }}
             renderPane={(p) => (
-              <ProductionPane wsId={wsId} projectId={projectId} placement={p} />
+              <ProductionPane
+                wsId={wsId}
+                projectId={projectId}
+                placement={p}
+                advertiserData={campaign.advertiserData}
+              />
             )}
           />
         </div>
@@ -2024,6 +2055,7 @@ function WrapupPhase({ wsId, campaign }: { wsId: string; campaign: Campaign }) {
                   <Repeat2 size={13} className="inline" />
                 </Th>
                 <Th className="text-right">CPV</Th>
+                <Th>Дата выхода</Th>
                 <Th>Снято</Th>
               </tr>
             </thead>
@@ -2050,6 +2082,9 @@ function WrapupPhase({ wsId, campaign }: { wsId: string; campaign: Campaign }) {
                   </td>
                   <td className="px-4 py-2.5 text-right tabular-nums text-zinc-700">
                     {cpv(p.priceAmount, p.metricsViews)}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <PublishDateCell placement={p} />
                   </td>
                   <td className="px-4 py-2.5">
                     <MetricsStatusCell placement={p} />
@@ -2109,6 +2144,27 @@ function PostSnapshotCell({ placement }: { placement: Placement }) {
         ) : null}
       </div>
     </div>
+  );
+}
+
+// Дата выхода поста (с временем) — кликабельна на сам пост (TG/YT/TikTok через
+// postUrl). publishedAt подтягивается автоматически воркером из самого поста;
+// fallback — вручную заданная дата выхода (scheduledAt).
+function PublishDateCell({ placement }: { placement: Placement }) {
+  const date = placement.publishedAt ?? placement.scheduledAt;
+  if (!date) return <span className="text-xs text-zinc-400">—</span>;
+  const label = formatDateTime(date);
+  return placement.postUrl ? (
+    <a
+      href={placement.postUrl}
+      target="_blank"
+      rel="noreferrer"
+      className="text-xs text-emerald-600 hover:underline"
+    >
+      {label} ↗
+    </a>
+  ) : (
+    <span className="text-xs text-zinc-600">{label}</span>
   );
 }
 
@@ -2280,8 +2336,11 @@ function ChannelCell({
           <div className="truncate text-sm font-medium text-zinc-900">
             {ch?.title ?? "Канал удалён"}
           </div>
-          <div className="truncate text-xs text-zinc-400">
-            {ch?.username ? `@${ch.username}` : "—"}
+          <div className="flex items-center gap-1 text-xs text-zinc-400">
+            {ch && <PlatformBadge platform={ch.platform} />}
+            <span className="truncate">
+              {ch?.username ? `@${ch.username}` : "—"}
+            </span>
           </div>
         </div>
       </button>

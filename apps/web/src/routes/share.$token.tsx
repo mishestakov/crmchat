@@ -12,6 +12,7 @@ import {
   shareDeepLink,
 } from "../lib/share-steps";
 import { ChannelPreviewDrawer } from "../components/channel-preview-drawer";
+import { PLATFORMS, PlatformBadge } from "../lib/platforms";
 import type { ChannelMessage } from "../components/channel-card";
 
 // Публичный клиентский view по magic-link. Вне _authenticated — без sidebar и
@@ -464,15 +465,15 @@ function PlacementRow({
               {ch?.title ?? "—"}
             </button>
             <div className="flex items-center gap-2 text-xs text-zinc-400">
-              {ch?.username && <span className="truncate">@{ch.username}</span>}
+              {ch && <PlatformBadge platform={ch.platform} />}
               {ch?.username && (
                 <a
-                  href={`https://t.me/${ch.username}`}
+                  href={PLATFORMS[ch.platform].url(ch.username)}
                   target="_blank"
                   rel="noreferrer"
-                  className="shrink-0 text-[#229ED9] hover:underline"
+                  className="truncate hover:underline"
                 >
-                  в Telegram ↗
+                  @{ch.username}
                 </a>
               )}
             </div>
@@ -843,8 +844,11 @@ function ReportRow({ item }: { item: ClientReportItem }) {
       )}
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-sm font-medium text-zinc-900">
-            {item.channel?.title ?? "—"}
+          <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-zinc-900">
+            {item.channel && (
+              <PlatformBadge platform={item.channel.platform} />
+            )}
+            <span className="truncate">{item.channel?.title ?? "—"}</span>
           </span>
           {item.publishedAt && (
             <span className="shrink-0 text-xs text-zinc-400">

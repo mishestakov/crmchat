@@ -827,8 +827,16 @@ app.openapi(
   },
 );
 
+// Окно расчёта охвата/ERR: до 500 постов И не старше 3 месяцев (sparse-каналы
+// иначе тянут год-назад-посты со стухшей аудиторией). Глубокий проход по ленте
+// делаем раз в сутки на канал (TTL по meta.metrics_at), не на каждое открытие.
+const METRICS_MAX_POSTS = 500;
+const METRICS_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+const METRICS_TTL_MS = 24 * 60 * 60 * 1000;
+
 type TdHistMsg = {
   id: number;
+  date: number;
   is_pinned?: boolean;
   interaction_info?: {
     view_count?: number;
@@ -845,14 +853,21 @@ type TdHistMsg = {
 function metricsFromMessages(
   msgs: TdHistMsg[],
 ): { avgReach: number; err: number; sample: number } | null {
+  // Только посты за последние 3 месяца: sparse-канал мог набрать 500 постов за
+  // год — старую аудиторию в охват не берём (даже если fetch их зацепил).
+  const minDateSec = (Date.now() - METRICS_WINDOW_MS) / 1000;
   const posts = msgs.filter(
     (m) =>
       !m.is_pinned &&
+      m.date >= minDateSec &&
       typeof m.interaction_info?.view_count === "number" &&
       m.interaction_info.view_count > 0,
   );
   if (posts.length < 3) return null;
-  const recent = posts.slice(0, 15);
+  // Считаем по всему окну (до 500 постов / 3 месяца), а не по 15 новейшим:
+  // у частопостящих каналов 15 постов = пара часов, охват скакал. Медиана
+  // робастна к выбросам.
+  const recent = posts;
   // recent.length ≥ 3 здесь → median не вернёт null, но ?? 0 для типа.
   const avgReach = median(recent.map((m) => m.interaction_info!.view_count!)) ?? 0;
   const ers = recent.map((m) => {
@@ -1474,11 +1489,23 @@ app.openapi(
     // вынесено в lib/channel-history.fetchChannelHistory — тот же код тянет
     // превью канала. Здесь оборачиваем классификацией ошибок: permanent →
     // помечаем канал недоступным, иначе 404.
+    // Вариант Б: глубокий проход по ленте (до 500 постов / 3 месяца) ради метрик
+    // делаем только когда они устарели (раз в сутки на канал по meta.metrics_at),
+    // иначе тянем ленту обычной порцией. Метрики считаем лишь на первой странице.
+    const isFirstPage = fromMessageId === undefined;
+    const metaAt = (channel.meta as Record<string, unknown>).metrics_at;
+    const parsedAt = typeof metaAt === "string" ? Date.parse(metaAt) : NaN;
+    // Нет маркера или он битый (NaN) → считаем устаревшим, надо пройтись.
+    const metricsStale =
+      !Number.isFinite(parsedAt) || Date.now() - parsedAt > METRICS_TTL_MS;
+    const deepMetrics = isFirstPage && metricsStale;
+
     let aggregated;
     try {
       aggregated = await fetchChannelHistory(tdClient, {
         chatId,
-        limit,
+        limit: deepMetrics ? METRICS_MAX_POSTS : limit,
+        maxAgeMs: deepMetrics ? METRICS_WINDOW_MS : undefined,
         fromMessageId,
       });
     } catch (e) {
@@ -1496,25 +1523,33 @@ app.openapi(
       await clearChannelUnavailable(id);
     }
 
-    const items = mapChannelHistoryItems(aggregated, { withMedia: true });
+    // Фронту отдаём первые limit; при глубоком проходе набрали больше — это
+    // только для расчёта охвата, лента остаётся постраничной.
+    const items = mapChannelHistoryItems(aggregated.slice(0, limit), {
+      withMedia: true,
+    });
 
     // Авто-метрики из этой же ленты (этап 16.10) — без отдельного TDLib-вызова.
     // Пишем в meta: центр и правый рельс показывают, «Согласован» снапшотит в
-    // прогноз. Только на первой странице (newest посты): пагинация тащит старые,
-    // по ним охват считать нельзя.
-    const metrics =
-      fromMessageId === undefined ? metricsFromMessages(aggregated) : null;
-    if (metrics) {
+    // прогноз. Только при deepMetrics (первая страница + устаревшие метрики).
+    const metrics = deepMetrics ? metricsFromMessages(aggregated) : null;
+    if (deepMetrics) {
+      // metrics_at — TTL-маркер «когда последний раз глубоко проходили». Пишем
+      // ВСЕГДА при deepMetrics, даже если метрик не набралось (sparse-канал:
+      // постов в окне меньше порога → metricsFromMessages === null). Иначе
+      // metricsStale остаётся true и мы лезем в глубокий проход на КАЖДОМ
+      // открытии первой страницы. Маркер = «проверили, до TTL не лезем снова».
+      const patch: Record<string, unknown> = {
+        metrics_at: new Date().toISOString(),
+      };
+      if (metrics) {
+        patch.avg_reach = metrics.avgReach;
+        patch.err = metrics.err;
+        patch.metrics_sample = metrics.sample;
+      }
       await db
         .update(channels)
-        .set({
-          meta: sql`${channels.meta} || ${JSON.stringify({
-            avg_reach: metrics.avgReach,
-            err: metrics.err,
-            metrics_sample: metrics.sample,
-            metrics_at: new Date().toISOString(),
-          })}::jsonb`,
-        })
+        .set({ meta: sql`${channels.meta} || ${JSON.stringify(patch)}::jsonb` })
         .where(eq(channels.id, id));
     }
 

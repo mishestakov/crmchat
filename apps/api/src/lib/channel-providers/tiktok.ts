@@ -1,5 +1,10 @@
 import { computeReach } from "./reach.ts";
-import type { ChannelProfile, ProviderVideo, VideoMetrics } from "./types.ts";
+import type {
+  ChannelProfile,
+  ProviderVideo,
+  RecentVideo,
+  VideoMetrics,
+} from "./types.ts";
 
 // TikTok СТРОГО через публичный embed профиля (curl, без логина/браузера/WAF).
 // Карта полей: /home/mike/tt/notes/embed-map.md.
@@ -31,7 +36,19 @@ type TtVideoData = {
     shareCount?: number;
     playCount?: number;
     covers?: string[];
+    // unix-время публикации строкой ("1643645623") — есть в single-video embed
+    // (embed-map.md §itemInfos), в отличие от профиль-videoList.
+    createTime?: string;
   };
+};
+
+// Видео из профильного videoList (карта полей: notes/embed-map.md). Поля
+// опциональны: на видео есть playCount, но createTime/вовлечений в профиле нет.
+type TtListVideo = {
+  id?: string;
+  playCount?: number;
+  desc?: string;
+  coverUrl?: string;
 };
 
 type TtUserInfo = {
@@ -63,19 +80,38 @@ export async function fetchTiktokProfile(
   const data = extractState(await res.text());
 
   const profile = data[`/embed/@${username}`] as
-    | { userInfo?: TtUserInfo; videoList?: { id?: string; playCount?: number }[] }
+    | { userInfo?: TtUserInfo; videoList?: TtListVideo[] }
     | undefined;
   const userInfo = profile?.userInfo;
   if (!userInfo?.uniqueId) {
     throw new Error(`TikTok-аккаунт не найден или приватный: @${username}`);
   }
+  const handle = userInfo.uniqueId;
+  const rawVideos = profile?.videoList ?? [];
 
-  const videos: ProviderVideo[] = (profile?.videoList ?? [])
+  const videos: ProviderVideo[] = rawVideos
     .map((v) => Number(v.playCount))
     .filter((views) => Number.isFinite(views) && views > 0)
     .map((views) => ({ views })); // дат/вовлечений в профиле нет
 
-  const handle = userInfo.uniqueId;
+  // Лента: обложка + подпись (с хэштегами) + просмотры. Лайки/комменты профиль
+  // не отдаёт — в ленте остаются null (точная стата видео есть в video-embed,
+  // но это отдельный запрос на каждое видео; в ленте не тянем).
+  const recentVideos: RecentVideo[] = rawVideos
+    .filter((v): v is TtListVideo & { id: string } => Boolean(v.id))
+    .slice(0, 12)
+    .map((v) => ({
+      id: v.id,
+      url: `https://www.tiktok.com/@${handle}/video/${v.id}`,
+      title: v.desc ?? null,
+      coverUrl: v.coverUrl ?? null,
+      views: typeof v.playCount === "number" ? v.playCount : null,
+      likes: null,
+      comments: null,
+      publishedAt: null,
+      durationSec: null,
+    }));
+
   return {
     externalId: userInfo.id ?? null,
     title: userInfo.nickname || handle,
@@ -86,6 +122,8 @@ export async function fetchTiktokProfile(
     verified: userInfo.verified ?? null,
     avatarUrl: userInfo.avatarThumbUrl ?? null,
     reach: computeReach(videos, now),
+    topics: [], // TikTok тем не отдаёт; тематика — в хэштегах подписей видео
+    recentVideos,
     raw: {
       followerCount: userInfo.followerCount ?? null,
       heartCount: userInfo.heartCount ?? null, // всего лайков аккаунта (округл.)
@@ -132,12 +170,17 @@ export async function fetchTiktokVideoMetrics(
     ?.videoData;
   const ii = vd?.itemInfos;
   if (!ii) throw new Error(`TikTok-видео не найдено или приватное: ${videoId}`);
+  // createTime — unix-строка; битое значение → NaN → new Date(NaN) бросает.
+  const createTs = ii.createTime ? Number(ii.createTime) : NaN;
   return {
     views: ii.playCount != null ? Number(ii.playCount) : null,
     likes: ii.diggCount != null ? Number(ii.diggCount) : null,
     comments: ii.commentCount != null ? Number(ii.commentCount) : null,
     shares: ii.shareCount != null ? Number(ii.shareCount) : null,
     title: ii.text ?? null,
-    coverUrl: vd?.itemInfos?.covers?.[0] ?? null,
+    coverUrl: ii.covers?.[0] ?? null,
+    publishedAt: Number.isFinite(createTs)
+      ? new Date(createTs * 1000).toISOString()
+      : null,
   };
 }

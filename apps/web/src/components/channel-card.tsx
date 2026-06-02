@@ -10,6 +10,7 @@ import {
   MessageSquare,
   Plus,
   Send,
+  Loader2,
   X,
 } from "lucide-react";
 import type { Channel } from "@repo/core";
@@ -198,6 +199,15 @@ export function ChannelCard(props: {
         </div>
       )}
       <ChannelHero channel={channel} syncing={syncMut.isPending} compact={compact} />
+      {/* Баннер синка — только пока профиль пустой (подписчиков ещё нет).
+          Как только данные есть, фоновый ре-синк идёт тихо: метрики/лента уже
+          показаны, баннер не висит «вечно». */}
+      {syncMut.isPending && channel.memberCount == null && (
+        <div className="flex items-center gap-2 border-b border-zinc-100 bg-zinc-50 px-5 py-2 text-xs text-zinc-500">
+          <Loader2 size={13} className="animate-spin" />
+          Подтягиваем профиль канала…
+        </div>
+      )}
       {!compact && (
         <MetaBadges
           channel={channel}
@@ -213,15 +223,22 @@ export function ChannelCard(props: {
           onClose={() => setDmOpen(false)}
         />
       )}
-      <PostsFeed
-        wsId={wsId}
-        channelId={channel.id}
-        channelExternalId={channel.externalId}
-        syncing={syncMut.isPending}
-        syncFailed={syncFailed}
-        unavailable={inUnavailableCooldown}
-        hasActiveAccount={hasActiveAccount}
-      />
+      {/* Лента: TG — посты через TDLib; YouTube/TikTok — это НЕ телеграмная
+          сущность (с TG связан только контакт-админ), поэтому /history-фид тут
+          не применим. Показываем провайдер-блок (метрики выше + ссылка). */}
+      {isProviderPlatform ? (
+        <ProviderFeed channel={channel} syncing={syncMut.isPending} />
+      ) : (
+        <PostsFeed
+          wsId={wsId}
+          channelId={channel.id}
+          channelExternalId={channel.externalId}
+          syncing={syncMut.isPending}
+          syncFailed={syncFailed}
+          unavailable={inUnavailableCooldown}
+          hasActiveAccount={hasActiveAccount}
+        />
+      )}
     </div>
   );
 }
@@ -325,6 +342,14 @@ function ChannelHero(props: {
             src={`data:image/jpeg;base64,${channel.thumbnailB64}`}
             alt=""
             className={`${avatar} shrink-0 rounded-full object-cover ring-1 ring-zinc-200 blur-[1.5px]`}
+          />
+        ) : typeof meta?.avatarUrl === "string" ? (
+          // YouTube/TikTok: аватар — прямая ссылка на CDN площадки (не байты).
+          <img
+            src={meta.avatarUrl}
+            alt=""
+            referrerPolicy="no-referrer"
+            className={`${avatar} shrink-0 rounded-full object-cover ring-1 ring-zinc-200`}
           />
         ) : (
           <div
@@ -843,6 +868,133 @@ export type ChannelMessage = {
   reactions: { emoji: string; count: number }[];
   isForwarded: boolean;
 };
+
+type ProviderVideo = {
+  id: string;
+  url: string;
+  title: string | null;
+  coverUrl: string | null;
+  views: number | null;
+  likes: number | null;
+  comments: number | null;
+  publishedAt: string | null;
+  durationSec: number | null;
+};
+
+function fmtDuration(sec: number): string {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  const mm = h > 0 ? String(m).padStart(2, "0") : String(m);
+  return (h > 0 ? `${h}:` : "") + `${mm}:${String(s).padStart(2, "0")}`;
+}
+
+// Лента провайдер-канала (YouTube/TikTok): сетка последних видео (обложка +
+// подпись, клик → площадка) + чип тематики. С Telegram не связано — у провайдера
+// телеграмный только контакт-админ.
+function ProviderFeed({
+  channel,
+  syncing,
+}: {
+  channel: Channel;
+  syncing: boolean;
+}) {
+  const platform = PLATFORMS[channel.platform];
+  const meta = (channel.meta ?? {}) as Record<string, unknown>;
+  const url =
+    channel.link ?? (channel.username ? platform.url(channel.username) : null);
+  const topics = Array.isArray(meta.topics) ? (meta.topics as string[]) : [];
+  const videos = Array.isArray(meta.recent_videos)
+    ? (meta.recent_videos as ProviderVideo[])
+    : [];
+
+  if (syncing && videos.length === 0) {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center gap-2 px-6 py-10 text-sm text-zinc-400">
+        <Loader2 size={14} className="animate-spin" />
+        Подтягиваем видео канала…
+      </div>
+    );
+  }
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      {topics.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-zinc-100 px-6 py-3">
+          <span className="text-[11px] uppercase tracking-wide text-zinc-400">
+            Тематика
+          </span>
+          {topics.map((t) => (
+            <span
+              key={t}
+              className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600"
+            >
+              {t}
+            </span>
+          ))}
+        </div>
+      )}
+      {videos.length === 0 ? (
+        <div className="px-6 py-10 text-center text-sm text-zinc-400">
+          Видео не подтянулись.{" "}
+          {url && (
+            <a
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              className="font-medium text-emerald-600 hover:underline"
+            >
+              Открыть на {platform.label} ↗
+            </a>
+          )}
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-3 px-6 py-4">
+          {videos.map((v) => (
+            <ProviderVideoCard key={v.id} video={v} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProviderVideoCard({ video: v }: { video: ProviderVideo }) {
+  return (
+    <a
+      href={v.url}
+      target="_blank"
+      rel="noreferrer"
+      className="group block overflow-hidden rounded-lg ring-1 ring-zinc-200 transition hover:ring-emerald-300"
+    >
+      <div className="relative aspect-video bg-zinc-100">
+        {v.coverUrl && (
+          <img
+            src={v.coverUrl}
+            alt=""
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            className="h-full w-full object-cover"
+          />
+        )}
+        {v.durationSec != null && (
+          <span className="absolute bottom-1 right-1 rounded bg-black/70 px-1 text-[10px] font-medium text-white">
+            {fmtDuration(v.durationSec)}
+          </span>
+        )}
+      </div>
+      <div className="p-2">
+        <p className="line-clamp-2 text-xs leading-snug text-zinc-700">
+          {v.title ?? "—"}
+        </p>
+        <div className="mt-1 flex flex-wrap gap-2 text-[11px] tabular-nums text-zinc-400">
+          {v.views != null && <span>👁 {formatCompact(v.views)}</span>}
+          {v.likes != null && <span>❤ {formatCompact(v.likes)}</span>}
+          {v.comments != null && <span>💬 {formatCompact(v.comments)}</span>}
+        </div>
+      </div>
+    </a>
+  );
+}
 
 function PostsFeed(props: {
   wsId: string;

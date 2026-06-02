@@ -47,6 +47,7 @@ const ClientPlacementSchema = z
       .object({
         title: z.string(),
         username: z.string().nullable(),
+        platform: z.enum(["telegram", "youtube", "tiktok", "max"]),
         memberCount: z.number().int().nullable(),
         avgReach: z.number().nullable(),
         err: z.number().nullable(),
@@ -159,6 +160,7 @@ app.openapi(
         clientStatusComment: projectItems.clientStatusComment,
         channelTitle: channels.title,
         channelUsername: channels.username,
+        channelPlatform: channels.platform,
         channelMembers: channels.memberCount,
         channelAvgReach: sql<number | null>`(${channels.meta} ->> 'avg_reach')::int`,
         channelErr: sql<number | null>`(${channels.meta} ->> 'err')::float8`,
@@ -189,6 +191,7 @@ app.openapi(
           ? {
               title: r.channelTitle ?? "—",
               username: r.channelUsername,
+              platform: r.channelPlatform!,
               memberCount: r.channelMembers,
               avgReach: r.channelAvgReach,
               err: r.channelErr,
@@ -606,7 +609,11 @@ const ClientReportItemSchema = z
   .object({
     id: z.string(),
     channel: z
-      .object({ title: z.string(), username: z.string().nullable() })
+      .object({
+        title: z.string(),
+        username: z.string().nullable(),
+        platform: z.enum(["telegram", "youtube", "tiktok", "max"]),
+      })
       .nullable(),
     postUrl: z.string().nullable(),
     publishedAt: z.iso.datetime().nullable(),
@@ -658,6 +665,7 @@ app.openapi(
         postSnapshot: projectItems.postSnapshot,
         channelTitle: channels.title,
         channelUsername: channels.username,
+        channelPlatform: channels.platform,
         channelId: channels.id,
       })
       .from(projectItems)
@@ -689,7 +697,11 @@ app.openapi(
         return {
           id: r.id,
           channel: r.channelId
-            ? { title: r.channelTitle ?? "—", username: r.channelUsername }
+            ? {
+                title: r.channelTitle ?? "—",
+                username: r.channelUsername,
+                platform: r.channelPlatform!,
+              }
             : null,
           postUrl: r.postUrl,
           publishedAt: (r.publishedAt ?? r.scheduledAt)?.toISOString() ?? null,

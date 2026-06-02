@@ -20,6 +20,7 @@ import {
   parseTiktokVideoId,
   resolveTiktokShortlink,
 } from "./channel-providers/tiktok.ts";
+import { detectChannelPlatform } from "./channel-providers/index.ts";
 
 // Воркер снятия метрик опубликованных постов (фаза «Отчёт»). Менеджер жмёт
 // «снять статистику» → размещения уходят в metrics_status='pending' → этот
@@ -183,19 +184,12 @@ type MetricsRow = {
   platform: "telegram" | "youtube" | "tiktok" | "max" | null;
 };
 
-// Fallback-детект по ссылке, когда у размещения нет канала (channelId null).
-function detectPlatformFromUrl(url: string): CollectorPlatform {
-  if (/youtube\.com|youtu\.be/i.test(url)) return "youtube";
-  if (/tiktok\.com/i.test(url)) return "tiktok";
-  return "telegram";
-}
-
 // Какой коллектор использовать. channel.platform — источник истины; URL-детект
-// только если канала нет. max/прочее → TDLib-ветка (там и упрётся в «нет
-// коллектора», коллектора для max пока нет).
+// (общий detectChannelPlatform) только если канала нет. max/прочее → TDLib-ветка
+// (там и упрётся в «нет коллектора», коллектора для max пока нет).
 function resolvePlatform(row: MetricsRow): CollectorPlatform {
   if (row.platform === "youtube" || row.platform === "tiktok") return row.platform;
-  if (row.platform == null && row.postUrl) return detectPlatformFromUrl(row.postUrl);
+  if (row.platform == null && row.postUrl) return detectChannelPlatform(row.postUrl);
   return "telegram";
 }
 
@@ -244,6 +238,9 @@ async function runProviderMetrics(
         metricsComments: m.comments,
         metricsShares: m.shares,
         metricsCollectedAt: new Date(),
+        // Дата выхода — из самого видео (YouTube snippet.publishedAt / TikTok
+        // createTime), автоматически, не вручную.
+        ...(m.publishedAt ? { publishedAt: new Date(m.publishedAt) } : {}),
         metricsError: null,
         // Сохраняем разрезолвленную каноническую ссылку (для TikTok-шортлинков).
         postUrl: effectiveUrl,
@@ -300,6 +297,7 @@ async function runTgMetrics(row: MetricsRow) {
       message?: {
         id?: number;
         chat_id?: number;
+        date?: number;
         interaction_info?: InteractionInfo;
         content?: TdContent;
       } | null;
@@ -338,6 +336,11 @@ async function runTgMetrics(row: MetricsRow) {
         metricsComments: null,
         metricsShares: info?.forward_count ?? null,
         metricsCollectedAt: new Date(),
+        // Дата выхода поста подтягивается автоматически из самого поста (его
+        // date), а не вводится менеджером вручную.
+        ...(message.date
+          ? { publishedAt: new Date(message.date * 1000) }
+          : {}),
         metricsError: null,
         postSnapshot: buildPostSnapshot({
           messageId: String(msgId),

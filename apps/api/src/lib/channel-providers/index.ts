@@ -16,6 +16,16 @@ export function isProviderPlatform(p: string): p is ProviderPlatform {
   return (PROVIDER_PLATFORMS as readonly string[]).includes(p);
 }
 
+// Платформа канала по строке ввода (построчное добавление в лонглист): ссылка
+// youtube/tiktok → провайдер, иначе (t.me / @username / голое имя) → telegram.
+export function detectChannelPlatform(
+  input: string,
+): "telegram" | ProviderPlatform {
+  if (/youtube\.com|youtu\.be/i.test(input)) return "youtube";
+  if (/tiktok\.com/i.test(input)) return "tiktok";
+  return "telegram";
+}
+
 // Под какой ключ в meta кладём платформо-сырьё (meta.yt / meta.tt).
 const META_KEY: Record<ProviderPlatform, string> = { youtube: "yt", tiktok: "tt" };
 
@@ -39,7 +49,10 @@ export async function syncChannelFromProvider(
     throw new Error(`syncChannelFromProvider: неподдерживаемая платформа ${channel.platform}`);
   }
   // Что скармливаем провайдеру: @handle, ссылка или внешний id — что есть.
-  const input = channel.username ?? channel.link ?? channel.externalId;
+  // link первым: канонический URL парсится обоими провайдерами. username после
+  // первого синка — голый @handle без «@» (YouTube его не принимает → падал
+  // re-sync), externalId TikTok'а — числовой id, embed его не ест.
+  const input = channel.link ?? channel.username ?? channel.externalId;
   if (!input) throw new Error("у канала нет username/link/external_id для резолва");
 
   const p = await fetchProfile(channel.platform, input, Date.now());
@@ -55,6 +68,10 @@ export async function syncChannelFromProvider(
     verified: p.verified,
     avatarUrl: p.avatarUrl,
     lastPostAt: reach.lastPostAt,
+    // Лента карточки + тематика (YouTube topicCategories). Обложки — ссылки на
+    // CDN площадки (не байты); у TikTok с TTL → освежаются этим же синком.
+    topics: p.topics,
+    recent_videos: p.recentVideos,
     [META_KEY[channel.platform]]: p.raw,
   };
 

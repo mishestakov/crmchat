@@ -8,7 +8,6 @@ import {
   Image as ImageIcon,
   Hash,
   Eye,
-  FileCheck,
   Check,
 } from "lucide-react";
 import { api, sendContactDocument } from "../../../../../lib/api";
@@ -772,10 +771,14 @@ export function ProductionPane({
   wsId,
   projectId,
   placement,
+  advertiserData,
 }: {
   wsId: string;
   projectId: string;
   placement: Placement;
+  // Реквизиты рекламодателя с кампании (бриф) — дефолт для ЕРИД-шага, если у
+  // размещения свои не заданы.
+  advertiserData: string | null;
 }) {
   const qc = useQueryClient();
   const accountsQ = useOutreachAccounts(wsId);
@@ -797,6 +800,9 @@ export function ProductionPane({
   const [openStep, setOpenStep] = useState<string | null>(null);
   const set = <K extends keyof ProdDraft>(k: K, v: ProdDraft[K]) =>
     setDraft((d) => ({ ...d, [k]: v }));
+  // Эффективные реквизиты рекламодателя для ЕРИД: своё на размещении (если
+  // менеджер переопределил) иначе из брифа кампании.
+  const eridAdv = draft.eridAdvertiserData || advertiserData || "";
   // Прыжок к помеченному сообщению в чате справа (клик «открыть в чате»). nonce
   // растёт на каждый клик — повторный прыжок к тому же id срабатывает снова.
   const [jumpTo, setJumpTo] = useState<{
@@ -893,7 +899,7 @@ export function ProductionPane({
       if (!adminContactId || !sendAccountId) {
         throw new Error("Нет привязанного админа или аккаунта для отправки");
       }
-      const text = `ERID: ${draft.erid}\nРекламодатель: ${draft.eridAdvertiserData}\n\nНанесите «Реклама» + ERID в левый нижний угол креатива.`;
+      const text = `ERID: ${draft.erid}\nРекламодатель: ${eridAdv}\n\nНанесите «Реклама» + ERID в левый нижний угол креатива.`;
       const { error: sErr } = await api.POST("/v1/workspaces/{wsId}/quick-send", {
         params: { path: { wsId } },
         body: { accountId: sendAccountId, contactId: adminContactId, text },
@@ -905,7 +911,7 @@ export function ProductionPane({
           params: { path: { wsId, projectId, placementId: placement.id } },
           body: {
             erid: draft.erid || null,
-            eridAdvertiserData: draft.eridAdvertiserData || null,
+            eridAdvertiserData: eridAdv || null,
             eridSentAt: new Date().toISOString(),
           },
         },
@@ -1048,26 +1054,55 @@ export function ProductionPane({
     body: React.ReactNode;
   }[] = [
     {
-      key: "contract",
+      // Договор + акт вместе (запрос баера): акт/УПД подписывают сразу с
+      // договором, иначе оплату не пропускают. Помечать сообщением в чате не
+      // обязательно — по ЭДО бухгалтер сообщает вне переписки, поэтому кнопка
+      // «подписан» / галочка «получен» доступны и без tag'а.
+      key: "documents",
       icon: <FileText size={15} />,
-      title: "Договор",
-      done: draft.contractStatus === "signed",
-      summary: "Подписан · сканы/ЭДО",
-      // Статус ведём от факта: отправка договора (drop) → пометка в чате
-      // проставляет «отправлен» автоматически; «подписан» — кнопкой ниже.
+      title: "Документы",
+      done: draft.contractStatus === "signed" && draft.actReceived,
+      summary: "Договор + акт подписаны",
       body: (
-        <div className="space-y-2">
-          {renderTagArea("contract")}
-          {stepMessages.contract && draft.contractStatus !== "signed" && (
-            <button
-              type="button"
-              onClick={() => markContractSigned.mutate()}
-              disabled={markContractSigned.isPending}
-              className="w-full rounded-lg border border-zinc-300 px-2 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
-            >
-              {markContractSigned.isPending ? "Сохраняем…" : "Договор подписан"}
-            </button>
-          )}
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+              Договор
+            </div>
+            {renderTagArea("contract")}
+            {draft.contractStatus === "signed" ? (
+              <p className="text-xs font-medium text-emerald-700">
+                ✓ Договор подписан
+              </p>
+            ) : (
+              <button
+                type="button"
+                onClick={() => markContractSigned.mutate()}
+                disabled={markContractSigned.isPending}
+                className="w-full rounded-lg border border-zinc-300 px-2 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
+              >
+                {markContractSigned.isPending ? "Сохраняем…" : "Договор подписан"}
+              </button>
+            )}
+          </div>
+          <div className="space-y-2 border-t border-zinc-100 pt-3">
+            <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+              Акт
+            </div>
+            {renderTagArea("act")}
+            <label className="flex items-center gap-2 text-sm text-zinc-700">
+              <input
+                type="checkbox"
+                checked={draft.actReceived}
+                onChange={(e) => set("actReceived", e.target.checked)}
+              />
+              Акт получен от блогера
+            </label>
+          </div>
+          <p className="text-[11px] text-zinc-400">
+            Подписали по ЭДО — отметьте кнопкой/галочкой, сообщение в чате не
+            обязательно.
+          </p>
         </div>
       ),
     },
@@ -1112,7 +1147,12 @@ export function ProductionPane({
           <input
             value={draft.eridAdvertiserData}
             onChange={(e) => set("eridAdvertiserData", e.target.value)}
-            placeholder="данные рекла (ИНН + название)"
+            placeholder={advertiserData || "данные рекла (ИНН + название)"}
+            title={
+              advertiserData
+                ? "По умолчанию берётся из брифа кампании — впишите, чтобы переопределить"
+                : undefined
+            }
             className="w-full rounded-md border border-zinc-300 px-2 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
           />
           <div className="flex items-center gap-2">
@@ -1178,37 +1218,16 @@ export function ProductionPane({
         </div>
       ),
     },
-    {
-      key: "act",
-      icon: <FileCheck size={15} />,
-      title: "Акт",
-      done: draft.actReceived,
-      summary: "Акт получен",
-      body: (
-        <div className="space-y-2">
-          {renderTagArea("act")}
-          <label className="flex items-center gap-2 text-sm text-zinc-700">
-            <input
-              type="checkbox"
-              checked={draft.actReceived}
-              onChange={(e) => set("actReceived", e.target.checked)}
-            />
-            Акт получен от блогера
-          </label>
-        </div>
-      ),
-    },
   ];
   // «Текущий» шаг для авто-раскрытия считаем по СОХРАНЁННОМУ состоянию, не по
   // live-черновику — иначе правка поля (напр. статус→«подписан») флипала бы done
   // и схлопывала редактируемый шаг до автосейва.
   const saved = toProd(placement);
   const doneServer = [
-    saved.contractStatus === "signed",
+    saved.contractStatus === "signed" && saved.actReceived,
     saved.creativeStatus === "approved",
     !!saved.erid,
     !!placement.postUrl,
-    saved.actReceived,
   ];
   const currentIdx = doneServer.findIndex((d) => !d);
   const openKey = openStep ?? (currentIdx >= 0 ? steps[currentIdx]!.key : null);

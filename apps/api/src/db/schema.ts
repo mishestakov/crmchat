@@ -625,6 +625,9 @@ export const projects = pgTable(
     periodEnd: timestamp("period_end", { withTimezone: true }),
     tov: text("tov"),
     constraints: text("constraints"),
+    // Реквизиты рекламодателя (ИНН + название) для маркировки ЕРИД — общие на
+    // кампанию (вводятся в брифе), автоподставляются в ЕРИД-шаг размещений.
+    advertiserData: text("advertiser_data"),
     // Клиент финализировал медиаплан по своей magic-link: с этого момента он
     // больше не меняет решения (фаза «Согласование» заморожена). Менеджер может
     // переоткрыть из кабинета (обнулить) — тогда клиент снова правит.
@@ -1031,6 +1034,13 @@ export const channels = pgTable(
     uniqueIndex("channels_workspace_platform_username_unique")
       .on(t.workspaceId, t.platform, sql`lower(${t.username})`)
       .where(sql`${t.username} IS NOT NULL`),
+    // Третий — канонический URL. Нужен для провайдер-каналов (YouTube/TikTok),
+    // добавленных по ссылке: до первого sync у них externalId/username = null,
+    // т.е. два индекса выше их не ловят → дубль при гонке bulk-добавления.
+    // onConflictDoNothing в bulk опирается именно на этот индекс.
+    uniqueIndex("channels_workspace_platform_link_unique")
+      .on(t.workspaceId, t.platform, sql`lower(${t.link})`)
+      .where(sql`${t.link} IS NOT NULL`),
     // Lookup от tg-replicator updateSupergroup-handler'а: cold-start TDLib
     // пушит десятки/сотни updateSupergroup, на каждый flush идёт UPDATE
     // WHERE meta->>'supergroup_id' = $1. Без index'а — full scan на каждый.

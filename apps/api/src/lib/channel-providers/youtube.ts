@@ -1,5 +1,10 @@
 import { computeReach } from "./reach.ts";
-import type { ChannelProfile, ProviderVideo, VideoMetrics } from "./types.ts";
+import type {
+  ChannelProfile,
+  ProviderVideo,
+  RecentVideo,
+  VideoMetrics,
+} from "./types.ts";
 
 // YouTube Data API v3 по API-ключу (без OAuth). Прототип:
 // scripts/youtube-probe.mjs. Резолв канала через forHandle/forUsername/UC-id —
@@ -81,13 +86,27 @@ type YtChannel = {
     videoCount?: string;
   };
   contentDetails?: { relatedPlaylists?: { uploads?: string } };
+  topicDetails?: { topicCategories?: string[] };
 };
 
 type YtVideo = {
   id: string;
-  snippet?: { publishedAt?: string };
+  snippet?: {
+    publishedAt?: string;
+    title?: string;
+    thumbnails?: { medium?: { url?: string }; high?: { url?: string } };
+  };
   statistics?: { viewCount?: string; likeCount?: string; commentCount?: string };
+  contentDetails?: { duration?: string };
 };
+
+// ISO8601-длительность YouTube (PT1M1S) → секунды. Для «Shorts vs длинное».
+function parseIsoDuration(d: string | undefined): number | null {
+  if (!d) return null;
+  const m = /^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/.exec(d);
+  if (!m) return null;
+  return Number(m[1] ?? 0) * 3600 + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0);
+}
 
 export async function fetchYoutubeProfile(
   input: string,
@@ -104,7 +123,10 @@ export async function fetchYoutubeProfile(
   // Один channels.list: фильтр (id/forHandle/forUsername) + полный part.
   const chRes = await ytApi(
     "channels",
-    { part: "snippet,statistics,contentDetails", ...channelFilter(target) },
+    {
+      part: "snippet,statistics,contentDetails,topicDetails",
+      ...channelFilter(target),
+    },
     key,
   );
   const ch = chRes.items?.[0] as YtChannel | undefined;
@@ -114,7 +136,9 @@ export async function fetchYoutubeProfile(
   const st = ch.statistics ?? {};
 
   // Окно охвата: последние ≤50 видео из uploads-плейлиста → их метрики.
+  // Те же видео (первые ~12) идут в ленту карточки (recentVideos).
   const videos: ProviderVideo[] = [];
+  const recentVideos: RecentVideo[] = [];
   const uploads = ch.contentDetails?.relatedPlaylists?.uploads;
   if (uploads) {
     const pl = await ytApi(
@@ -128,7 +152,7 @@ export async function fetchYoutubeProfile(
     if (ids.length > 0) {
       const vidRes = await ytApi(
         "videos",
-        { part: "snippet,statistics", id: ids.join(",") },
+        { part: "snippet,statistics,contentDetails", id: ids.join(",") },
         key,
       );
       for (const raw of vidRes.items ?? []) {
@@ -136,19 +160,38 @@ export async function fetchYoutubeProfile(
         const views = Number(v.statistics?.viewCount);
         const published = v.snippet?.publishedAt;
         if (!Number.isFinite(views) || !published) continue;
-        videos.push({
-          views,
-          likes: v.statistics?.likeCount != null ? Number(v.statistics.likeCount) : undefined,
-          comments:
-            v.statistics?.commentCount != null
-              ? Number(v.statistics.commentCount)
-              : undefined,
-          // У YouTube нет публичного счётчика репостов.
-          createdAt: new Date(published),
-        });
+        const likes =
+          v.statistics?.likeCount != null ? Number(v.statistics.likeCount) : undefined;
+        const comments =
+          v.statistics?.commentCount != null
+            ? Number(v.statistics.commentCount)
+            : undefined;
+        // У YouTube нет публичного счётчика репостов.
+        videos.push({ views, likes, comments, createdAt: new Date(published) });
+        if (recentVideos.length < 12) {
+          recentVideos.push({
+            id: v.id,
+            url: `https://www.youtube.com/watch?v=${v.id}`,
+            title: v.snippet?.title ?? null,
+            coverUrl:
+              v.snippet?.thumbnails?.medium?.url ??
+              v.snippet?.thumbnails?.high?.url ??
+              null,
+            views,
+            likes: likes ?? null,
+            comments: comments ?? null,
+            publishedAt: published,
+            durationSec: parseIsoDuration(v.contentDetails?.duration),
+          });
+        }
       }
     }
   }
+
+  // Тематика: topicCategories — это вики-URL; берём хвост и чистим (_→пробел).
+  const topics = (ch.topicDetails?.topicCategories ?? [])
+    .map((u) => decodeURIComponent(u.split("/").pop() ?? "").replace(/_/g, " "))
+    .filter(Boolean);
 
   const subs = st.hiddenSubscriberCount ? null : Number(st.subscriberCount);
   const handle = sn.customUrl?.replace(/^@/, "") ?? null;
@@ -163,6 +206,8 @@ export async function fetchYoutubeProfile(
     verified: null, // нет в публичном API канала
     avatarUrl: sn.thumbnails?.medium?.url ?? sn.thumbnails?.default?.url ?? null,
     reach: computeReach(videos, now),
+    topics,
+    recentVideos,
     raw: {
       subscriberCount: subs,
       subscribersHidden: Boolean(st.hiddenSubscriberCount),
@@ -208,7 +253,14 @@ export async function fetchYoutubeVideoMetrics(
     key,
   );
   const v = r.items?.[0] as
-    | { snippet?: { title?: string; thumbnails?: { medium?: { url?: string } } }; statistics?: YtVideo["statistics"] }
+    | {
+        snippet?: {
+          title?: string;
+          publishedAt?: string;
+          thumbnails?: { medium?: { url?: string } };
+        };
+        statistics?: YtVideo["statistics"];
+      }
     | undefined;
   if (!v) throw new Error(`YouTube-видео не найдено или скрыто: ${videoId}`);
   const st = v.statistics ?? {};
@@ -219,5 +271,6 @@ export async function fetchYoutubeVideoMetrics(
     shares: null, // YouTube не отдаёт публичный счётчик репостов
     title: v.snippet?.title ?? null,
     coverUrl: v.snippet?.thumbnails?.medium?.url ?? null,
+    publishedAt: v.snippet?.publishedAt ?? null,
   };
 }
