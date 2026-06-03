@@ -32,9 +32,6 @@ importers:
       hono:
         specifier: ^4.12.23
         version: 4.12.23
-      jose:
-        specifier: ^6.2.3
-        version: 6.2.3
       postgres:
         specifier: ^3.4.9
         version: 3.4.9
@@ -1368,9 +1365,6 @@ packages:
     resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
     hasBin: true
 
-  jose@6.2.3:
-    resolution: {integrity: sha512-YYVDInQKFJfR/xa3ojUTl8c2KoTwiL1R5Wg9YCydwH0x0B9grbzlg5HC7mMjCtUJjbQ/YnGEZIhI5tCgfTb4Hw==}
-
   js-levenshtein@1.1.6:
     resolution: {integrity: sha512-X2BB11YZtrRqY4EnQcLX5Rh373zbK4alC1FW7D7MBhL2gtcC17cTnr6DmfHZeS0s2rTHjUTMMHfG7gO8SSdw+g==}
     engines: {node: '>=0.10.0'}
@@ -2676,8 +2670,6 @@ snapshots:
   isbot@5.1.40: {}
 
   jiti@2.7.0: {}
-
-  jose@6.2.3: {}
 
   js-levenshtein@1.1.6: {}
 

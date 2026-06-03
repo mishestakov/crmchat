@@ -1,18 +1,11 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { deleteCookie, getCookie, setCookie } from "hono/cookie";
+import { getCookie } from "hono/cookie";
 import { eq } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import { users } from "../db/schema.ts";
 import { createSession, destroySession } from "../lib/sessions.ts";
-import {
-  buildAuthorizationUrl,
-  exchangeCodeForIdToken,
-  makePkceChallenge,
-  makePkceVerifier,
-  makeState,
-} from "../lib/tg-oidc.ts";
-import { issueBridgeToken, consumeBridgeToken } from "../lib/bridge-tokens.ts";
+import { consumeBridgeToken } from "../lib/bridge-tokens.ts";
 import {
   issueAuthToken,
   checkAuthToken,
@@ -23,78 +16,6 @@ import {
 } from "../lib/tg-bot.ts";
 
 const app = new OpenAPIHono();
-
-const OIDC_COOKIE = "tg_oidc";
-const WEB_ORIGIN = (process.env.WEB_ORIGIN ?? "http://localhost:5173").replace(/\/$/, "");
-
-// Whitelist для post-login редиректа. Принимаем только same-origin path:
-// начинается с одиночного '/', НЕ начинается с '//' или '/\\' (protocol-relative
-// и backslash-trick ломают same-origin), без CR/LF (header injection),
-// разумная длина. Возвращает path или null. Используется в /auth/start
-// (для сохранения в OIDC-cookie) и в /auth/callback (на финальном редиректе
-// в /auth/finish?next=...) — defense-in-depth: фронт `/auth/finish` тоже
-// валидирует ещё раз.
-function safeNext(raw: string | undefined | null): string | null {
-  if (!raw) return null;
-  if (raw.length > 512) return null;
-  if (!raw.startsWith("/")) return null;
-  if (raw.startsWith("//") || raw.startsWith("/\\")) return null;
-  if (/[\r\n]/.test(raw)) return null;
-  return raw;
-}
-
-app.get("/v1/auth/telegram/start", async (c) => {
-  const verifier = makePkceVerifier();
-  const state = makeState();
-  const next = safeNext(c.req.query("next"));
-  setCookie(c, OIDC_COOKIE, JSON.stringify({ verifier, state, next }), {
-    httpOnly: true,
-    sameSite: "Lax",
-    path: "/",
-    secure: process.env.NODE_ENV === "production",
-    maxAge: 600,
-  });
-  return c.redirect(
-    buildAuthorizationUrl({ state, codeChallenge: makePkceChallenge(verifier) }),
-    302,
-  );
-});
-
-app.get("/v1/auth/telegram/callback", async (c) => {
-  const code = c.req.query("code");
-  const state = c.req.query("state");
-  const oidcCookie = getCookie(c, OIDC_COOKIE);
-  deleteCookie(c, OIDC_COOKIE, { path: "/" });
-
-  const fail = () => c.redirect(`${WEB_ORIGIN}/login?error=1`, 302);
-  if (!code || !state || !oidcCookie) return fail();
-  const stored = JSON.parse(oidcCookie) as {
-    verifier: string;
-    state: string;
-    next?: string | null;
-  };
-  if (stored.state !== state) return fail();
-
-  const claims = await exchangeCodeForIdToken({ code, codeVerifier: stored.verifier });
-  const profile = { name: claims.name, username: claims.preferred_username };
-  const [row] = await db
-    .insert(users)
-    .values({ tgUserId: claims.sub, ...profile })
-    .onConflictDoUpdate({
-      target: users.tgUserId,
-      set: { ...profile, updatedAt: new Date() },
-    })
-    .returning({ id: users.id });
-
-  // В prod заменить на createSession(c, row!.id) + redirect (next ?? "/"),
-  // см. bridge-tokens.ts.
-  const bt = issueBridgeToken(row!.id);
-  const next = safeNext(stored.next);
-  const finishUrl = new URL(`${WEB_ORIGIN}/auth/finish`);
-  finishUrl.searchParams.set("bt", bt);
-  if (next) finishUrl.searchParams.set("next", next);
-  return c.redirect(finishUrl.toString(), 302);
-});
 
 app.openapi(
   createRoute({
@@ -188,7 +109,8 @@ if (isDevAuthEnabled) {
 }
 
 // === Telegram Bot deep-link auth flow ============================================
-// Альтернатива OIDC (/v1/auth/telegram/*) — обходит RKN-блокировку oauth.telegram.org.
+// Основной (и единственный) login-флоу — обходит RKN-блокировку oauth.telegram.org,
+// до которого OIDC-вариант на RU-сервере не достучаться.
 // SPA вызывает /start → получает token + t.me-ссылку → опрашивает /poll каждые
 // несколько секунд → когда юзер подтвердил в TG-боте, /poll возвращает bridge-token,
 // SPA дальше идёт обычным путём через /v1/auth/finish.
