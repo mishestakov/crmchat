@@ -47,7 +47,7 @@ const ClientPlacementSchema = z
       .object({
         title: z.string(),
         username: z.string().nullable(),
-        platform: z.enum(["telegram", "youtube", "tiktok", "max"]),
+        platform: z.enum(["telegram", "youtube", "tiktok", "dzen", "max"]),
         memberCount: z.number().int().nullable(),
         avgReach: z.number().nullable(),
         err: z.number().nullable(),
@@ -612,7 +612,7 @@ const ClientReportItemSchema = z
       .object({
         title: z.string(),
         username: z.string().nullable(),
-        platform: z.enum(["telegram", "youtube", "tiktok", "max"]),
+        platform: z.enum(["telegram", "youtube", "tiktok", "dzen", "max"]),
       })
       .nullable(),
     postUrl: z.string().nullable(),

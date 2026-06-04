@@ -215,7 +215,7 @@ export function extractDocument(content: TdContent): MappedDocument | null {
 export const PostSnapshotSchema = z.object({
   // Платформа поста. Отсутствует/undefined у старых TG-снимков — трактуем как
   // 'telegram'. У YouTube/TikTok — соответственно.
-  platform: z.enum(["telegram", "youtube", "tiktok"]).optional(),
+  platform: z.enum(["telegram", "youtube", "tiktok", "dzen"]).optional(),
   // messageId/chatId — TG-специфика (дозагрузка full-res медиа). У провайдеров
   // (YT/TikTok) их нет.
   messageId: z.string().optional(),

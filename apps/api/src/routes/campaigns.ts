@@ -34,6 +34,7 @@ import { extractUsername } from "../lib/tg-username.ts";
 import {
   detectChannelPlatform,
   fetchProviderPost,
+  isProviderPlatform,
 } from "../lib/channel-providers/index.ts";
 import { errMsg } from "../lib/errors.ts";
 import { resolveAdminRecipient } from "../lib/placement-recipient.ts";
@@ -109,7 +110,7 @@ const PlacementSchema = z
         id: z.string(),
         title: z.string(),
         username: z.string().nullable(),
-        platform: z.enum(["telegram", "youtube", "tiktok", "max"]),
+        platform: z.enum(["telegram", "youtube", "tiktok", "dzen", "max"]),
         memberCount: z.number().int().nullable(),
         // Авто-метрики из ленты (этап 16.10): ср.охват + ERR. Живые из
         // channels.meta — на согласовании клиент видит актуальные, а не снимок.
@@ -595,7 +596,7 @@ app.openapi(
     // Ключ дедупа — platform + нормализованный идентификатор.
     type ParsedAdd =
       | { platform: "telegram"; key: string; uname: string }
-      | { platform: "youtube" | "tiktok"; key: string; link: string };
+      | { platform: "youtube" | "tiktok" | "dzen"; key: string; link: string };
     let skippedInvalid = 0;
     const seen = new Set<string>();
     const adds: ParsedAdd[] = [];
@@ -1225,7 +1226,7 @@ function serializePlacement(
     channelId: string | null;
     channelTitle: string | null;
     channelUsername: string | null;
-    channelPlatform: "telegram" | "youtube" | "tiktok" | "max" | null;
+    channelPlatform: "telegram" | "youtube" | "tiktok" | "dzen" | "max" | null;
     channelMembers: number | null;
     channelAvgReach: number | null;
     channelErr: number | null;
@@ -1562,7 +1563,7 @@ app.openapi(
     // напрямую. Парсинг id по платформе канала = проверка соответствия площадки
     // (не youtube-ссылка на youtube-канале → 422). Снимок отдаём сразу; точные
     // метрики позже снимет воркер (как у TG).
-    if (row.platform === "youtube" || row.platform === "tiktok") {
+    if (row.platform && isProviderPlatform(row.platform)) {
       let post: Awaited<ReturnType<typeof fetchProviderPost>>;
       try {
         post = await fetchProviderPost(row.platform, url);

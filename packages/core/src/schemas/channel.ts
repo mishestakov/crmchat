@@ -17,6 +17,7 @@ export const ChannelPlatformSchema = z.enum([
   "telegram",
   "youtube",
   "tiktok",
+  "dzen",
   "max",
 ]);
 export type ChannelPlatform = z.infer<typeof ChannelPlatformSchema>;

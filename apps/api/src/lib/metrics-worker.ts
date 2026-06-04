@@ -175,7 +175,7 @@ type MetricsRow = {
   postUrl: string | null;
   // platform канала-площадки (авторитетный источник). null — у размещения нет
   // канала; тогда падаем на URL-детект.
-  platform: "telegram" | "youtube" | "tiktok" | "max" | null;
+  platform: "telegram" | "youtube" | "tiktok" | "dzen" | "max" | null;
 };
 
 // Какой коллектор использовать. channel.platform — источник истины; URL-детект
@@ -183,7 +183,12 @@ type MetricsRow = {
 // (там и упрётся в «нет коллектора», коллектора для max пока нет).
 function resolvePlatform(row: MetricsRow): CollectorPlatform {
   if (row.platform === "youtube" || row.platform === "tiktok") return row.platform;
-  if (row.platform == null && row.postUrl) return detectChannelPlatform(row.postUrl);
+  if (row.platform == null && row.postUrl) {
+    // Дзен-метрики поста пока не подключены (см. dzen.ts fetchDzenPostMetrics) —
+    // как max, падаем в TG-ветку, где упрёмся в «нет коллектора».
+    const detected = detectChannelPlatform(row.postUrl);
+    return detected === "dzen" ? "telegram" : detected;
+  }
   return "telegram";
 }
 

@@ -2,6 +2,11 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "../../db/client.ts";
 import { channels } from "../../db/schema.ts";
 import {
+  fetchDzenPostMetrics,
+  fetchDzenProfile,
+  parseDzenPostId,
+} from "./dzen.ts";
+import {
   fetchTiktokProfile,
   fetchTiktokVideoMetrics,
   parseTiktokVideoId,
@@ -19,7 +24,7 @@ export type { ChannelProfile } from "./types.ts";
 
 // Платформы с внешним HTTP-провайдером (не TDLib). Telegram синкается своим
 // путём в channels.ts (syncChannelFromTg).
-export const PROVIDER_PLATFORMS = ["youtube", "tiktok"] as const;
+export const PROVIDER_PLATFORMS = ["youtube", "tiktok", "dzen"] as const;
 export type ProviderPlatform = (typeof PROVIDER_PLATFORMS)[number];
 
 export function isProviderPlatform(p: string): p is ProviderPlatform {
@@ -33,6 +38,7 @@ export function detectChannelPlatform(
 ): "telegram" | ProviderPlatform {
   if (/youtube\.com|youtu\.be/i.test(input)) return "youtube";
   if (/tiktok\.com/i.test(input)) return "tiktok";
+  if (/dzen\.ru|zen\.yandex\.ru/i.test(input)) return "dzen";
   return "telegram";
 }
 
@@ -51,7 +57,11 @@ export async function fetchProviderPost(
 }> {
   let effectiveUrl = url;
   let videoId =
-    platform === "youtube" ? parseYoutubeVideoId(url) : parseTiktokVideoId(url);
+    platform === "youtube"
+      ? parseYoutubeVideoId(url)
+      : platform === "dzen"
+        ? parseDzenPostId(url)
+        : parseTiktokVideoId(url);
   if (!videoId && platform === "tiktok") {
     effectiveUrl = await resolveTiktokShortlink(url);
     videoId = parseTiktokVideoId(effectiveUrl);
@@ -62,7 +72,9 @@ export async function fetchProviderPost(
   const metrics =
     platform === "youtube"
       ? await fetchYoutubeVideoMetrics(videoId)
-      : await fetchTiktokVideoMetrics(videoId);
+      : platform === "dzen"
+        ? await fetchDzenPostMetrics(videoId)
+        : await fetchTiktokVideoMetrics(videoId);
   const snapshot: PostSnapshot = {
     platform,
     text: metrics.title ?? "",
@@ -82,7 +94,7 @@ export async function fetchProviderPost(
 }
 
 // Под какой ключ в meta кладём платформо-сырьё (meta.yt / meta.tt).
-const META_KEY: Record<ProviderPlatform, string> = { youtube: "yt", tiktok: "tt" };
+const META_KEY: Record<ProviderPlatform, string> = { youtube: "yt", tiktok: "tt", dzen: "dz" };
 
 async function fetchProfile(
   platform: ProviderPlatform,
@@ -90,6 +102,7 @@ async function fetchProfile(
   now: number,
 ): Promise<ChannelProfile> {
   if (platform === "youtube") return fetchYoutubeProfile(input, now);
+  if (platform === "dzen") return fetchDzenProfile(input, now);
   return fetchTiktokProfile(input, now);
 }
 

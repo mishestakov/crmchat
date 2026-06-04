@@ -976,6 +976,7 @@ export const channelPlatform = pgEnum("channel_platform", [
   "telegram",
   "youtube",
   "tiktok",
+  "dzen",
   "max",
 ]);
 

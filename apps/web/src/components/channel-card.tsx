@@ -3,13 +3,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import {
   BadgeCheck,
+  CreditCard,
   Eye,
   Forward,
   Gift,
   Link as LinkIcon,
+  Mail,
   MessageSquare,
+  Phone,
   Plus,
   Send,
+  ShieldCheck,
   Loader2,
   X,
 } from "lucide-react";
@@ -72,7 +76,9 @@ export function ChannelCard(props: {
   // не требуем hasActiveAccount (иначе площадки воркспейса без TG-аккаунта
   // никогда не наполнятся ленивым синком после импорта).
   const isProviderPlatform =
-    channel.platform === "youtube" || channel.platform === "tiktok";
+    channel.platform === "youtube" ||
+    channel.platform === "tiktok" ||
+    channel.platform === "dzen";
 
   const inUnavailableCooldown =
     !!channel.unavailableLastCheckAt &&
@@ -215,6 +221,7 @@ export function ChannelCard(props: {
         />
       )}
       {!compact && <AdminsSection wsId={wsId} channel={channel} />}
+      {!compact && channel.platform === "dzen" && <DzenContacts channel={channel} />}
       {!compact && dmOpen && hasDmGroup && (
         <ChannelDmSection
           wsId={wsId}
@@ -892,6 +899,108 @@ function fmtDuration(sec: number): string {
 // Лента провайдер-канала (YouTube/TikTok): сетка последних видео (обложка +
 // подпись, клик → площадка) + чип тематики. С Telegram не связано — у провайдера
 // телеграмный только контакт-админ.
+// Контакты/соцсети/РКН/Premium Дзена (meta.dz). Дзен, в отличие от YT/TikTok,
+// отдаёт это в том же одном запросе профиля — показываем как пищу для outreach.
+type DzenMeta = {
+  emails?: string[];
+  phones?: string[];
+  social_links?: { net: string | null; name: string | null; link: string | null }[];
+  donations_enabled?: boolean;
+  rkn?: { link: string } | null;
+  premium_tariffs?: { name: string | null; price_rub: number | null; period: string | null }[];
+};
+
+function DzenContacts({ channel }: { channel: Channel }) {
+  const dz = ((channel.meta ?? {}) as Record<string, unknown>).dz as
+    | DzenMeta
+    | undefined;
+  if (!dz) return null;
+  const emails = dz.emails ?? [];
+  const phones = dz.phones ?? [];
+  const socials = (dz.social_links ?? []).filter((s) => s.link);
+  const tariffs = (dz.premium_tariffs ?? []).filter((t) => t.price_rub != null);
+  const hasAny =
+    emails.length || phones.length || socials.length || dz.rkn || tariffs.length;
+  if (!hasAny) return null;
+
+  return (
+    <div className="space-y-2.5 border-b border-zinc-100 px-6 py-3 text-sm">
+      {(emails.length > 0 || phones.length > 0) && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          {emails.map((e) => (
+            <a
+              key={e}
+              href={`mailto:${e}`}
+              className="inline-flex items-center gap-1.5 text-zinc-700 hover:text-emerald-700"
+            >
+              <Mail size={13} className="text-zinc-400" />
+              {e}
+            </a>
+          ))}
+          {phones.map((p) => (
+            <a
+              key={p}
+              href={`tel:${p}`}
+              className="inline-flex items-center gap-1.5 text-zinc-700 hover:text-emerald-700"
+            >
+              <Phone size={13} className="text-zinc-400" />
+              {p}
+            </a>
+          ))}
+        </div>
+      )}
+      {socials.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {socials.map((s, i) => (
+            <a
+              key={`${s.net ?? ""}-${s.link}-${i}`}
+              href={s.link!}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2.5 py-0.5 text-xs text-zinc-600 hover:bg-zinc-200"
+            >
+              {s.name ?? s.net}
+              <LinkIcon size={10} className="opacity-50" />
+            </a>
+          ))}
+        </div>
+      )}
+      {(dz.rkn || dz.donations_enabled) && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500">
+          {dz.rkn && (
+            <a
+              href={dz.rkn.link}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-zinc-600 hover:text-emerald-700"
+            >
+              <ShieldCheck size={13} className="text-zinc-400" />
+              В реестре блогеров РКН
+            </a>
+          )}
+          {dz.donations_enabled && <span>Донаты включены</span>}
+        </div>
+      )}
+      {tariffs.length > 0 && (
+        <div className="space-y-1">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-zinc-500">
+            <CreditCard size={13} className="text-zinc-400" />
+            Платная подписка
+          </div>
+          <ul className="space-y-0.5 pl-5 text-xs text-zinc-600">
+            {tariffs.map((t, i) => (
+              <li key={i} className="list-disc">
+                <span className="font-medium text-zinc-800">{t.price_rub} ₽</span>
+                {t.period ? `/${t.period}` : ""} — {t.name ?? "тариф"}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProviderFeed({
   channel,
   syncing,
