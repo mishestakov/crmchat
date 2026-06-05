@@ -31,6 +31,12 @@ import {
   syncChannelFromProvider,
 } from "../lib/channel-providers/index.ts";
 import {
+  syncChannelFromMax,
+  syncMaxChannelsBatch,
+} from "../lib/channel-providers/max.ts";
+import { getMaxWorkerClient } from "../lib/max-account-client.ts";
+import type { MaxClient } from "../lib/max/index.ts";
+import {
   channelAdmins,
   channelSubscriptions,
   channelThumbnails,
@@ -147,6 +153,7 @@ async function pickOutreachClient(
     .where(
       and(
         accountAccessClause(wsId, userId, role),
+        eq(outreachAccounts.platform, "telegram"),
         eq(outreachAccounts.status, "active"),
       ),
     )
@@ -156,6 +163,38 @@ async function pickOutreachClient(
   const client = await getOutreachWorkerClient(acc);
   if (!client) return null;
   return { client, accountId: acc.id };
+}
+
+// Любой активный MAX-аккаунт workspace'а: публичные каналы MAX читаются без
+// вступления, поэтому подписка не нужна (в отличие от приватных TG).
+async function pickMaxClient(
+  wsId: string,
+  userId: string,
+  role: WorkspaceRole,
+): Promise<{ client: MaxClient; accountId: string } | null> {
+  const [acc] = await db
+    .select({
+      id: outreachAccounts.id,
+      sessionToken: outreachAccounts.sessionToken,
+      meta: outreachAccounts.meta,
+    })
+    .from(outreachAccounts)
+    .where(
+      and(
+        accountAccessClause(wsId, userId, role),
+        eq(outreachAccounts.platform, "max"),
+        eq(outreachAccounts.status, "active"),
+      ),
+    )
+    .orderBy(outreachAccounts.createdAt)
+    .limit(1);
+  if (!acc) return null;
+  try {
+    const client = await getMaxWorkerClient(acc);
+    return { client, accountId: acc.id };
+  } catch {
+    return null;
+  }
 }
 
 // Выбор аккаунта для чтения канала. Приоритет: любой подписанный аккаунт
@@ -1066,6 +1105,25 @@ app.openapi(
       return c.json(serialized!);
     }
 
+    // MAX: читается через аккаунт-сессию (как TG), но подписка не нужна —
+    // публичные каналы видны любому авторизованному MAX-аккаунту workspace'а.
+    if (channel.platform === "max") {
+      const picked = await pickMaxClient(wsId, userId, role);
+      if (!picked) {
+        throw new HTTPException(412, {
+          message:
+            "no active MAX account available — connect one in /outreach/accounts/new",
+        });
+      }
+      const updated = await syncChannelFromMax(
+        channel,
+        picked.client,
+        picked.accountId,
+      );
+      const [serialized] = await joinAdmins([updated]);
+      return c.json(serialized!);
+    }
+
     if (channel.platform !== "telegram") {
       throw new HTTPException(400, {
         message: `sync supported only for platform=telegram (got ${channel.platform})`,
@@ -1641,6 +1699,7 @@ async function pickActiveAccountId(
     .where(
       and(
         accountAccessClause(wsId, userId, role),
+        eq(outreachAccounts.platform, "telegram"),
         eq(outreachAccounts.status, "active"),
       ),
     )
@@ -2062,7 +2121,12 @@ app.openapi(
       // тривиально дерайвится из username. CSV-link имеет приоритет.
       const linkFromCsv = pickStr(r, mapping.link);
       const link =
-        linkFromCsv || (username && platform === "telegram" ? `https://t.me/${username}` : null);
+        linkFromCsv ||
+        (username && platform === "telegram"
+          ? `https://t.me/${username}`
+          : username && platform === "max"
+            ? `https://max.ru/${username}`
+            : null);
       const description = pickStr(r, mapping.description);
       const memCntRaw = pickStr(r, mapping.memberCount);
       const memCntParsed = memCntRaw ? Number(memCntRaw.replace(/\s+/g, "")) : NaN;
@@ -2313,6 +2377,8 @@ app.openapi(
 
     // Step 5: bulk INSERT новых каналов чанками по INSERT_CHUNK.
     let channelsCreated = 0;
+    // Свежесозданные id — для жадной MAX-выгрузки на импорте (CHAT_INFO ×100).
+    const createdChannelIds: string[] = [];
     const idByKey = new Map<string, string>();
     if (toInsert.length > 0) {
       const allRows = toInsert.map((t) => ({
@@ -2339,6 +2405,7 @@ app.openapi(
         for (const ins of inserted) {
           if (ins.externalId) idByKey.set(`eid:${ins.externalId}`, ins.id);
           if (ins.usernameLower) idByKey.set(`un:${ins.usernameLower}`, ins.id);
+          createdChannelIds.push(ins.id);
         }
         channelsCreated += inserted.length;
       }
@@ -2420,6 +2487,29 @@ app.openapi(
       for (const chunk of chunks(allChannelAdminLinks, INSERT_CHUNK)) {
         await db.insert(channelAdmins).values(chunk).onConflictDoNothing();
       }
+    }
+
+    // MAX: жадно выгружаем карточки свежесозданных каналов в фоне — CHAT_INFO
+    // батчит до 100 id за раз (другое API, чем ленивый per-channel у YT/TikTok).
+    // Не блокируем ответ импорта; reach доберётся ленивым single-синком.
+    if (platform === "max" && createdChannelIds.length > 0) {
+      const role = c.get("workspaceRole");
+      void (async () => {
+        try {
+          const picked = await pickMaxClient(wsId, userId, role);
+          if (!picked) return;
+          const rows = await db
+            .select()
+            .from(channels)
+            .where(inArray(channels.id, createdChannelIds));
+          const res = await syncMaxChannelsBatch(picked.client, rows);
+          console.log(
+            `[max-import] ${wsId}: выгружено ${res.updated}, не резолвнулось ${res.unresolved}`,
+          );
+        } catch (e) {
+          console.error(`[max-import] batch failed ${wsId}:`, errMsg(e));
+        }
+      })();
     }
 
     return c.json({

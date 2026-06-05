@@ -1008,7 +1008,7 @@ app.openapi(
           .select({
             id: outreachAccounts.id,
             firstName: outreachAccounts.firstName,
-            tgUsername: outreachAccounts.tgUsername,
+            tgUsername: outreachAccounts.externalUsername,
             phoneNumber: outreachAccounts.phoneNumber,
             hasPremium: outreachAccounts.hasPremium,
           })

@@ -596,7 +596,11 @@ app.openapi(
     // Ключ дедупа — platform + нормализованный идентификатор.
     type ParsedAdd =
       | { platform: "telegram"; key: string; uname: string }
-      | { platform: "youtube" | "tiktok" | "dzen"; key: string; link: string };
+      | {
+          platform: "youtube" | "tiktok" | "dzen" | "max";
+          key: string;
+          link: string;
+        };
     let skippedInvalid = 0;
     const seen = new Set<string>();
     const adds: ParsedAdd[] = [];
@@ -1161,7 +1165,7 @@ async function loadAccounts(ids: (string | null)[]) {
     .select({
       id: outreachAccounts.id,
       firstName: outreachAccounts.firstName,
-      tgUsername: outreachAccounts.tgUsername,
+      tgUsername: outreachAccounts.externalUsername,
     })
     .from(outreachAccounts)
     .where(inArray(outreachAccounts.id, real));
@@ -1610,9 +1614,11 @@ app.openapi(
       .where(
         and(
           eq(outreachAccounts.workspaceId, wsId),
+          eq(outreachAccounts.platform, "telegram"),
           eq(outreachAccounts.status, "active"),
         ),
       )
+      .orderBy(outreachAccounts.createdAt)
       .limit(1);
     if (!acc) {
       throw new HTTPException(412, { message: "нет активного аккаунта Telegram" });

@@ -154,6 +154,7 @@ async function pickReaderAccount(workspaceId: string, channelId: string | null) 
     .where(
       and(
         eq(outreachAccounts.workspaceId, workspaceId),
+        eq(outreachAccounts.platform, "telegram"),
         eq(outreachAccounts.status, "active"),
         or(
           isNull(outreachAccounts.cooldownUntil),
@@ -187,7 +188,8 @@ function resolvePlatform(row: MetricsRow): CollectorPlatform {
     // Дзен-метрики поста пока не подключены (см. dzen.ts fetchDzenPostMetrics) —
     // как max, падаем в TG-ветку, где упрёмся в «нет коллектора».
     const detected = detectChannelPlatform(row.postUrl);
-    return detected === "dzen" ? "telegram" : detected;
+    // dzen/max коллекторов постов пока нет → TG-ветка («нет коллектора»).
+    return detected === "dzen" || detected === "max" ? "telegram" : detected;
   }
   return "telegram";
 }

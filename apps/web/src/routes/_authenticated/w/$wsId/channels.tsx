@@ -748,7 +748,9 @@ function ImportWizard(props: {
             {/* Платформа всего импорта. YouTube/TikTok заполнятся данными лениво
                 при открытии площадки (provider-sync), здесь нужен только хэндл/ссылка. */}
             <div className="flex items-center gap-1.5">
-              {(["telegram", "youtube", "tiktok"] as Platform[]).map((p) => {
+              {(
+                ["telegram", "youtube", "tiktok", "dzen", "max"] as Platform[]
+              ).map((p) => {
                 const cfg = PLATFORMS[p];
                 const active = platform === p;
                 return (
@@ -763,7 +765,7 @@ function ImportWizard(props: {
                         : "border-zinc-300 text-zinc-600 hover:bg-zinc-50")
                     }
                   >
-                    <cfg.Icon size={14} /> {cfg.label}
+                    <PlatformBadge platform={p} /> {cfg.label}
                   </button>
                 );
               })}

@@ -2,6 +2,7 @@ import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { ChevronRight, Plus, Send, Star } from "lucide-react";
 import { errorMessage } from "../../../../../../lib/errors";
 import { useOutreachAccounts } from "../../../../../../lib/outreach-queries";
+import { PlatformBadge } from "../../../../../../lib/platforms";
 
 export const Route = createFileRoute(
   "/_authenticated/w/$wsId/outreach/accounts/",
@@ -44,9 +45,9 @@ function OutreachAccountsList() {
       </div>
 
       <p className="text-sm text-zinc-500">
-        Отдельные TG-аккаунты для холодных рассылок. Личные не используем —
-        Telegram банит за массовую отправку с обычных аккаунтов (≈5/день
-        без Premium).
+        Отдельные аккаунты-отправители (Telegram, MAX) для холодных рассылок и
+        парсинга каналов. Личные не используем — за массовую отправку с обычных
+        аккаунтов площадки банят.
       </p>
 
       {accounts.isLoading && (
@@ -63,7 +64,8 @@ function OutreachAccountsList() {
           <Send size={28} className="mx-auto mb-3 text-sky-500" />
           <p className="mb-2 font-medium">Нет аккаунтов</p>
           <p className="mb-4 text-zinc-500">
-            Подключите хотя бы один TG-аккаунт, чтобы запускать рассылки.
+            Подключите хотя бы один аккаунт (Telegram или MAX), чтобы запускать
+            рассылки и собирать статистику каналов.
           </p>
           <Link
             to="/w/$wsId/outreach/accounts/new"
@@ -98,6 +100,7 @@ function OutreachAccountsList() {
                 />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5 text-sm">
+                    <PlatformBadge platform={acc.platform} />
                     <span className="truncate font-medium">
                       {acc.firstName || acc.tgUsername || "Без имени"}
                     </span>

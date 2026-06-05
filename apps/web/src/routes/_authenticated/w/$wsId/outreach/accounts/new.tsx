@@ -6,8 +6,10 @@ import { errorMessage } from "../../../../../../lib/errors";
 import { BackButton } from "../../../../../../components/back-button";
 import {
   TelegramAuthFlow,
+  TelegramLogo,
   type TgAuthApi,
 } from "../../../../../../components/telegram-auth-flow";
+import { MaxLogo } from "../../../../../../lib/platforms";
 import { OUTREACH_QK } from "../../../../../../lib/query-keys";
 
 export const Route = createFileRoute(
@@ -20,6 +22,7 @@ function NewOutreachAccountPage() {
   const { wsId } = Route.useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const [platform, setPlatform] = useState<"telegram" | "max" | null>(null);
   const [connectedId, setConnectedId] = useState<string | null>(null);
   const [replicaSize, setReplicaSize] = useState(0);
   const [isImporting, setIsImporting] = useState(false);
@@ -72,12 +75,13 @@ function NewOutreachAccountPage() {
     };
   }, [connectedId, qc, wsId]);
 
-  const tgApi: TgAuthApi = {
+  const p = platform ?? "telegram";
+  const authApi: TgAuthApi = {
     qrStreamUrl: `/v1/workspaces/${wsId}/outreach/accounts/auth/qr-stream`,
     sendCode: async (phoneNumber) => {
       const { data, error } = await api.POST(
         "/v1/workspaces/{wsId}/outreach/accounts/auth/send-code",
-        { params: { path: { wsId } }, body: { phoneNumber } },
+        { params: { path: { wsId } }, body: { phoneNumber, platform: p } },
       );
       if (error) throw error;
       return data;
@@ -85,7 +89,7 @@ function NewOutreachAccountPage() {
     signIn: async (args) => {
       const { data, error } = await api.POST(
         "/v1/workspaces/{wsId}/outreach/accounts/auth/sign-in",
-        { params: { path: { wsId } }, body: args },
+        { params: { path: { wsId } }, body: { ...args, platform: p } },
       );
       if (error) throw error;
       return data;
@@ -93,7 +97,7 @@ function NewOutreachAccountPage() {
     signInPassword: async (password) => {
       const { data, error } = await api.POST(
         "/v1/workspaces/{wsId}/outreach/accounts/auth/sign-in-password",
-        { params: { path: { wsId } }, body: { password } },
+        { params: { path: { wsId } }, body: { password, platform: p } },
       );
       if (error) throw error;
       return data;
@@ -103,26 +107,73 @@ function NewOutreachAccountPage() {
   const goToList = () =>
     navigate({ to: "/w/$wsId/outreach/accounts", params: { wsId } });
 
-  if (!connectedId) {
+  // Шаг 0: выбор мессенджера. Дальше — общий phone/SMS-флоу (TgAuthApi),
+  // различается только брендингом и пост-обработкой (реплика чатов — TG-only).
+  if (!connectedId && !platform) {
     return (
       <div className="space-y-3 p-6">
         <BackButton />
-        <div className="mx-auto max-w-xl">
-          <div className="mb-4 rounded-2xl bg-amber-50 px-5 py-4 text-sm text-amber-900">
-            <div className="font-medium">После авторизации</div>
-            <p className="mt-1 text-amber-900/80">
-              Загрузим чат-лист аккаунта локально (на сервере), чтобы система
-              понимала, кто из ваших аккаунтов с кем уже общался — тогда при
-              импорте каналов/лидов знакомый блогер сам закрепится за нужным
-              аккаунтом. Личные переписки в общий список контактов не попадают.
-            </p>
-          </div>
+        <div className="mx-auto max-w-md space-y-3">
+          <h1 className="text-lg font-semibold">Подключить аккаунт</h1>
+          <button
+            type="button"
+            onClick={() => setPlatform("telegram")}
+            className="flex w-full items-center gap-3 rounded-xl bg-white px-5 py-4 text-left shadow-sm hover:bg-zinc-50"
+          >
+            <TelegramLogo size={40} />
+            <div>
+              <div className="font-medium">Telegram</div>
+              <div className="text-sm text-zinc-500">Рассылка, каналы, чаты</div>
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={() => setPlatform("max")}
+            className="flex w-full items-center gap-3 rounded-xl bg-white px-5 py-4 text-left shadow-sm hover:bg-zinc-50"
+          >
+            <MaxLogo size={40} />
+            <div>
+              <div className="font-medium">MAX</div>
+              <div className="text-sm text-zinc-500">Каналы и статистика, ЛС</div>
+            </div>
+          </button>
         </div>
+      </div>
+    );
+  }
+
+  if (!connectedId && platform) {
+    return (
+      <div className="space-y-3 p-6">
+        <BackButton />
+        <button
+          type="button"
+          onClick={() => setPlatform(null)}
+          className="mx-auto block text-sm text-zinc-500 hover:text-zinc-900"
+        >
+          ← выбрать другой мессенджер
+        </button>
+        {/* Реплика чат-листа — только Telegram (tg_chats). */}
+        {platform === "telegram" && (
+          <div className="mx-auto max-w-xl">
+            <div className="mb-4 rounded-2xl bg-amber-50 px-5 py-4 text-sm text-amber-900">
+              <div className="font-medium">После авторизации</div>
+              <p className="mt-1 text-amber-900/80">
+                Загрузим чат-лист аккаунта локально (на сервере), чтобы система
+                понимала, кто из ваших аккаунтов с кем уже общался — тогда при
+                импорте каналов/лидов знакомый блогер сам закрепится за нужным
+                аккаунтом. Личные переписки в общий список контактов не попадают.
+              </p>
+            </div>
+          </div>
+        )}
         <TelegramAuthFlow
-          api={tgApi}
+          api={authApi}
+          platform={platform}
           onComplete={(r) => {
             qc.invalidateQueries({ queryKey: OUTREACH_QK.accounts(wsId) });
-            if (r.accountId) {
+            // Реплику догружаем только для TG; MAX сразу в список.
+            if (platform === "telegram" && r.accountId) {
               setConnectedId(r.accountId);
             } else {
               goToList();

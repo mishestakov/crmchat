@@ -32,13 +32,15 @@ export function isProviderPlatform(p: string): p is ProviderPlatform {
 }
 
 // Платформа канала по строке ввода (построчное добавление в лонглист): ссылка
-// youtube/tiktok → провайдер, иначе (t.me / @username / голое имя) → telegram.
+// youtube/tiktok/dzen → HTTP-провайдер, max.ru → MAX (через аккаунт-сессию),
+// иначе (t.me / @username / голое имя) → telegram.
 export function detectChannelPlatform(
   input: string,
-): "telegram" | ProviderPlatform {
+): "telegram" | "max" | ProviderPlatform {
   if (/youtube\.com|youtu\.be/i.test(input)) return "youtube";
   if (/tiktok\.com/i.test(input)) return "tiktok";
   if (/dzen\.ru|zen\.yandex\.ru/i.test(input)) return "dzen";
+  if (/max\.ru|oneme\.ru/i.test(input)) return "max";
   return "telegram";
 }
 
@@ -124,6 +126,18 @@ export async function syncChannelFromProvider(
   if (!input) throw new Error("у канала нет username/link/external_id для резолва");
 
   const p = await fetchProfile(channel.platform, input, Date.now());
+  return writeChannelProfile(channel, p, META_KEY[channel.platform]);
+}
+
+// Запись нормализованного ChannelProfile в БД: типизированные колонки + meta
+// (merge) + synced_at. Общая для всех платформ-через-профиль (YouTube/TikTok/
+// Dzen — HTTP, MAX — через аккаунт-сессию, см. channel-providers/max.ts).
+// properties/admins не трогаем. metaKey — куда класть платформо-сырьё (yt/tt/dz/mx).
+export async function writeChannelProfile(
+  channel: typeof channels.$inferSelect,
+  p: ChannelProfile,
+  metaKey: string,
+): Promise<typeof channels.$inferSelect> {
   const { reach } = p;
 
   // avg_reach (медиана просмотров) + err (ER в %) — кросс-платформенный
@@ -140,7 +154,7 @@ export async function syncChannelFromProvider(
     // CDN площадки (не байты); у TikTok с TTL → освежаются этим же синком.
     topics: p.topics,
     recent_videos: p.recentVideos,
-    [META_KEY[channel.platform]]: p.raw,
+    [metaKey]: p.raw,
   };
 
   const [updated] = await db

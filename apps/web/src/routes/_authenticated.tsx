@@ -111,7 +111,7 @@ function AuthLayout() {
                   </SidebarLink>
                 )}
                 <SidebarLink to="/w/$wsId/outreach/accounts" wsId={wsId}>
-                  Telegram-аккаунты
+                  Аутрич-аккаунты
                 </SidebarLink>
                 <SidebarLink to="/w/$wsId/outreach/schedule" wsId={wsId}>
                   Расписание

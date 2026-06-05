@@ -61,8 +61,13 @@ export function ChannelCard(props: {
   // Личка канала (этап 16.9): 0⭐ → пишем из CRM, >0 → тред read-only (вручную).
   const { hasDm: hasDmGroup, starCost: dmStarCost } = channelDm(channel.meta);
   const accountsQ = useOutreachAccounts(wsId);
+  // Синк через аккаунт-сессию: TG-канал нужен активный telegram-аккаунт,
+  // MAX-канал — активный max-аккаунт (после обобщения таблицы — не «любой»).
   const hasActiveAccount =
-    !!accountsQ.data && accountsQ.data.some((a) => a.status === "active");
+    !!accountsQ.data &&
+    accountsQ.data.some(
+      (a) => a.status === "active" && a.platform === channel.platform,
+    );
 
   // Sync свежей карточки из TG: stale-while-revalidate с TTL 24h. UI рендерит
   // что есть в БД, в фоне fetch'им свежее. На mount запускаем один раз через

@@ -91,7 +91,12 @@ async function warmupListeners() {
         workspaceId: outreachAccounts.workspaceId,
       })
       .from(outreachAccounts)
-      .where(eq(outreachAccounts.status, "active"));
+      .where(
+        and(
+          eq(outreachAccounts.platform, "telegram"),
+          eq(outreachAccounts.status, "active"),
+        ),
+      );
     // Чанки по WARMUP_CONCURRENCY: TDLib инстансы тяжёлые на старте (binlog
     // load + handshake), толпой стартовать дорого по RAM/CPU.
     const WARMUP_CONCURRENCY = 5;

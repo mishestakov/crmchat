@@ -4,6 +4,7 @@ import { Send } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { errorMessage } from "../lib/errors";
 import { useEventSourceEvent } from "../lib/hooks";
+import { MaxLogo } from "../lib/platforms";
 
 // Auth-флоу outreach TG-аккаунта (outreach/accounts/new). Endpoint'ы
 // прокидываются через `api`-prop.
@@ -21,12 +22,21 @@ export type TgAuthSignInPasswordResult =
   | { status: "password_invalid" };
 
 export type TgAuthApi = {
-  qrStreamUrl: string;
+  // Только Telegram (QR-логин). У MAX QR нет — поле не используется.
+  qrStreamUrl?: string;
   sendCode: (phoneNumber: string) => Promise<{
     isCodeViaApp: boolean;
   }>;
   signIn: (args: { phoneCode: string }) => Promise<TgAuthSignInResult>;
   signInPassword: (password: string) => Promise<TgAuthSignInPasswordResult>;
+};
+
+export type AuthPlatform = "telegram" | "max";
+
+// Айдентика мессенджера для шагов авторизации. У MAX нет QR.
+const BRAND: Record<AuthPlatform, string> = {
+  telegram: "Telegram",
+  max: "MAX",
 };
 
 type QrState =
@@ -47,9 +57,17 @@ type AuthState =
 
 export function TelegramAuthFlow(props: {
   api: TgAuthApi;
+  // По умолчанию telegram — обратная совместимость со старыми вызовами.
+  platform?: AuthPlatform;
   onComplete: (result: { accountId?: string }) => void;
 }) {
-  const [state, setState] = useState<AuthState>({ step: "scan-qr" });
+  const platform = props.platform ?? "telegram";
+  // У MAX нет QR — начинаем сразу с телефона.
+  const [state, setState] = useState<AuthState>(
+    platform === "max"
+      ? { step: "enter-phone", phoneNumber: "" }
+      : { step: "scan-qr" },
+  );
 
   return (
     <div className="mx-auto max-w-md">
@@ -61,11 +79,17 @@ export function TelegramAuthFlow(props: {
         />
       )}
       {state.step === "enter-phone" && (
-        <PhoneStep api={props.api} state={state} setState={setState} />
+        <PhoneStep
+          api={props.api}
+          platform={platform}
+          state={state}
+          setState={setState}
+        />
       )}
       {state.step === "enter-code" && (
         <CodeStep
           api={props.api}
+          platform={platform}
           state={state}
           setState={setState}
           onComplete={props.onComplete}
@@ -74,6 +98,7 @@ export function TelegramAuthFlow(props: {
       {state.step === "enter-password" && (
         <PasswordStep
           api={props.api}
+          platform={platform}
           setState={setState}
           onComplete={props.onComplete}
         />
@@ -89,7 +114,8 @@ function ScanQrStep(props: {
 }) {
   const [qrState, setQrState] = useState<QrState | null>(null);
 
-  useEventSourceEvent<QrState>(props.api.qrStreamUrl, "state", setQrState);
+  // QR-шаг монтируется только у Telegram — qrStreamUrl всегда задан.
+  useEventSourceEvent<QrState>(props.api.qrStreamUrl ?? null, "state", setQrState);
 
   // onComplete не мемоизирован у вызывающих, deps ловят его ссылку при каждом
   // ререндере родителя. Без guard'а success-state мог бы тригернуть onComplete
@@ -163,6 +189,7 @@ function QrImage({ token }: { token: string }) {
 
 function PhoneStep(props: {
   api: TgAuthApi;
+  platform: AuthPlatform;
   state: Extract<AuthState, { step: "enter-phone" }>;
   setState: (s: AuthState) => void;
 }) {
@@ -185,8 +212,10 @@ function PhoneStep(props: {
   return (
     <Card>
       <div className="flex flex-col items-center gap-4 px-6 py-8">
-        <TelegramLogo size={48} />
-        <h1 className="text-lg font-semibold">Введите номер</h1>
+        <MessengerLogo platform={props.platform} size={48} />
+        <h1 className="text-lg font-semibold">
+          Войти в {BRAND[props.platform]}
+        </h1>
         <input
           autoFocus
           type="tel"
@@ -206,13 +235,16 @@ function PhoneStep(props: {
         >
           {send.isPending ? "Отправка…" : "Получить код"}
         </button>
-        <button
-          type="button"
-          onClick={() => props.setState({ step: "scan-qr" })}
-          className="text-sm text-zinc-500 hover:text-zinc-900"
-        >
-          ← Войти по QR
-        </button>
+        {/* QR-вход только у Telegram. */}
+        {props.platform === "telegram" && (
+          <button
+            type="button"
+            onClick={() => props.setState({ step: "scan-qr" })}
+            className="text-sm text-zinc-500 hover:text-zinc-900"
+          >
+            ← Войти по QR
+          </button>
+        )}
       </div>
     </Card>
   );
@@ -220,6 +252,7 @@ function PhoneStep(props: {
 
 function CodeStep(props: {
   api: TgAuthApi;
+  platform: AuthPlatform;
   state: Extract<AuthState, { step: "enter-code" }>;
   setState: (s: AuthState) => void;
   onComplete: (r: { accountId?: string }) => void;
@@ -252,18 +285,18 @@ function CodeStep(props: {
   return (
     <Card>
       <div className="flex flex-col items-center gap-4 px-6 py-8">
-        <TelegramLogo size={48} />
+        <MessengerLogo platform={props.platform} size={48} />
         <h1 className="text-lg font-semibold">Введите код</h1>
         <p className="text-center text-sm text-zinc-600">
           {props.state.isCodeViaApp
-            ? "Откройте Telegram и проверьте сообщение от Telegram"
+            ? `Откройте ${BRAND[props.platform]} и проверьте сообщение`
             : `Код отправлен SMS на ${props.state.phoneNumber}`}
         </p>
         <input
           autoFocus
           inputMode="numeric"
           maxLength={6}
-          placeholder="12345"
+          placeholder="123456"
           value={code}
           onChange={(e) => {
             setCode(e.target.value.replace(/\D/g, "").slice(0, 6));
@@ -305,6 +338,7 @@ function CodeStep(props: {
 
 function PasswordStep(props: {
   api: TgAuthApi;
+  platform: AuthPlatform;
   setState: (s: AuthState) => void;
   onComplete: (r: { accountId?: string }) => void;
 }) {
@@ -323,10 +357,10 @@ function PasswordStep(props: {
   return (
     <Card>
       <div className="flex flex-col items-center gap-4 px-6 py-8">
-        <TelegramLogo size={48} />
+        <MessengerLogo platform={props.platform} size={48} />
         <h1 className="text-lg font-semibold">Двухфакторный пароль</h1>
         <p className="text-center text-sm text-zinc-600">
-          У этого аккаунта включён cloud-password.
+          У этого аккаунта включён облачный пароль.
         </p>
         <input
           autoFocus
@@ -376,4 +410,16 @@ export function TelegramLogo({ size = 48 }: { size?: number }) {
       <Send size={size * 0.5} className="ml-1" />
     </div>
   );
+}
+
+// Лого по платформе: Telegram — иконка Send, MAX — настоящий логотип (SVG).
+function MessengerLogo({
+  platform,
+  size = 48,
+}: {
+  platform: AuthPlatform;
+  size?: number;
+}) {
+  if (platform === "telegram") return <TelegramLogo size={size} />;
+  return <MaxLogo size={size} />;
 }

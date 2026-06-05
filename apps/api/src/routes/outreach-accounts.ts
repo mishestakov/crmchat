@@ -5,6 +5,7 @@ import { db } from "../db/client.ts";
 import {
   contacts,
   outreachAccounts,
+  outreachAccountPlatform,
   outreachAccountStatus,
   properties as propsTable,
   tgChats,
@@ -18,6 +19,12 @@ import {
   getOrCreatePendingOutreachClient,
   persistOutreachAccount,
 } from "../lib/outreach-account-client.ts";
+import {
+  maxSendCode,
+  maxSignInCode,
+  maxSignInPassword,
+  persistMaxAccount,
+} from "../lib/max-account-client.ts";
 import {
   accountAccessClause,
   assertAccountAccess,
@@ -47,6 +54,7 @@ const WsAccountParam = z.object({
 const AccountSchema = z
   .object({
     id: z.string(),
+    platform: z.enum(outreachAccountPlatform.enumValues),
     status: z.enum(outreachAccountStatus.enumValues),
     tgUserId: z.string(),
     tgUsername: z.string().nullable(),
@@ -88,9 +96,10 @@ const ImportContactsRespSchema = z
 function serializeAccount(r: typeof outreachAccounts.$inferSelect) {
   return {
     id: r.id,
+    platform: r.platform,
     status: r.status,
-    tgUserId: r.tgUserId,
-    tgUsername: r.tgUsername,
+    tgUserId: r.externalUserId,
+    tgUsername: r.externalUsername,
     phoneNumber: r.phoneNumber,
     firstName: r.firstName,
     hasPremium: r.hasPremium,
@@ -218,7 +227,10 @@ app.openapi(
       body: {
         content: {
           "application/json": {
-            schema: z.object({ phoneNumber: z.string().min(5).max(32) }),
+            schema: z.object({
+              phoneNumber: z.string().min(5).max(32),
+              platform: z.enum(outreachAccountPlatform.enumValues).default("telegram"),
+            }),
           },
         },
         required: true,
@@ -233,8 +245,13 @@ app.openapi(
   }),
   async (c) => {
     const wsId = c.get("workspaceId");
-    const { phoneNumber } = c.req.valid("json");
+    const { phoneNumber, platform } = c.req.valid("json");
     try {
+      if (platform === "max") {
+        await maxSendCode(wsId, phoneNumber);
+        // MAX всегда шлёт SMS — фронту это маппится в isCodeViaApp=false.
+        return c.json({ isCodeViaApp: false });
+      }
       // Свежий клиент: предыдущая попытка могла оставить устаревший phone-state.
       await clearPendingOutreachClient(wsId);
       const pending = await getOrCreatePendingOutreachClient(wsId);
@@ -258,6 +275,7 @@ app.openapi(
           "application/json": {
             schema: z.object({
               phoneCode: z.string().min(1).max(16),
+              platform: z.enum(outreachAccountPlatform.enumValues).default("telegram"),
             }),
           },
         },
@@ -274,8 +292,17 @@ app.openapi(
   async (c) => {
     const wsId = c.get("workspaceId");
     const userId = c.get("userId");
-    const { phoneCode } = c.req.valid("json");
+    const { phoneCode, platform } = c.req.valid("json");
     try {
+      if (platform === "max") {
+        const r = await maxSignInCode(wsId, phoneCode);
+        if (r.kind === "password_needed")
+          return c.json({ status: "password_needed" as const });
+        if (r.kind === "code_invalid")
+          return c.json({ status: "phone_code_invalid" as const });
+        const acc = await persistMaxAccount(wsId, userId);
+        return c.json({ status: "sign_in_complete" as const, accountId: acc.id });
+      }
       const pending = await getOrCreatePendingOutreachClient(wsId);
       const r = await tdSignInCode(pending, phoneCode);
       if (r.kind === "user_not_found")
@@ -305,7 +332,10 @@ app.openapi(
       body: {
         content: {
           "application/json": {
-            schema: z.object({ password: z.string().min(1).max(256) }),
+            schema: z.object({
+              password: z.string().min(1).max(256),
+              platform: z.enum(outreachAccountPlatform.enumValues).default("telegram"),
+            }),
           },
         },
         required: true,
@@ -323,8 +353,15 @@ app.openapi(
   async (c) => {
     const wsId = c.get("workspaceId");
     const userId = c.get("userId");
-    const { password } = c.req.valid("json");
+    const { password, platform } = c.req.valid("json");
     try {
+      if (platform === "max") {
+        const r = await maxSignInPassword(wsId, password);
+        if (r.kind === "password_invalid")
+          return c.json({ status: "password_invalid" as const });
+        const acc = await persistMaxAccount(wsId, userId);
+        return c.json({ status: "sign_in_complete" as const, accountId: acc.id });
+      }
       const pending = await getOrCreatePendingOutreachClient(wsId);
       const r = await tdSignInPassword(pending, password);
       if (r.kind === "password_invalid")
@@ -446,7 +483,7 @@ app.openapi(
         and(
           eq(tgChats.accountId, accountId),
           eq(tgUsers.isDeleted, false),
-          sql`${tgChats.peerUserId} != ${acc.tgUserId}`,
+          sql`${tgChats.peerUserId} != ${acc.externalUserId}`,
         ),
       );
 

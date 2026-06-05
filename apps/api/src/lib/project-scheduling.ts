@@ -317,6 +317,7 @@ export async function resolveProjectAccountIds(
     .where(
       and(
         eq(outreachAccounts.workspaceId, wsId),
+        eq(outreachAccounts.platform, "telegram"),
         eq(outreachAccounts.status, "active"),
       ),
     );

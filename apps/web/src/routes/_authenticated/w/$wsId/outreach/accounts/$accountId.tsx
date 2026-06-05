@@ -8,6 +8,7 @@ import { BackButton } from "../../../../../../components/back-button";
 import { OUTREACH_QK, WS_QK } from "../../../../../../lib/query-keys";
 import { useMyRole } from "../../../../../../lib/hooks";
 import { formatDateTime } from "../../../../../../lib/date-utils";
+import { PlatformBadge } from "../../../../../../lib/platforms";
 
 export const Route = createFileRoute(
   "/_authenticated/w/$wsId/outreach/accounts/$accountId",
@@ -119,6 +120,7 @@ function AccountDetailPage() {
       <div className="mx-auto max-w-xl space-y-4">
         <div>
           <div className="flex items-center gap-1.5">
+            <PlatformBadge platform={acc.platform} />
             <h1 className="text-2xl font-semibold">
               {acc.firstName || acc.tgUsername || "Без имени"}
             </h1>
@@ -166,9 +168,10 @@ function AccountDetailPage() {
             </span>
             <span className="mb-2 block text-xs text-zinc-500">
               Сколько новых сообщений в сутки максимум уйдёт с этого аккаунта.
-              Сбрасывается в полночь по часовому поясу workspace. Безопасный
-              дефолт для не-Premium без warmup'а — 30. С Premium можно крутить
-              выше.
+              Сбрасывается в полночь по часовому поясу workspace.
+              {acc.platform === "telegram"
+                ? " Безопасный дефолт для не-Premium без warmup'а — 30. С Premium можно крутить выше."
+                : ""}
             </span>
             <input
               type="number"

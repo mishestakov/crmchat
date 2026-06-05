@@ -20,8 +20,32 @@ export const PLATFORMS: Record<
 // заводится импортом/из трафика, MAX — задел.
 export const ADDABLE: Platform[] = ["youtube", "tiktok", "dzen"];
 
+// Настоящий логотип MAX (их favicon, public/max-logo.png) — подходящей
+// lucide-иконки нет, монограмма не похожа. Функциональное обозначение
+// платформы, как иконки провайдеров в OAuth-кнопках.
+export const MAX_LOGO_SRC = "/max-logo.svg";
+
+export function MaxLogo({ size = 14 }: { size?: number }) {
+  return (
+    <img
+      src={MAX_LOGO_SRC}
+      alt="MAX"
+      width={size}
+      height={size}
+      className="inline-block shrink-0 rounded-[4px] object-contain"
+    />
+  );
+}
+
 export function PlatformBadge({ platform }: { platform: Platform }) {
   const p = PLATFORMS[platform];
+  if (platform === "max") {
+    return (
+      <span title={p.label} className="inline-flex">
+        <MaxLogo size={14} />
+      </span>
+    );
+  }
   const { Icon } = p;
   return (
     <span title={p.label} className={`inline-flex ${p.color}`}>

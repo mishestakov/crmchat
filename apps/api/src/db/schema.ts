@@ -304,6 +304,20 @@ export const outreachAccountStatus = pgEnum("outreach_account_status", [
   "unauthorized",
 ]);
 
+// Мессенджер, в котором живёт подключённый аккаунт. telegram — через TDLib
+// (сессия в FS), max — через реверс-клиент lib/max (сессия = loginToken в БД).
+// YouTube/TikTok здесь нет: их каналы парсятся stateless-провайдером без аккаунта.
+export const outreachAccountPlatform = pgEnum("outreach_account_platform", [
+  "telegram",
+  "max",
+]);
+
+// Платформо-специфичные поля аккаунта, которые не нужны в общих колонках.
+// max: { deviceId } (нужен для реконнекта сессии). telegram: пусто.
+export interface OutreachAccountMeta {
+  deviceId?: string;
+}
+
 export const outreachAccounts = pgTable(
   "outreach_accounts",
   {
@@ -311,12 +325,20 @@ export const outreachAccounts = pgTable(
     workspaceId: text("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
+    platform: outreachAccountPlatform("platform").notNull().default("telegram"),
     status: outreachAccountStatus("status").notNull().default("active"),
-    tgUserId: text("tg_user_id").notNull(),
-    tgUsername: text("tg_username"),
+    // Внешний id аккаунта в его мессенджере: tg user_id | max contact.id.
+    // Ключ дедупа аккаунта внутри workspace (unique ниже).
+    externalUserId: text("external_user_id").notNull(),
+    externalUsername: text("external_username"),
     phoneNumber: text("phone_number"),
     firstName: text("first_name"),
+    // TG-only: Premium-флаг (null/false для MAX).
     hasPremium: boolean("has_premium").notNull().default(false),
+    // MAX: loginToken для реконнекта живого сокета. У TG null — сессия в FS
+    // (.td-database). Очищается при logout/unauthorized.
+    sessionToken: text("session_token"),
+    meta: jsonb("meta").$type<OutreachAccountMeta>().notNull().default({}),
     // Лимит исходящих сообщений в сутки на этот аккаунт. Worker (фаза 3b)
     // считает sent-за-сегодня и пропускает аккаунт когда упёрлись. Дефолт 15 —
     // консервативный уровень из касдева Юли (10 безопасно, 15 ещё ОК, выше
@@ -344,10 +366,11 @@ export const outreachAccounts = pgTable(
   (t) => [
     index("outreach_accounts_workspace_id_idx").on(t.workspaceId),
     index("outreach_accounts_owner_idx").on(t.workspaceId, t.ownerUserId),
-    // Один и тот же TG-аккаунт нельзя добавить в один workspace дважды.
-    unique("outreach_accounts_workspace_tg_unique").on(
+    // Один и тот же аккаунт мессенджера нельзя добавить в workspace дважды.
+    unique("outreach_accounts_workspace_external_unique").on(
       t.workspaceId,
-      t.tgUserId,
+      t.platform,
+      t.externalUserId,
     ),
   ],
 );

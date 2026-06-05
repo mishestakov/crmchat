@@ -389,6 +389,7 @@ app.openapi(
       .where(
         and(
           eq(outreachAccounts.workspaceId, share.workspaceId),
+          eq(outreachAccounts.platform, "telegram"),
           eq(outreachAccounts.status, "active"),
         ),
       )

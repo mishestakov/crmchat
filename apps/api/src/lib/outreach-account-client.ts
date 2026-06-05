@@ -136,7 +136,8 @@ export async function persistOutreachAccount(
     .where(
       and(
         eq(outreachAccounts.workspaceId, workspaceId),
-        eq(outreachAccounts.tgUserId, tgUserId),
+        eq(outreachAccounts.platform, "telegram"),
+        eq(outreachAccounts.externalUserId, tgUserId),
       ),
     )
     .limit(1);
@@ -182,8 +183,9 @@ export async function persistOutreachAccount(
     .values({
       id: finalAccountId,
       workspaceId,
-      tgUserId: profile.tgUserId,
-      tgUsername: profile.tgUsername,
+      platform: "telegram",
+      externalUserId: profile.tgUserId,
+      externalUsername: profile.tgUsername,
       phoneNumber: profile.phoneNumber,
       firstName: profile.firstName,
       hasPremium: profile.hasPremium,
@@ -191,9 +193,13 @@ export async function persistOutreachAccount(
       createdBy: userId,
     })
     .onConflictDoUpdate({
-      target: [outreachAccounts.workspaceId, outreachAccounts.tgUserId],
+      target: [
+        outreachAccounts.workspaceId,
+        outreachAccounts.platform,
+        outreachAccounts.externalUserId,
+      ],
       set: {
-        tgUsername: profile.tgUsername,
+        externalUsername: profile.tgUsername,
         phoneNumber: profile.phoneNumber,
         firstName: profile.firstName,
         hasPremium: profile.hasPremium,
@@ -382,6 +388,19 @@ export async function getOutreachWorkerClient(account: {
 
   const promise = (async () => {
     try {
+      // Граница движка: TDLib только для telegram-аккаунтов. Если селект-вызывающий
+      // забыл platform-фильтр и сюда дошёл MAX (или иной) аккаунт — не плодим
+      // пустой td-database, падаем громко в одной точке вместо тихого спавна.
+      const [row] = await db
+        .select({ platform: outreachAccounts.platform })
+        .from(outreachAccounts)
+        .where(eq(outreachAccounts.id, account.id))
+        .limit(1);
+      if (row && row.platform !== "telegram") {
+        throw new Error(
+          `getOutreachWorkerClient: аккаунт ${account.id} платформы ${row.platform} — TDLib только для telegram`,
+        );
+      }
       const worker = await spawnWorker(account.id, account.workspaceId);
       workerClients.set(account.id, worker);
       return worker.client;
