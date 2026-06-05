@@ -887,7 +887,11 @@ function AddChannelsModal({
 
 // Запустить аутрич (этап 16.8): доступно в draft, когда у всех каналов есть
 // контакт (жёсткий гейт; бэк тоже проверяет и вернёт 400). Правим цепочку и
-// активируем. Опенер один на админа; {{каналы}} → перечень его каналов.
+// активируем. Опенер один на админа; {{каналы}} → его каналы через запятую:
+// TG как @username, YouTube/TikTok/Дзен — ссылкой.
+const LAUNCH_VARIABLES = [
+  { key: "каналы", label: "@username'ы и ссылки каналов админа" },
+];
 function LaunchModal({
   wsId,
   campaign,
@@ -934,11 +938,16 @@ function LaunchModal({
       <h2 className="mb-1 text-base font-semibold">Запустить аутрич</h2>
       <p className="mb-4 text-xs text-zinc-500">
         Первое сообщение уйдёт админам лонглиста через ваши Telegram-аккаунты в
-        человеческом темпе. Один опенер на админа — если у него несколько
-        каналов, перечислите их через{" "}
-        <code className="rounded bg-zinc-100 px-1">{"{{каналы}}"}</code>.
+        человеческом темпе. Один опенер на админа:{" "}
+        <code className="rounded bg-zinc-100 px-1">{"{{каналы}}"}</code>{" "}
+        подставит @username его канала (YouTube/TikTok — ссылкой), а если
+        каналов несколько — все через запятую.
       </p>
-      <MessagesEditor value={messages} onChange={setMessages} />
+      <MessagesEditor
+        value={messages}
+        onChange={setMessages}
+        variables={LAUNCH_VARIABLES}
+      />
       {launch.error && (
         <p className="mt-2 text-sm text-red-600">{errorMessage(launch.error)}</p>
       )}

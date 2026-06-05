@@ -187,9 +187,11 @@ export function buildScheduledRows(opts: {
 }
 
 // Подготовка лидов агентского аутрича (этап 16.8). Один опенер на админа:
-// дедуп по lower(username); подстановка {{каналы}} = все каналы этого админа
-// в проекте (по неотобранным в шортлист размещениям); пропуск размещений без
-// @username (личка/телефон — авто-опенер не адресуем, менеджер пишет вручную).
+// дедуп по lower(username); подстановка {{каналы}} = идентификаторы всех
+// каналов этого админа в проекте (по неотобранным в шортлист размещениям):
+// TG → @username, YouTube/TikTok/Дзен → ссылка. Пропуск размещений без
+// @username админа (личка/телефон — авто-опенер не адресуем, менеджер пишет
+// вручную).
 // skipContacted=true (доливка в активную кампанию) дополнительно опускает
 // админов, с кем тред в проекте уже начат — повторный опенер не шлём.
 export async function prepareAgencyLeads(opts: {
@@ -197,8 +199,14 @@ export async function prepareAgencyLeads(opts: {
   leads: SchedulingLead[];
   skipContacted: boolean;
 }): Promise<SchedulingLead[]> {
-  const titleRows = await db
-    .select({ username: projectItems.username, title: channels.title })
+  const channelRows = await db
+    .select({
+      adminUsername: projectItems.username,
+      platform: channels.platform,
+      channelUsername: channels.username,
+      link: channels.link,
+      title: channels.title,
+    })
     .from(projectItems)
     .leftJoin(channels, eq(channels.id, projectItems.channelId))
     .where(
@@ -211,11 +219,19 @@ export async function prepareAgencyLeads(opts: {
       ),
     );
   const canals = new Map<string, string[]>();
-  for (const r of titleRows) {
-    if (!r.username) continue;
-    const key = r.username.toLowerCase();
+  for (const r of channelRows) {
+    if (!r.adminUsername) continue;
+    const key = r.adminUsername.toLowerCase();
     const list = canals.get(key) ?? [];
-    list.push(r.title ?? "канал");
+    // Естественный идентификатор канала: TG → @username (кликабельное
+    // упоминание в личке), провайдер-канал → ссылка. Fallback на title —
+    // только редкие кейсы (приватный TG-канал); у болванок из bulk-добавления
+    // title и так "@username"/URL.
+    const ident =
+      r.platform === "telegram"
+        ? r.channelUsername && `@${r.channelUsername}`
+        : r.link;
+    list.push(ident ?? r.title ?? "канал");
     canals.set(key, list);
   }
 
