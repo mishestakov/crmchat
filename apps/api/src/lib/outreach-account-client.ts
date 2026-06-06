@@ -339,6 +339,9 @@ export async function findSubscribedReaderAccount(
     eq(channelSubscriptions.status, "subscribed"),
     eq(outreachAccounts.workspaceId, workspaceId),
     eq(outreachAccounts.status, "active"),
+    // reader идёт в TDLib (getOutreachWorkerClient) — только telegram. MAX-
+    // подписки на закрытые MAX-каналы сюда не тащим, иначе спавн упадёт на guard.
+    eq(outreachAccounts.platform, "telegram"),
   ];
   if (respectCooldown) {
     conds.push(

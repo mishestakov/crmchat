@@ -11,6 +11,7 @@ import {
   Mail,
   MessageSquare,
   Phone,
+  Play,
   Plus,
   Send,
   ShieldCheck,
@@ -19,7 +20,7 @@ import {
 } from "lucide-react";
 import type { Channel } from "@repo/core";
 import { api } from "../lib/api";
-import { PLATFORMS } from "../lib/platforms";
+import { PLATFORMS, type Platform } from "../lib/platforms";
 import { formatRelative } from "../lib/date-utils";
 import { errorMessage } from "../lib/errors";
 import { useOutreachAccounts } from "../lib/outreach-queries";
@@ -244,6 +245,7 @@ export function ChannelCard(props: {
         <PostsFeed
           wsId={wsId}
           channelId={channel.id}
+          platform={channel.platform}
           channelExternalId={channel.externalId}
           syncing={syncMut.isPending}
           syncFailed={syncFailed}
@@ -874,6 +876,8 @@ export type ChannelMessage = {
   // full-res дескриптор (есть только в /history). Опционально — /preview его не
   // отдаёт, там остаётся блюр-thumb.
   media?: { kind: "photo" | "video"; width: number; height: number } | null;
+  // Прямой CDN-URL медиа (MAX). null/undefined → рендер через TG-прокси/thumb.
+  mediaUrl?: string | null;
   views: number | null;
   forwards: number | null;
   replies: number | null;
@@ -1113,6 +1117,7 @@ function ProviderVideoCard({ video: v }: { video: ProviderVideo }) {
 function PostsFeed(props: {
   wsId: string;
   channelId: string;
+  platform: Platform;
   channelExternalId: string | null;
   syncing: boolean;
   syncFailed: boolean;
@@ -1156,7 +1161,9 @@ function PostsFeed(props: {
   // Аккумулятор «более старых» страниц (prepend). Сбрасывается на смену
   // channelId.
   const [olderPages, setOlderPages] = useState<ChannelMessage[]>([]);
-  const [hasMore, setHasMore] = useState(true);
+  // MAX: пагинации ленты пока нет (id сообщений > MAX_SAFE_INTEGER, бэк отдаёт
+  // последние N). hasMore=false сразу — иначе onScroll шлёт overflow-id → 400.
+  const [hasMore, setHasMore] = useState(props.platform !== "max");
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState<unknown>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1222,7 +1229,7 @@ function PostsFeed(props: {
       .GET("/v1/workspaces/{wsId}/channels/{id}/history", {
         params: {
           path: { wsId: props.wsId, id: props.channelId },
-          query: { limit: PAGE_LIMIT, fromMessageId: Number(oldestId) },
+          query: { limit: PAGE_LIMIT, fromMessageId: String(oldestId) },
         },
       })
       .then(({ data, error }) => {
@@ -1252,12 +1259,13 @@ function PostsFeed(props: {
     // оставляем пустым, без второго объяснения.
     return <div className="min-h-0 flex-1" />;
   }
+  const platformLabel = PLATFORMS[props.platform].label;
   if (!props.hasActiveAccount) {
     return (
       <div className="min-h-0 flex-1 px-6 py-4">
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          Чтобы читать каналы — подключите Telegram-аккаунт в разделе{" "}
-          <strong>Telegram-аккаунты</strong>.
+          Чтобы читать каналы — подключите {platformLabel}-аккаунт в разделе{" "}
+          <strong>Аутрич-аккаунты</strong>.
         </div>
       </div>
     );
@@ -1265,14 +1273,14 @@ function PostsFeed(props: {
   if (props.syncFailed) {
     return (
       <div className="min-h-0 flex-1 px-6 py-4 text-sm text-zinc-400">
-        Сначала нужна синхронизация с Telegram (см. сообщение выше).
+        Сначала нужна синхронизация с {platformLabel} (см. сообщение выше).
       </div>
     );
   }
   if (!props.channelExternalId) {
     return (
       <div className="min-h-0 flex-1 px-6 py-4 text-sm text-zinc-400">
-        Нет привязки к Telegram — история недоступна.
+        Нет привязки к {platformLabel} — история недоступна.
       </div>
     );
   }
@@ -1368,7 +1376,30 @@ export function Post({
   const fullRes = m.media && wsId && channelId;
   return (
     <article className="overflow-hidden rounded-2xl bg-white ring-1 ring-zinc-200">
-      {fullRes ? (
+      {m.mediaUrl ? (
+        // MAX: прямой CDN-URL (фото/постер видео). Видео не проигрываем —
+        // показываем кадр с play-бейджем.
+        <div className="relative bg-zinc-100">
+          <img
+            src={m.mediaUrl}
+            alt=""
+            loading="lazy"
+            className="max-h-96 w-full object-contain"
+            // CDN-URL может быть недоступен (referer-gate/протух) — прячем весь
+            // блок, чтобы не висела битая иконка с play-бейджем поверх.
+            onError={(e) => {
+              e.currentTarget.parentElement?.style.setProperty("display", "none");
+            }}
+          />
+          {m.media?.kind === "video" && (
+            <span className="absolute inset-0 flex items-center justify-center">
+              <span className="rounded-full bg-black/50 p-3">
+                <Play size={20} className="fill-white text-white" />
+              </span>
+            </span>
+          )}
+        </div>
+      ) : fullRes ? (
         <FullResMedia
           src={`/v1/workspaces/${wsId}/channels/${channelId}/post-media/${m.id}`}
           thumb={m.mediaThumb}

@@ -221,6 +221,14 @@ type MaxAccountRow = {
   meta: { deviceId?: string };
 };
 
+async function markMaxUnauthorized(accountId: string): Promise<void> {
+  await db
+    .update(outreachAccounts)
+    .set({ status: "unauthorized", updatedAt: new Date() })
+    .where(eq(outreachAccounts.id, accountId))
+    .catch(() => {});
+}
+
 export function evictMaxWorkerClient(accountId: string): void {
   const c = workerClients.get(accountId);
   if (c) {
@@ -246,23 +254,34 @@ export async function getMaxWorkerClient(account: MaxAccountRow): Promise<MaxCli
     if (!account.sessionToken || !account.meta.deviceId) {
       throw new Error("у MAX-аккаунта нет сохранённой сессии");
     }
+    const deviceId = account.meta.deviceId;
+    const loginToken = account.sessionToken;
     const client = new MaxClient();
+    // Самовосстановление (как withReconnect в ~/MAX): на сетевом сбое/half-open
+    // операции клиент сам делает чистый реконнект тем же токеном и повторяет
+    // запрос — сессия живёт, не падает на одном разрыве. FAIL_LOGIN_TOKEN при
+    // реконнекте = токен реально мёртв → unauthorized + эвикт.
+    client.setReconnectHook(async () => {
+      client.close();
+      try {
+        await connectSession(client, { deviceId, loginToken });
+      } catch (e) {
+        if (e instanceof MaxClientError) {
+          evictMaxWorkerClient(account.id);
+          await markMaxUnauthorized(account.id);
+        }
+        throw e;
+      }
+    });
     try {
-      await connectSession(client, {
-        deviceId: account.meta.deviceId,
-        loginToken: account.sessionToken,
-      });
+      await connectSession(client, { deviceId, loginToken });
     } catch (e) {
       client.close(); // не оставляем открытый сокет при провале login
       // Серверная ошибка (cmd=3, напр. FAIL_LOGIN_TOKEN) = сессия протухла →
       // помечаем unauthorized, чтобы UI предложил переподключить. Сетевые
       // ошибки (не MaxClientError) — транзиентные, статус не трогаем.
       if (e instanceof MaxClientError) {
-        await db
-          .update(outreachAccounts)
-          .set({ status: "unauthorized", updatedAt: new Date() })
-          .where(eq(outreachAccounts.id, account.id))
-          .catch(() => {});
+        await markMaxUnauthorized(account.id);
       }
       throw e;
     }

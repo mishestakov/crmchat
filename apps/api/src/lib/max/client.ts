@@ -8,6 +8,16 @@ import { EventEmitter, once } from "node:events";
 import { buildPacket, tryParsePacket, type PacketHeader } from "./codec.ts";
 import { OPCODES, opcodeName } from "./opcodes.ts";
 
+// Опкоды рукопожатия — их шлёт сам reconnect-хук (SESSION_INIT/LOGIN). На них
+// авто-реконнект отключаем, иначе рекурсия при переподключении.
+const RECONNECT_SKIP_OPCODES = new Set<number>([
+  OPCODES.SESSION_INIT,
+  OPCODES.AUTH_REQUEST,
+  OPCODES.AUTH,
+  OPCODES.AUTH_LOGIN_CHECK_PASSWORD,
+  OPCODES.LOGIN,
+]);
+
 export class MaxClientError extends Error {
   packet?: PacketHeader;
   payload?: unknown;
@@ -49,6 +59,12 @@ export class MaxClient extends EventEmitter {
   private buffer: Buffer = Buffer.alloc(0);
   private nextSeq = 1;
   private pending = new Map<number, PendingRequest>();
+  // Самовосстановление (как withReconnect в ~/MAX): на сетевом сбое операции
+  // клиент сам переподключается через этот хук и повторяет запрос. Ставит
+  // getMaxWorkerClient (close → connectSession). reconnecting гасит рекурсию,
+  // пока хук сам шлёт SESSION_INIT/LOGIN.
+  private reconnectHook?: () => Promise<void>;
+  private reconnecting = false;
 
   constructor(options: MaxClientOptions = {}) {
     super();
@@ -56,6 +72,10 @@ export class MaxClient extends EventEmitter {
     this.port = options.port ?? 443;
     this.servername = options.servername ?? this.host;
     this.onLog = options.onLog;
+  }
+
+  setReconnectHook(fn: () => Promise<void>): void {
+    this.reconnectHook = fn;
   }
 
   async connect(): Promise<void> {
@@ -203,7 +223,33 @@ export class MaxClient extends EventEmitter {
 
   // --- Core ---
 
-  sendRequest(opcode: number, payload: unknown, options: { cmd?: number; timeoutMs?: number } = {}): Promise<MaxResponse> {
+  async sendRequest(opcode: number, payload: unknown, options: { cmd?: number; timeoutMs?: number } = {}): Promise<MaxResponse> {
+    try {
+      return await this.sendOnce(opcode, payload, options);
+    } catch (e) {
+      // Серверная валидационная ошибка (cmd=3, напр. FAIL_LOGIN_TOKEN) — НЕ
+      // сетевая, реконнект не поможет. Auth-опкоды (их шлёт сам хук) и повторный
+      // вход во время реконнекта — пропускаем. Иначе: один чистый реконнект и
+      // повтор (как withReconnect в ~/MAX) — переживаем half-open/идл-разрыв.
+      if (
+        !this.reconnectHook ||
+        this.reconnecting ||
+        e instanceof MaxClientError ||
+        RECONNECT_SKIP_OPCODES.has(opcode)
+      ) {
+        throw e;
+      }
+      this.reconnecting = true;
+      try {
+        await this.reconnectHook();
+      } finally {
+        this.reconnecting = false;
+      }
+      return this.sendOnce(opcode, payload, options);
+    }
+  }
+
+  private sendOnce(opcode: number, payload: unknown, options: { cmd?: number; timeoutMs?: number } = {}): Promise<MaxResponse> {
     if (!this.socket) return Promise.reject(new Error("Not connected"));
     const seq = this.allocateSeq();
     const cmd = options.cmd ?? 0;

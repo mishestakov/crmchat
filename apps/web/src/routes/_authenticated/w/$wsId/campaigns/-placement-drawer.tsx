@@ -435,6 +435,7 @@ function Resolver({
     mutationFn: async (body: {
       contactId?: string;
       username?: string;
+      maxLink?: string;
       dm?: boolean;
       group?: { chatId: string; accountId: string };
     }) => {
@@ -578,7 +579,11 @@ function Resolver({
             wsId={wsId}
             excludeIds={new Set()}
             onPick={(contactId) => setAdmin.mutate({ contactId })}
-            onCreateByUsername={(username) => setAdmin.mutate({ username })}
+            onCreateByUsername={(input) =>
+              /max\.ru\/u\//i.test(input)
+                ? setAdmin.mutate({ maxLink: input })
+                : setAdmin.mutate({ username: input })
+            }
             loading={setAdmin.isPending}
           />
         </div>

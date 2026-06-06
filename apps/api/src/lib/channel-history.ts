@@ -53,6 +53,8 @@ export function mapChannelHistoryItems(
       entities,
       mediaThumb,
       media,
+      // TG отдаёт байты медиа через post-media/{id} прокси — прямого URL нет.
+      mediaUrl: null,
       views: ii?.view_count ?? null,
       forwards: ii?.forward_count ?? null,
       replies: ii?.reply_info?.reply_count ?? null,

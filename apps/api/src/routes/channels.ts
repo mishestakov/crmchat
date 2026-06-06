@@ -31,6 +31,7 @@ import {
   syncChannelFromProvider,
 } from "../lib/channel-providers/index.ts";
 import {
+  fetchMaxPosts,
   syncChannelFromMax,
   syncMaxChannelsBatch,
 } from "../lib/channel-providers/max.ts";
@@ -571,6 +572,9 @@ const SetAdminBody = z
   .object({
     contactId: z.string().min(1).max(64).optional(),
     username: z.string().min(1).max(64).optional(),
+    // MAX-админ: ссылка max.ru/u/<token> (длиннее 64) → контакт с
+    // properties.max_link (модель получателя для отправки ЛС в MAX).
+    maxLink: z.string().min(1).max(256).optional(),
     dm: z.boolean().optional(),
     // Способ связи = группа аккаунта (этап 16.9): chat_id группы + аккаунт-
     // участник (через него потом читаем/пишем).
@@ -583,10 +587,13 @@ const SetAdminBody = z
   })
   .refine(
     (b) =>
-      [b.contactId, b.username, b.dm, b.group].filter(
+      [b.contactId, b.username, b.maxLink, b.dm, b.group].filter(
         (v) => v != null && v !== false,
       ).length === 1,
-    { message: "укажите ровно одно: contactId, username, dm:true или group" },
+    {
+      message:
+        "укажите ровно одно: contactId, username, maxLink, dm:true или group",
+    },
   );
 
 app.openapi(
@@ -613,7 +620,24 @@ app.openapi(
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
     const body = c.req.valid("json");
-    await assertChannelAccess(id, wsId);
+    const channel = await assertChannelAccess(id, wsId);
+
+    // maxLink — только для MAX-канала и только ссылка-профиль вида max.ru/u/<token>.
+    // Иначе healPlacementRecipients(override) затёр бы TG-получателей null'ами
+    // (resolveAdminRecipient не читает max_link), а кривая ссылка дала бы
+    // неадресуемый stub-контакт.
+    if (body.maxLink) {
+      if (channel.platform !== "max") {
+        throw new HTTPException(400, {
+          message: "Ссылку MAX можно привязать только к MAX-каналу",
+        });
+      }
+      if (!/max\.ru\/u\//i.test(body.maxLink)) {
+        throw new HTTPException(400, {
+          message: "Нужна ссылка получателя вида max.ru/u/<токен>",
+        });
+      }
+    }
 
     if (body.group) {
       // Способ связи = группа: снимаем персону-получателя, в meta пишем chat_id
@@ -672,8 +696,37 @@ app.openapi(
       return c.json(serialized!);
     }
 
-    // Резолвим целевой контакт: существующий по id или stub по @username.
+    // Резолвим целевой контакт: существующий по id, MAX-stub по /u/-ссылке,
+    // или stub по @username.
     let contactId = body.contactId ?? null;
+    if (!contactId && body.maxLink) {
+      const link = body.maxLink.trim();
+      // Дедуп по properties.max_link (уникального индекса нет — select-then-insert).
+      const [existing] = await db
+        .select({ id: contacts.id })
+        .from(contacts)
+        .where(
+          and(
+            eq(contacts.workspaceId, wsId),
+            sql`${contacts.properties} ->> 'max_link' = ${link}`,
+          ),
+        )
+        .limit(1);
+      if (existing) {
+        contactId = existing.id;
+      } else {
+        const tokenShort = link.replace(/.*\/u\//, "").slice(0, 8);
+        const [created] = await db
+          .insert(contacts)
+          .values({
+            workspaceId: wsId,
+            properties: { max_link: link, full_name: `MAX: ${tokenShort}…` },
+            createdBy: userId,
+          })
+          .returning({ id: contacts.id });
+        contactId = created?.id ?? null;
+      }
+    }
     if (!contactId && body.username) {
       const uname = extractUsername(body.username);
       if (!uname) {
@@ -1409,7 +1462,14 @@ app.openapi(
 // Pagination: from_message_id=0 на первой странице (TDLib возвращает с
 // last сообщения). На дальнейших передаём id последнего полученного.
 const ChannelHistoryQuery = z.object({
-  fromMessageId: z.coerce.number().int().nonnegative().optional(),
+  // string, не number: MAX-id сообщений > MAX_SAFE_INTEGER (≈1.16e17) — coerce
+  // в number валит валидацию (too_big) и теряет точность. regex ^\d+$ держит
+  // инвариант «неотрицательное целое» на краю (режет abc/-5 → 400), но без
+  // safe-int-кэпа. TG-ветка парсит Number() сама, MAX-ветка отдаёт [].
+  fromMessageId: z
+    .string()
+    .regex(/^\d+$/)
+    .optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 const ChannelHistoryReaction = z.object({
@@ -1431,6 +1491,9 @@ const ChannelHistoryItem = z.object({
       height: z.number().int(),
     })
     .nullable(),
+  // Прямой CDN-URL медиа (MAX). TG отдаёт байты через post-media/{id} прокси,
+  // поэтому для TG здесь null — рендер выбирает источник по наличию mediaUrl.
+  mediaUrl: z.string().nullable(),
   // messageInteractionInfo (td_api.tl:2730). У постов в каналах view_count
   // почти всегда есть; forward_count и replies — опционально (репост только
   // если кто-то форварднул, replies — только если у канала есть linked-чат).
@@ -1467,6 +1530,26 @@ app.openapi(
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
     const channel = await assertChannelAccess(id, wsId);
+
+    // MAX: лента постов через CHAT_HISTORY (тот же контракт ответа, что TG).
+    // Пагинация по времени пока не делаем — на 2-й странице (fromMessageId)
+    // отдаём пусто. v1: последние N постов.
+    if (channel.platform === "max") {
+      if (!channel.externalId) {
+        throw new HTTPException(412, {
+          message: "channel not synced yet — POST /sync first",
+        });
+      }
+      if (fromMessageId) return c.json({ messages: [] });
+      const picked = await pickMaxClient(wsId, userId, role);
+      if (!picked) {
+        throw new HTTPException(412, {
+          message: "no active MAX account available",
+        });
+      }
+      const messages = await fetchMaxPosts(picked.client, channel.externalId, limit);
+      return c.json({ messages });
+    }
 
     if (channel.platform !== "telegram") {
       throw new HTTPException(400, {
@@ -1564,7 +1647,7 @@ app.openapi(
         chatId,
         limit: deepMetrics ? METRICS_MAX_POSTS : limit,
         maxAgeMs: deepMetrics ? METRICS_WINDOW_MS : undefined,
-        fromMessageId,
+        fromMessageId: fromMessageId ? Number(fromMessageId) : undefined,
       });
     } catch (e) {
       const cls = classifyResolveError(e);

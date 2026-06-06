@@ -111,27 +111,29 @@ function pickSearchCandidate(payload: unknown, slug: string): SearchCandidate | 
   );
 }
 
-// Резолвим id канала: точный externalId → LINK_INFO по ссылке (точно) →
-// PUBLIC_SEARCH по слагу (точное совпадение ссылки). Без угадывания.
-async function resolveMaxChatId(
+// Резолвим ref канала: точный externalId → LINK_INFO по ссылке (точно) →
+// PUBLIC_SEARCH по слагу. Возвращаем и chatId, и сам chat из LINK_INFO, если
+// он пришёл — для приватных join-инвайтов это единственное превью (id/title/
+// access/participantsCount) ДО вступления; CHAT_INFO без членства пуст.
+async function resolveMaxChatRef(
   client: MaxClient,
   channel: typeof channels.$inferSelect,
-): Promise<string> {
-  if (channel.externalId) return channel.externalId;
+): Promise<{ chatId: string; linkChat: Record<string, unknown> | null }> {
+  if (channel.externalId) return { chatId: channel.externalId, linkChat: null };
 
   const link = channelMaxLink(channel);
   if (link) {
     const res = await client.linkInfo(link);
     const chat = rec(rec(res.payload)?.chat);
     const id = chat && negativeChatId(chat);
-    if (id) return id;
+    if (id) return { chatId: id, linkChat: chat };
   }
 
   const slug = slugFromChannel(channel);
   if (slug) {
     const res = await client.publicSearch(slug, { count: 20 });
     const cand = pickSearchCandidate(res.payload, slug);
-    if (cand) return String(cand.chatId);
+    if (cand) return { chatId: String(cand.chatId), linkChat: null };
   }
 
   throw new Error(
@@ -139,19 +141,20 @@ async function resolveMaxChatId(
   );
 }
 
-// Резолвим в сырой chat-объект: id → CHAT_INFO (канонические полные поля:
-// подписчики, messagesCount, ссылка, аватар).
+// Резолвим в сырой chat-объект: CHAT_INFO по id (канонические полные поля:
+// подписчики, messagesCount, аватар). Для приватного канала без членства
+// CHAT_INFO пуст — тогда отдаём превью из LINK_INFO (его хватает на карточку +
+// определить access=PRIVATE для кнопки «Вступить»).
 async function resolveMaxChat(
   client: MaxClient,
   channel: typeof channels.$inferSelect,
 ): Promise<Record<string, unknown>> {
-  const chatId = await resolveMaxChatId(client, channel);
+  const { chatId, linkChat } = await resolveMaxChatRef(client, channel);
   const info = await client.chatsInfo([chatId]);
   const chat = extractChats(info.payload)[0];
-  if (!chat || !negativeChatId(chat)) {
-    throw new Error(`MAX: CHAT_INFO пуст для chatId=${chatId}`);
-  }
-  return chat;
+  if (chat && negativeChatId(chat)) return chat;
+  if (linkChat) return linkChat;
+  throw new Error(`MAX: CHAT_INFO пуст для chatId=${chatId}`);
 }
 
 // Окно охвата из последних сообщений: медиана просмотров (stats.views), ER
@@ -174,6 +177,93 @@ async function fetchReach(client: MaxClient, chatId: string): Promise<ReachWindo
     vids.push({ views, likes: reactions, createdAt: time ? new Date(time) : undefined });
   }
   return computeReach(vids, Date.now());
+}
+
+export type MaxPost = {
+  id: string;
+  date: string;
+  text: string;
+  entities: never[];
+  mediaThumb: null;
+  media: { kind: "photo" | "video"; width: number; height: number } | null;
+  // Прямой CDN-URL картинки/постера (okcdn.ru/oneme.ru) — MAX отдаёт ссылкой,
+  // прокси не нужен. null = медиа нет (TG-посты тоже null, рендер по mediaUrl).
+  mediaUrl: string | null;
+  views: number | null;
+  forwards: null;
+  replies: null;
+  reactions: { emoji: string; count: number }[];
+  isForwarded: boolean;
+};
+
+// Медиа из attaches MAX-сообщения. PHOTO → baseUrl/url; VIDEO → thumbnail
+// (постер; видео не проигрываем, показываем кадр). Shape снят с исходников
+// web.max.ru + живого RT. previewData (инлайн WebP-блюр) пока не используем.
+function extractMaxMedia(msg: Record<string, unknown>): {
+  media: { kind: "photo" | "video"; width: number; height: number } | null;
+  mediaUrl: string | null;
+} {
+  const atts = (Array.isArray(msg.attaches) ? msg.attaches : [])
+    .map(rec)
+    .filter((a): a is Record<string, unknown> => !!a);
+  const att = atts.find((a) => a._type === "PHOTO" || a._type === "VIDEO");
+  if (!att) return { media: null, mediaUrl: null };
+  const str = (v: unknown) => (typeof v === "string" ? v : null);
+  const isVideo = att._type === "VIDEO";
+  const url = isVideo ? str(att.thumbnail) : (str(att.baseUrl) ?? str(att.url));
+  if (!url) return { media: null, mediaUrl: null };
+  return {
+    media: {
+      kind: isVideo ? "video" : "photo",
+      width: toInt(att.width) ?? 0,
+      height: toInt(att.height) ?? 0,
+    },
+    mediaUrl: url,
+  };
+}
+
+// Лента постов MAX: CHAT_HISTORY → формат ChannelHistoryItem (тот же контракт,
+// что TG /history, чтобы PostsFeed рендерил без ветвлений). MAX отдаёт
+// text/stats.views/reactionInfo.totalCount/time + медиа в attaches. Реакции —
+// агрегат totalCount одним значком; forwards/replies/entities — пустые.
+export async function fetchMaxPosts(
+  client: MaxClient,
+  chatId: string,
+  limit: number,
+): Promise<MaxPost[]> {
+  const res = await client.chatHistory(chatId, {
+    backward: limit,
+    getMessages: true,
+  });
+  const msgs = ((rec(res.payload)?.messages as unknown[] | undefined) ?? [])
+    .map(rec)
+    .filter((m): m is Record<string, unknown> => !!m);
+  const posts: MaxPost[] = [];
+  for (const m of msgs) {
+    // Без id нет стабильного React-key — пропускаем (иначе key="" коллизит).
+    if (m.id == null) continue;
+    const time = toInt(m.time);
+    const total = toInt(rec(m.reactionInfo)?.totalCount) ?? 0;
+    const { media, mediaUrl } = extractMaxMedia(m);
+    posts.push({
+      id: String(m.id),
+      // time=0/мусор → берём now, иначе localeCompare сослал бы пост в 1970.
+      date: new Date(time && time > 0 ? time : Date.now()).toISOString(),
+      text: typeof m.text === "string" ? m.text : "",
+      entities: [],
+      mediaThumb: null,
+      media,
+      mediaUrl,
+      views: toInt(rec(m.stats)?.views),
+      forwards: null,
+      replies: null,
+      reactions: total > 0 ? [{ emoji: "❤️", count: total }] : [],
+      isForwarded: false,
+    });
+  }
+  // Свежие сверху, как в TG-ленте.
+  posts.sort((a, b) => b.date.localeCompare(a.date));
+  return posts;
 }
 
 // CHAT_INFO/PUBLIC_SEARCH chat → нормализованный ChannelProfile.
@@ -295,7 +385,9 @@ export async function syncMaxChannelsBatch(
   for (const ch of rows) {
     let id: string | null = ch.externalId;
     if (!id) {
-      id = await resolveMaxChatId(client, ch).catch(() => null);
+      id = await resolveMaxChatRef(client, ch)
+        .then((r) => r.chatId)
+        .catch(() => null);
     }
     if (id) byId.set(id, ch);
     else unresolved++;
