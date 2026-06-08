@@ -29,6 +29,7 @@ import {
 import { substituteVariables } from "../lib/substitute-variables.ts";
 import { pickDefined } from "../lib/pick-defined.ts";
 import { extractUsername } from "../lib/tg-username.ts";
+import { parseChannelInput } from "@repo/core";
 import {
   detectChannelPlatform,
   fetchProviderPost,
@@ -583,6 +584,9 @@ app.openapi(
     // Ключ дедупа — platform + нормализованный идентификатор.
     type ParsedAdd =
       | { platform: "telegram"; key: string; uname: string }
+      // Приватный TG-канал по инвайт-ссылке (t.me/+abc): @username нет, заводим
+      // болванку по link; админа/мету подтянет drawer/sync после вступления.
+      | { platform: "telegram"; key: string; link: string }
       | { platform: "youtube" | "tiktok" | "dzen"; key: string; link: string };
     let skippedInvalid = 0;
     const seen = new Set<string>();
@@ -592,11 +596,21 @@ app.openapi(
       let entry: ParsedAdd | null;
       if (platform === "telegram") {
         const uname = extractUsername(raw);
-        if (!uname) {
-          skippedInvalid++;
-          continue;
+        if (uname) {
+          entry = { platform, key: `telegram:${uname}`, uname };
+        } else {
+          // Не @username — пробуем инвайт-ссылку приватного канала.
+          const { inviteLink } = parseChannelInput(raw);
+          if (!inviteLink) {
+            skippedInvalid++;
+            continue;
+          }
+          entry = {
+            platform,
+            key: `telegram:invite:${inviteLink.toLowerCase()}`,
+            link: inviteLink,
+          };
         }
-        entry = { platform, key: `telegram:${uname}`, uname };
       } else {
         const link = raw.trim();
         entry = { platform, key: `${platform}:${link.toLowerCase()}`, link };
@@ -612,11 +626,12 @@ app.openapi(
     const insertedItems: InsertedPlacement[] = [];
 
     for (const a of adds) {
-      // find-or-create канал: TG по lower(username), провайдер по lower(link).
-      const matchCh =
-        a.platform === "telegram"
-          ? sql`lower(${channels.username}) = ${a.uname}`
-          : sql`lower(${channels.link}) = ${a.link.toLowerCase()}`;
+      // find-or-create канал: публичный TG по lower(username), остальное (провайдер
+      // + приватный TG по инвайт-ссылке) — по lower(link).
+      const byUsername = "uname" in a;
+      const matchCh = byUsername
+        ? sql`lower(${channels.username}) = ${a.uname}`
+        : sql`lower(${channels.link}) = ${a.link.toLowerCase()}`;
       let [ch] = await db
         .select({ id: channels.id })
         .from(channels)
@@ -632,7 +647,7 @@ app.openapi(
         const [created] = await db
           .insert(channels)
           .values(
-            a.platform === "telegram"
+            byUsername
               ? {
                   workspaceId: wsId,
                   title: `@${a.uname}`,
@@ -642,8 +657,8 @@ app.openapi(
                 }
               : {
                   workspaceId: wsId,
-                  // title — заглушка по ссылке; sync провайдера перезапишет.
-                  title: a.link,
+                  // title — заглушка; sync провайдера / drawer перезапишет.
+                  title: a.platform === "telegram" ? "Приватный канал" : a.link,
                   link: a.link,
                   platform: a.platform,
                   createdBy: userId,
