@@ -198,12 +198,6 @@ const PlacementSchema = z
   })
   .openapi("Placement");
 
-const CreatePlacementBody = z
-  .object({
-    channelId: z.string().min(1).max(64),
-  })
-  .openapi("CreatePlacement");
-
 const UpdatePlacementBody = z
   .object({
     available: z.boolean().nullable().optional(),
@@ -466,69 +460,6 @@ async function scheduleDolivka(opts: {
     leads,
   });
 }
-
-app.openapi(
-  createRoute({
-    method: "post",
-    path: "/v1/workspaces/{wsId}/projects/{projectId}/placements",
-    tags: ["campaigns"],
-    request: {
-      params: WsProjectParam,
-      body: {
-        content: { "application/json": { schema: CreatePlacementBody } },
-        required: true,
-      },
-    },
-    responses: {
-      201: {
-        content: { "application/json": { schema: PlacementSchema } },
-        description: "Created",
-      },
-    },
-  }),
-  async (c) => {
-    const wsId = c.get("workspaceId");
-    const userId = c.get("userId");
-    const role = c.get("workspaceRole");
-    const { projectId } = c.req.valid("param");
-    const { channelId } = c.req.valid("json");
-    const project = await assertProjectAccess(projectId, wsId, userId, role);
-    // До вставки: на активной кампании проверяем, что доливку есть чем слать.
-    const dolivkaAccounts = await dolivkaAccountsOrThrow(wsId, project);
-
-    const [channel] = await db
-      .select({ id: channels.id })
-      .from(channels)
-      .where(and(eq(channels.id, channelId), eq(channels.workspaceId, wsId)))
-      .limit(1);
-    if (!channel) throw new HTTPException(404, { message: "channel not found" });
-
-    const admin = await resolveAdminRecipient(channelId);
-    const [row] = await db
-      .insert(projectItems)
-      .values({
-        workspaceId: wsId,
-        projectId,
-        channelId,
-        contactId: admin.contactId,
-        username: admin.username,
-        tgUserId: admin.tgUserId,
-      })
-      .returning();
-
-    if (dolivkaAccounts && row) {
-      await scheduleDolivka({
-        wsId,
-        project,
-        accountIds: dolivkaAccounts,
-        inserted: [row],
-      });
-    }
-
-    const placement = await loadPlacement(row!.id);
-    return c.json(placement!, 201);
-  },
-);
 
 // Массовое добавление: по одному URL/@username на строку. Канал, которого нет
 // в базе, заводим болванкой (title=@username) — реальные title/подписчики

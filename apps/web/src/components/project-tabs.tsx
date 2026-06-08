@@ -43,13 +43,11 @@ export function ProjectTabs(props: {
           )}
           {rightSlot && <div className="ml-auto">{rightSlot}</div>}
         </div>
-        {/* В draft канбан и список пусты — пока проект не запустили,
-            смотреть там нечего. Показываем только «Настройки», чтобы
-            юзер не путался. */}
-        {seq.data?.status === "draft" ? (
-          <div className="h-2" />
-        ) : (
-          <nav className="-mb-px flex items-center gap-1 text-sm">
+        {/* «Список» — рабочий список каналов проекта (добавление каналов
+            живёт там), нужен и в черновике. «Канбан» в черновике пуст
+            (стадий ещё нет) — показываем его только после запуска. */}
+        <nav className="-mb-px flex items-center gap-1 text-sm">
+          {seq.data && seq.data.status !== "draft" && (
             <Tab
               to="/w/$wsId/projects/$projectId/kanban"
               wsId={wsId}
@@ -58,23 +56,23 @@ export function ProjectTabs(props: {
               label="Канбан"
               onClick={() => rememberLastProjectView(projectId, "kanban")}
             />
-            <Tab
-              to="/w/$wsId/projects/$projectId/leads"
-              wsId={wsId}
-              projectId={projectId}
-              active={isLeads}
-              label="Список"
-              onClick={() => rememberLastProjectView(projectId, "leads")}
-            />
-            <Tab
-              to="/w/$wsId/projects/$projectId"
-              wsId={wsId}
-              projectId={projectId}
-              active={isSettings}
-              label="Настройки"
-            />
-          </nav>
-        )}
+          )}
+          <Tab
+            to="/w/$wsId/projects/$projectId/leads"
+            wsId={wsId}
+            projectId={projectId}
+            active={isLeads}
+            label="Список"
+            onClick={() => rememberLastProjectView(projectId, "leads")}
+          />
+          <Tab
+            to="/w/$wsId/projects/$projectId"
+            wsId={wsId}
+            projectId={projectId}
+            active={isSettings}
+            label="Настройки"
+          />
+        </nav>
       </div>
     </div>
   );

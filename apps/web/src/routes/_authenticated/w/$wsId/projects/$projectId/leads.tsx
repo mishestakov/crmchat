@@ -152,7 +152,8 @@ function LeadsPage() {
       <ProjectTabs wsId={wsId} projectId={projectId} />
       <div className="mx-auto w-full max-w-6xl space-y-4 px-6">
         <div className="flex flex-wrap items-center gap-3">
-          {seq.data?.status !== "done" && (
+          {seq.data?.status !== "done" &&
+            seq.data?.status !== "archived" && (
             <button
               type="button"
               onClick={() => setShowAddChannels(true)}

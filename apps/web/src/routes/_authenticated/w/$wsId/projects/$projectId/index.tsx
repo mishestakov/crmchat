@@ -37,7 +37,6 @@ import {
 import { OUTREACH_QK, invalidateProject } from "../../../../../../lib/query-keys";
 import { substituteVariables } from "../../../../../../lib/substitute-variables";
 import { TEMPLATE_VARIABLES } from "../../../../../../lib/template-variables";
-import { AddChannelsModal } from "../../../../../../components/add-channels-modal";
 
 export const Route = createFileRoute(
   "/_authenticated/w/$wsId/projects/$projectId/",
@@ -59,19 +58,6 @@ function SequenceDetailPage() {
   const seq = useProject(wsId, projectId);
   const accountsQ = useOutreachAccounts(wsId);
 
-  const leadsQ = useQuery({
-    queryKey: OUTREACH_QK.projectLeads(wsId, projectId),
-    queryFn: async () => {
-      const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/projects/{projectId}/leads",
-        {
-          params: { path: { wsId, projectId }, query: { limit: 1, offset: 0 } },
-        },
-      );
-      if (error) throw error;
-      return data;
-    },
-  });
 
   const analyticsQ = useQuery({
     queryKey: OUTREACH_QK.projectAnalytics(wsId, projectId, 30),
@@ -132,7 +118,6 @@ function SequenceDetailPage() {
   const [showDelete, setShowDelete] = useState(false);
   const [editingStages, setEditingStages] = useState(false);
   const [showSaveAsTemplate, setShowSaveAsTemplate] = useState(false);
-  const [showAddChannels, setShowAddChannels] = useState(false);
 
   useEffect(() => {
     if (!seq.data) return;
@@ -263,7 +248,6 @@ function SequenceDetailPage() {
   }
 
   const data = seq.data;
-  const leadsCount = leadsQ.data?.total ?? 0;
   const sortedStages = [...data.stages].sort((a, b) => a.order - b.order);
   const accountsSummary = buildAccountsSummary(data, accountsQ.data ?? []);
   const crmSummary = buildCrmSummary(data);
@@ -403,34 +387,6 @@ function SequenceDetailPage() {
           </Link>
         </Section>
 
-        {/* === 3. База лидов === */}
-        <Section header="База">
-          <Link
-            to="/w/$wsId/projects/$projectId/leads"
-            params={{ wsId, projectId }}
-          >
-            <SectionItem withChevron>
-              <SectionItemTitle>Каналы</SectionItemTitle>
-              <SectionItemValue>
-                {leadsCount} {pluralize(leadsCount, "канал", "канала", "каналов")}
-              </SectionItemValue>
-            </SectionItem>
-          </Link>
-
-          {!isDone && (
-            <button
-              type="button"
-              onClick={() => setShowAddChannels(true)}
-              className="block w-full text-left hover:bg-zinc-50"
-            >
-              <SectionItem withChevron>
-                <SectionItemTitle>Добавить каналы</SectionItemTitle>
-                <SectionItemValue>+ ещё площадок</SectionItemValue>
-              </SectionItem>
-            </button>
-          )}
-        </Section>
-
         {/* === Section: статистика — для всех статусов кроме draft === */}
         {!isDraft && (
           <Section header="Статистика">
@@ -558,15 +514,6 @@ function SequenceDetailPage() {
           projectId={projectId}
           initial={[...data.stages].sort((a, b) => a.order - b.order)}
           onClose={() => setEditingStages(false)}
-        />
-      )}
-
-      {showAddChannels && (
-        <AddChannelsModal
-          wsId={wsId}
-          projectId={projectId}
-          onClose={() => setShowAddChannels(false)}
-          onAdded={() => invalidateProject(qc, wsId, projectId, { leads: true })}
         />
       )}
 
