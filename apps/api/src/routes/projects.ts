@@ -30,7 +30,7 @@ import {
 } from "../lib/projects-access.ts";
 import {
   assignContactDefaultsAtLaunch,
-  channelIdentifier,
+  prepareLeads,
   resolveProjectAccountIds,
   resolveStickyByTgUserIds,
   scheduleLeads,
@@ -1498,36 +1498,37 @@ app.openapi(
       .select({
         id: projectItems.id,
         username: projectItems.username,
+        tgUserId: projectItems.tgUserId,
         properties: projectItems.properties,
-        channelTitle: channels.title,
-        channelUsername: channels.username,
-        channelLink: channels.link,
-        channelPlatform: channels.platform,
       })
       .from(projectItems)
-      .leftJoin(channels, eq(channels.id, projectItems.channelId))
       .where(eq(projectItems.projectId, project.id))
       .limit(1)
       .offset(Math.floor(Math.random() * cnt));
     if (!row) return c.json(null);
-    // Синтезируем канало-переменные тем же channelIdentifier, что prepareLeads
-    // на активации — превью подстановки совпадает с реальной отправкой.
-    const channelVars: Record<string, string> = {};
-    if (row.channelPlatform) {
-      const { ident, link } = channelIdentifier({
-        platform: row.channelPlatform,
-        username: row.channelUsername,
-        title: row.channelTitle,
-        link: row.channelLink,
-      });
-      channelVars.каналы = ident;
-      channelVars.канал = row.channelTitle ?? ident;
-      if (link) channelVars.ссылка = link;
-    }
+    // Превью = реальная отправка: прогоняем сэмпл через тот же prepareLeads, что
+    // и активация — он синтезирует {{каналы}} (все каналы админа), {{канал}},
+    // {{ссылка}}. prepareLeads вернёт [] для бота/без-@username → fallback на
+    // голые properties (превью без канало-переменных).
+    const [prepared] = await prepareLeads({
+      projectId: project.id,
+      leads: [
+        {
+          id: row.id,
+          username: row.username,
+          tgUserId: row.tgUserId,
+          properties: (row.properties ?? {}) as Record<string, unknown>,
+        },
+      ],
+      skipContacted: false,
+    });
     return c.json({
       id: row.id,
       username: row.username,
-      properties: { ...row.properties, ...channelVars },
+      properties: (prepared?.properties ?? row.properties) as Record<
+        string,
+        string
+      >,
     });
   },
 );

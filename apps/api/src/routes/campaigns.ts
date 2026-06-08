@@ -398,6 +398,13 @@ async function dolivkaAccountsOrThrow(
   wsId: string,
   project: typeof projects.$inferSelect,
 ): Promise<string[] | null> {
+  // В завершённую/архивную кампанию добавлять каналы нельзя — цепочка отыграна,
+  // размещение осталось бы orphan'ом без рассылки.
+  if (project.status === "done" || project.status === "archived") {
+    throw new HTTPException(400, {
+      message: "Кампания завершена — добавлять каналы нельзя",
+    });
+  }
   if (project.status !== "active" && project.status !== "paused") return null;
   if (project.messages.length === 0) {
     throw new HTTPException(400, {
