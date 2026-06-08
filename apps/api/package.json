@@ -14,14 +14,14 @@
     "@hono/zod-openapi": "^1.4.0",
     "@repo/core": "workspace:*",
     "drizzle-orm": "^0.45.2",
-    "hono": "^4.12.23",
+    "hono": "^4.12.24",
     "postgres": "^3.4.9",
     "prebuilt-tdlib": "^0.1008064.0",
     "tdl": "^8.1.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/node": "^24.12.4",
+    "@types/node": "^24.13.1",
     "drizzle-kit": "^0.31.10",
     "typescript": "^6.0.3"
   }

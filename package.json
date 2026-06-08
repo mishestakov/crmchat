@@ -13,7 +13,7 @@
     "typecheck": "turbo run typecheck"
   },
   "devDependencies": {
-    "turbo": "^2.9.15",
+    "turbo": "^2.9.16",
     "typescript": "^6.0.3"
   },
   "pnpm": {
