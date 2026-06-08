@@ -18,7 +18,8 @@ export function AddChannelsModal(props: {
   projectId: string;
   onClose: () => void;
   title?: string;
-  unit?: (n: number) => string;
+  // Существительное во множественном для счётчика («каналов»/«блогеров»).
+  unit?: string;
   onAdded?: () => void;
 }) {
   const {
@@ -26,7 +27,7 @@ export function AddChannelsModal(props: {
     projectId,
     onClose,
     title = "Добавить каналы",
-    unit = (n) => `${n} каналов`,
+    unit = "каналов",
     onAdded,
   } = props;
   const qc = useQueryClient();
@@ -99,7 +100,9 @@ export function AddChannelsModal(props: {
             <p className="mt-2 text-sm text-red-600">{errorMessage(add.error)}</p>
           )}
           <div className="mt-4 flex items-center justify-between">
-            <span className="text-xs text-zinc-500">{unit(bulkLines.length)}</span>
+            <span className="text-xs text-zinc-500">
+              {bulkLines.length} {unit}
+            </span>
             <div className="flex gap-2">
               <button
                 type="button"

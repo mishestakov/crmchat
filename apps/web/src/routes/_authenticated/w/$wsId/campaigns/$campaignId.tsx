@@ -634,7 +634,7 @@ function LonglistPhase({
           projectId={projectId}
           onClose={() => setAddOpen(false)}
           title="Добавить блогеров в лонглист"
-          unit={(n) => `${n} блогеров`}
+          unit="блогеров"
           onAdded={() => {
             qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] });
             qc.invalidateQueries({ queryKey: ["campaign", wsId, projectId] });

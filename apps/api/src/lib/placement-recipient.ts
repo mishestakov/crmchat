@@ -32,9 +32,7 @@ export async function healPlacementRecipients(
 ): Promise<void> {
   const admin = await resolveAdminRecipient(channelId);
   if (!admin.contactId) return;
-  const base = and(
-    eq(projectItems.channelId, channelId),
-  );
+  const base = eq(projectItems.channelId, channelId);
   await db
     .update(projectItems)
     .set({
@@ -52,9 +50,5 @@ export async function clearPlacementRecipients(channelId: string): Promise<void>
   await db
     .update(projectItems)
     .set({ contactId: null, username: null, tgUserId: null })
-    .where(
-      and(
-        eq(projectItems.channelId, channelId),
-      ),
-    );
+    .where(eq(projectItems.channelId, channelId));
 }
