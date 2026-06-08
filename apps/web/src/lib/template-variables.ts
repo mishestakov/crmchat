@@ -1,40 +1,29 @@
-import type { paths } from "@repo/api-client";
 import type { VariableOption } from "../components/variable-textarea";
 import { PLACEHOLDER_RE } from "./substitute-variables";
 
-// Источники переменных шаблона рассылки. Бэк substituteVariables берёт:
-//   1) lead.properties[key] — снимок CSV-строки под raw header'ами.
-//   2) canonical scalar `username` — TG @-handle, не в properties.
-// Список variables для UI зеркалит CSV-колонки прошлых импортов.
+// Переменные шаблона рассылки. Бэк substituteVariables берёт их из
+// lead.properties + canonical `username`. В канало-центричной схеме значения
+// синтезируются из базы каналов на активации (prepareLeads): один опенер на
+// админа, поэтому доступны @-handle админа и идентификаторы его каналов.
+// Произвольные ключи юзер тоже может вписать — они подсветятся как unknown,
+// если их нет в lead.properties.
 
 export const CANONICAL: VariableOption = {
   key: "username",
-  label: "@-handle Telegram",
+  label: "@-handle админа",
 };
 
-type ProjectImport =
-  paths["/v1/workspaces/{wsId}/projects/{projectId}/imports"]["get"]["responses"][200]["content"]["application/json"][number];
+// Из базы каналов (см. apps/api/.../project-scheduling.ts → prepareLeads).
+export const CHANNEL_VARIABLES: VariableOption[] = [
+  { key: "каналы", label: "все каналы админа (список)" },
+  { key: "канал", label: "название канала" },
+  { key: "ссылка", label: "ссылка на канал" },
+];
 
-// Все CSV-headers из импортов проекта — под теми же именами что в файле.
-// Identifier-колонку (usernameColumn) исключаем: её значение доступно как
-// canonical {{username}}, дубль в jsonb не делаем.
-export function buildVariablesFromImports(
-  imports: ProjectImport[] | undefined,
-): VariableOption[] {
-  const seen = new Set<string>();
-  const options: VariableOption[] = [];
-  for (const imp of imports ?? []) {
-    const sm = imp.sourceMeta;
-    for (const col of sm.columns ?? []) {
-      if (col === sm.usernameColumn) continue;
-      const k = col.toLowerCase();
-      if (seen.has(k)) continue;
-      seen.add(k);
-      options.push({ key: col });
-    }
-  }
-  return [CANONICAL, ...options];
-}
+export const TEMPLATE_VARIABLES: VariableOption[] = [
+  CANONICAL,
+  ...CHANNEL_VARIABLES,
+];
 
 export function extractUnknownVariables(
   text: string,

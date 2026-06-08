@@ -231,6 +231,14 @@ const seedContacts: (typeof contacts.$inferInsert)[] = [];
 // встречается в нескольких проектах, второй лид цепляется за того же contact.
 // Это правило 5A — partial unique по (workspace, lower(@)) на уровне БД.
 const contactByWsUsername = new Map<string, string>();
+// Канало-центричная модель: каждый блогер демо = канал с этим блогером-админом.
+// buildLeads заводит каналы и channel_admins (как seedRealChannels, но для
+// демо-персон). Дедуп по ws:lower(username), накапливаем и INSERT'им перед
+// project_items (FK на channel_id). Username демо-блогеров не пересекаются с
+// TOP_CHANNELS (проверено) — конфликта unique(ws,platform,username) нет.
+const seedChannels: (typeof channels.$inferInsert)[] = [];
+const seedChannelAdmins: (typeof channelAdmins.$inferInsert)[] = [];
+const channelByWsUsername = new Map<string, string>();
 
 function buildLeads(
   projectId: string,
@@ -270,11 +278,31 @@ function buildLeads(
         createdBy: ownerUserId,
       });
     }
+    // Канал блогера: дедуп по ws:lower(username) (тот же блогер в разных
+    // проектах → один канал, placement'ы цепляются за него). channel_admins
+    // линкуем при первом создании канала (контакт-админ = тот же блогер).
+    const chKey = `${workspaceId}:${s.username.toLowerCase()}`;
+    let channelId = channelByWsUsername.get(chKey) ?? null;
+    if (!channelId) {
+      channelId = `chl_${workspaceId}_${s.username.toLowerCase()}`;
+      channelByWsUsername.set(chKey, channelId);
+      seedChannels.push({
+        id: channelId,
+        workspaceId,
+        platform: "telegram",
+        username: s.username,
+        title: s.full_name,
+        link: `https://t.me/${s.username}`,
+        createdBy: ownerUserId,
+      });
+      seedChannelAdmins.push({ channelId, contactId });
+    }
     return {
       id: lid,
       workspaceId,
       projectId,
-      kind: "lead" as const,
+      kind: "placement" as const,
+      channelId,
       stageId: s.stageId,
       username: s.username,
       tgUserId: tg,
@@ -462,6 +490,21 @@ if (sashaSeedContacts.length > 0) {
     .insert(contacts)
     .values(sashaSeedContacts)
     .onConflictDoNothing({ target: contacts.id });
+}
+
+// Каналы блогеров + channel_admins (перед project_items — FK на channel_id).
+const sashaSeedChannels = seedChannels.filter((c) => c.workspaceId === SASHA_WS);
+if (sashaSeedChannels.length > 0) {
+  await db
+    .insert(channels)
+    .values(sashaSeedChannels)
+    .onConflictDoNothing({ target: channels.id });
+  await db
+    .insert(channelAdmins)
+    .values(
+      seedChannelAdmins.filter((a) => a.channelId.startsWith(`chl_${SASHA_WS}_`)),
+    )
+    .onConflictDoNothing();
 }
 
 await db
@@ -766,6 +809,20 @@ if (cppSeedContacts.length > 0) {
     .insert(contacts)
     .values(cppSeedContacts)
     .onConflictDoNothing({ target: contacts.id });
+}
+
+const cppSeedChannels = seedChannels.filter((c) => c.workspaceId === CPP_WS);
+if (cppSeedChannels.length > 0) {
+  await db
+    .insert(channels)
+    .values(cppSeedChannels)
+    .onConflictDoNothing({ target: channels.id });
+  await db
+    .insert(channelAdmins)
+    .values(
+      seedChannelAdmins.filter((a) => a.channelId.startsWith(`chl_${CPP_WS}_`)),
+    )
+    .onConflictDoNothing();
 }
 
 await db

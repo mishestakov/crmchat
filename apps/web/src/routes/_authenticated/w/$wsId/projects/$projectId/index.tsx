@@ -1,6 +1,6 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -36,7 +36,8 @@ import {
 } from "../../../../../../lib/outreach-queries";
 import { OUTREACH_QK, invalidateProject } from "../../../../../../lib/query-keys";
 import { substituteVariables } from "../../../../../../lib/substitute-variables";
-import { buildVariablesFromImports } from "../../../../../../lib/template-variables";
+import { TEMPLATE_VARIABLES } from "../../../../../../lib/template-variables";
+import { AddChannelsModal } from "../../../../../../components/add-channels-modal";
 
 export const Route = createFileRoute(
   "/_authenticated/w/$wsId/projects/$projectId/",
@@ -123,28 +124,15 @@ function SequenceDetailPage() {
   // правятся на отдельных sub-routes.
   const [messages, setMessages] = useState<Message[]>([]);
 
-  // Список переменных для autocomplete — только CSV-колонки из импортов
-  // проекта (точное соответствие lead.properties) + canonical username.
-  const importsQ = useQuery({
-    queryKey: ["project-imports", wsId, projectId],
-    queryFn: async () => {
-      const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/projects/{projectId}/imports",
-        { params: { path: { wsId, projectId } } },
-      );
-      if (error) throw error;
-      return data;
-    },
-  });
-  const templateVariables = useMemo(
-    () => buildVariablesFromImports(importsQ.data),
-    [importsQ.data],
-  );
+  // Переменные autocomplete — canonical username + канало-переменные из базы
+  // (синтезируются на активации, см. prepareLeads). Статический список.
+  const templateVariables = TEMPLATE_VARIABLES;
   const [previewMsg, setPreviewMsg] = useState<Message | null>(null);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [editingStages, setEditingStages] = useState(false);
   const [showSaveAsTemplate, setShowSaveAsTemplate] = useState(false);
+  const [showAddChannels, setShowAddChannels] = useState(false);
 
   useEffect(() => {
     if (!seq.data) return;
@@ -422,23 +410,24 @@ function SequenceDetailPage() {
             params={{ wsId, projectId }}
           >
             <SectionItem withChevron>
-              <SectionItemTitle>Лиды</SectionItemTitle>
+              <SectionItemTitle>Каналы</SectionItemTitle>
               <SectionItemValue>
-                {leadsCount} {pluralize(leadsCount, "лид", "лида", "лидов")}
+                {leadsCount} {pluralize(leadsCount, "канал", "канала", "каналов")}
               </SectionItemValue>
             </SectionItem>
           </Link>
 
           {!isDone && (
-            <Link
-              to="/w/$wsId/projects/$projectId/import"
-              params={{ wsId, projectId }}
+            <button
+              type="button"
+              onClick={() => setShowAddChannels(true)}
+              className="block w-full text-left hover:bg-zinc-50"
             >
               <SectionItem withChevron>
-                <SectionItemTitle>Импортировать CSV</SectionItemTitle>
-                <SectionItemValue>+ ещё лидов</SectionItemValue>
+                <SectionItemTitle>Добавить каналы</SectionItemTitle>
+                <SectionItemValue>+ ещё площадок</SectionItemValue>
               </SectionItem>
-            </Link>
+            </button>
           )}
         </Section>
 
@@ -569,6 +558,20 @@ function SequenceDetailPage() {
           projectId={projectId}
           initial={[...data.stages].sort((a, b) => a.order - b.order)}
           onClose={() => setEditingStages(false)}
+        />
+      )}
+
+      {showAddChannels && (
+        <AddChannelsModal
+          wsId={wsId}
+          projectId={projectId}
+          onClose={() => setShowAddChannels(false)}
+          onAdded={() => {
+            qc.invalidateQueries({
+              queryKey: OUTREACH_QK.projectLeads(wsId, projectId),
+            });
+            qc.invalidateQueries({ queryKey: OUTREACH_QK.project(wsId, projectId) });
+          }}
         />
       )}
 

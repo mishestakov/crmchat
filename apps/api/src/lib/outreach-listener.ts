@@ -4,7 +4,6 @@ import {
   contacts,
   outreachAccounts,
   projectItems,
-  projectImports,
   properties as propsTable,
   scheduledMessages,
   tgChats,

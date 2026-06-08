@@ -21,12 +21,10 @@ import {
 import { assertProjectAccess } from "../lib/projects-access.ts";
 import {
   resolveStickyByTgUserIds,
-  resolveWarmTgUserIds,
   resolveProjectAccountIds,
-  buildScheduledRows,
-  prepareAgencyLeads,
+  scheduleLeads,
+  assignContactDefaultsAtLaunch,
   FINAL_OFFER_MSG_IDX,
-  type SchedulingLead,
 } from "../lib/project-scheduling.ts";
 import { substituteVariables } from "../lib/substitute-variables.ts";
 import { pickDefined } from "../lib/pick-defined.ts";
@@ -391,8 +389,8 @@ app.openapi(
 // ── Доливка размещений в активную кампанию ──────────────────────────────────
 // Если кампания уже active/paused, новые размещения должны сразу пойти в аутрич
 // по общей цепочке (project.messages), независимо от уже запущенных волн —
-// offset'ы цепочки считаются от now(). Это та же доливка, что в BD (этап 12.5
-// project-imports): переиспользуем общие хелперы project-scheduling.
+// offset'ы цепочки считаются от now(). Тот же общий конвейер scheduleLeads,
+// что и в активации (project-scheduling).
 //
 // dolivkaAccountsOrThrow вызывается ДО вставки размещений: если кампания активна,
 // но слать нечем (нет цепочки/аккаунтов) — 400 без частичного состояния. Для
@@ -421,6 +419,7 @@ type InsertedPlacement = {
   channelId: string | null;
   username: string | null;
   tgUserId: string | null;
+  contactId: string | null;
   properties: unknown;
 };
 
@@ -430,52 +429,35 @@ async function scheduleDolivka(opts: {
   accountIds: string[];
   inserted: InsertedPlacement[];
 }) {
-  // Agency: один опенер на админа + {{каналы}} + пропуск админов с уже начатым
-  // тредом (этап 16.8). BD: только размещения с адресатом (без получателя
-  // аутрич некуда слать — менеджер привяжет позже).
-  let leads: SchedulingLead[];
-  if (opts.project.kind === "agency") {
-    leads = await prepareAgencyLeads({
-      projectId: opts.project.id,
-      leads: opts.inserted.map((p) => ({
-        id: p.id,
-        username: p.username,
-        tgUserId: p.tgUserId,
-        properties: (p.properties ?? {}) as Record<string, unknown>,
-      })),
-      skipContacted: true,
-    });
-  } else {
-    leads = opts.inserted
-      .filter((p) => p.tgUserId !== null || p.username !== null)
-      .map((p) => ({
-        id: p.id,
-        username: p.username,
-        tgUserId: p.tgUserId,
-        properties: (p.properties ?? {}) as Record<string, unknown>,
-      }));
-  }
-  if (leads.length === 0) return;
-
-  const tgUserIds = leads
-    .map((l) => l.tgUserId)
-    .filter((x): x is string => x !== null);
-  const priorByTgUserId = await resolveStickyByTgUserIds(opts.wsId, tgUserIds);
-  const warmTgUserIds = await resolveWarmTgUserIds(opts.wsId, tgUserIds);
-
-  const rows = buildScheduledRows({
+  // Общий конвейер с активацией (scheduleLeads): дедуп по админу + синтез
+  // канало-vars + sticky/warm. skipContacted=true — повторный опенер уже
+  // начатым тредам не шлём; prepareLeads внутри отбрасывает размещения без
+  // получателя.
+  const { rows, leads } = await scheduleLeads({
     wsId: opts.wsId,
     project: opts.project,
     accountIds: opts.accountIds,
-    leads,
+    leads: opts.inserted.map((p) => ({
+      id: p.id,
+      username: p.username,
+      tgUserId: p.tgUserId,
+      contactId: p.contactId,
+      properties: (p.properties ?? {}) as Record<string, unknown>,
+    })),
     baseTime: new Date(),
-    priorByTgUserId,
-    warmTgUserIds,
+    skipContacted: true,
   });
   const CHUNK = 1000;
   for (let i = 0; i < rows.length; i += CHUNK) {
     await db.insert(scheduledMessages).values(rows.slice(i, i + CHUNK));
   }
+  // Распределение владельца — после вставки строк (best-effort, продолжает
+  // RR-счётчик проекта).
+  await assignContactDefaultsAtLaunch({
+    wsId: opts.wsId,
+    project: opts.project,
+    leads,
+  });
 }
 
 app.openapi(
