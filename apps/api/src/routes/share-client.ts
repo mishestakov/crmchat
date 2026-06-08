@@ -171,7 +171,6 @@ app.openapi(
       .where(
         and(
           eq(projectItems.projectId, share.projectId),
-          eq(projectItems.kind, "placement"),
           sql`${projectItems.shortlistedAt} IS NOT NULL`,
         ),
       )
@@ -258,7 +257,6 @@ app.openapi(
         and(
           eq(projectItems.id, placementId),
           eq(projectItems.projectId, share.projectId),
-          eq(projectItems.kind, "placement"),
           sql`${projectItems.shortlistedAt} IS NOT NULL`,
         ),
       )
@@ -290,7 +288,6 @@ app.openapi(
       .where(
         and(
           eq(projectItems.projectId, share.projectId),
-          eq(projectItems.kind, "placement"),
           sql`${projectItems.shortlistedAt} IS NOT NULL`,
           eq(projectItems.clientStatus, "pending"),
         ),
@@ -368,7 +365,6 @@ app.openapi(
         and(
           eq(projectItems.id, placementId),
           eq(projectItems.projectId, share.projectId),
-          eq(projectItems.kind, "placement"),
           sql`${projectItems.shortlistedAt} IS NOT NULL`,
         ),
       )
@@ -472,7 +468,6 @@ app.openapi(
       .where(
         and(
           eq(projectItems.projectId, share.projectId),
-          eq(projectItems.kind, "placement"),
           sql`${projectItems.shortlistedAt} IS NOT NULL`,
           sql`${projectItems.stepMessages} -> 'creative' IS NOT NULL`,
           inArray(projectItems.creativeStatus, CLIENT_CREATIVE_VISIBLE),
@@ -543,7 +538,6 @@ app.get(
         and(
           eq(projectItems.id, placementId),
           eq(projectItems.projectId, share.projectId),
-          eq(projectItems.kind, "placement"),
           sql`${projectItems.shortlistedAt} IS NOT NULL`,
         ),
       )
@@ -591,7 +585,6 @@ app.openapi(
         and(
           eq(projectItems.id, placementId),
           eq(projectItems.projectId, share.projectId),
-          eq(projectItems.kind, "placement"),
           sql`${projectItems.shortlistedAt} IS NOT NULL`,
           inArray(projectItems.creativeStatus, CLIENT_CREATIVE_STATUSES),
         ),
@@ -673,7 +666,6 @@ app.openapi(
       .where(
         and(
           eq(projectItems.projectId, share.projectId),
-          eq(projectItems.kind, "placement"),
           // Только реально вышедшие размещения медиаплана: одобрено клиентом +
           // в шортлисте + есть ссылка на пост (как отчёт менеджера в WrapupPhase).
           // Иначе отклонённое/недошортлиженное с проставленным post_url утекло бы

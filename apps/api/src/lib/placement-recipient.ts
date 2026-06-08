@@ -34,7 +34,6 @@ export async function healPlacementRecipients(
   if (!admin.contactId) return;
   const base = and(
     eq(projectItems.channelId, channelId),
-    eq(projectItems.kind, "placement"),
   );
   await db
     .update(projectItems)
@@ -56,7 +55,6 @@ export async function clearPlacementRecipients(channelId: string): Promise<void>
     .where(
       and(
         eq(projectItems.channelId, channelId),
-        eq(projectItems.kind, "placement"),
       ),
     );
 }

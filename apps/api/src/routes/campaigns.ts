@@ -372,7 +372,6 @@ app.openapi(
       .where(
         and(
           eq(projectItems.projectId, projectId),
-          eq(projectItems.kind, "placement"),
           stageClause,
         ),
       )
@@ -502,7 +501,6 @@ app.openapi(
       .values({
         workspaceId: wsId,
         projectId,
-        kind: "placement",
         channelId,
         contactId: admin.contactId,
         username: admin.username,
@@ -673,7 +671,6 @@ app.openapi(
           and(
             eq(projectItems.projectId, projectId),
             eq(projectItems.channelId, ch.id),
-            eq(projectItems.kind, "placement"),
           ),
         )
         .limit(1);
@@ -692,7 +689,6 @@ app.openapi(
         .values({
           workspaceId: wsId,
           projectId,
-          kind: "placement",
           channelId: ch.id,
           contactId: admin.contactId,
           username: admin.username,
@@ -810,7 +806,6 @@ app.openapi(
         and(
           eq(projectItems.id, placementId),
           eq(projectItems.projectId, projectId),
-          eq(projectItems.kind, "placement"),
         ),
       )
       .returning({ id: projectItems.id });
@@ -841,7 +836,6 @@ app.openapi(
         and(
           eq(projectItems.id, placementId),
           eq(projectItems.projectId, projectId),
-          eq(projectItems.kind, "placement"),
         ),
       )
       .returning({ id: projectItems.id });
@@ -906,7 +900,6 @@ app.openapi(
       .where(
         and(
           eq(projectItems.projectId, projectId),
-          eq(projectItems.kind, "placement"),
           eq(projectItems.clientStatus, "approved"),
           isNotNull(projectItems.shortlistedAt),
           sql`(${projectItems.username} IS NOT NULL OR ${projectItems.tgUserId} IS NOT NULL)`,
@@ -1032,7 +1025,6 @@ app.openapi(
       .where(
         and(
           eq(projectItems.projectId, projectId),
-          eq(projectItems.kind, "placement"),
           eq(projectItems.clientStatus, "approved"),
           isNotNull(projectItems.shortlistedAt),
           isNotNull(projectItems.postUrl),
@@ -1353,7 +1345,6 @@ app.openapi(
         and(
           eq(projectItems.id, placementId),
           eq(projectItems.projectId, projectId),
-          eq(projectItems.kind, "placement"),
         ),
       )
       .limit(1);
@@ -1396,7 +1387,6 @@ app.get(
         and(
           eq(projectItems.id, placementId),
           eq(projectItems.projectId, projectId),
-          eq(projectItems.kind, "placement"),
         ),
       )
       .limit(1);
@@ -1450,7 +1440,6 @@ app.openapi(
         and(
           eq(projectItems.id, placementId),
           eq(projectItems.projectId, projectId),
-          eq(projectItems.kind, "placement"),
         ),
       )
       .returning({ id: projectItems.id });
@@ -1481,7 +1470,6 @@ app.openapi(
         and(
           eq(projectItems.id, placementId),
           eq(projectItems.projectId, projectId),
-          eq(projectItems.kind, "placement"),
         ),
       )
       .returning({ id: projectItems.id });
@@ -1535,7 +1523,6 @@ app.openapi(
         and(
           eq(projectItems.id, placementId),
           eq(projectItems.projectId, projectId),
-          eq(projectItems.kind, "placement"),
         ),
       )
       .limit(1);

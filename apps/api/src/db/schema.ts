@@ -403,14 +403,11 @@ export const outreachAccountsMode = pgEnum("outreach_accounts_mode", [
 //     Project=инстанс программы за период, Item=лид.
 // (2) Агентство: Track=клиент (Coca-Cola), Project=кампания (Q4 Holiday),
 //     Item=размещение (channel × project × date).
-// Тип сущности задаёт workspace.mode (первичный тумблер сценария). У track'а
-// отдельного kind НЕТ — папка одинакова в обоих сценариях, mode уже всё разводит.
-// Соответствие: mode='bd' → outreach, mode='agency' → agency. Различие — в
-// обёртке воркфлоу (BD-канбан vs agency-визард), а несущий слой (канало-
-// центричные placement-айтемы → аутрич) общий: оба сценария ведут список
-// каналов, аутрич идёт на админа канала. См. specs/etap-16-agency.md §16.
-
-export const projectKind = pgEnum("project_kind", ["outreach", "agency"]);
+// Сценарий (bd/agency) — это workspace.mode; отдельного kind на project/track
+// НЕТ, он полностью выводим из mode (различие лишь в обёртке воркфлоу: BD-канбан
+// vs agency-визард). Несущий слой общий: оба сценария ведут список каналов,
+// аутрич идёт на админа канала (канало-центричные placement-айтемы). См.
+// specs/etap-16-agency.md §16.
 
 // draft → active ↔ paused → done → archived. archived проекты скрыты из
 // основного listing'а; вытащить из архива пока нельзя (или через прямой
@@ -422,13 +419,6 @@ export const projectStatus = pgEnum("project_status", [
   "done",
   "archived",
 ]);
-
-// Единственный вид айтема — placement (канал-в-проекте). Бывший 'lead'
-// (человеко-центричный CSV-блоб BD-режима) выпилен: BD теперь тоже канало-
-// центричный, получатель аутрича резолвится от админа канала. Дискриминатор
-// оставлен одним значением — все `kind='placement'`-фильтры остаются валидны;
-// удаление колонки целиком — отдельный проход (см. кандидатов на схлопывание).
-export const projectItemKind = pgEnum("project_item_kind", ["placement"]);
 
 // Фаза agency-кампании — стадия воронки в визарде (бриф → лонглист →
 // согласование → финальный оффер → производство → отчёт). Свободная
@@ -603,7 +593,6 @@ export const projects = pgTable(
       .notNull()
       .references(() => tracks.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
-    kind: projectKind("kind").notNull().default("outreach"),
     status: projectStatus("status").notNull().default("draft"),
     properties: jsonb("properties")
       .$type<Record<string, unknown>>()
@@ -703,7 +692,6 @@ export const projectItems = pgTable(
     projectId: text("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
-    kind: projectItemKind("kind").notNull().default("placement"),
     // Текущая стадия канбана. text — id из projects.stages[*].id, без FK
     // (stages — json на проекте). null = «без стадии», валидно для UI.
     stageId: text("stage_id"),

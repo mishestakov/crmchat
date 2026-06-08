@@ -372,17 +372,12 @@ app.openapi(
       initialMessages = tpl.messages;
     }
 
-    // kind проставляется автоматом из workspace.mode (см. db/schema.ts рядом
-    // с projectKind). bd → outreach, agency → agency. Юзер kind не выбирает.
-    const mode = c.get("workspaceMode");
-    const kind = mode === "agency" ? "agency" : "outreach";
     const [row] = await db
       .insert(projects)
       .values({
         workspaceId: wsId,
         trackId: body.trackId,
         name: body.name,
-        kind,
         stages: initialStages,
         messages: initialMessages,
         // agency brief-поля (для bd остаются null/default). numeric → string,

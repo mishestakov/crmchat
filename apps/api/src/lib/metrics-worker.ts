@@ -108,7 +108,6 @@ async function tick() {
       .leftJoin(channels, eq(channels.id, projectItems.channelId))
       .where(
         and(
-          eq(projectItems.kind, "placement"),
           eq(projectItems.metricsStatus, "pending"),
           isNotNull(projectItems.postUrl),
           tgCapped ? inArray(channels.platform, ["youtube", "tiktok"]) : undefined,

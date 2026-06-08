@@ -244,7 +244,6 @@ export async function prepareLeads(opts: {
     .where(
       and(
         eq(projectItems.projectId, opts.projectId),
-        eq(projectItems.kind, "placement"),
         isNull(projectItems.shortlistedAt),
         // Отказавшихся не включаем в {{каналы}} (этап 16.10).
         sql`${projectItems.available} is distinct from false`,
