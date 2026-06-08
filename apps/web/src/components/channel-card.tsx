@@ -189,6 +189,11 @@ export function ChannelCard(props: {
   const syncErrorReason = syncErrorRaw
     ? matchUnavailableReason(syncErrorRaw)
     : null;
+  // Закрытый MAX-канал без членства — sync ставит meta.mx_pending; показываем
+  // кнопку «Вступить» вместо ленты (постов без вступления нет).
+  const maxPending =
+    channel.platform === "max" &&
+    (channel.meta as Record<string, unknown> | null)?.mx_pending === true;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-white">
@@ -241,6 +246,8 @@ export function ChannelCard(props: {
           не применим. Показываем провайдер-блок (метрики выше + ссылка). */}
       {isProviderPlatform ? (
         <ProviderFeed channel={channel} syncing={syncMut.isPending} />
+      ) : maxPending ? (
+        <MaxJoinPrompt wsId={wsId} channelId={channel.id} />
       ) : (
         <PostsFeed
           wsId={wsId}
@@ -1111,6 +1118,60 @@ function ProviderVideoCard({ video: v }: { video: ProviderVideo }) {
         </div>
       </div>
     </a>
+  );
+}
+
+// Кнопка вступления в закрытый MAX-канал. Часть пускает сразу → посты/охваты
+// подтянутся; часть по одобрению админа → «запрос отправлен».
+function MaxJoinPrompt({
+  wsId,
+  channelId,
+}: {
+  wsId: string;
+  channelId: string;
+}) {
+  const qc = useQueryClient();
+  const joinMut = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.POST(
+        "/v1/workspaces/{wsId}/channels/{id}/max-subscribe",
+        { params: { path: { wsId, id: channelId } } },
+      );
+      if (error) throw error;
+      return data!;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["channel", wsId, channelId] });
+      qc.invalidateQueries({ queryKey: ["channels", wsId] });
+    },
+  });
+  return (
+    <div className="min-h-0 flex-1 px-6 py-4">
+      <div className="rounded-lg border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-900">
+        Закрытый MAX-канал — чтобы видеть посты и охваты, нужно вступить.
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={() => joinMut.mutate()}
+            disabled={joinMut.isPending}
+            className="rounded-md bg-violet-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-700 disabled:opacity-50"
+          >
+            {joinMut.isPending ? "Вступаем…" : "Вступить в канал"}
+          </button>
+        </div>
+        {joinMut.error && (
+          <p className="mt-2 text-xs text-red-600">
+            {errorMessage(joinMut.error)}
+          </p>
+        )}
+        {joinMut.isSuccess && (
+          <p className="mt-2 text-xs text-violet-700">
+            Если канал по одобрению — запрос отправлен; иначе посты уже
+            подтянулись.
+          </p>
+        )}
+      </div>
+    </div>
   );
 }
 

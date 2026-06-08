@@ -155,6 +155,14 @@ export function ChatPanel(props: {
   const displayName = contactFullName(props.contact) || "—";
   const peerKey = props.contact.id;
 
+  // MAX-контакт (привязан по max.ru/u): своя переписка через MAX-сессию, TG-
+  // запросы (preview/chat-history) гасим и рендерим MaxChatBody ниже. Двойная
+  // TG+MAX идентичность → предпочитаем TG (established primary), чтобы не
+  // прятать TG-переписку.
+  const cprops = props.contact.properties as Record<string, unknown> | null;
+  const isMax =
+    !!(cprops?.max_link || cprops?.max_user_id) && !cprops?.tg_user_id;
+
   // Preview активных проектов: бэк находит project_items.tg_user_id и считает
   // pending'и. Если у peer'а есть pending'и → warning перед отправкой.
   const previewQ = useQuery({
@@ -171,6 +179,7 @@ export function ChatPanel(props: {
       return data!.activeProjects;
     },
     staleTime: 30_000,
+    enabled: !isMax,
   });
 
   const stickyMut = useMutation({
@@ -297,6 +306,7 @@ export function ChatPanel(props: {
       return data!;
     },
     staleTime: 60_000,
+    enabled: !isMax,
   });
 
   // closeChat: TDLib держит чат «открытым» с момента первого fetch
@@ -306,6 +316,9 @@ export function ChatPanel(props: {
   // автоматически на refetch.
   const targetContactId = props.contact.id;
   useEffect(() => {
+    // MAX-контакт TDLib-чат не открывал — closeChat не шлём (иначе спурный
+    // POST с TG-accountId на размонтировании MAX-переписки).
+    if (isMax) return;
     const wsId = props.wsId;
     const accountId = props.accountId;
     return () => {
@@ -318,12 +331,13 @@ export function ChatPanel(props: {
           console.error("[chat-drawer] closeChat:", e),
         );
     };
-  }, [props.wsId, props.accountId, targetContactId]);
+  }, [props.wsId, props.accountId, targetContactId, isMax]);
 
   // Перетягиваем chat-history на любое contact event (новое сообщение,
-  // read-receipt, удаление) — listener конвертит TDLib updates в SSE.
+  // read-receipt, удаление) — listener конвертит TDLib updates в SSE. Для MAX
+  // эту подписку не открываем (MaxChatBody держит свою).
   useEventSourceEvent<{ contactId: string }>(
-    `/v1/workspaces/${props.wsId}/contact-stream`,
+    isMax ? null : `/v1/workspaces/${props.wsId}/contact-stream`,
     "contact",
     (ev) => {
       if (ev.contactId === props.contact.id) {
@@ -488,6 +502,16 @@ export function ChatPanel(props: {
       })()
     : null;
 
+  if (isMax) {
+    return (
+      <MaxChatBody
+        wsId={props.wsId}
+        contactId={props.contact.id}
+        displayName={displayName}
+      />
+    );
+  }
+
   return (
     <div
       className="relative flex h-full flex-col bg-white"
@@ -526,10 +550,15 @@ export function ChatPanel(props: {
           </div>
         )}
         <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3">
-          <div className="min-w-0">
-            <div className="truncate font-medium">{displayName}</div>
-            <div className="text-xs text-zinc-500">
-              {formatPeerStatus(peerStatus) ?? "История переписки"}
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-sky-100 text-xs font-medium text-sky-700">
+              {(displayName[0] ?? "?").toUpperCase()}
+            </span>
+            <div className="min-w-0">
+              <div className="truncate font-medium">{displayName}</div>
+              <div className="text-xs text-zinc-500">
+                {formatPeerStatus(peerStatus) ?? "История переписки"}
+              </div>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -975,4 +1004,160 @@ function formatPeerStatus(
   if (status.isOnline) return "в сети";
   if (!status.lastSeenAt) return "был недавно";
   return `был ${formatRelative(status.lastSeenAt)}`;
+}
+
+// Переписка MAX-контакта (#5): история через max-сессию (лёгкий поллинг для
+// realtime входящих) + composer. Своя панель — TG-фич (теги/upload/bot/sticky)
+// тут нет.
+function MaxChatBody(props: {
+  wsId: string;
+  contactId: string;
+  displayName: string;
+}) {
+  const qc = useQueryClient();
+  const [text, setText] = useState("");
+
+  const historyQ = useQuery({
+    queryKey: ["max-history", props.wsId, props.contactId] as const,
+    queryFn: async () => {
+      const { data, error } = await api.GET(
+        "/v1/workspaces/{wsId}/contacts/{id}/max-history",
+        { params: { path: { wsId: props.wsId, id: props.contactId } } },
+      );
+      if (error) throw error;
+      return data!;
+    },
+    // Поллинг — fallback; основной realtime через SSE ниже (как TG-панель).
+    refetchInterval: 15000,
+  });
+
+  // Push входящих: NOTIF_MESSAGE-listener шлёт contact-event → инвалидируем
+  // ленту мгновенно (та же SSE-машина, что у TG-переписки).
+  useEventSourceEvent<{ contactId: string }>(
+    `/v1/workspaces/${props.wsId}/contact-stream`,
+    "contact",
+    (ev) => {
+      if (ev.contactId === props.contactId) {
+        qc.invalidateQueries({
+          queryKey: ["max-history", props.wsId, props.contactId],
+        });
+      }
+    },
+  );
+
+  const sendMut = useMutation({
+    mutationFn: async (raw: string) => {
+      const t = raw.trim();
+      if (!t) throw new Error("Пустое сообщение");
+      const { data, error } = await api.POST(
+        "/v1/workspaces/{wsId}/contacts/{id}/max-send",
+        {
+          params: { path: { wsId: props.wsId, id: props.contactId } },
+          body: { text: t },
+        },
+      );
+      if (error) throw error;
+      return data!;
+    },
+    onSuccess: () => {
+      setText("");
+      qc.invalidateQueries({
+        queryKey: ["max-history", props.wsId, props.contactId],
+      });
+    },
+  });
+
+  const messages = historyQ.data?.messages ?? [];
+  const peer = historyQ.data?.peer;
+  const name = peer?.name || props.displayName;
+
+  return (
+    <div className="flex h-full flex-col bg-white">
+      <div className="flex items-center gap-2 border-b border-zinc-100 px-4 py-2">
+        {peer?.avatarUrl ? (
+          <img
+            src={peer.avatarUrl}
+            alt=""
+            className="h-7 w-7 shrink-0 rounded-full object-cover"
+            onError={(e) => {
+              e.currentTarget.style.display = "none";
+            }}
+          />
+        ) : (
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-medium text-violet-700">
+            {(name[0] ?? "?").toUpperCase()}
+          </span>
+        )}
+        <span className="text-sm font-medium">{name}</span>
+        <span className="text-xs font-normal text-violet-600">· MAX</span>
+      </div>
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-4 py-3">
+        {historyQ.isLoading && (
+          <p className="text-sm text-zinc-400">Загрузка переписки…</p>
+        )}
+        {historyQ.error && (
+          <p className="text-sm text-red-600">{errorMessage(historyQ.error)}</p>
+        )}
+        {historyQ.isSuccess && messages.length === 0 && (
+          <p className="text-sm text-zinc-400">Переписки пока нет.</p>
+        )}
+        {messages.map((m) => (
+          <div
+            key={m.id}
+            className={`flex ${m.outgoing ? "justify-end" : "justify-start"}`}
+          >
+            <div
+              className={`max-w-[75%] whitespace-pre-wrap rounded-2xl px-3 py-1.5 text-sm ${
+                m.outgoing
+                  ? "bg-violet-600 text-white"
+                  : "bg-zinc-100 text-zinc-900"
+              }`}
+            >
+              {m.text || <span className="opacity-60">[без текста]</span>}
+              <div
+                className={`mt-0.5 text-[10px] ${
+                  m.outgoing ? "text-violet-200" : "text-zinc-400"
+                }`}
+              >
+                {new Date(m.time).toLocaleTimeString("ru-RU", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="border-t border-zinc-100 p-3">
+        {sendMut.error && (
+          <p className="mb-1 text-xs text-red-600">
+            {errorMessage(sendMut.error)}
+          </p>
+        )}
+        <div className="flex items-end gap-2">
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                if (text.trim()) sendMut.mutate(text);
+              }
+            }}
+            rows={2}
+            placeholder="Сообщение в MAX…"
+            className="min-w-0 flex-1 resize-none rounded-lg border border-zinc-300 px-3 py-1.5 text-sm focus:border-violet-500 focus:outline-none"
+          />
+          <button
+            type="button"
+            onClick={() => sendMut.mutate(text)}
+            disabled={!text.trim() || sendMut.isPending}
+            className="shrink-0 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-50"
+          >
+            {sendMut.isPending ? "…" : "Отправить"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }

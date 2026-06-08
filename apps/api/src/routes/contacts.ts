@@ -40,6 +40,12 @@ import {
 import { ensureContactTgUserId } from "../lib/ensure-tg-user-id.ts";
 import { errMsg } from "../lib/errors.ts";
 import { getOutreachWorkerClient } from "../lib/outreach-account-client.ts";
+import { sendMaxMessage } from "../lib/max-account-client.ts";
+import {
+  ensureMaxContactDisplay,
+  fetchMaxDialog,
+  pickMaxAccount,
+} from "../lib/max-conversation.ts";
 import { sendDocument, downloadToBytes } from "../lib/td-files.ts";
 import { resolveStickyByPeerIds } from "../lib/sticky.ts";
 import {
@@ -371,6 +377,143 @@ app.openapi(
     const row = await selectOne(wsId, id);
     if (!row) throw new HTTPException(404, { message: "contact not found" });
     return c.json(serialize(row));
+  },
+);
+
+// --- MAX-переписка контакта (#5): история + отправка через MAX-аккаунт ws'а ---
+
+// Адрес контакта в MAX: кешированный max_user_id (быстро, без LINK_INFO) или
+// max_link-ссылка (резолвится на месте). null — контакт не MAX.
+function maxPeerRef(props: unknown): string | null {
+  const p = props as Record<string, unknown> | null;
+  const uid = p?.max_user_id;
+  if (typeof uid === "string" && uid) return uid;
+  const link = p?.max_link;
+  if (typeof link === "string" && link) return link;
+  return null;
+}
+
+const MaxDialogMessageSchema = z
+  .object({
+    id: z.string(),
+    text: z.string(),
+    time: z.iso.datetime(),
+    outgoing: z.boolean(),
+  })
+  .openapi("MaxDialogMessage");
+
+app.openapi(
+  createRoute({
+    method: "get",
+    path: "/v1/workspaces/{wsId}/contacts/{id}/max-history",
+    tags: ["contacts"],
+    request: { params: WsIdParam },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({
+              peer: z.object({
+                name: z.string(),
+                avatarUrl: z.string().nullable(),
+              }),
+              messages: z.array(MaxDialogMessageSchema),
+            }),
+          },
+        },
+        description: "MAX dialog history",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const { id } = c.req.valid("param");
+    const contact = await assertContactAccess(id, wsId);
+    const props = (contact.properties ?? {}) as Record<string, unknown>;
+    if (!maxPeerRef(props)) {
+      throw new HTTPException(400, {
+        message: "у контакта нет MAX-адреса (max_user_id/max_link)",
+      });
+    }
+    const account = await pickMaxAccount(wsId, userId, role);
+    if (!account) {
+      throw new HTTPException(412, { message: "нет активного MAX-аккаунта" });
+    }
+    // Бэкфилл имени/аватара (старый контакт по токену) + актуальный peer-ref.
+    // ensureMaxContactDisplay уже резолвит userId — берём его (числовой id
+    // короткозамыкает LINK_INFO в fetchMaxDialog), fallback на max_link.
+    try {
+      const display = await ensureMaxContactDisplay(account, id, props);
+      const peerRef = display.userId ?? maxPeerRef(props)!;
+      const messages = await fetchMaxDialog(account, peerRef);
+      return c.json({
+        peer: { name: display.name, avatarUrl: display.avatarUrl },
+        messages,
+      });
+    } catch (e) {
+      // Мёртвая сессия / протухший LINK_INFO — graceful, как у max-send.
+      throw new HTTPException(502, {
+        message: `MAX: история недоступна — ${errMsg(e)}`,
+      });
+    }
+  },
+);
+
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/contacts/{id}/max-send",
+    tags: ["contacts"],
+    request: {
+      params: WsIdParam,
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({ text: z.string().min(1).max(4000) }),
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({
+              status: z.literal("sent"),
+              messageId: z.string().nullable(),
+            }),
+          },
+        },
+        description: "MAX DM sent",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const { id } = c.req.valid("param");
+    const { text } = c.req.valid("json");
+    const contact = await assertContactAccess(id, wsId);
+    const peer = maxPeerRef(contact.properties);
+    if (!peer) {
+      throw new HTTPException(400, { message: "у контакта нет MAX-адреса" });
+    }
+    const account = await pickMaxAccount(wsId, userId, role);
+    if (!account) {
+      throw new HTTPException(412, { message: "нет активного MAX-аккаунта" });
+    }
+    try {
+      const { messageId } = await sendMaxMessage(account, peer, text);
+      return c.json({ status: "sent" as const, messageId });
+    } catch (e) {
+      throw new HTTPException(502, {
+        message: `MAX: не отправилось — ${errMsg(e)}`,
+      });
+    }
   },
 );
 

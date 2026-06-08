@@ -2,6 +2,7 @@ import type { Server as HttpServer } from "node:http";
 import { serve } from "@hono/node-server";
 import { app } from "./app.ts";
 import { startOutreachWorker } from "./lib/outreach-worker.ts";
+import { warmupMaxListeners } from "./lib/max-conversation.ts";
 import { startMetricsWorker } from "./lib/metrics-worker.ts";
 import { syncPresetsForAllWorkspaces } from "./lib/workspace-presets.ts";
 import { startBotPolling } from "./lib/tg-bot.ts";
@@ -14,6 +15,12 @@ const port = Number(process.env.PORT ?? 3000);
 // чтобы две реплики не выбирали одни и те же scheduled_messages.
 if (process.env.NODE_ENV !== "test") {
   startOutreachWorker();
+  // Persistent MAX-listener'ы (NOTIF_MESSAGE → отметка ответа лида). Поднимаем
+  // сокеты active MAX-аккаунтов, как warmupListeners для TG. Periodic re-warmup:
+  // пассивный listener (входящие не шлёт) не триггерит self-reconnect, поэтому
+  // мёртвый сокет переподнимаем раз в 10 мин (connected — дешёвый cache-hit).
+  void warmupMaxListeners();
+  setInterval(() => void warmupMaxListeners(), 10 * 60_000);
   startMetricsWorker();
   void syncPresetsForAllWorkspaces();
   // RU-сервер: webhook не доставляется (входящий к RU-IP таймаутит), тянем

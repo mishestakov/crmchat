@@ -266,6 +266,33 @@ export async function fetchMaxPosts(
   return posts;
 }
 
+// --- метрики поста (#2) ---
+
+// Пост-ссылка MAX: max.ru/<канал>/<base64url(int64 messageId)> → messageId.
+// Обратное к encodeMessageToken (writeBigInt64BE + base64url) в клиенте MAX.
+export function maxMessageIdFromUrl(url: string): string | null {
+  const m = url.match(/max\.ru\/[^/?#]+\/([A-Za-z0-9_-]+)/i);
+  if (!m) return null;
+  try {
+    const buf = Buffer.from(m[1]!, "base64url");
+    if (buf.length < 8) return null;
+    return buf.readBigInt64BE().toString();
+  } catch {
+    return null;
+  }
+}
+
+// Просмотры поста через MSG_GET_STAT: ответ {stats:{<msgId>:{views}}}.
+export async function fetchMaxPostViews(
+  client: MaxClient,
+  chatId: string,
+  messageId: string,
+): Promise<number | null> {
+  const res = await client.msgGetStat(chatId, [messageId]);
+  const stats = rec(rec(res.payload)?.stats);
+  return toInt(rec(stats?.[messageId])?.views);
+}
+
 // CHAT_INFO/PUBLIC_SEARCH chat → нормализованный ChannelProfile.
 function mapChatToProfile(chat: Record<string, unknown>, reach: ReachWindow): ChannelProfile {
   const opts = rec(chat.options) ?? {};
@@ -292,48 +319,45 @@ function mapChatToProfile(chat: Record<string, unknown>, reach: ReachWindow): Ch
 // ожидание одобрения админа (options.JOIN_REQUEST). Зеркало TG
 // channel_subscriptions (status subscribed|pending). Возвращает актуальный chat
 // и pending — при pending читать историю ещё нельзя.
-async function ensureChannelAccess(
-  client: MaxClient,
-  channel: typeof channels.$inferSelect,
-  chat: Record<string, unknown>,
-  accountId: string | undefined,
-): Promise<{ chat: Record<string, unknown>; pending: boolean }> {
+// Закрытый (access=PRIVATE) без членства (joinTime=0) → читать историю нельзя,
+// нужна ручная подписка (joinMaxChannel по кнопке). Публичный/вступивший — ок.
+function maxAccessPending(chat: Record<string, unknown>): boolean {
   const access = typeof chat.access === "string" ? chat.access : "PUBLIC";
   const joined = chat.joinTime != null && Number(chat.joinTime) > 0;
-  if (access !== "PRIVATE" || joined) return { chat, pending: false };
+  return access === "PRIVATE" && !joined;
+}
 
-  const link =
-    channelMaxLink(channel) ?? (typeof chat.link === "string" ? chat.link : null);
-  if (!link) return { chat, pending: true };
-
-  let joinedNow = false;
+// Вступить в MAX-канал по кнопке: CHAT_JOIN по ссылке. Некоторые пускают сразу
+// (joinTime>0 → subscribed), некоторые требуют одобрения админа (→ pending).
+// Зеркало TG channel_subscriptions. Бросает если у канала нет ссылки.
+export async function joinMaxChannel(
+  client: MaxClient,
+  channel: typeof channels.$inferSelect,
+  accountId: string,
+): Promise<{ joined: boolean }> {
+  const link = channelMaxLink(channel);
+  if (!link) throw new Error("MAX: у канала нет ссылки для вступления");
+  let joined = false;
   try {
     const res = await client.chatJoin(link);
     const jc = rec(rec(res.payload)?.chat);
-    joinedNow = !!jc && jc.joinTime != null && Number(jc.joinTime) > 0;
+    joined = !!jc && jc.joinTime != null && Number(jc.joinTime) > 0;
   } catch {
     // join отклонён / требует одобрения → pending.
-    joinedNow = false;
+    joined = false;
   }
-
-  if (accountId) {
-    await db
-      .insert(channelSubscriptions)
-      .values({
-        accountId,
-        channelId: channel.id,
-        status: joinedNow ? "subscribed" : "pending",
-      })
-      .onConflictDoUpdate({
-        target: [channelSubscriptions.accountId, channelSubscriptions.channelId],
-        set: { status: joinedNow ? "subscribed" : "pending" },
-      });
-  }
-
-  if (!joinedNow) return { chat, pending: true };
-  // После вступления — свежий CHAT_INFO (полные поля доступны участнику).
-  const fresh = await client.chatsInfo([negativeChatId(chat)!]);
-  return { chat: extractChats(fresh.payload)[0] ?? chat, pending: false };
+  await db
+    .insert(channelSubscriptions)
+    .values({
+      accountId,
+      channelId: channel.id,
+      status: joined ? "subscribed" : "pending",
+    })
+    .onConflictDoUpdate({
+      target: [channelSubscriptions.accountId, channelSubscriptions.channelId],
+      set: { status: joined ? "subscribed" : "pending" },
+    });
+  return { joined };
 }
 
 const EMPTY_REACH: ReachWindow = {
@@ -354,18 +378,19 @@ export async function syncChannelFromMax(
   if (channel.platform !== "max") {
     throw new Error(`syncChannelFromMax: ожидалась платформа max, получено ${channel.platform}`);
   }
-  let chat = await resolveMaxChat(client, channel);
-  const access = await ensureChannelAccess(client, channel, chat, accountId);
-  chat = access.chat;
+  const chat = await resolveMaxChat(client, channel);
+  // Закрытый канал без членства — авто-join НЕ делаем (это решает кнопка
+  // «Вступить»); показываем превью + mx_pending для карточки.
+  const pending = maxAccessPending(chat);
 
-  // Reach только если можем читать (публичный или вступили). При ожидании
-  // одобрения история недоступна — оставляем reach пустым.
-  const reach = access.pending
+  // Reach только если можем читать (публичный или вступили). При pending
+  // история недоступна — reach пустой.
+  const reach = pending
     ? EMPTY_REACH
     : await fetchReach(client, negativeChatId(chat)!).catch(() => EMPTY_REACH);
 
   const profile = mapChatToProfile(chat, reach);
-  return writeChannelProfile(channel, profile, "mx");
+  return writeChannelProfile(channel, profile, "mx", { mx_pending: pending });
 }
 
 // Батч-выгрузка карточек MAX на импорте: CHAT_INFO принимает до 100 id за раз,

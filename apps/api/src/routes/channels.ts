@@ -32,10 +32,15 @@ import {
 } from "../lib/channel-providers/index.ts";
 import {
   fetchMaxPosts,
+  joinMaxChannel,
   syncChannelFromMax,
   syncMaxChannelsBatch,
 } from "../lib/channel-providers/max.ts";
-import { getMaxWorkerClient } from "../lib/max-account-client.ts";
+import {
+  getMaxWorkerClient,
+  resolveMaxContactRef,
+} from "../lib/max-account-client.ts";
+import { pickMaxAccount } from "../lib/max-conversation.ts";
 import type { MaxClient } from "../lib/max/index.ts";
 import {
   channelAdmins,
@@ -167,28 +172,14 @@ async function pickOutreachClient(
 }
 
 // Любой активный MAX-аккаунт workspace'а: публичные каналы MAX читаются без
-// вступления, поэтому подписка не нужна (в отличие от приватных TG).
+// вступления, поэтому подписка не нужна (в отличие от приватных TG). Выбор
+// аккаунта — общий pickMaxAccount; здесь поверх него поднимаем воркер-клиент.
 async function pickMaxClient(
   wsId: string,
   userId: string,
   role: WorkspaceRole,
 ): Promise<{ client: MaxClient; accountId: string } | null> {
-  const [acc] = await db
-    .select({
-      id: outreachAccounts.id,
-      sessionToken: outreachAccounts.sessionToken,
-      meta: outreachAccounts.meta,
-    })
-    .from(outreachAccounts)
-    .where(
-      and(
-        accountAccessClause(wsId, userId, role),
-        eq(outreachAccounts.platform, "max"),
-        eq(outreachAccounts.status, "active"),
-      ),
-    )
-    .orderBy(outreachAccounts.createdAt)
-    .limit(1);
+  const acc = await pickMaxAccount(wsId, userId, role);
   if (!acc) return null;
   try {
     const client = await getMaxWorkerClient(acc);
@@ -715,14 +706,32 @@ app.openapi(
       if (existing) {
         contactId = existing.id;
       } else {
-        const tokenShort = link.replace(/.*\/u\//, "").slice(0, 8);
+        // Резолвим /u/ через MAX-сессию: реальное имя + max_user_id (кешируем —
+        // отправка/история не дёргают LINK_INFO повторно, он rate-limited).
+        // Best-effort: нет сессии → подпись по токену, без max_user_id.
+        let fullName = `MAX: ${link.replace(/.*\/u\//, "").slice(0, 8)}…`;
+        let maxUserId: string | null = null;
+        let avatarUrl: string | null = null;
+        const picked = await pickMaxClient(wsId, userId, role);
+        if (picked) {
+          try {
+            const r = await resolveMaxContactRef(picked.client, link);
+            maxUserId = r.userId;
+            if (r.name) fullName = r.name;
+            avatarUrl = r.avatarUrl;
+          } catch {
+            /* best-effort — оставляем токен-подпись */
+          }
+        }
+        const props: Record<string, unknown> = {
+          max_link: link,
+          full_name: fullName,
+        };
+        if (maxUserId) props.max_user_id = maxUserId;
+        if (avatarUrl) props.max_avatar_url = avatarUrl;
         const [created] = await db
           .insert(contacts)
-          .values({
-            workspaceId: wsId,
-            properties: { max_link: link, full_name: `MAX: ${tokenShort}…` },
-            createdBy: userId,
-          })
+          .values({ workspaceId: wsId, properties: props, createdBy: userId })
           .returning({ id: contacts.id });
         contactId = created?.id ?? null;
       }
@@ -1205,6 +1214,45 @@ app.openapi(
     const tdClient = picked.client;
 
     const updated = await syncChannelFromTg(channel, tdClient);
+    const [serialized] = await joinAdmins([updated]);
+    return c.json(serialized!);
+  },
+);
+
+// Вступить в закрытый MAX-канал (кнопка «Вступить»): CHAT_JOIN по ссылке →
+// channel_subscriptions, затем re-sync (теперь участник → подтянутся reach/посты,
+// mx_pending снимется). Аккаунт MAX выбираем сами (pickMaxClient).
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/channels/{id}/max-subscribe",
+    tags: ["channels"],
+    request: { params: WsIdParam },
+    responses: {
+      200: {
+        content: { "application/json": { schema: ChannelSchema } },
+        description: "Joined MAX channel (subscribed or pending approval)",
+      },
+    },
+  }),
+  async (c) => {
+    const { wsId, id } = c.req.valid("param");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const channel = await assertChannelAccess(id, wsId);
+    if (channel.platform !== "max") {
+      throw new HTTPException(400, { message: "только для MAX-каналов" });
+    }
+    const picked = await pickMaxClient(wsId, userId, role);
+    if (!picked) {
+      throw new HTTPException(412, { message: "нет активного MAX-аккаунта" });
+    }
+    await joinMaxChannel(picked.client, channel, picked.accountId);
+    const updated = await syncChannelFromMax(
+      channel,
+      picked.client,
+      picked.accountId,
+    );
     const [serialized] = await joinAdmins([updated]);
     return c.json(serialized!);
   },

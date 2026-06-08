@@ -270,6 +270,11 @@ export const contacts = pgTable(
     index("contacts_tg_user_id_idx").on(
       sql`(${t.properties} ->> 'tg_user_id')`,
     ),
+    // Зеркало под MAX-inbound: listener ищет контакт по properties->>'max_user_id'
+    // на каждом NOTIF_MESSAGE — без индекса full scan по таблице.
+    index("contacts_max_user_id_idx").on(
+      sql`(${t.properties} ->> 'max_user_id')`,
+    ),
     // UNIQUE на пару (workspace, tg_user_id) — закрывает race в outreach
     // listener'е: два concurrent NewMessage events могли создать двух контактов
     // для одного TG-юзера (find-or-create в разных запросах). Partial index:

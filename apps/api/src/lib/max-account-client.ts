@@ -40,6 +40,17 @@ const PENDING_TTL_MS = 5 * 60_000;
 const workerClients = new Map<string, MaxClient>();
 const workerInflight = new Map<string, Promise<MaxClient>>();
 
+// Хук, вызываемый при создании нового воркер-клиента (max-conversation вешает
+// inbound-listener). Держим тут, а не импортим max-conversation — иначе цикл.
+let clientCreatedHook:
+  | ((accountId: string, client: MaxClient) => void)
+  | null = null;
+export function setMaxClientCreatedHook(
+  fn: (accountId: string, client: MaxClient) => void,
+): void {
+  clientCreatedHook = fn;
+}
+
 function isExpired(p: MaxPending): boolean {
   return Date.now() - p.createdAt > PENDING_TTL_MS;
 }
@@ -286,6 +297,10 @@ export async function getMaxWorkerClient(account: MaxAccountRow): Promise<MaxCli
       throw e;
     }
     workerClients.set(account.id, client);
+    // Хук «клиент создан» — max-conversation вешает inbound-listener на КАЖДЫЙ
+    // новый инстанс (не только на warmup), иначе после reconnect/evict/позднего
+    // подключения новый сокет остаётся без обработчика NOTIF_MESSAGE.
+    clientCreatedHook?.(account.id, client);
     return client;
   })();
 
@@ -306,25 +321,42 @@ export function maxDialogChatId(selfUserId: string, peerUserId: string): string 
   return (BigInt(selfUserId) ^ BigInt(peerUserId)).toString();
 }
 
-// Резолвим получателя в его userId: ссылка max.ru/u/<token> → LINK_INFO →
-// contact.id; голый числовой id — как есть. Бросает если не резолвится.
-export async function resolveMaxPeerUserId(
+// Резолвим получателя: ссылка max.ru/u/<token> → LINK_INFO → contact.id + имя
+// (names[0].firstName+lastName); голый числовой id — как есть (имя null). Бросает
+// если не резолвится. name нужен для подписи контакта-админа при привязке.
+export async function resolveMaxContactRef(
   client: MaxClient,
   ref: string,
-): Promise<string> {
+): Promise<{ userId: string; name: string | null; avatarUrl: string | null }> {
   const trimmed = ref.trim();
-  if (/^-?\d+$/.test(trimmed)) return trimmed;
+  if (/^-?\d+$/.test(trimmed))
+    return { userId: trimmed, name: null, avatarUrl: null };
   const m = trimmed.match(/(?:max\.ru\/)?(u\/[A-Za-z0-9_-]+)/i);
   if (!m) throw new Error(`MAX: не распознал получателя: ${ref}`);
   const res = await client.linkInfo(m[1]!);
-  const id = (
+  const contact = (
     (res.payload as Record<string, unknown> | null)?.user as
       | Record<string, unknown>
       | undefined
   )?.contact as Record<string, unknown> | undefined;
-  const userId = id?.id;
+  const userId = contact?.id;
   if (userId == null) throw new Error(`MAX: LINK_INFO не вернул contact.id для ${ref}`);
-  return String(userId);
+  const names = Array.isArray(contact?.names) ? contact.names : [];
+  const n0 = names[0] as Record<string, unknown> | undefined;
+  const first = typeof n0?.firstName === "string" ? n0.firstName : "";
+  const last = typeof n0?.lastName === "string" ? n0.lastName : "";
+  const name = [first, last].filter(Boolean).join(" ").trim() || null;
+  // Аватар контакта (юзера) — baseUrl (i.oneme.ru); у каналов это baseIconUrl.
+  const avatarUrl = typeof contact?.baseUrl === "string" ? contact.baseUrl : null;
+  return { userId: String(userId), name, avatarUrl };
+}
+
+// Только userId (для send/history, где имя не нужно).
+export async function resolveMaxPeerUserId(
+  client: MaxClient,
+  ref: string,
+): Promise<string> {
+  return (await resolveMaxContactRef(client, ref)).userId;
 }
 
 type MaxSendAccount = {

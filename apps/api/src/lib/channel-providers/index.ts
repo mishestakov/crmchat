@@ -137,6 +137,7 @@ export async function writeChannelProfile(
   channel: typeof channels.$inferSelect,
   p: ChannelProfile,
   metaKey: string,
+  extraMeta?: Record<string, unknown>,
 ): Promise<typeof channels.$inferSelect> {
   const { reach } = p;
 
@@ -155,6 +156,7 @@ export async function writeChannelProfile(
     topics: p.topics,
     recent_videos: p.recentVideos,
     [metaKey]: p.raw,
+    ...(extraMeta ?? {}),
   };
 
   const [updated] = await db
