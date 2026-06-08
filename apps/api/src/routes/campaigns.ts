@@ -28,7 +28,6 @@ import {
 } from "../lib/project-scheduling.ts";
 import { substituteVariables } from "../lib/substitute-variables.ts";
 import { pickDefined } from "../lib/pick-defined.ts";
-import { extractUsername } from "../lib/tg-username.ts";
 import { parseChannelInput } from "@repo/core";
 import {
   detectChannelPlatform,
@@ -526,21 +525,21 @@ app.openapi(
       const platform = detectChannelPlatform(raw);
       let entry: ParsedAdd | null;
       if (platform === "telegram") {
-        const uname = extractUsername(raw);
-        if (uname) {
-          entry = { platform, key: `telegram:${uname}`, uname };
-        } else {
-          // Не @username — пробуем инвайт-ссылку приватного канала.
-          const { inviteLink } = parseChannelInput(raw);
-          if (!inviteLink) {
-            skippedInvalid++;
-            continue;
-          }
+        // Единый парсер TG-адреса (правила username = TDLib is_allowed_username,
+        // см. parse-channel-input.ts): отдаёт публичный @username ИЛИ приватную
+        // инвайт-ссылку за один проход.
+        const { username, inviteLink } = parseChannelInput(raw);
+        if (username) {
+          entry = { platform, key: `telegram:${username}`, uname: username };
+        } else if (inviteLink) {
           entry = {
             platform,
             key: `telegram:invite:${inviteLink.toLowerCase()}`,
             link: inviteLink,
           };
+        } else {
+          skippedInvalid++;
+          continue;
         }
       } else {
         const link = raw.trim();

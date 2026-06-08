@@ -7,10 +7,10 @@ import {
   CreateChannelSchema as BaseCreateChannel,
   ImportChannelsSchema as BaseImportChannels,
   ImportChannelsResultSchema as BaseImportResult,
+  parseChannelInput,
 } from "@repo/core";
 import { db, sql as sqlClient } from "../db/client.ts";
 import { contactUsernameLowerSql } from "../lib/contact-sql.ts";
-import { extractUsername } from "../lib/tg-username.ts";
 import { median } from "../lib/median.ts";
 import { errMsg, isUniqueViolation } from "../lib/errors.ts";
 import {
@@ -448,7 +448,7 @@ app.openapi(
       }
     }
 
-    // usernames → find-or-create stub-контакт. extractUsername нормализует и
+    // usernames → find-or-create stub-контакт. parseChannelInput нормализует и
     // отбрасывает мусор (URL/«foo bar»/точки) — иначе в telegram_username
     // попадёт битый хэндл, который аутрич не зарезолвит. full_name = «@username»
     // до первого синка/трафика.
@@ -456,7 +456,7 @@ app.openapi(
     const norm = [
       ...new Set(
         usernames
-          .map((u) => extractUsername(u))
+          .map((u) => parseChannelInput(u).username)
           .filter((u): u is string => u !== null),
       ),
     ];
@@ -636,7 +636,7 @@ app.openapi(
     // Резолвим целевой контакт: существующий по id или stub по @username.
     let contactId = body.contactId ?? null;
     if (!contactId && body.username) {
-      const uname = extractUsername(body.username);
+      const uname = parseChannelInput(body.username).username;
       if (!uname) {
         throw new HTTPException(400, { message: "невалидный @username" });
       }
