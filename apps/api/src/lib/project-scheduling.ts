@@ -145,10 +145,8 @@ export type ScheduledRow = {
 };
 
 // Построить scheduled_messages row'ы для набора лидов. Sticky + warm
-// резолвятся снаружи (вызывающий контролирует когда грузить), чтобы можно
-// было переиспользовать для активации (загружает все лиды проекта одним
-// батчем) и доливки (новые лиды одного импорта).
-export function buildScheduledRows(opts: {
+// резолвятся снаружи. Внутренний шаг scheduleLeads (не экспортируется).
+function buildScheduledRows(opts: {
   wsId: string;
   project: typeof projects.$inferSelect;
   accountIds: string[];
@@ -226,7 +224,7 @@ export function channelIdentifier(ch: {
 // адресуем, менеджер пишет вручную). Пропуск ботов (ручной способ связи).
 // skipContacted=true (доливка в активную кампанию) дополнительно опускает
 // админов, с кем тред в проекте уже начат — повторный опенер не шлём.
-export async function prepareLeads(opts: {
+async function prepareLeads(opts: {
   projectId: string;
   leads: SchedulingLead[];
   skipContacted: boolean;

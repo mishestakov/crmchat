@@ -566,12 +566,7 @@ function SequenceDetailPage() {
           wsId={wsId}
           projectId={projectId}
           onClose={() => setShowAddChannels(false)}
-          onAdded={() => {
-            qc.invalidateQueries({
-              queryKey: OUTREACH_QK.projectLeads(wsId, projectId),
-            });
-            qc.invalidateQueries({ queryKey: OUTREACH_QK.project(wsId, projectId) });
-          }}
+          onAdded={() => invalidateProject(qc, wsId, projectId, { leads: true })}
         />
       )}
 

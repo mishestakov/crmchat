@@ -41,11 +41,14 @@ export function EntityTree<T extends ItemLike>(props: {
   const byTrack = useMemo(() => {
     const term = query.trim().toLowerCase();
     const map = new Map<string, T[]>();
-    for (const t of props.tracks) map.set(t.id, []);
+    const nameById = new Map<string, string>();
+    for (const t of props.tracks) {
+      map.set(t.id, []);
+      nameById.set(t.id, t.name);
+    }
     for (const p of props.items) {
       if (term) {
-        const trackName =
-          props.tracks.find((t) => t.id === p.trackId)?.name ?? "";
+        const trackName = nameById.get(p.trackId) ?? "";
         if (
           !p.name.toLowerCase().includes(term) &&
           !trackName.toLowerCase().includes(term)

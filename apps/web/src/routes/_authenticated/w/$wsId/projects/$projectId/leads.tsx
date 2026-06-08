@@ -28,7 +28,7 @@ import {
   useOutreachAccounts,
   useProject,
 } from "../../../../../../lib/outreach-queries";
-import { OUTREACH_QK } from "../../../../../../lib/query-keys";
+import { OUTREACH_QK, invalidateProject } from "../../../../../../lib/query-keys";
 import { useEventSourceEvent } from "../../../../../../lib/hooks";
 
 export const Route = createFileRoute(
@@ -336,12 +336,7 @@ function LeadsPage() {
           wsId={wsId}
           projectId={projectId}
           onClose={() => setShowAddChannels(false)}
-          onAdded={() => {
-            qc.invalidateQueries({
-              queryKey: OUTREACH_QK.projectLeads(wsId, projectId),
-            });
-            qc.invalidateQueries({ queryKey: OUTREACH_QK.project(wsId, projectId) });
-          }}
+          onAdded={() => invalidateProject(qc, wsId, projectId, { leads: true })}
         />
       )}
     </div>
