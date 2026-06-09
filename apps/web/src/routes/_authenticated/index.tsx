@@ -29,7 +29,7 @@ export const Route = createFileRoute("/_authenticated/")({
     const ws = await context.queryClient.fetchQuery(workspacesQueryOptions);
     if (ws.length > 0) {
       throw redirect({
-        to: "/w/$wsId/contacts",
+        to: "/w/$wsId/channels",
         params: { wsId: ws[0]!.id },
       });
     }
@@ -64,7 +64,7 @@ function CreateWorkspacePage() {
     },
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["workspaces"] });
-      navigate({ to: "/w/$wsId/contacts", params: { wsId: data.id } });
+      navigate({ to: "/w/$wsId/channels", params: { wsId: data.id } });
     },
   });
 
@@ -81,7 +81,7 @@ function CreateWorkspacePage() {
           type="button"
           onClick={() =>
             navigate({
-              to: "/w/$wsId/contacts",
+              to: "/w/$wsId/channels",
               params: { wsId: existingWs.id },
             })
           }

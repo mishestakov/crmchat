@@ -58,7 +58,7 @@ function AcceptInvite() {
     onSuccess: async (data) => {
       await qc.invalidateQueries({ queryKey: ["workspaces"] });
       navigate({
-        to: "/w/$wsId/contacts",
+        to: "/w/$wsId/channels",
         params: { wsId: data.workspaceId },
       });
     },
@@ -103,7 +103,7 @@ function AcceptInvite() {
   if (invite.data.alreadyMember) {
     return (
       <Navigate
-        to="/w/$wsId/contacts"
+        to="/w/$wsId/channels"
         params={{ wsId: invite.data.workspaceId }}
       />
     );

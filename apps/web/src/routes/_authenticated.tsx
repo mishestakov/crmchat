@@ -198,7 +198,6 @@ function SidebarGroup({
 
 function SidebarLink(props: {
   to:
-    | "/w/$wsId/contacts"
     | "/w/$wsId/channels"
     | "/w/$wsId/settings"
     | "/w/$wsId/outreach/accounts"

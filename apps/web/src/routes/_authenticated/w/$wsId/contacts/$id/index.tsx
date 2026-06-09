@@ -59,7 +59,7 @@ function ContactDetail() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["contacts", wsId] });
-      navigate({ to: "/w/$wsId/contacts", params: { wsId } });
+      navigate({ to: "/w/$wsId/channels", params: { wsId } });
     },
   });
 
