@@ -29,7 +29,6 @@ import {
   projectAccessClause,
 } from "../lib/projects-access.ts";
 import {
-  assignContactDefaultsAtLaunch,
   channelIdentifier,
   resolveProjectAccountIds,
   resolveStickyByTgUserIds,
@@ -94,8 +93,6 @@ const ProjectSchema = z
     accountsMode: AccountsModeSchema,
     accountsSelected: z.array(z.string()),
     messages: z.array(MessageSchema),
-    contactDefaultOwnerIds: z.array(z.string()),
-    contactDefaults: z.record(z.string(), z.unknown()),
     activatedAt: z.iso.datetime().nullable(),
     completedAt: z.iso.datetime().nullable(),
     // Клиент финализировал медиаплан (фаза «Согласование»): решения заморожены.
@@ -140,8 +137,6 @@ const UpdateProjectBody = z
     accountsMode: AccountsModeSchema.optional(),
     accountsSelected: z.array(z.string()).optional(),
     messages: z.array(MessageSchema).optional(),
-    contactDefaultOwnerIds: z.array(z.string()).optional(),
-    contactDefaults: z.record(z.string(), z.unknown()).optional(),
     // agency: фаза и бриф правятся в любом статусе (не snapshot-поля).
     // phase — свободная навигация по визарду, brief-* — данные кампании.
     phase: PhaseSchema.optional(),
@@ -472,8 +467,6 @@ app.openapi(
           "accountsMode",
           "accountsSelected",
           "messages",
-          "contactDefaultOwnerIds",
-          "contactDefaults",
           // agency text/enum-поля — прямое копирование (null валиден).
           "phase",
           "brief",
@@ -615,20 +608,19 @@ app.openapi(
     }
 
     // Лонглист → scheduled-строки общим конвейером (дедуп по админу + синтез
-    // канало-vars + распределение владельца + sticky/warm). Только не отобранные
-    // в шортлист и не отказавшиеся; already-contacted на первом запуске не
-    // пропускаем. У BD шортлиста нет → shortlistedAt всегда null (фильтр no-op).
+    // канало-vars + sticky/warm). Только не отобранные в шортлист и не
+    // отказавшиеся; already-contacted на первом запуске не пропускаем. У BD
+    // шортлиста нет → shortlistedAt всегда null (фильтр no-op).
     const longlist = allLeads
       .filter((l) => l.shortlistedAt === null && l.available !== false)
       .map((l) => ({
         id: l.id,
         username: l.username,
         tgUserId: l.tgUserId,
-        contactId: l.contactId,
         properties: (l.properties ?? {}) as Record<string, unknown>,
       }));
     const activatedAt = new Date();
-    const { rows, leads } = await scheduleLeads({
+    const rows = await scheduleLeads({
       wsId,
       project,
       accountIds,
@@ -653,10 +645,6 @@ app.openapi(
         })
         .where(eq(projects.id, project.id));
     });
-
-    // Распределяем владельца/CRM-дефолты ПОСЛЕ коммита рассылки (best-effort —
-    // при откате выше сюда не доходим, контакты не получают owner'а зря).
-    await assignContactDefaultsAtLaunch({ wsId, project, leads });
 
     const refreshed = await assertProjectAccess(projectId, wsId, userId, role);
     return c.json(serializeProject(refreshed));
@@ -1556,8 +1544,6 @@ function serializeProject(
     accountsMode: row.accountsMode,
     accountsSelected: row.accountsSelected,
     messages: row.messages,
-    contactDefaultOwnerIds: row.contactDefaultOwnerIds,
-    contactDefaults: row.contactDefaults,
     activatedAt: row.activatedAt?.toISOString() ?? null,
     completedAt: row.completedAt?.toISOString() ?? null,
     clientFinalizedAt: row.clientFinalizedAt?.toISOString() ?? null,

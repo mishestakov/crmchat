@@ -636,17 +636,6 @@ export const projects = pgTable(
       .$type<ProjectMessage[]>()
       .notNull()
       .default([]),
-    contactDefaultOwnerIds: jsonb("contact_default_owner_ids")
-      .$type<string[]>()
-      .notNull()
-      .default([]),
-    contactDefaults: jsonb("contact_defaults")
-      .$type<Record<string, unknown>>()
-      .notNull()
-      .default({}),
-    contactOwnerRoundRobin: integer("contact_owner_round_robin")
-      .notNull()
-      .default(0),
     activatedAt: timestamp("activated_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
 

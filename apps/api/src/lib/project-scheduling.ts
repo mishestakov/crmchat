@@ -5,17 +5,13 @@ import {
   contacts,
   outreachAccounts,
   projectItems,
-  projects,
   scheduledMessages,
   tgChats,
   tgUsers,
   type ProjectMessage,
+  type projects,
 } from "../db/schema.ts";
 import { contactTgUserIdSql } from "./contact-sql.ts";
-import {
-  loadPropertyDefs,
-  validateContactProperties,
-} from "./contact-properties.ts";
 import { resolveStickyByPeerIds } from "./sticky.ts";
 import { substituteVariables } from "./substitute-variables.ts";
 
@@ -128,9 +124,6 @@ export type SchedulingLead = {
   id: string;
   username: string | null;
   tgUserId: string | null;
-  // Контакт-админ канала. Нужен assignContactDefaultsAtLaunch для распределения
-  // владельца на запуске. Опционален — не все вызывающие его прокидывают.
-  contactId?: string | null;
   properties: Record<string, unknown>;
 };
 
@@ -350,99 +343,6 @@ async function prepareLeads(opts: {
   return out;
 }
 
-// Распределение CRM-полей контактов на ЗАПУСКЕ кампании (а не на импорте —
-// импорт каналов проект-агностичен). Для дедуплицированных по админу лидов:
-// проставляет owner_id round-robin из пула проекта тем контактам, у кого его
-// ещё нет (first-launch-wins — не перетираем ручное/прошлой кампании), и
-// доливает contactDefaults проекта по ключам, которых у контакта нет.
-// Счётчик RR (project.contactOwnerRoundRobin) сдвигаем на число реально
-// назначенных владельцев. Мутирует contacts + projects. Вызывается ПОСЛЕ
-// персиста scheduled_messages (best-effort): при откате активации сюда не
-// доходим — контакты не получают owner'а и RR-счётчик не двигается. Запись
-// идемпотентна (owner ставится только если пуст, дефолты — в отсутствующие
-// ключи), так что повторный заход безопасен.
-export async function assignContactDefaultsAtLaunch(opts: {
-  wsId: string;
-  project: typeof projects.$inferSelect;
-  leads: SchedulingLead[];
-}): Promise<void> {
-  const contactIds = [
-    ...new Set(
-      opts.leads
-        .map((l) => l.contactId)
-        .filter((id): id is string => id != null),
-    ),
-  ];
-  if (contactIds.length === 0) return;
-
-  const ownerIds = opts.project.contactDefaultOwnerIds;
-  const projectDefaults = opts.project.contactDefaults as Record<
-    string,
-    unknown
-  >;
-  const hasOwnerPool = ownerIds.length > 0;
-  const hasDefaults = Object.keys(projectDefaults).length > 0;
-  if (!hasOwnerPool && !hasDefaults) return;
-
-  const defs = await loadPropertyDefs(opts.wsId);
-  const allKeys = new Set(defs.map((d) => d.key));
-  const canOwner = hasOwnerPool && allKeys.has("owner_id");
-  if (!canOwner && !hasDefaults) return;
-
-  const rows = await db
-    .select({ id: contacts.id, properties: contacts.properties })
-    .from(contacts)
-    .where(
-      and(eq(contacts.workspaceId, opts.wsId), inArray(contacts.id, contactIds)),
-    );
-  const propsById = new Map(
-    rows.map((r) => [r.id, (r.properties ?? {}) as Record<string, unknown>]),
-  );
-
-  // Итерируем contactIds в порядке лидов (не в произвольном порядке БД) — чтобы
-  // round-robin владельца назначался детерминированно (первый лид → первый
-  // владелец пула и т.д.). Правки считаем в памяти, пишем параллельно.
-  let assigned = 0;
-  const updates: { id: string; properties: Record<string, unknown> }[] = [];
-  for (const id of contactIds) {
-    const props = propsById.get(id);
-    if (!props) continue;
-    const additions: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(projectDefaults)) {
-      if (props[k] === undefined && allKeys.has(k)) additions[k] = v;
-    }
-    if (canOwner && !props.owner_id) {
-      additions.owner_id =
-        ownerIds[(opts.project.contactOwnerRoundRobin + assigned) % ownerIds.length];
-      assigned++;
-    }
-    if (Object.keys(additions).length === 0) continue;
-    // Валидируем ТОЛЬКО добавляемое и мёржим в существующие props. Не прогоняем
-    // хранимые props через validateContactProperties: если у контакта есть ключ
-    // с удалённым позже property-def, ревалидация бросила бы 400 и уронила всю
-    // активацию (additions всегда из allKeys, на них validate не падает).
-    updates.push({
-      id,
-      properties: { ...props, ...validateContactProperties(defs, additions) },
-    });
-  }
-
-  await Promise.all(
-    updates.map((u) =>
-      db.update(contacts).set({ properties: u.properties }).where(eq(contacts.id, u.id)),
-    ),
-  );
-
-  if (assigned > 0) {
-    await db
-      .update(projects)
-      .set({
-        contactOwnerRoundRobin: sql`${projects.contactOwnerRoundRobin} + ${assigned}`,
-      })
-      .where(eq(projects.id, opts.project.id));
-  }
-}
-
 // Список аккаунтов, которые видит проект на момент активации/доливки:
 // (active) ∩ (project.accountsMode/accountsSelected).
 export async function resolveProjectAccountIds(
@@ -464,12 +364,9 @@ export async function resolveProjectAccountIds(
     .filter((id) => project.accountsSelected.includes(id));
 }
 
-// Чистый конвейер «лиды проекта → scheduled-строки» — общий путь активации и
-// доливки: prepareLeads (дедуп по админу + синтез канало-vars) → sticky + warm
-// → buildScheduledRows. Сайд-эффектов нет: возвращает строки на вставку И
-// подготовленные лиды (для assignContactDefaultsAtLaunch). Распределение
-// владельца вызывающий делает ПОСЛЕ персиста строк — иначе при откате
-// активации контакты получили бы owner'а, а рассылка нет.
+// Конвейер «лиды проекта → scheduled-строки» — общий путь активации и доливки:
+// prepareLeads (дедуп по админу + синтез канало-vars) → sticky + warm →
+// buildScheduledRows. Вставку строк делает вызывающий (в своей транзакции).
 export async function scheduleLeads(opts: {
   wsId: string;
   project: typeof projects.$inferSelect;
@@ -477,13 +374,13 @@ export async function scheduleLeads(opts: {
   leads: SchedulingLead[];
   baseTime: Date;
   skipContacted: boolean;
-}): Promise<{ rows: ScheduledRow[]; leads: SchedulingLead[] }> {
+}): Promise<ScheduledRow[]> {
   const prepared = await prepareLeads({
     projectId: opts.project.id,
     leads: opts.leads,
     skipContacted: opts.skipContacted,
   });
-  if (prepared.length === 0) return { rows: [], leads: [] };
+  if (prepared.length === 0) return [];
   const tgUserIds = prepared
     .map((l) => l.tgUserId)
     .filter((x): x is string => x !== null);
@@ -492,7 +389,7 @@ export async function scheduleLeads(opts: {
     resolveStickyByTgUserIds(opts.wsId, tgUserIds),
     resolveWarmTgUserIds(opts.wsId, tgUserIds),
   ]);
-  const rows = buildScheduledRows({
+  return buildScheduledRows({
     wsId: opts.wsId,
     project: opts.project,
     accountIds: opts.accountIds,
@@ -501,5 +398,4 @@ export async function scheduleLeads(opts: {
     priorByTgUserId,
     warmTgUserIds,
   });
-  return { rows, leads: prepared };
 }

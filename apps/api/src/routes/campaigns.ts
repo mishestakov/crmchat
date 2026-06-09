@@ -23,7 +23,6 @@ import {
   resolveStickyByTgUserIds,
   resolveProjectAccountIds,
   scheduleLeads,
-  assignContactDefaultsAtLaunch,
   FINAL_OFFER_MSG_IDX,
 } from "../lib/project-scheduling.ts";
 import { substituteVariables } from "../lib/substitute-variables.ts";
@@ -419,7 +418,6 @@ type InsertedPlacement = {
   channelId: string | null;
   username: string | null;
   tgUserId: string | null;
-  contactId: string | null;
   properties: unknown;
 };
 
@@ -433,7 +431,7 @@ async function scheduleDolivka(opts: {
   // канало-vars + sticky/warm. skipContacted=true — повторный опенер уже
   // начатым тредам не шлём; prepareLeads внутри отбрасывает размещения без
   // получателя.
-  const { rows, leads } = await scheduleLeads({
+  const rows = await scheduleLeads({
     wsId: opts.wsId,
     project: opts.project,
     accountIds: opts.accountIds,
@@ -441,7 +439,6 @@ async function scheduleDolivka(opts: {
       id: p.id,
       username: p.username,
       tgUserId: p.tgUserId,
-      contactId: p.contactId,
       properties: (p.properties ?? {}) as Record<string, unknown>,
     })),
     baseTime: new Date(),
@@ -451,13 +448,6 @@ async function scheduleDolivka(opts: {
   for (let i = 0; i < rows.length; i += CHUNK) {
     await db.insert(scheduledMessages).values(rows.slice(i, i + CHUNK));
   }
-  // Распределение владельца — после вставки строк (best-effort, продолжает
-  // RR-счётчик проекта).
-  await assignContactDefaultsAtLaunch({
-    wsId: opts.wsId,
-    project: opts.project,
-    leads,
-  });
 }
 
 // Массовое добавление: по одному URL/@username на строку. Канал, которого нет

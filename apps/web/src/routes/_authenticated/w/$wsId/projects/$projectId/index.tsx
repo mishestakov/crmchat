@@ -250,7 +250,6 @@ function SequenceDetailPage() {
   const data = seq.data;
   const sortedStages = [...data.stages].sort((a, b) => a.order - b.order);
   const accountsSummary = buildAccountsSummary(data, accountsQ.data ?? []);
-  const crmSummary = buildCrmSummary(data);
   const messagesSummary = buildMessagesSummary(messages);
 
   const confirmComplete = () => {
@@ -373,16 +372,6 @@ function SequenceDetailPage() {
             <SectionItem withChevron>
               <SectionItemTitle>Аккаунты</SectionItemTitle>
               <SectionItemValue>{accountsSummary}</SectionItemValue>
-            </SectionItem>
-          </Link>
-
-          <Link
-            to="/w/$wsId/projects/$projectId/contact-settings"
-            params={{ wsId, projectId }}
-          >
-            <SectionItem withChevron>
-              <SectionItemTitle>CRM-автоматизации</SectionItemTitle>
-              <SectionItemValue>{crmSummary}</SectionItemValue>
             </SectionItem>
           </Link>
         </Section>
@@ -568,15 +557,6 @@ function buildAccountsSummary(
   if (chosen.length === 0) return `Выбрано: ${project.accountsSelected.length}`;
   if (chosen.length <= 3) return chosen.join(", ");
   return `${chosen.slice(0, 3).join(", ")} + ${chosen.length - 3}`;
-}
-
-// Сводка CRM-автоматизаций: кол-во ответственных за лидов. Заменяет прежний
-// прочерк «—» — без клика непонятно что внутри.
-function buildCrmSummary(project: SequenceData): string {
-  const owners = project.contactDefaultOwnerIds.length;
-  if (owners === 0) return "Ответственный: создатель рассылки";
-  if (owners === 1) return "1 ответственный";
-  return `${owners} ответственных (round-robin)`;
 }
 
 // Сводка цепочки: «N шагов: первое сразу → через 1 ч → через 1 день».
