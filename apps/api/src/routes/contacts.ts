@@ -427,7 +427,8 @@ app.openapi(
     const { id } = c.req.valid("param");
     const contact = await assertContactAccess(id, wsId);
     const props = (contact.properties ?? {}) as Record<string, unknown>;
-    if (!maxPeerRef(props)) {
+    const peer = maxPeerRef(props);
+    if (!peer) {
       throw new HTTPException(400, {
         message: "у контакта нет MAX-адреса (max_user_id/max_link)",
       });
@@ -439,7 +440,7 @@ app.openapi(
     // Имя/аватар закешированы в момент привязки админа (set-admin резолвит
     // LINK_INFO и пишет full_name/max_avatar_url) — отдаём из properties как есть.
     try {
-      const messages = await fetchMaxDialog(account, maxPeerRef(props)!);
+      const messages = await fetchMaxDialog(account, peer);
       return c.json({
         peer: {
           name: typeof props.full_name === "string" ? props.full_name : "",

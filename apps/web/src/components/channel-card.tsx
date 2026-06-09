@@ -739,6 +739,13 @@ function AdminsSection(props: { wsId: string; channel: Channel }) {
   const qc = useQueryClient();
   const [adding, setAdding] = useState(false);
 
+  // Привязка/отвязка админа меняет канал + контакты — инвалидируем общий набор.
+  const invalidateAdmins = () => {
+    qc.invalidateQueries({ queryKey: ["channels", props.wsId] });
+    qc.invalidateQueries({ queryKey: ["channel", props.wsId, props.channel.id] });
+    qc.invalidateQueries({ queryKey: ["contacts", props.wsId] });
+  };
+
   const removeMut = useMutation({
     mutationFn: async (contactId: string) => {
       const { error } = await api.DELETE(
@@ -751,11 +758,7 @@ function AdminsSection(props: { wsId: string; channel: Channel }) {
       );
       if (error) throw error;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["channels", props.wsId] });
-      qc.invalidateQueries({ queryKey: ["channel", props.wsId, props.channel.id] });
-      qc.invalidateQueries({ queryKey: ["contacts", props.wsId] });
-    },
+    onSuccess: invalidateAdmins,
   });
 
   const addMut = useMutation({
@@ -771,9 +774,7 @@ function AdminsSection(props: { wsId: string; channel: Channel }) {
       return data;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["channels", props.wsId] });
-      qc.invalidateQueries({ queryKey: ["channel", props.wsId, props.channel.id] });
-      qc.invalidateQueries({ queryKey: ["contacts", props.wsId] });
+      invalidateAdmins();
       setAdding(false);
     },
   });
@@ -793,9 +794,7 @@ function AdminsSection(props: { wsId: string; channel: Channel }) {
       return data;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["channels", props.wsId] });
-      qc.invalidateQueries({ queryKey: ["channel", props.wsId, props.channel.id] });
-      qc.invalidateQueries({ queryKey: ["contacts", props.wsId] });
+      invalidateAdmins();
       setAdding(false);
     },
   });
