@@ -1,6 +1,6 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -36,7 +36,7 @@ import {
 } from "../../../../../../lib/outreach-queries";
 import { OUTREACH_QK, invalidateProject } from "../../../../../../lib/query-keys";
 import { substituteVariables } from "../../../../../../lib/substitute-variables";
-import { buildVariablesFromImports } from "../../../../../../lib/template-variables";
+import { TEMPLATE_VARIABLES } from "../../../../../../lib/template-variables";
 
 export const Route = createFileRoute(
   "/_authenticated/w/$wsId/projects/$projectId/",
@@ -58,19 +58,6 @@ function SequenceDetailPage() {
   const seq = useProject(wsId, projectId);
   const accountsQ = useOutreachAccounts(wsId);
 
-  const leadsQ = useQuery({
-    queryKey: OUTREACH_QK.projectLeads(wsId, projectId),
-    queryFn: async () => {
-      const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/projects/{projectId}/leads",
-        {
-          params: { path: { wsId, projectId }, query: { limit: 1, offset: 0 } },
-        },
-      );
-      if (error) throw error;
-      return data;
-    },
-  });
 
   const analyticsQ = useQuery({
     queryKey: OUTREACH_QK.projectAnalytics(wsId, projectId, 30),
@@ -123,23 +110,9 @@ function SequenceDetailPage() {
   // правятся на отдельных sub-routes.
   const [messages, setMessages] = useState<Message[]>([]);
 
-  // Список переменных для autocomplete — только CSV-колонки из импортов
-  // проекта (точное соответствие lead.properties) + canonical username.
-  const importsQ = useQuery({
-    queryKey: ["project-imports", wsId, projectId],
-    queryFn: async () => {
-      const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/projects/{projectId}/imports",
-        { params: { path: { wsId, projectId } } },
-      );
-      if (error) throw error;
-      return data;
-    },
-  });
-  const templateVariables = useMemo(
-    () => buildVariablesFromImports(importsQ.data),
-    [importsQ.data],
-  );
+  // Переменные autocomplete — canonical username + канало-переменные из базы
+  // (синтезируются на активации, см. prepareLeads). Статический список.
+  const templateVariables = TEMPLATE_VARIABLES;
   const [previewMsg, setPreviewMsg] = useState<Message | null>(null);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
@@ -275,10 +248,8 @@ function SequenceDetailPage() {
   }
 
   const data = seq.data;
-  const leadsCount = leadsQ.data?.total ?? 0;
   const sortedStages = [...data.stages].sort((a, b) => a.order - b.order);
   const accountsSummary = buildAccountsSummary(data, accountsQ.data ?? []);
-  const crmSummary = buildCrmSummary(data);
   const messagesSummary = buildMessagesSummary(messages);
 
   const confirmComplete = () => {
@@ -403,43 +374,6 @@ function SequenceDetailPage() {
               <SectionItemValue>{accountsSummary}</SectionItemValue>
             </SectionItem>
           </Link>
-
-          <Link
-            to="/w/$wsId/projects/$projectId/contact-settings"
-            params={{ wsId, projectId }}
-          >
-            <SectionItem withChevron>
-              <SectionItemTitle>CRM-автоматизации</SectionItemTitle>
-              <SectionItemValue>{crmSummary}</SectionItemValue>
-            </SectionItem>
-          </Link>
-        </Section>
-
-        {/* === 3. База лидов === */}
-        <Section header="База">
-          <Link
-            to="/w/$wsId/projects/$projectId/leads"
-            params={{ wsId, projectId }}
-          >
-            <SectionItem withChevron>
-              <SectionItemTitle>Лиды</SectionItemTitle>
-              <SectionItemValue>
-                {leadsCount} {pluralize(leadsCount, "лид", "лида", "лидов")}
-              </SectionItemValue>
-            </SectionItem>
-          </Link>
-
-          {!isDone && (
-            <Link
-              to="/w/$wsId/projects/$projectId/import"
-              params={{ wsId, projectId }}
-            >
-              <SectionItem withChevron>
-                <SectionItemTitle>Импортировать CSV</SectionItemTitle>
-                <SectionItemValue>+ ещё лидов</SectionItemValue>
-              </SectionItem>
-            </Link>
-          )}
         </Section>
 
         {/* === Section: статистика — для всех статусов кроме draft === */}
@@ -623,15 +557,6 @@ function buildAccountsSummary(
   if (chosen.length === 0) return `Выбрано: ${project.accountsSelected.length}`;
   if (chosen.length <= 3) return chosen.join(", ");
   return `${chosen.slice(0, 3).join(", ")} + ${chosen.length - 3}`;
-}
-
-// Сводка CRM-автоматизаций: кол-во ответственных за лидов. Заменяет прежний
-// прочерк «—» — без клика непонятно что внутри.
-function buildCrmSummary(project: SequenceData): string {
-  const owners = project.contactDefaultOwnerIds.length;
-  if (owners === 0) return "Ответственный: создатель рассылки";
-  if (owners === 1) return "1 ответственный";
-  return `${owners} ответственных (round-robin)`;
 }
 
 // Сводка цепочки: «N шагов: первое сразу → через 1 ч → через 1 день».

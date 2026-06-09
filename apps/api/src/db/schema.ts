@@ -173,8 +173,7 @@ export const workspaceInvites = pgTable(
 // Custom-property types. По спеке data-model.md §3 — date добавим когда упрёмся.
 // multi_select хранит string[] значений option.id; single_select — одно option.id.
 // Аналог donor PROPERTY_METADATA. Createable (text/single_select/multi_select) — юзер
-// сам создаёт через UI; остальные — только через preset-сидинг при создании workspace
-// (флаг `internal`). UI отфильтровывает createable при «новое поле».
+// сам создаёт через UI; остальные типы пока неиспользуемы (заведены под будущее).
 export const propertyType = pgEnum("property_type", [
   "text",
   "single_select",
@@ -189,6 +188,10 @@ export const propertyType = pgEnum("property_type", [
 
 export type PropertyValue = { id: string; name: string };
 
+// Каталог пользовательских кастом-полей КАНАЛА (ниша, cpc/cpa-бакет, тип
+// потребления и т.п.). Channel-centric: в донор-CRM каталог висел на контактах
+// (lead-CRM наследие) — у нас контакт держит только фиксированные системные
+// поля (см. CONTACT_FIELD_DEFS в @repo/core), а кастом живёт на канале.
 export const properties = pgTable(
   "properties",
   {
@@ -201,10 +204,6 @@ export const properties = pgTable(
     type: propertyType("type").notNull(),
     order: integer("order").notNull().default(0),
     required: boolean("required").notNull().default(false),
-    showInList: boolean("show_in_list").notNull().default(true),
-    // true для preset-полей, засеянных при создании workspace (full_name/email/...).
-    // UI: нельзя удалить, тип фиксирован; rename/required/showInList разрешены.
-    internal: boolean("internal").notNull().default(false),
     // null для скалярных типов; массив опций для single_select/multi_select.
     values: jsonb("values").$type<PropertyValue[]>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -431,13 +430,11 @@ export const outreachAccountsMode = pgEnum("outreach_accounts_mode", [
 //     Project=инстанс программы за период, Item=лид.
 // (2) Агентство: Track=клиент (Coca-Cola), Project=кампания (Q4 Holiday),
 //     Item=размещение (channel × project × date).
-// Тип сущности задаёт workspace.mode (первичный тумблер сценария). На уровне
-// project/item discriminator всё же нужен (project_item_kind: lead vs placement
-// разводит outreach- и agency-логику). У track'а отдельного kind НЕТ — папка
-// одинакова в обоих сценариях, mode уже всё разводит.
-// Соответствие: mode='bd' → outreach/lead; mode='agency' → agency/placement.
-
-export const projectKind = pgEnum("project_kind", ["outreach", "agency"]);
+// Сценарий (bd/agency) — это workspace.mode; отдельного kind на project/track
+// НЕТ, он полностью выводим из mode (различие лишь в обёртке воркфлоу: BD-канбан
+// vs agency-визард). Несущий слой общий: оба сценария ведут список каналов,
+// аутрич идёт на админа канала (канало-центричные placement-айтемы). См.
+// specs/etap-16-agency.md §16.
 
 // draft → active ↔ paused → done → archived. archived проекты скрыты из
 // основного listing'а; вытащить из архива пока нельзя (или через прямой
@@ -448,11 +445,6 @@ export const projectStatus = pgEnum("project_status", [
   "paused",
   "done",
   "archived",
-]);
-
-export const projectItemKind = pgEnum("project_item_kind", [
-  "lead",
-  "placement",
 ]);
 
 // Фаза agency-кампании — стадия воронки в визарде (бриф → лонглист →
@@ -628,7 +620,6 @@ export const projects = pgTable(
       .notNull()
       .references(() => tracks.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
-    kind: projectKind("kind").notNull().default("outreach"),
     status: projectStatus("status").notNull().default("draft"),
     properties: jsonb("properties")
       .$type<Record<string, unknown>>()
@@ -672,17 +663,6 @@ export const projects = pgTable(
       .$type<ProjectMessage[]>()
       .notNull()
       .default([]),
-    contactDefaultOwnerIds: jsonb("contact_default_owner_ids")
-      .$type<string[]>()
-      .notNull()
-      .default([]),
-    contactDefaults: jsonb("contact_defaults")
-      .$type<Record<string, unknown>>()
-      .notNull()
-      .default({}),
-    contactOwnerRoundRobin: integer("contact_owner_round_robin")
-      .notNull()
-      .default(0),
     activatedAt: timestamp("activated_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
 
@@ -696,52 +676,6 @@ export const projects = pgTable(
     index("projects_workspace_id_idx").on(t.workspaceId),
     index("projects_track_id_idx").on(t.trackId),
   ],
-);
-
-// Project import — лог CSV-импортов в проект. Нужен, чтобы видеть какие
-// батчи приходили и когда (для «доливки лидов»).
-export type ProjectImportSourceMeta = {
-  fileName?: string;
-  usernameColumn?: string;
-  // CSV-колонка с @username канала, который ведёт лид. На импорте такие
-  // каналы upsert'ятся в `channels` и связываются с контактом через
-  // `channel_admins`. Цель — один залив CSV даёт и лидов, и карточки каналов
-  // в `/channels`. Минимум полей: только username; title/member_count
-  // заполнятся при первом sync'е из соцсети.
-  channelUsernameColumn?: string;
-  columns?: string[];
-};
-
-export type ProjectImportStats = {
-  imported: number;
-  skippedMissingIdentifier: number;
-  skippedDuplicate: number;
-  // Сколько лидов узнали в существующих contacts (sticky подхватит).
-  recognized?: number;
-};
-
-export const projectImports = pgTable(
-  "project_imports",
-  {
-    id: text("id").primaryKey().$defaultFn(shortId),
-    workspaceId: text("workspace_id")
-      .notNull()
-      .references(() => workspaces.id, { onDelete: "cascade" }),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
-    name: text("name").notNull(),
-    sourceMeta: jsonb("source_meta")
-      .$type<ProjectImportSourceMeta>()
-      .notNull()
-      .default({}),
-    importStats: jsonb("import_stats").$type<ProjectImportStats>(),
-    createdBy: text("created_by")
-      .notNull()
-      .references(() => users.id),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [index("project_imports_project_id_idx").on(t.projectId)],
 );
 
 // Ссылка на помеченное сообщение в чате с админом (фаза «Запуск»): договор,
@@ -762,8 +696,8 @@ export type PlacementStepMessages = {
   act?: PlacementMsgRef;
 };
 
-// Project item — карточка на канбане проекта. Lead (контакт-в-задаче) или
-// placement (channel-в-проекте).
+// Project item — карточка проекта: placement (канал-в-проекте). Получатель
+// аутрича (username/tg_user_id/contact_id) резолвится от админа канала.
 export const projectItems = pgTable(
   "project_items",
   {
@@ -774,20 +708,11 @@ export const projectItems = pgTable(
     projectId: text("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
-    // FK на batch CSV-импорта, из которого пришёл item. NULL — item создан
-    // вручную или доливкой без batch-меток. ON DELETE SET NULL: запись
-    // импорта могут удалить, item остаётся.
-    importId: text("import_id").references(() => projectImports.id, {
-      onDelete: "set null",
-    }),
-    kind: projectItemKind("kind").notNull().default("lead"),
     // Текущая стадия канбана. text — id из projects.stages[*].id, без FK
-    // (stages — json на проекте). null = «без стадии»; новые лиды лучше
-    // создавать с stage_id первой стадии (см. project-imports.ts), но
-    // явно null остаётся валидным для UI «Без стадии».
+    // (stages — json на проекте). null = «без стадии», валидно для UI.
     stageId: text("stage_id"),
 
-    // === lead-specific (kind='lead') =======================================
+    // === получатель аутрича (резолвится от админа канала) ==================
 
     username: text("username"),
     tgUserId: text("tg_user_id"),
@@ -796,17 +721,18 @@ export const projectItems = pgTable(
       onDelete: "set null",
     }),
 
+    // Снимок свойств для подстановки {{key}} в шаблонах. {{каналы}}/{{канал}}/
+    // {{ссылка}} синтезируются из базы каналов на активации (см. prepareLeads),
+    // сюда же можно класть произвольные ключи (доливка/ручная правка).
     properties: jsonb("properties")
       .$type<Record<string, string>>()
       .notNull()
       .default({}),
 
-    // === placement-specific (kind='placement') =============================
-    // Строка медиаплана = «выход поста у одного блогера в кампании». Аутрич по
-    // лонглисту переиспользует lead-поля выше (username/tg_user_id/contact_id
-    // резолвятся от админа канала), а эти поля держат данные размещения.
-    // Поля публикации/метрик/ЕРИД (published_at, actual_*, erid) добавятся в
-    // PR производства — не часть data shape лонглиста.
+    // === данные размещения =================================================
+    // Строка медиаплана = «выход поста у одного блогера в кампании».
+    // Поля публикации/метрик/ЕРИД (published_at, actual_*, erid) — фаза
+    // производства (agency-визард); BD их не использует.
     channelId: text("channel_id").references(() => channels.id, {
       onDelete: "cascade",
     }),
@@ -891,7 +817,7 @@ export const projectItems = pgTable(
   },
   (t) => [
     index("project_items_project_id_idx").on(t.projectId),
-    // Под медиаплан-лукап и историю цен по каналу (kind='placement').
+    // Под медиаплан-лукап и историю цен по каналу.
     index("project_items_channel_id_idx").on(t.channelId),
     index("project_items_workspace_id_idx").on(t.workspaceId),
     // Под inbound-listener: lookup `WHERE workspace_id = ? AND tg_user_id = ?`.
@@ -899,11 +825,9 @@ export const projectItems = pgTable(
       t.workspaceId,
       t.tgUserId,
     ),
-    // Identity-уникальность лидов в одном проекте: @username — единственный
-    // TG-идентификатор, по которому импорт может найти и отправить DM.
-    uniqueIndex("project_items_project_username_unique")
-      .on(t.projectId, sql`lower(${t.username})`)
-      .where(sql`${t.username} IS NOT NULL AND ${t.kind} = 'lead'`),
+    // Уникальности по (project, username) НЕТ: один админ может вести
+    // несколько каналов → несколько размещений с тем же @username. Дедуп
+    // размещений — по channelId в самом placements/bulk (ручная проверка).
   ],
 );
 

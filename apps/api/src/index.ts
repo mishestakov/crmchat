@@ -4,7 +4,6 @@ import { app } from "./app.ts";
 import { startOutreachWorker } from "./lib/outreach-worker.ts";
 import { warmupMaxListeners } from "./lib/max-conversation.ts";
 import { startMetricsWorker } from "./lib/metrics-worker.ts";
-import { syncPresetsForAllWorkspaces } from "./lib/workspace-presets.ts";
 import { startBotPolling } from "./lib/tg-bot.ts";
 
 const port = Number(process.env.PORT ?? 3000);
@@ -22,7 +21,6 @@ if (process.env.NODE_ENV !== "test") {
   void warmupMaxListeners();
   setInterval(() => void warmupMaxListeners(), 10 * 60_000);
   startMetricsWorker();
-  void syncPresetsForAllWorkspaces();
   // RU-сервер: webhook не доставляется (входящий к RU-IP таймаутит), тянем
   // апдеты сами long-polling'ом. setupWebhook оставлен в tg-bot.ts на случай
   // не-RU окружения, где webhook предпочтительнее.

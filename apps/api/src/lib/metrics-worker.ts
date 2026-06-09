@@ -113,7 +113,6 @@ async function tick() {
       .leftJoin(channels, eq(channels.id, projectItems.channelId))
       .where(
         and(
-          eq(projectItems.kind, "placement"),
           eq(projectItems.metricsStatus, "pending"),
           isNotNull(projectItems.postUrl),
           // MAX не под TG-капом (свой сокет, не TDLib) — пускаем и при tgCapped.

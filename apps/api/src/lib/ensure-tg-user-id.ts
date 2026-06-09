@@ -4,9 +4,9 @@ import { contacts } from "../db/schema.ts";
 import { errMsg } from "./errors.ts";
 import type { TdClient } from "./tdlib/index.ts";
 
-// Lazy-резолв tg_user_id для контакта: импортирован по @ без последующих
-// отправок (project-imports, channels admin smart-stub) → contact живёт без
-// id и quick-send / chat-history его не открывают. searchPublicChat тащит
+// Lazy-резолв tg_user_id для контакта: заведён по @ без последующих
+// отправок (channels admin smart-stub / bulk-добавление каналов) → contact
+// живёт без id и quick-send / chat-history его не открывают. searchPublicChat тащит
 // TG-чат по username и даёт user_id; сохраняем в properties.tg_user_id
 // (jsonb-merge) — следующий вызов уже идёт по короткому пути.
 //

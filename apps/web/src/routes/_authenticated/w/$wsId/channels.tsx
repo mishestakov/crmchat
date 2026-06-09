@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { X } from "lucide-react";
-import type { Channel, ImportChannelsMapping } from "@repo/core";
+import type { Channel, ImportChannelsMapping, Property } from "@repo/core";
 import { PLATFORMS, PlatformBadge, type Platform } from "../../../../lib/platforms";
 import { api } from "../../../../lib/api";
 import { formatMembers } from "../../../../components/channel-card";
@@ -26,8 +26,6 @@ const DM_PILL =
 type Slot =
   | "ignore"
   | "title"
-  | "username"
-  | "externalId"
   | "link"
   | "memberCount"
   | "description"
@@ -37,42 +35,56 @@ type Slot =
 const SLOT_LABELS: Record<Slot, string> = {
   ignore: "— Игнорировать",
   title: "Название",
-  username: "@username канала",
-  externalId: "ID канала (chat_id)",
-  link: "Ссылка",
+  link: "Ссылка (идентификатор)",
   memberCount: "Подписчиков",
   description: "Описание",
   adminUsername: "@username админа",
   property: "В свойство…",
 };
 
-// Авто-детект слота по имени CSV-заголовка. Ключи нормализованы
-// (lower-case, non-alnum → '_'); сравниваем нормализованный header'ом.
+// Авто-детект слота по ТОЧНОМУ каноническому имени заголовка (как в шаблоне CSV).
+// Синонимы убраны намеренно: формат задаёт шаблон, нестандартные заголовки юзер
+// маппит вручную. Ключи нормализованы (lower-case, non-alnum → '_').
 const AUTO_DETECT: Record<string, Slot> = {
   title: "title",
-  name: "title",
-  channel_name: "title",
-  username: "username",
-  channel_username: "username",
-  handle: "username",
-  chat_id: "externalId",
-  channel_id: "externalId",
-  id: "externalId",
-  external_id: "externalId",
-  subscribers: "memberCount",
-  member_count: "memberCount",
-  members: "memberCount",
-  followers: "memberCount",
-  description: "description",
-  desc: "description",
-  about: "description",
-  admin_username: "adminUsername",
-  admin: "adminUsername",
-  owner: "adminUsername",
   link: "link",
-  url: "link",
-  channel_url: "link",
+  subscribers: "memberCount",
+  description: "description",
+  admin: "adminUsername",
 };
+
+// Канонические заголовки шаблона CSV (кнопка «Скачать шаблон»). Идентификатор —
+// полная ссылка (платформа детектится из домена), `@username` колонкой нет.
+const TEMPLATE_HEADERS = [
+  "link",
+  "title",
+  "subscribers",
+  "description",
+  "admin",
+];
+
+// Демо-CSV: канонические колонки + ключи каталога, одна пример-строка.
+// Заголовки совпадают с AUTO_DETECT → типизированные импортятся без маппинга.
+function downloadTemplateCsv(catalog: Property[]) {
+  const headers = [...TEMPLATE_HEADERS, ...catalog.map((p) => p.key)];
+  const example = [
+    "https://t.me/leoday",
+    "Леонардо Дайвинчик",
+    "5330905",
+    "Бот знакомств. По рекламе @futuread",
+    "futuread",
+    ...catalog.map(() => ""),
+  ];
+  const csv = [headers.join(","), example.join(",")].join("\n");
+  const url = URL.createObjectURL(
+    new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }),
+  );
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "import-channels-template.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 function normalizeHeader(s: string): string {
   return s
@@ -155,6 +167,17 @@ function ChannelsPage() {
   } | null>(null);
 
   const accountsQ = useOutreachAccounts(wsId);
+  // Каталог кастом-полей канала — для кнопки «Скачать шаблон» (колонки = поля).
+  const catalogQ = useQuery({
+    queryKey: ["properties", wsId],
+    queryFn: async () => {
+      const { data, error } = await api.GET("/v1/workspaces/{wsId}/properties", {
+        params: { path: { wsId } },
+      });
+      if (error) throw error;
+      return data;
+    },
+  });
   const accountById = new Map(
     (accountsQ.data ?? []).map((a) => [a.id, a]),
   );
@@ -214,6 +237,13 @@ function ChannelsPage() {
               if (f) void onFile(f);
             }}
           />
+          <button
+            type="button"
+            onClick={() => downloadTemplateCsv(catalogQ.data ?? [])}
+            className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-600 hover:bg-zinc-50"
+          >
+            Скачать шаблон
+          </button>
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
@@ -585,23 +615,31 @@ function ImportWizard(props: {
 }) {
   const { parsed } = props;
 
-  // Платформа всего импорта — выбирается явно, не угадывается по URL построчно.
-  // Один импорт = одна площадка (надёжнее смешанного автодетекта). Прокидывается
-  // в API; дедуп и lower(username)-uniq считаются в разрезе платформы.
-  const [platform, setPlatform] = useState<Platform>("telegram");
+  // Платформа не выбирается: идентификатор — ссылка, домен сам её определяет
+  // построчно на бэке (t.me / youtube / tiktok). Одна точка истины.
 
-  // Init: для каждого header — auto-detect или 'ignore'. Используем заголовок
-  // как ключ state'а; все равенство по строке.
+  // Каталог кастом-полей канала — слот «В свойство…» выбирает поле из него
+  // (не свободный ключ). Тот же каталог, что в настройках «Поля».
+  const catalogQ = useQuery({
+    queryKey: ["properties", props.wsId],
+    queryFn: async () => {
+      const { data, error } = await api.GET("/v1/workspaces/{wsId}/properties", {
+        params: { path: { wsId: props.wsId } },
+      });
+      if (error) throw error;
+      return data;
+    },
+  });
+  const catalog = catalogQ.data ?? [];
+
+  // Init: для каждого header — auto-detect типизированного слота или 'ignore'.
   const [mappings, setMappings] = useState<Record<string, ColMapping>>(() => {
     const init: Record<string, ColMapping> = {};
     const used = new Set<string>();
     for (const h of parsed.headers) {
-      const norm = normalizeHeader(h);
-      const auto = AUTO_DETECT[norm];
-      // Один слот используем максимум один раз — если auto-detect триггернул
-      // дважды (две колонки 'username' и 'channel_username'), вторую делаем
-      // 'ignore', юзер выберет вручную.
-      if (auto && auto !== "property" && !used.has(auto)) {
+      const auto = AUTO_DETECT[normalizeHeader(h)];
+      // Один типизированный слот — максимум один раз; дубль уводим в 'ignore'.
+      if (auto && !used.has(auto)) {
         init[h] = { slot: auto } as ColMapping;
         used.add(auto);
       } else {
@@ -615,8 +653,13 @@ function ImportWizard(props: {
     setMappings((m) => {
       const next = { ...m };
       if (slot === "property") {
-        // Дефолтный propertyKey = нормализованный header (er, niche, ...).
-        next[header] = { slot: "property", propertyKey: normalizeHeader(header) };
+        // Дефолт — поле каталога с ключом, совпавшим с заголовком, иначе первое.
+        const norm = normalizeHeader(header);
+        const match = catalog.find((p) => p.key === norm)?.key;
+        next[header] = {
+          slot: "property",
+          propertyKey: match ?? catalog[0]?.key ?? "",
+        };
       } else {
         next[header] = { slot } as ColMapping;
       }
@@ -627,6 +670,7 @@ function ImportWizard(props: {
   const setPropertyKey = (header: string, propertyKey: string) => {
     setMappings((m) => ({ ...m, [header]: { slot: "property", propertyKey } }));
   };
+
 
   // Какие slot'ы уже заняты (кроме текущей колонки) — чтобы не дать выбрать
   // дважды один типизированный слот.
@@ -640,30 +684,28 @@ function ImportWizard(props: {
     return used;
   }, [mappings]);
 
-  // Identifying-маппинг для дедупа.
+  // Идентификатор — колонка-ссылка (платформа определится из домена на бэке).
   const hasIdentifier = useMemo(() => {
-    return Object.values(mappings).some(
-      (m) => m.slot === "externalId" || m.slot === "username",
-    );
+    return Object.values(mappings).some((m) => m.slot === "link");
   }, [mappings]);
 
-  // Дубль-ключи в свойствах — недопустимы.
+  // В одно поле каталога — максимум одна колонка; пустой выбор недопустим.
   const propertyKeyError = useMemo(() => {
     const keys = new Map<string, number>();
     for (const m of Object.values(mappings)) {
       if (m.slot === "property") {
-        if (!m.propertyKey.trim()) return "У свойства должен быть ключ";
-        if (!/^[a-z0-9_]+$/i.test(m.propertyKey)) {
-          return `Ключ свойства «${m.propertyKey}» содержит недопустимые символы (только a-z, 0-9, _)`;
-        }
+        if (!m.propertyKey) return "Выберите поле каталога для колонки";
         keys.set(m.propertyKey, (keys.get(m.propertyKey) ?? 0) + 1);
       }
     }
     for (const [k, n] of keys) {
-      if (n > 1) return `Ключ свойства «${k}» использован дважды`;
+      if (n > 1) {
+        const name = catalog.find((p) => p.key === k)?.name ?? k;
+        return `Поле «${name}» выбрано для двух колонок`;
+      }
     }
     return null;
-  }, [mappings]);
+  }, [mappings, catalog]);
 
   const submitMut = useMutation({
     mutationFn: async () => {
@@ -687,7 +729,6 @@ function ImportWizard(props: {
           body: {
             rows: parsed.rows,
             mapping: apiMapping,
-            platform,
           },
         },
       );
@@ -745,31 +786,13 @@ function ImportWizard(props: {
             </p>
           </div>
           <div className="flex items-center gap-3">
-            {/* Платформа всего импорта. YouTube/TikTok заполнятся данными лениво
-                при открытии площадки (provider-sync), здесь нужен только хэндл/ссылка. */}
-            <div className="flex items-center gap-1.5">
-              {(
-                ["telegram", "youtube", "tiktok", "dzen", "max"] as Platform[]
-              ).map((p) => {
-                const cfg = PLATFORMS[p];
-                const active = platform === p;
-                return (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => setPlatform(p)}
-                    className={
-                      "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors " +
-                      (active
-                        ? "border-emerald-500 bg-emerald-50 text-emerald-700"
-                        : "border-zinc-300 text-zinc-600 hover:bg-zinc-50")
-                    }
-                  >
-                    <PlatformBadge platform={p} /> {cfg.label}
-                  </button>
-                );
-              })}
-            </div>
+            <button
+              type="button"
+              onClick={() => downloadTemplateCsv(catalog)}
+              className="rounded-lg border border-zinc-300 px-2.5 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50"
+            >
+              Скачать шаблон
+            </button>
             <button
               type="button"
               onClick={props.onClose}
@@ -837,13 +860,20 @@ function ImportWizard(props: {
                           })}
                         </select>
                         {m.slot === "property" && (
-                          <input
-                            type="text"
+                          <select
                             value={m.propertyKey}
                             onChange={(e) => setPropertyKey(h, e.target.value)}
-                            placeholder="ключ (er, niche…)"
-                            className="w-40 rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm focus:border-emerald-500 focus:outline-none"
-                          />
+                            className="w-44 rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm focus:border-emerald-500 focus:outline-none"
+                          >
+                            {catalog.length === 0 && (
+                              <option value="">— нет полей в каталоге —</option>
+                            )}
+                            {catalog.map((p) => (
+                              <option key={p.key} value={p.key}>
+                                {p.name}
+                              </option>
+                            ))}
+                          </select>
                         )}
                       </div>
                     </td>
@@ -858,7 +888,8 @@ function ImportWizard(props: {
           <div className="text-xs text-zinc-600">
             {!hasIdentifier && (
               <span className="text-amber-700">
-                Нужна колонка-идентификатор: «ID канала» или «@username канала».
+                Нужна колонка «Ссылка» — она же идентификатор (платформа
+                определится из ссылки).
               </span>
             )}
             {hasIdentifier && propertyKeyError && (

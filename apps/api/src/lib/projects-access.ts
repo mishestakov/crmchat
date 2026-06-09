@@ -1,7 +1,7 @@
 import { and, eq, sql, type SQL } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import { db } from "../db/client.ts";
-import { projects } from "../db/schema.ts";
+import { projects, workspaces } from "../db/schema.ts";
 import type { WorkspaceRole } from "../middleware/assert-member.ts";
 import { myAccountIdsSql } from "./outreach-access.ts";
 
@@ -25,15 +25,16 @@ export function projectAccessClause(
   const wsClause = eq(projects.workspaceId, workspaceId);
   if (role === "admin") return wsClause;
   const myAccounts = myAccountIdsSql(workspaceId, userId);
-  // agency-проекты (kind='agency') видны всем member'ам ws — это общий ресурс
+  // В agency-режиме все проекты видны всем member'ам ws — это общий ресурс
   // агентства (как контакты/каналы), доступ не привязан к outreach-аккаунтам.
+  // Сценарий определяет workspace.mode (отдельного project.kind больше нет).
   // Без этого member без подключённого аккаунта залочен во всей agency-фиче
   // (пустое дерево кампаний + 404 на всех endpoint'ах). Owner-based RBAC
   // (спека §7, видимость по ответственному менеджеру) — отдельный шаг.
   return and(
     wsClause,
     sql`(
-      ${projects.kind} = 'agency'
+      EXISTS (SELECT 1 FROM ${workspaces} w WHERE w.id = ${workspaceId} AND w.mode = 'agency')
       OR (${projects.accountsMode} = 'selected'
         AND EXISTS (
           SELECT 1 FROM jsonb_array_elements_text(${projects.accountsSelected}) sel(id)

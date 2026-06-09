@@ -13,6 +13,7 @@ import { contactTgUserIdSql } from "../lib/contact-sql.ts";
 import { errMsg } from "../lib/errors.ts";
 import {
   getOutreachWorkerClient,
+  parseFloodWaitSeconds,
   setAccountCooldown,
 } from "../lib/outreach-account-client.ts";
 import { emitProjectChanged } from "../lib/events.ts";
@@ -297,15 +298,5 @@ app.openapi(
     return c.json({ status: "sent" as const, cancelledProjects });
   },
 );
-
-function parseFloodWaitSeconds(msg: string): number | null {
-  const m1 = msg.match(/retry after (\d+)/i);
-  if (m1) return Number(m1[1]);
-  const m2 = msg.match(/FLOOD_WAIT_(\d+)/);
-  if (m2) return Number(m2[1]);
-  const m3 = msg.match(/SLOWMODE_WAIT_(\d+)/);
-  if (m3) return Number(m3[1]);
-  return null;
-}
 
 export default app;

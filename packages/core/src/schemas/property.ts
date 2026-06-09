@@ -1,9 +1,7 @@
 import { z } from "zod";
 
 // Все типы донорского PROPERTY_METADATA. Createable (UI «новое поле») определяется
-// клиентом — см. CREATEABLE_TYPES ниже. Бэкенд принимает любой тип в CreateProperty,
-// но проставляет internal=false для пользовательских; preset (internal=true) сидятся
-// при создании workspace и не создаются через API.
+// клиентом — см. CREATEABLE_TYPES ниже. Бэкенд принимает любой тип в CreateProperty.
 export const PropertyTypeSchema = z.enum([
   "text",
   "single_select",
@@ -23,17 +21,17 @@ export const CREATEABLE_PROPERTY_TYPES: PropertyType[] = [
   "multi_select",
 ];
 
-// Зарезервированные ключи preset-properties (соответствуют donor's ALLOWED_PROPERTY_KEYS,
-// без avatarUrl и без точечной нотации). Custom-keys должны не пересекаться.
+// Каталог `properties` теперь про КАНАЛЫ. Зарезервированные ключи = собственные
+// типизированные колонки channels.*: кастом-поле канала не должно их затенять
+// (иначе «ниша» начала бы спорить с настоящим title/описанием/подписчиками).
 export const RESERVED_PROPERTY_KEYS = new Set([
-  "full_name",
+  "title",
+  "username",
+  "link",
   "description",
-  "email",
-  "phone",
-  "telegram_username",
-  "url",
-  "amount",
-  "stage",
+  "member_count",
+  "external_id",
+  "platform",
 ]);
 
 export const PropertyValueSchema = z.object({
@@ -54,8 +52,6 @@ export const PropertySchema = z.object({
   type: PropertyTypeSchema,
   order: z.number().int(),
   required: z.boolean(),
-  showInList: z.boolean(),
-  internal: z.boolean(),
   values: z.array(PropertyValueSchema).nullable(),
   createdAt: z.iso.datetime(),
 });
@@ -68,12 +64,11 @@ export const CreatePropertySchema = PropertySchema.pick({
 })
   .extend({
     required: z.boolean().optional(),
-    showInList: z.boolean().optional(),
     values: z.array(PropertyValueSchema).optional(),
   })
-  // RESERVED_PROPERTY_KEYS = preset-поля (full_name, email, ...). Их сидит сервер
-  // при создании workspace; пользователь не может создать кастом с тем же ключом
-  // — иначе коллизия с system property и UI рендерил бы их как «обычные».
+  // Пользователь не может создать кастом-поле канала с ключом собственной
+  // колонки channels.* — иначе коллизия с системным полем и UI рендерил бы их
+  // как «обычные».
   .refine((v) => !RESERVED_PROPERTY_KEYS.has(v.key), {
     message: "key is reserved for a system property",
     path: ["key"],
@@ -85,8 +80,41 @@ export const UpdatePropertySchema = z
     name: z.string().min(1).max(120),
     order: z.number().int(),
     required: z.boolean(),
-    showInList: z.boolean(),
     values: z.array(PropertyValueSchema).nullable(),
   })
   .partial();
 export type UpdatePropertyInput = z.infer<typeof UpdatePropertySchema>;
+
+// Минимальная форма определения поля — достаточно и для валидатора значений, и
+// для рендера формы. Каналы берут это из таблицы `properties` (Property —
+// супермножество FieldDef), контакты — из фиксированной константы ниже.
+export type FieldDef = {
+  key: string;
+  name: string;
+  type: PropertyType;
+  required: boolean;
+  values: PropertyValue[] | null;
+};
+
+// Системные поля контакта. В отличие от канала, у контакта НЕТ пользовательского
+// каталога (контакт-привязка кастом-полей была донор-наследием lead-CRM): это
+// фиксированный набор, общий для API-валидации и формы контакта. `tg_user_id` —
+// служебное, заполняется системно (TG-импорт, outreach, listener).
+export const CONTACT_FIELD_DEFS: FieldDef[] = [
+  { key: "full_name", name: "Имя", type: "text", required: true, values: null },
+  {
+    key: "description",
+    name: "Описание",
+    type: "textarea",
+    required: false,
+    values: null,
+  },
+  {
+    key: "telegram_username",
+    name: "Telegram",
+    type: "text",
+    required: false,
+    values: null,
+  },
+  { key: "tg_user_id", name: "TG ID", type: "text", required: false, values: null },
+];

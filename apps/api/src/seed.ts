@@ -17,7 +17,6 @@ import {
   type ProjectMessage,
   type ProjectStage,
 } from "./db/schema.ts";
-import { seedDefaultProperties } from "./lib/workspace-presets.ts";
 
 // Top-100 реальных TG-каналов из исследования рынка маркетинга — для
 // демо «жирной» базы каналов в каждом workspace. Файл seed-data/top-channels.json
@@ -90,8 +89,6 @@ await db
     { workspaceId: SASHA_WS, userId: ANNA_ID, role: "member" },
   ])
   .onConflictDoNothing();
-
-await seedDefaultProperties(SASHA_WS);
 
 // Папки Саши — 4 типа работ из product.md.
 await db
@@ -231,6 +228,14 @@ const seedContacts: (typeof contacts.$inferInsert)[] = [];
 // встречается в нескольких проектах, второй лид цепляется за того же contact.
 // Это правило 5A — partial unique по (workspace, lower(@)) на уровне БД.
 const contactByWsUsername = new Map<string, string>();
+// Канало-центричная модель: каждый блогер демо = канал с этим блогером-админом.
+// buildLeads заводит каналы и channel_admins (как seedRealChannels, но для
+// демо-персон). Дедуп по ws:lower(username), накапливаем и INSERT'им перед
+// project_items (FK на channel_id). Username демо-блогеров не пересекаются с
+// TOP_CHANNELS (проверено) — конфликта unique(ws,platform,username) нет.
+const seedChannels: (typeof channels.$inferInsert)[] = [];
+const seedChannelAdmins: (typeof channelAdmins.$inferInsert)[] = [];
+const channelByWsUsername = new Map<string, string>();
 
 function buildLeads(
   projectId: string,
@@ -270,11 +275,30 @@ function buildLeads(
         createdBy: ownerUserId,
       });
     }
+    // Канал блогера: дедуп по ws:lower(username) (тот же блогер в разных
+    // проектах → один канал, placement'ы цепляются за него). channel_admins
+    // линкуем при первом создании канала (контакт-админ = тот же блогер).
+    const chKey = `${workspaceId}:${s.username.toLowerCase()}`;
+    let channelId = channelByWsUsername.get(chKey) ?? null;
+    if (!channelId) {
+      channelId = `chl_${workspaceId}_${s.username.toLowerCase()}`;
+      channelByWsUsername.set(chKey, channelId);
+      seedChannels.push({
+        id: channelId,
+        workspaceId,
+        platform: "telegram",
+        username: s.username,
+        title: s.full_name,
+        link: `https://t.me/${s.username}`,
+        createdBy: ownerUserId,
+      });
+      seedChannelAdmins.push({ channelId, contactId });
+    }
     return {
       id: lid,
       workspaceId,
       projectId,
-      kind: "lead" as const,
+      channelId,
       stageId: s.stageId,
       username: s.username,
       tgUserId: tg,
@@ -302,7 +326,6 @@ await db
       workspaceId: SASHA_WS,
       trackId: "trk_sasha_acquire",
       name: "Привлечение январь 2026",
-      kind: "outreach",
       status: "active",
       stages: SASHA_ACQUIRE_STAGES,
       messages: ACQUIRE_MESSAGES,
@@ -314,7 +337,6 @@ await db
       workspaceId: SASHA_WS,
       trackId: "trk_sasha_acquire",
       name: "Привлечение декабрь 2025",
-      kind: "outreach",
       status: "done",
       stages: SASHA_ACQUIRE_STAGES,
       messages: ACQUIRE_MESSAGES,
@@ -327,7 +349,6 @@ await db
       workspaceId: SASHA_WS,
       trackId: "trk_sasha_acquire",
       name: "Привлечение февраль 2026",
-      kind: "outreach",
       status: "draft",
       stages: SASHA_ACQUIRE_STAGES,
       messages: ACQUIRE_MESSAGES,
@@ -339,7 +360,6 @@ await db
       workspaceId: SASHA_WS,
       trackId: "trk_sasha_retain",
       name: "Q1 2026 — ценные партнёры",
-      kind: "outreach",
       status: "active",
       stages: SASHA_RETAIN_STAGES,
       messages: RETAIN_MESSAGES,
@@ -352,7 +372,6 @@ await db
       workspaceId: SASHA_WS,
       trackId: "trk_sasha_churn",
       name: "Снижение выплат — ноябрь",
-      kind: "outreach",
       status: "active",
       stages: SASHA_CHURN_STAGES,
       messages: CHURN_MESSAGES,
@@ -365,7 +384,6 @@ await db
       workspaceId: SASHA_WS,
       trackId: "trk_sasha_adhoc",
       name: "Переход на самозанятость",
-      kind: "outreach",
       status: "active",
       stages: SASHA_ADHOC_STAGES,
       messages: ADHOC_MESSAGES,
@@ -377,7 +395,6 @@ await db
       workspaceId: SASHA_WS,
       trackId: "trk_sasha_adhoc",
       name: "Разбан ботов после правок",
-      kind: "outreach",
       status: "active",
       stages: SASHA_ADHOC_STAGES,
       messages: ADHOC_MESSAGES,
@@ -464,6 +481,21 @@ if (sashaSeedContacts.length > 0) {
     .onConflictDoNothing({ target: contacts.id });
 }
 
+// Каналы блогеров + channel_admins (перед project_items — FK на channel_id).
+const sashaSeedChannels = seedChannels.filter((c) => c.workspaceId === SASHA_WS);
+if (sashaSeedChannels.length > 0) {
+  await db
+    .insert(channels)
+    .values(sashaSeedChannels)
+    .onConflictDoNothing({ target: channels.id });
+  await db
+    .insert(channelAdmins)
+    .values(
+      seedChannelAdmins.filter((a) => a.channelId.startsWith(`chl_${SASHA_WS}_`)),
+    )
+    .onConflictDoNothing();
+}
+
 await db
   .insert(projectItems)
   .values([
@@ -503,8 +535,6 @@ await db
     { workspaceId: CPP_WS, userId: BORIS_ID, role: "member" },
   ])
   .onConflictDoNothing();
-
-await seedDefaultProperties(CPP_WS);
 
 // Папки агентства = клиенты-рекламодатели (kind='client'). Реквизиты пока
 // не заполняем — поля жидкие в properties jsonb.
@@ -587,7 +617,6 @@ await db
       workspaceId: CPP_WS,
       trackId: "trk_cpp_cocacola",
       name: "Q4 2026 Holiday",
-      kind: "outreach",
       status: "active",
       stages: CPP_PLACEMENT_STAGES,
       messages: CPP_OFFER_MESSAGES,
@@ -600,7 +629,6 @@ await db
       workspaceId: CPP_WS,
       trackId: "trk_cpp_cocacola",
       name: "Cold pre-launch",
-      kind: "outreach",
       status: "draft",
       stages: CPP_PLACEMENT_STAGES,
       messages: CPP_OFFER_MESSAGES,
@@ -613,7 +641,6 @@ await db
       workspaceId: CPP_WS,
       trackId: "trk_cpp_beeline",
       name: "Тариф «Молодёжный»",
-      kind: "outreach",
       status: "active",
       stages: CPP_PLACEMENT_STAGES,
       messages: CPP_OFFER_MESSAGES,
@@ -626,7 +653,6 @@ await db
       workspaceId: CPP_WS,
       trackId: "trk_cpp_beeline",
       name: "B2B SMB сегмент",
-      kind: "outreach",
       status: "active",
       stages: CPP_PLACEMENT_STAGES,
       messages: CPP_OFFER_MESSAGES,
@@ -639,7 +665,6 @@ await db
       workspaceId: CPP_WS,
       trackId: "trk_cpp_beeline",
       name: "Лето 2026",
-      kind: "outreach",
       status: "done",
       stages: CPP_PLACEMENT_STAGES,
       messages: CPP_OFFER_MESSAGES,
@@ -654,7 +679,6 @@ await db
       workspaceId: CPP_WS,
       trackId: "trk_cpp_skyeng",
       name: "EdTech Q1",
-      kind: "outreach",
       status: "draft",
       stages: CPP_PLACEMENT_STAGES,
       messages: CPP_OFFER_MESSAGES,
@@ -766,6 +790,20 @@ if (cppSeedContacts.length > 0) {
     .insert(contacts)
     .values(cppSeedContacts)
     .onConflictDoNothing({ target: contacts.id });
+}
+
+const cppSeedChannels = seedChannels.filter((c) => c.workspaceId === CPP_WS);
+if (cppSeedChannels.length > 0) {
+  await db
+    .insert(channels)
+    .values(cppSeedChannels)
+    .onConflictDoNothing({ target: channels.id });
+  await db
+    .insert(channelAdmins)
+    .values(
+      seedChannelAdmins.filter((a) => a.channelId.startsWith(`chl_${CPP_WS}_`)),
+    )
+    .onConflictDoNothing();
 }
 
 await db
@@ -888,8 +926,6 @@ await db
   ])
   .onConflictDoNothing();
 
-await seedDefaultProperties(AGENCY_WS);
-
 await db
   .insert(tracks)
   .values([
@@ -921,7 +957,6 @@ await db
     workspaceId: AGENCY_WS,
     trackId: "trk_ag_coke",
     name: "Q4 Holiday B2B",
-    kind: "agency",
     status: "draft",
     phase: "longlist",
     brief:
@@ -977,7 +1012,6 @@ const placementRows = agChannelIds.map((channelId, i) => {
     id: `pli_ag_${String(i).padStart(3, "0")}`,
     workspaceId: AGENCY_WS,
     projectId: "prj_ag_q4",
-    kind: "placement" as const,
     channelId,
     contactId: admin?.contactId ?? null,
     username: (props.telegram_username as string | undefined) ?? null,

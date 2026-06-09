@@ -1,10 +1,12 @@
-import { and, asc, eq, gte, inArray, lt, lte, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lt, lte, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
+  contacts,
   outreachAccounts,
   projectItems,
   projects,
   scheduledMessages,
+  tgChats,
   tgUsers,
   workspaces,
 } from "../db/schema.ts";
@@ -211,13 +213,14 @@ async function processAccount(accountId: string, items: DueItem[]) {
     .select({
       account: outreachAccounts,
       outreachSchedule: workspaces.outreachSchedule,
+      mode: workspaces.mode,
     })
     .from(outreachAccounts)
     .innerJoin(workspaces, eq(workspaces.id, outreachAccounts.workspaceId))
     .where(eq(outreachAccounts.id, accountId))
     .limit(1);
   if (!row || row.account.status !== "active") return;
-  const { account, outreachSchedule } = row;
+  const { account, outreachSchedule, mode } = row;
 
   // FloodWait cooldown в БД. Если время не вышло — пропускаем тик. Если
   // вышло — чистим (одной операцией снимаем плашку из UI).
@@ -376,6 +379,32 @@ async function processAccount(accountId: string, items: DueItem[]) {
           .update(projectItems)
           .set({ tgUserId })
           .where(eq(projectItems.id, lead.id));
+      }
+      // BD: закрепляем блогера за этим аккаунтом с ПЕРВОГО (холодного) контакта —
+      // чтобы во всех будущих кампаниях его вёл тот же аккаунт (одно контактное
+      // лицо на блогера). Только для «ничьих»: primary ещё не задан И блогер
+      // никому в воркспейсе не отвечал (иначе холодное исходящее «угнало» бы
+      // блогера, ответившего другому аккаунту — см. sticky.ts). Атомарно: WHERE +
+      // NOT EXISTS. В agency не закрепляем — там одного блогера ведут разные.
+      if (mode === "bd" && lead.contactId && item.messageIdx === 0) {
+        await db
+          .update(contacts)
+          .set({ primaryAccountId: accountId })
+          .where(
+            and(
+              eq(contacts.id, lead.contactId),
+              isNull(contacts.primaryAccountId),
+              sql`not exists (
+                select 1 from ${tgChats}
+                where ${tgChats.peerUserId} = ${tgUserId}
+                  and ${tgChats.hasInbound} = true
+                  and ${tgChats.accountId} in (
+                    select ${outreachAccounts.id} from ${outreachAccounts}
+                    where ${outreachAccounts.workspaceId} = ${account.workspaceId}
+                  )
+              )`,
+            ),
+          );
       }
       emitProjectChanged(item.projectId);
       if (item.messageIdx === 0 && cold) newLeadsRemaining--;

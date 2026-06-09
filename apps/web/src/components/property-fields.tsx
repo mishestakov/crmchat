@@ -1,22 +1,25 @@
-// Общая форма полей контакта — используется в /contacts/new и /contacts/$id/edit.
-// Один блок, одно правило отображения:
-//   ALWAYS_SHOWN_KEYS — всегда поле (full_name, description)
+// Generic-рендерер набора полей (FieldDef[]) поверх values-объекта. Используется
+// и для контакта (фиксированный CONTACT_FIELD_DEFS), и для канала (каталог
+// channels.properties). Правило отображения одно:
+//   alwaysShownKeys — всегда поле (для контакта: full_name/description)
 //   filled (есть значение) — поле
-//   иначе — chip «+ Email» внизу, по клику раскрывается в поле
-// Без деления identity/properties и спец-исключений.
+//   иначе — chip «+ Название» внизу, по клику раскрывается в поле
+// Порядок полей = порядок входного массива (каталог уже отсортирован сервером),
+// alwaysShownKeys пиннятся вперёд.
 
 import { useState } from "react";
-import type { Property, PropertyType } from "@repo/core";
+import type { FieldDef, PropertyType } from "@repo/core";
 
-// Жёсткий порядок верхушки. Дальше — properties.order.
-const ALWAYS_SHOWN_KEYS = ["full_name", "description"] as const;
-
-export function ContactFormFields(props: {
-  properties: Property[];
+export function PropertyFields(props: {
+  fields: FieldDef[];
   values: Record<string, unknown>;
   onChange: (next: Record<string, unknown>) => void;
+  // Ключи, которые показываем всегда (даже пустыми), в заданном порядке.
+  alwaysShownKeys?: string[];
 }) {
-  const { properties, values, onChange } = props;
+  const { fields, values, onChange } = props;
+  const alwaysShownKeys = props.alwaysShownKeys ?? [];
+  const isAlwaysShown = (key: string) => alwaysShownKeys.includes(key);
 
   const setValue = (key: string, v: unknown) => {
     onChange({ ...values, [key]: v });
@@ -28,49 +31,50 @@ export function ContactFormFields(props: {
   // рендере (и setState игнорировал бы кроме первого раза).
   const [revealed, setRevealed] = useState<Set<string>>(() => {
     const r = new Set<string>();
-    for (const p of properties) {
-      if (!isAlwaysShown(p.key) && hasValue(values[p.key])) r.add(p.key);
+    for (const f of fields) {
+      if (!isAlwaysShown(f.key) && hasValue(values[f.key])) r.add(f.key);
     }
     return r;
   });
 
-  const visible: Property[] = [];
-  const hidden: Property[] = [];
-  for (const p of properties) {
-    if (
-      isAlwaysShown(p.key) ||
-      hasValue(values[p.key]) ||
-      revealed.has(p.key)
-    ) {
-      visible.push(p);
+  const visible: FieldDef[] = [];
+  const hidden: FieldDef[] = [];
+  for (const f of fields) {
+    if (isAlwaysShown(f.key) || hasValue(values[f.key]) || revealed.has(f.key)) {
+      visible.push(f);
     } else {
-      hidden.push(p);
+      hidden.push(f);
     }
   }
-  visible.sort(visibleOrder);
+  visible.sort((a, b) => orderOf(a.key) - orderOf(b.key));
+  function orderOf(key: string): number {
+    const i = alwaysShownKeys.indexOf(key);
+    // alwaysShown — вперёд в своём порядке; остальные сохраняют входной порядок.
+    return i !== -1 ? i : alwaysShownKeys.length + fields.findIndex((f) => f.key === key);
+  }
 
   return (
     <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
-      {visible.map((p, i) => (
-        <PropertyRow
-          key={p.id}
-          property={p}
-          value={values[p.key]}
-          onChange={(v) => setValue(p.key, v)}
+      {visible.map((f, i) => (
+        <FieldRow
+          key={f.key}
+          field={f}
+          value={values[f.key]}
+          onChange={(v) => setValue(f.key, v)}
           isLast={i === visible.length - 1 && hidden.length === 0}
           autoFocus={i === 0}
         />
       ))}
       {hidden.length > 0 && (
         <div className="flex flex-wrap gap-2 border-t border-zinc-100 px-4 py-3">
-          {hidden.map((p) => (
+          {hidden.map((f) => (
             <button
               type="button"
-              key={p.id}
-              onClick={() => setRevealed((s) => new Set([...s, p.key]))}
+              key={f.key}
+              onClick={() => setRevealed((s) => new Set([...s, f.key]))}
               className="rounded-full border border-zinc-300 px-3 py-1 text-xs text-zinc-600 hover:bg-zinc-50"
             >
-              + {p.name}
+              + {f.name}
             </button>
           ))}
         </div>
@@ -79,35 +83,20 @@ export function ContactFormFields(props: {
   );
 }
 
-function isAlwaysShown(key: string): boolean {
-  return (ALWAYS_SHOWN_KEYS as readonly string[]).includes(key);
-}
-
 function hasValue(v: unknown): boolean {
   if (v === undefined || v === null || v === "") return false;
   if (Array.isArray(v) && v.length === 0) return false;
   return true;
 }
 
-// ALWAYS_SHOWN сверху в фиксированном порядке, дальше — по property.order.
-function visibleOrder(a: Property, b: Property): number {
-  const all: readonly string[] = ALWAYS_SHOWN_KEYS;
-  const aA = all.indexOf(a.key);
-  const bA = all.indexOf(b.key);
-  if (aA !== -1 && bA !== -1) return aA - bA;
-  if (aA !== -1) return -1;
-  if (bA !== -1) return 1;
-  return a.order - b.order;
-}
-
-function PropertyRow(props: {
-  property: Property;
+function FieldRow(props: {
+  field: FieldDef;
   value: unknown;
   onChange: (v: unknown) => void;
   isLast: boolean;
   autoFocus?: boolean;
 }) {
-  const { property: p, value, onChange } = props;
+  const { field: f, value, onChange } = props;
   return (
     <div
       className={
@@ -117,14 +106,14 @@ function PropertyRow(props: {
     >
       {/* pt-1.5 совпадает с py-1.5 у инпутов → label выравнен с первой строкой
           текста (для многострочного textarea — с верхней строкой, как и должно). */}
-      <span className="w-28 shrink-0 pt-1.5 text-zinc-500">{p.name}</span>
+      <span className="w-28 shrink-0 pt-1.5 text-zinc-500">{f.name}</span>
       <div className="min-w-0 flex-1">
         <ValueInput
-          type={p.type}
-          required={p.required}
+          type={f.type}
+          required={f.required}
           value={value}
           onChange={onChange}
-          options={p.values ?? []}
+          options={f.values ?? []}
           autoFocus={props.autoFocus}
         />
       </div>
@@ -227,7 +216,7 @@ function ValueInput(props: {
       />
     );
   }
-  // text / email / tel / url / user_select — общий strgin input.
+  // text / email / tel / url / user_select — общий string input.
   // Браузер сам делает легкую валидацию по type=email/tel/url и подсказывает
   // подходящую клавиатуру на mobile.
   const htmlType =

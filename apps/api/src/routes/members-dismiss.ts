@@ -19,8 +19,8 @@ import {
 // «он подменяет коллегу» теряют смысл — wait, нет: «подменяет коллегу» это
 // его delegate_id, а аккаунты у него СВОИ; «outbound» в смысле «делегации НА
 // его аккаунты другим людям» — оставляем, т.к. новый owner может захотеть их
-// сохранить; их удаление — отдельный шаг через UI). Чистим
-// projects.contactDefaultOwnerIds от его id. И удаляем из workspace_members.
+// сохранить; их удаление — отдельный шаг через UI). И удаляем из
+// workspace_members.
 //
 // Pre-condition: body.transfers покрывает ВСЕ его аккаунты ровно по одному
 // разу — иначе 400. Это страховка от гонок (между показом мастера и нажатием
@@ -46,7 +46,6 @@ const Resp = z
   .object({
     transferredAccountIds: z.array(z.string()),
     revokedDelegations: z.number().int(),
-    projectsCleaned: z.number().int(),
   })
   .openapi("DismissMemberResp");
 
@@ -178,7 +177,6 @@ app.openapi(
     }
 
     let revokedDelegations = 0;
-    let projectsCleaned = 0;
 
     await db.transaction(async (tx) => {
       // Bulk-transfer аккаунтов. Per-row UPDATE — список короткий
@@ -212,26 +210,6 @@ app.openapi(
       `);
       revokedDelegations = Number(delResult[0]?.count ?? 0);
 
-      // Чистка projects.contactDefaultOwnerIds от target'а.
-      const projResult = await tx.execute<{ count: number }>(sql`
-        WITH updated AS (
-          UPDATE projects
-          SET contact_default_owner_ids = COALESCE(
-            (
-              SELECT jsonb_agg(elem)
-              FROM jsonb_array_elements_text(contact_default_owner_ids) elem
-              WHERE elem <> ${targetId}
-            ),
-            '[]'::jsonb
-          )
-          WHERE workspace_id = ${wsId}
-            AND contact_default_owner_ids @> to_jsonb(${targetId}::text)
-          RETURNING 1
-        )
-        SELECT COUNT(*)::int AS count FROM updated
-      `);
-      projectsCleaned = Number(projResult[0]?.count ?? 0);
-
       await tx
         .delete(workspaceMembers)
         .where(
@@ -245,7 +223,6 @@ app.openapi(
     return c.json({
       transferredAccountIds: transfers.map((t) => t.accountId),
       revokedDelegations,
-      projectsCleaned,
     });
   },
 );

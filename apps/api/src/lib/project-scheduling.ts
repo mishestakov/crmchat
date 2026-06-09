@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
   channels,
@@ -15,8 +15,8 @@ import { contactTgUserIdSql } from "./contact-sql.ts";
 import { resolveStickyByPeerIds } from "./sticky.ts";
 import { substituteVariables } from "./substitute-variables.ts";
 
-// Helpers для активации проекта (/activate) и доливки лидов в активный
-// проект (/imports POST при status=active|paused). Общая логика:
+// Helpers для активации проекта (/activate) и доливки размещений в активный
+// проект (placements/bulk при status=active|paused). Общая логика:
 // разрешить sticky → warm-set → построить scheduled_messages row'ы со
 // смещениями от baseTime, с round-robin для лидов без sticky.
 
@@ -138,10 +138,8 @@ export type ScheduledRow = {
 };
 
 // Построить scheduled_messages row'ы для набора лидов. Sticky + warm
-// резолвятся снаружи (вызывающий контролирует когда грузить), чтобы можно
-// было переиспользовать для активации (загружает все лиды проекта одним
-// батчем) и доливки (новые лиды одного импорта).
-export function buildScheduledRows(opts: {
+// резолвятся снаружи. Внутренний шаг scheduleLeads (не экспортируется).
+function buildScheduledRows(opts: {
   wsId: string;
   project: typeof projects.$inferSelect;
   accountIds: string[];
@@ -186,15 +184,40 @@ export function buildScheduledRows(opts: {
   });
 }
 
-// Подготовка лидов агентского аутрича (этап 16.8). Один опенер на админа:
-// дедуп по lower(username); подстановка {{каналы}} = идентификаторы всех
-// каналов этого админа в проекте (по неотобранным в шортлист размещениям):
-// TG → @username, YouTube/TikTok/Дзен → ссылка. Пропуск размещений без
-// @username админа (личка/телефон — авто-опенер не адресуем, менеджер пишет
-// вручную).
+// Естественный идентификатор канала + ссылка для подстановки. TG → @username
+// (кликабельное упоминание в личке) + t.me-ссылка; провайдер → ссылка. Fallback
+// ident на title (приватный TG-канал / болванка). Общий для prepareLeads (батч
+// по админам) и sample-lead (превью одного канала) — чтобы синтез
+// {{канал}}/{{ссылка}} не разъезжался между ними.
+export function channelIdentifier(ch: {
+  platform: string | null;
+  username: string | null;
+  title: string | null;
+  link: string | null;
+}): { ident: string; link: string | null } {
+  const tg = ch.platform === "telegram";
+  const ident =
+    (tg ? (ch.username ? `@${ch.username}` : null) : ch.link) ??
+    ch.title ??
+    "канал";
+  const link =
+    ch.link ?? (tg && ch.username ? `https://t.me/${ch.username}` : null);
+  return { ident, link };
+}
+
+// Подготовка лидов аутрича — общая для BD и agency (несущий слой канало-
+// центричной схемы). Один опенер на админа: дедуп по lower(username).
+// Синтезирует свойства из базы каналов на момент активации (данные «текут» из
+// площадки, а не из замороженного снимка):
+//   {{каналы}} = идентификаторы ВСЕХ каналов админа в проекте (TG → @username,
+//               провайдер → ссылка);
+//   {{канал}}  = название первого канала админа (частый случай — 1 канал);
+//   {{ссылка}} = ссылка первого канала админа.
+// Пропуск размещений без @username админа (личка/телефон — авто-опенер не
+// адресуем, менеджер пишет вручную). Пропуск ботов (ручной способ связи).
 // skipContacted=true (доливка в активную кампанию) дополнительно опускает
 // админов, с кем тред в проекте уже начат — повторный опенер не шлём.
-export async function prepareAgencyLeads(opts: {
+async function prepareLeads(opts: {
   projectId: string;
   leads: SchedulingLead[];
   skipContacted: boolean;
@@ -212,27 +235,35 @@ export async function prepareAgencyLeads(opts: {
     .where(
       and(
         eq(projectItems.projectId, opts.projectId),
-        eq(projectItems.kind, "placement"),
         isNull(projectItems.shortlistedAt),
         // Отказавшихся не включаем в {{каналы}} (этап 16.10).
         sql`${projectItems.available} is distinct from false`,
       ),
-    );
-  const canals = new Map<string, string[]>();
+    )
+    // Детерминированный порядок: {{канал}}/{{ссылка}} = первый по дате
+    // добавления канал админа (иначе «первый» зависел бы от плана Postgres
+    // и расходился между запусками и с sample-lead-превью).
+    .orderBy(asc(projectItems.createdAt));
+  const canals = new Map<
+    string,
+    { idents: string[]; title: string | null; link: string | null }
+  >();
   for (const r of channelRows) {
     if (!r.adminUsername) continue;
     const key = r.adminUsername.toLowerCase();
-    const list = canals.get(key) ?? [];
-    // Естественный идентификатор канала: TG → @username (кликабельное
-    // упоминание в личке), провайдер-канал → ссылка. Fallback на title —
-    // только редкие кейсы (приватный TG-канал); у болванок из bulk-добавления
-    // title и так "@username"/URL.
-    const ident =
-      r.platform === "telegram"
-        ? r.channelUsername && `@${r.channelUsername}`
-        : r.link;
-    list.push(ident ?? r.title ?? "канал");
-    canals.set(key, list);
+    const entry = canals.get(key) ?? { idents: [], title: null, link: null };
+    const { ident, link } = channelIdentifier({
+      platform: r.platform,
+      username: r.channelUsername,
+      title: r.title,
+      link: r.link,
+    });
+    entry.idents.push(ident);
+    // {{канал}}/{{ссылка}} — первый канал админа (частый случай: 1 канал = 1
+    // админ). При нескольких каналах полный список даёт {{каналы}}.
+    if (entry.title === null) entry.title = r.title ?? ident;
+    if (entry.link === null) entry.link = link;
+    canals.set(key, entry);
   }
 
   let contacted = new Set<string>();
@@ -294,11 +325,18 @@ export async function prepareAgencyLeads(opts: {
     if (seen.has(key)) continue;
     seen.add(key);
     if (opts.skipContacted && contacted.has(key)) continue;
-    const list = canals.get(key);
+    const entry = canals.get(key);
     out.push({
       ...l,
-      properties: list
-        ? { ...l.properties, каналы: list.join(", ") }
+      properties: entry
+        ? {
+            ...l.properties,
+            каналы: entry.idents.join(", "),
+            // entry.title всегда задан (channelIdentifier даёт fallback "канал");
+            // ссылка может быть null (приватный канал без link) — тогда не кладём.
+            канал: entry.title!,
+            ...(entry.link ? { ссылка: entry.link } : {}),
+          }
         : l.properties,
     });
   }
@@ -325,4 +363,40 @@ export async function resolveProjectAccountIds(
   return accountRows
     .map((a) => a.id)
     .filter((id) => project.accountsSelected.includes(id));
+}
+
+// Конвейер «лиды проекта → scheduled-строки» — общий путь активации и доливки:
+// prepareLeads (дедуп по админу + синтез канало-vars) → sticky + warm →
+// buildScheduledRows. Вставку строк делает вызывающий (в своей транзакции).
+export async function scheduleLeads(opts: {
+  wsId: string;
+  project: typeof projects.$inferSelect;
+  accountIds: string[];
+  leads: SchedulingLead[];
+  baseTime: Date;
+  skipContacted: boolean;
+}): Promise<ScheduledRow[]> {
+  const prepared = await prepareLeads({
+    projectId: opts.project.id,
+    leads: opts.leads,
+    skipContacted: opts.skipContacted,
+  });
+  if (prepared.length === 0) return [];
+  const tgUserIds = prepared
+    .map((l) => l.tgUserId)
+    .filter((x): x is string => x !== null);
+  // sticky и warm независимы (общий вход tgUserIds) — параллелим.
+  const [priorByTgUserId, warmTgUserIds] = await Promise.all([
+    resolveStickyByTgUserIds(opts.wsId, tgUserIds),
+    resolveWarmTgUserIds(opts.wsId, tgUserIds),
+  ]);
+  return buildScheduledRows({
+    wsId: opts.wsId,
+    project: opts.project,
+    accountIds: opts.accountIds,
+    leads: prepared,
+    baseTime: opts.baseTime,
+    priorByTgUserId,
+    warmTgUserIds,
+  });
 }

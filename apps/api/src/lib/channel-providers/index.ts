@@ -17,6 +17,7 @@ import {
   fetchYoutubeVideoMetrics,
   parseYoutubeVideoId,
 } from "./youtube.ts";
+import { parseChannelInput } from "@repo/core";
 import type { ChannelProfile, VideoMetrics } from "./types.ts";
 import type { PostSnapshot } from "../td-message.ts";
 
@@ -42,6 +43,29 @@ export function detectChannelPlatform(
   if (/dzen\.ru|zen\.yandex\.ru/i.test(input)) return "dzen";
   if (/max\.ru|oneme\.ru/i.test(input)) return "max";
   return "telegram";
+}
+
+// Единый резолвер «адрес канала → платформа + идентификатор». Одна точка истины
+// для CSV-импорта (и потенциально placements/bulk): платформа из домена, для TG
+// — публичный @username (с дерайвом t.me-ссылки) или приватная инвайт-ссылка;
+// для провайдеров — сама ссылка. null = мусор/пустая строка.
+export function resolveChannelIdentifier(raw: string): {
+  platform: "telegram" | "max" | ProviderPlatform;
+  username: string | null;
+  link: string | null;
+} | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const platform = detectChannelPlatform(trimmed);
+  if (platform !== "telegram") {
+    return { platform, username: null, link: trimmed };
+  }
+  const { username, inviteLink } = parseChannelInput(trimmed);
+  if (username) {
+    return { platform, username, link: `https://t.me/${username}` };
+  }
+  if (inviteLink) return { platform, username: null, link: inviteLink };
+  return null;
 }
 
 // Метрики вышедшего поста YouTube/TikTok по ссылке: парсим videoId (TikTok-

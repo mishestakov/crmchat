@@ -6,6 +6,7 @@ import {
   Check,
   CheckCheck,
   MessageCircleReply,
+  Plus,
   Sparkles,
   Trash2,
 } from "lucide-react";
@@ -16,6 +17,7 @@ import { ProjectTabs } from "../../../../../../components/project-tabs";
 import { type AccountRow } from "../../../../../../components/chat-drawer";
 import { LeadChatDrawer } from "../../../../../../components/lead-chat-drawer";
 import { TruncationBanner } from "../../../../../../components/truncation-banner";
+import { AddChannelsModal } from "../../../../../../components/add-channels-modal";
 import {
   formatDateTime,
   formatPastRelative,
@@ -26,7 +28,7 @@ import {
   useOutreachAccounts,
   useProject,
 } from "../../../../../../lib/outreach-queries";
-import { OUTREACH_QK } from "../../../../../../lib/query-keys";
+import { OUTREACH_QK, invalidateProject } from "../../../../../../lib/query-keys";
 import { useEventSourceEvent } from "../../../../../../lib/hooks";
 
 export const Route = createFileRoute(
@@ -44,9 +46,8 @@ type LeadMessage = Lead["messages"][number];
 
 function LeadsPage() {
   const { wsId, projectId } = Route.useParams();
-  const [showCsv, setShowCsv] = useState(false);
   const [onlyUnreplied, setOnlyUnreplied] = useState(false);
-  const [importFilter, setImportFilter] = useState<string>("all");
+  const [showAddChannels, setShowAddChannels] = useState(false);
   const [drawerLeadId, setDrawerLeadId] = useState<string | null>(null);
 
   const seq = useProject(wsId, projectId);
@@ -109,62 +110,18 @@ function LeadsPage() {
     },
   });
 
-  const importsQ = useQuery({
-    queryKey: ["project-imports", wsId, projectId] as const,
-    queryFn: async () => {
-      const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/projects/{projectId}/imports",
-        { params: { path: { wsId, projectId } } },
-      );
-      if (error) throw error;
-      return data;
-    },
-  });
-
-  // Колонки CSV-данных = объединение ключей properties по всем лидам.
-  // Стабильный порядок: первое появление wins.
-  const csvKeys = useMemo(() => {
-    if (!leadsQ.data) return [] as string[];
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const l of leadsQ.data.leads) {
-      for (const k of Object.keys(l.properties)) {
-        if (!seen.has(k)) {
-          seen.add(k);
-          out.push(k);
-        }
-      }
-    }
-    return out;
-  }, [leadsQ.data]);
-
   const totalMsgCount = seq.data?.messages.length ?? 0;
   const total = leadsQ.data?.total ?? 0;
   const replied = leadsQ.data?.repliedCount ?? 0;
   const visibleLeads = useMemo(() => {
     if (!leadsQ.data) return [];
     let out = leadsQ.data.leads;
-    if (importFilter !== "all") {
-      out = out.filter((l) => l.importId === importFilter);
-    }
     if (onlyUnreplied) {
       out = out.filter((l) => !l.repliedAt);
     }
     return out;
-  }, [leadsQ.data, onlyUnreplied, importFilter]);
+  }, [leadsQ.data, onlyUnreplied]);
 
-  // Per-import счётчики для опций селекта — «N в работе» = всего лидов
-  // импорта на этой странице (server-side total приходит в importStats,
-  // но фильтр клиентский, так что считаем по leadsQ.data).
-  const importCounts = useMemo(() => {
-    const m = new Map<string, number>();
-    if (!leadsQ.data) return m;
-    for (const l of leadsQ.data.leads) {
-      if (!l.importId) continue;
-      m.set(l.importId, (m.get(l.importId) ?? 0) + 1);
-    }
-    return m;
-  }, [leadsQ.data]);
   // Сводка по выбранной странице (200 лидов); при больших задачах нужен
   // агрегат с бэка.
   const stickyCount =
@@ -195,25 +152,16 @@ function LeadsPage() {
       <ProjectTabs wsId={wsId} projectId={projectId} />
       <div className="mx-auto w-full max-w-6xl space-y-4 px-6">
         <div className="flex flex-wrap items-center gap-3">
-          {importsQ.data && importsQ.data.length > 1 && (
-            <label className="inline-flex items-center gap-2 text-sm text-zinc-600">
-              Импорт:
-              <select
-                value={importFilter}
-                onChange={(e) => setImportFilter(e.target.value)}
-                className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm"
-              >
-                <option value="all">Все ({leadsQ.data?.total ?? 0})</option>
-                {importsQ.data.map((imp) => (
-                  <option key={imp.id} value={imp.id}>
-                    {imp.name} · {formatRelative(imp.createdAt)}
-                    {importCounts.get(imp.id)
-                      ? ` · ${importCounts.get(imp.id)}`
-                      : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
+          {seq.data?.status !== "done" &&
+            seq.data?.status !== "archived" && (
+            <button
+              type="button"
+              onClick={() => setShowAddChannels(true)}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
+            >
+              <Plus size={15} />
+              Добавить каналы
+            </button>
           )}
           <label className="inline-flex items-center gap-2 text-sm text-zinc-600">
             <input
@@ -223,27 +171,17 @@ function LeadsPage() {
             />
             Только не ответившие
           </label>
-          {csvKeys.length > 0 && (
-            <label className="inline-flex items-center gap-2 text-sm text-zinc-600">
-              <input
-                type="checkbox"
-                checked={showCsv}
-                onChange={(e) => setShowCsv(e.target.checked)}
-              />
-              Показать CSV-данные
-            </label>
-          )}
         </div>
 
         <div className="text-xs text-zinc-500">
           {onlyUnreplied ? (
             <>
               {visibleLeads.length} не ответили из {total}{" "}
-              {pluralize(total, "лида", "лидов", "лидов")}
+              {pluralize(total, "канала", "каналов", "каналов")}
             </>
           ) : (
             <>
-              Всего {total} {pluralize(total, "лид", "лида", "лидов")}
+              Всего {total} {pluralize(total, "канал", "канала", "каналов")}
               {replied > 0 && ` · ${replied} ответили`}
             </>
           )}
@@ -265,7 +203,7 @@ function LeadsPage() {
 
         {leadsQ.isLoading && (
           <div className="rounded-2xl bg-white p-6 text-sm text-zinc-500 shadow-sm">
-            Загрузка лидов…
+            Загрузка каналов…
           </div>
         )}
         {leadsQ.error && (
@@ -275,25 +213,21 @@ function LeadsPage() {
         )}
         {leadsQ.data && leadsQ.data.leads.length === 0 && (
           <div className="rounded-2xl bg-white p-6 text-sm text-zinc-500 shadow-sm">
-            В исходном списке нет лидов.
+            В проекте пока нет каналов. Нажмите «Добавить каналы».
           </div>
         )}
         {leadsQ.data &&
           leadsQ.data.leads.length > 0 &&
           visibleLeads.length === 0 && (
             <div className="rounded-2xl bg-white p-6 text-sm text-zinc-500 shadow-sm">
-              {importFilter !== "all" && onlyUnreplied
-                ? "В этом импорте все ответили."
-                : importFilter !== "all"
-                  ? "В этом импорте лидов нет на текущей странице."
-                  : "Все ответили — фильтр пуст."}
+              Все ответили — фильтр пуст.
             </div>
           )}
         {leadsQ.data && leadsQ.data.leads.length === LEADS_PAGE_LIMIT && (
           <TruncationBanner
             shown={LEADS_PAGE_LIMIT}
             total={leadsQ.data.total}
-            entity="лидов"
+            entity="каналов"
           />
         )}
         {leadsQ.data && visibleLeads.length > 0 && (
@@ -302,14 +236,8 @@ function LeadsPage() {
               <thead className="bg-zinc-50 text-xs text-zinc-500">
                 <tr>
                   <th className="sticky left-0 bg-zinc-50 px-4 py-2 text-left font-normal">
-                    Лид
+                    Канал
                   </th>
-                  {showCsv &&
-                    csvKeys.map((k) => (
-                      <th key={k} className="px-4 py-2 text-left font-normal">
-                        {k}
-                      </th>
-                    ))}
                   <th className="px-4 py-2 text-left font-normal">Аккаунт</th>
                   {Array.from({ length: totalMsgCount }).map((_, i) => (
                     <th key={i} className="px-4 py-2 text-left font-normal">
@@ -338,17 +266,6 @@ function LeadsPage() {
                     >
                       <LeadCell lead={l} wsId={wsId} />
                     </td>
-                    {showCsv &&
-                      csvKeys.map((k) => (
-                        <td
-                          key={k}
-                          className="px-4 py-2 align-top text-xs text-zinc-700"
-                        >
-                          {l.properties[k] ?? (
-                            <span className="text-zinc-400">—</span>
-                          )}
-                        </td>
-                      ))}
                     <td className="px-4 py-2 align-top">
                       <AccountCell
                         account={l.account}
@@ -415,16 +332,32 @@ function LeadsPage() {
             />
           );
         })()}
+      {showAddChannels && (
+        <AddChannelsModal
+          wsId={wsId}
+          projectId={projectId}
+          onClose={() => setShowAddChannels(false)}
+          onAdded={() => invalidateProject(qc, wsId, projectId, { leads: true })}
+        />
+      )}
     </div>
   );
 }
 
 
 function LeadCell({ lead, wsId }: { lead: Lead; wsId: string }) {
-  const ident = lead.username ? `@${lead.username}` : "—";
+  const ch = lead.channel;
+  const channelLabel =
+    ch?.title || (ch?.username ? `@${ch.username}` : "—");
+  const admin = lead.username ? `@${lead.username}` : null;
   return (
     <div className="space-y-0.5">
-      <div className="font-medium">{ident}</div>
+      <div className="font-medium">{channelLabel}</div>
+      {admin && (
+        <div className="text-xs text-zinc-500" title="Админ-получатель аутрича">
+          админ {admin}
+        </div>
+      )}
       {lead.repliedAt && lead.contactId && (
         <Link
           to="/w/$wsId/contacts/$id"

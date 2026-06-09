@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  ChevronDown,
   Globe,
   Hash,
   Mail,
@@ -15,7 +14,7 @@ import {
   Send,
   X,
 } from "lucide-react";
-import type { Contact, Property } from "@repo/core";
+import type { Contact } from "@repo/core";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
 import { formatRelative } from "../../../../../../lib/date-utils";
@@ -31,40 +30,12 @@ export const Route = createFileRoute("/_authenticated/w/$wsId/contacts/$id/")({
   component: ContactDetail,
 });
 
-// Identity-properties: рендерятся специально в верхней карточке (имя по центру,
-// описание подписью, email/url/tel/telegram → соц.иконки). Остальные (amount,
-// stage, custom_*) идут отдельным блоком с inline-edit.
-const IDENTITY_KEYS = new Set([
-  "full_name",
-  "description",
-  "email",
-  "phone",
-  "url",
-  "telegram_username",
-  // tg_user_id рендерить негде: в шапку не идёт (это не идентичность для
-  // юзера, а внутренний привязочный id), в таблицу «Связь» тоже — там есть
-  // только @username. Прячем из общего списка custom-properties.
-  "tg_user_id",
-]);
-
 function ContactDetail() {
   const { wsId, id } = Route.useParams();
   const navigate = useNavigate();
   // accountId выбранный для drawer'а; null = drawer закрыт.
   const [drawerAccountId, setDrawerAccountId] = useState<string | null>(null);
   const qc = useQueryClient();
-
-  const properties = useQuery({
-    queryKey: ["properties", wsId],
-    queryFn: async () => {
-      const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/properties",
-        { params: { path: { wsId } } },
-      );
-      if (error) throw error;
-      return data;
-    },
-  });
 
   const contact = useQuery({
     queryKey: ["contact", wsId, id],
@@ -134,7 +105,7 @@ function ContactDetail() {
     },
   });
 
-  if (contact.isLoading || properties.isLoading) {
+  if (contact.isLoading) {
     return (
       <div className="space-y-3 p-6">
         <BackButton />
@@ -153,15 +124,12 @@ function ContactDetail() {
     );
   }
 
-  const props_ = properties.data ?? [];
-
   return (
     <div className="space-y-3 p-6">
       <BackButton />
       <div className="mx-auto max-w-xl space-y-3">
         <ContactView
           contact={contact.data}
-          properties={props_}
           onEdit={() =>
             navigate({
               to: "/w/$wsId/contacts/$id/edit",
@@ -203,18 +171,16 @@ function ContactDetail() {
 
 function ContactView(props: {
   contact: Contact;
-  properties: Property[];
   onEdit: () => void;
   onDelete: () => void;
   onPatch: (key: string, value: unknown) => void;
   onOpenChat: () => void;
   canOpenChat: boolean;
 }) {
-  const { contact, properties } = props;
+  const { contact } = props;
   const values = contact.properties as Record<string, unknown>;
   const fullName = stringValue(values.full_name);
   const description = stringValue(values.description);
-  const nonIdentityProps = properties.filter((p) => !IDENTITY_KEYS.has(p.key));
 
   return (
     <>
@@ -235,31 +201,6 @@ function ContactView(props: {
           />
         </div>
       </div>
-
-      {nonIdentityProps.length > 0 && (
-        <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
-          {nonIdentityProps.map((p, i) => (
-            <div
-              key={p.id}
-              className={
-                "flex items-center justify-between gap-3 px-5 py-2.5 text-sm " +
-                (i < nonIdentityProps.length - 1
-                  ? "border-b border-zinc-100"
-                  : "")
-              }
-            >
-              <span className="text-zinc-500">{p.name}</span>
-              <div className="min-w-0 flex-1 max-w-[60%]">
-                <InlineEdit
-                  property={p}
-                  value={values[p.key]}
-                  onCommit={(v) => props.onPatch(p.key, v)}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
     </>
   );
 }
@@ -524,162 +465,6 @@ function stringValue(raw: unknown): string {
   if (typeof raw === "string") return raw;
   if (typeof raw === "number") return String(raw);
   return "";
-}
-
-// Inline-редактор для одного property в view-карточке. Селект/multi-select коммитят
-// сразу onChange (один клик = один запрос); text/number — onBlur и Enter (типичный
-// паттерн «нажал Enter, ушёл — сохранили»). Visual: разное для типов, но всегда
-// очевидно «кликабельно».
-function InlineEdit(props: {
-  property: Property;
-  value: unknown;
-  onCommit: (v: unknown) => void;
-}) {
-  const { property: p, value, onCommit } = props;
-
-  if (p.type === "single_select") {
-    return (
-      <div className="relative">
-        <select
-          value={typeof value === "string" ? value : ""}
-          onChange={(e) => onCommit(e.target.value)}
-          className="w-full appearance-none rounded-md border border-zinc-200 bg-white py-1 pl-2 pr-7 text-right text-sm hover:border-zinc-400 focus:border-emerald-500 focus:outline-none"
-        >
-          {!p.required && <option value="">—</option>}
-          {p.values?.map((v) => (
-            <option key={v.id} value={v.id}>
-              {v.name}
-            </option>
-          ))}
-        </select>
-        <ChevronDown
-          size={14}
-          className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400"
-        />
-      </div>
-    );
-  }
-
-  if (p.type === "multi_select") {
-    const arr = Array.isArray(value)
-      ? value.filter((x): x is string => typeof x === "string")
-      : [];
-    return (
-      <div className="flex flex-wrap justify-end gap-1">
-        {(p.values ?? []).map((o) => {
-          const selected = arr.includes(o.id);
-          return (
-            <button
-              type="button"
-              key={o.id}
-              onClick={() =>
-                onCommit(
-                  selected ? arr.filter((x) => x !== o.id) : [...arr, o.id],
-                )
-              }
-              className={
-                "rounded-full border px-2.5 py-0.5 text-xs transition-colors " +
-                (selected
-                  ? "border-zinc-900 bg-zinc-900 text-white"
-                  : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50")
-              }
-            >
-              {o.name}
-            </button>
-          );
-        })}
-      </div>
-    );
-  }
-
-  if (p.type === "number") {
-    return (
-      <InlineInput
-        kind="number"
-        value={value}
-        onCommit={onCommit as (v: unknown) => void}
-      />
-    );
-  }
-
-  // text / textarea / email / tel / url / user_select — общий text input.
-  return (
-    <InlineInput
-      kind="text"
-      htmlType={
-        p.type === "email"
-          ? "email"
-          : p.type === "tel"
-            ? "tel"
-            : p.type === "url"
-              ? "url"
-              : "text"
-      }
-      value={value}
-      onCommit={onCommit as (v: unknown) => void}
-    />
-  );
-}
-
-const inlineInputClass =
-  "w-full rounded-md border border-zinc-200 bg-white px-2 py-1 text-right text-sm hover:border-zinc-400 focus:border-emerald-500 focus:outline-none";
-
-// Единый inline-input для text/email/tel/url/number. Раздваивались только initial
-// (string vs number→string), commit (отдать строку vs распарсить в number) и
-// htmlType — параметризуем эти три точки и живём в одном компоненте.
-function InlineInput(props: {
-  kind: "text" | "number";
-  htmlType?: "text" | "email" | "tel" | "url";
-  value: unknown;
-  onCommit: (v: unknown) => void;
-}) {
-  const { kind, value, onCommit } = props;
-  const initial =
-    kind === "number"
-      ? typeof value === "number" && Number.isFinite(value)
-        ? String(value)
-        : ""
-      : typeof value === "string"
-        ? value
-        : "";
-  const [local, setLocal] = useState(initial);
-  const ref = useRef<HTMLInputElement>(null);
-  // Cинхронизируемся с внешним value (после успешного PATCH / других источников)
-  // — НО не затираем то, что юзер сейчас печатает: если этот input в фокусе,
-  // ждём blur. Иначе при PATCH поля A терялся набираемый текст в поле B.
-  useEffect(() => {
-    if (document.activeElement === ref.current) return;
-    setLocal(initial);
-  }, [initial]);
-
-  const commit = () => {
-    if (local === initial) return;
-    if (kind === "number") {
-      if (local === "") {
-        onCommit("");
-        return;
-      }
-      const n = Number(local);
-      if (Number.isFinite(n)) onCommit(n);
-    } else {
-      onCommit(local);
-    }
-  };
-
-  return (
-    <input
-      ref={ref}
-      type={kind === "number" ? "number" : props.htmlType ?? "text"}
-      value={local}
-      onChange={(e) => setLocal(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-        if (e.key === "Escape") setLocal(initial);
-      }}
-      className={inlineInputClass}
-    />
-  );
 }
 
 // Каналы где контакт записан админом. Источник — contact.channels (subquery

@@ -12,7 +12,6 @@ import {
   workspaceMembers,
   workspaces,
 } from "../db/schema.ts";
-import { seedDefaultProperties } from "../lib/workspace-presets.ts";
 import type { SessionVars } from "../middleware/require-session.ts";
 
 const WorkspaceSchema = BaseWorkspaceSchema.openapi("Workspace");
@@ -89,10 +88,9 @@ app.openapi(createRouteDef, async (c) => {
     });
     return ws!;
   });
-  // 8 preset-properties (full_name, description, email, phone, telegram_username,
-  // url, amount, stage). Делаем всегда — без них контакты невозможно создать,
-  // и UI ожидает их как identity-секцию карточки.
-  await seedDefaultProperties(row.id);
+  // Системные поля контакта больше не сидятся в БД — они фиксированы константой
+  // CONTACT_FIELD_DEFS (@repo/core). Каталог `properties` теперь пуст до первого
+  // пользовательского поля КАНАЛА.
   return c.json(serialize(row), 201);
 });
 

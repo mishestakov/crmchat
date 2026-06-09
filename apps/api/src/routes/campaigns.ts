@@ -21,16 +21,13 @@ import {
 import { assertProjectAccess } from "../lib/projects-access.ts";
 import {
   resolveStickyByTgUserIds,
-  resolveWarmTgUserIds,
   resolveProjectAccountIds,
-  buildScheduledRows,
-  prepareAgencyLeads,
+  scheduleLeads,
   FINAL_OFFER_MSG_IDX,
-  type SchedulingLead,
 } from "../lib/project-scheduling.ts";
 import { substituteVariables } from "../lib/substitute-variables.ts";
 import { pickDefined } from "../lib/pick-defined.ts";
-import { extractUsername } from "../lib/tg-username.ts";
+import { parseChannelInput } from "@repo/core";
 import {
   detectChannelPlatform,
   fetchProviderPost,
@@ -198,12 +195,6 @@ const PlacementSchema = z
     createdAt: z.iso.datetime(),
   })
   .openapi("Placement");
-
-const CreatePlacementBody = z
-  .object({
-    channelId: z.string().min(1).max(64),
-  })
-  .openapi("CreatePlacement");
 
 const UpdatePlacementBody = z
   .object({
@@ -374,7 +365,6 @@ app.openapi(
       .where(
         and(
           eq(projectItems.projectId, projectId),
-          eq(projectItems.kind, "placement"),
           stageClause,
         ),
       )
@@ -391,8 +381,8 @@ app.openapi(
 // ── Доливка размещений в активную кампанию ──────────────────────────────────
 // Если кампания уже active/paused, новые размещения должны сразу пойти в аутрич
 // по общей цепочке (project.messages), независимо от уже запущенных волн —
-// offset'ы цепочки считаются от now(). Это та же доливка, что в BD (этап 12.5
-// project-imports): переиспользуем общие хелперы project-scheduling.
+// offset'ы цепочки считаются от now(). Тот же общий конвейер scheduleLeads,
+// что и в активации (project-scheduling).
 //
 // dolivkaAccountsOrThrow вызывается ДО вставки размещений: если кампания активна,
 // но слать нечем (нет цепочки/аккаунтов) — 400 без частичного состояния. Для
@@ -401,6 +391,13 @@ async function dolivkaAccountsOrThrow(
   wsId: string,
   project: typeof projects.$inferSelect,
 ): Promise<string[] | null> {
+  // В завершённую/архивную кампанию добавлять каналы нельзя — цепочка отыграна,
+  // размещение осталось бы orphan'ом без рассылки.
+  if (project.status === "done" || project.status === "archived") {
+    throw new HTTPException(400, {
+      message: "Кампания завершена — добавлять каналы нельзя",
+    });
+  }
   if (project.status !== "active" && project.status !== "paused") return null;
   if (project.messages.length === 0) {
     throw new HTTPException(400, {
@@ -430,117 +427,28 @@ async function scheduleDolivka(opts: {
   accountIds: string[];
   inserted: InsertedPlacement[];
 }) {
-  // Agency: один опенер на админа + {{каналы}} + пропуск админов с уже начатым
-  // тредом (этап 16.8). BD: только размещения с адресатом (без получателя
-  // аутрич некуда слать — менеджер привяжет позже).
-  let leads: SchedulingLead[];
-  if (opts.project.kind === "agency") {
-    leads = await prepareAgencyLeads({
-      projectId: opts.project.id,
-      leads: opts.inserted.map((p) => ({
-        id: p.id,
-        username: p.username,
-        tgUserId: p.tgUserId,
-        properties: (p.properties ?? {}) as Record<string, unknown>,
-      })),
-      skipContacted: true,
-    });
-  } else {
-    leads = opts.inserted
-      .filter((p) => p.tgUserId !== null || p.username !== null)
-      .map((p) => ({
-        id: p.id,
-        username: p.username,
-        tgUserId: p.tgUserId,
-        properties: (p.properties ?? {}) as Record<string, unknown>,
-      }));
-  }
-  if (leads.length === 0) return;
-
-  const tgUserIds = leads
-    .map((l) => l.tgUserId)
-    .filter((x): x is string => x !== null);
-  const priorByTgUserId = await resolveStickyByTgUserIds(opts.wsId, tgUserIds);
-  const warmTgUserIds = await resolveWarmTgUserIds(opts.wsId, tgUserIds);
-
-  const rows = buildScheduledRows({
+  // Общий конвейер с активацией (scheduleLeads): дедуп по админу + синтез
+  // канало-vars + sticky/warm. skipContacted=true — повторный опенер уже
+  // начатым тредам не шлём; prepareLeads внутри отбрасывает размещения без
+  // получателя.
+  const rows = await scheduleLeads({
     wsId: opts.wsId,
     project: opts.project,
     accountIds: opts.accountIds,
-    leads,
+    leads: opts.inserted.map((p) => ({
+      id: p.id,
+      username: p.username,
+      tgUserId: p.tgUserId,
+      properties: (p.properties ?? {}) as Record<string, unknown>,
+    })),
     baseTime: new Date(),
-    priorByTgUserId,
-    warmTgUserIds,
+    skipContacted: true,
   });
   const CHUNK = 1000;
   for (let i = 0; i < rows.length; i += CHUNK) {
     await db.insert(scheduledMessages).values(rows.slice(i, i + CHUNK));
   }
 }
-
-app.openapi(
-  createRoute({
-    method: "post",
-    path: "/v1/workspaces/{wsId}/projects/{projectId}/placements",
-    tags: ["campaigns"],
-    request: {
-      params: WsProjectParam,
-      body: {
-        content: { "application/json": { schema: CreatePlacementBody } },
-        required: true,
-      },
-    },
-    responses: {
-      201: {
-        content: { "application/json": { schema: PlacementSchema } },
-        description: "Created",
-      },
-    },
-  }),
-  async (c) => {
-    const wsId = c.get("workspaceId");
-    const userId = c.get("userId");
-    const role = c.get("workspaceRole");
-    const { projectId } = c.req.valid("param");
-    const { channelId } = c.req.valid("json");
-    const project = await assertProjectAccess(projectId, wsId, userId, role);
-    // До вставки: на активной кампании проверяем, что доливку есть чем слать.
-    const dolivkaAccounts = await dolivkaAccountsOrThrow(wsId, project);
-
-    const [channel] = await db
-      .select({ id: channels.id })
-      .from(channels)
-      .where(and(eq(channels.id, channelId), eq(channels.workspaceId, wsId)))
-      .limit(1);
-    if (!channel) throw new HTTPException(404, { message: "channel not found" });
-
-    const admin = await resolveAdminRecipient(channelId);
-    const [row] = await db
-      .insert(projectItems)
-      .values({
-        workspaceId: wsId,
-        projectId,
-        kind: "placement",
-        channelId,
-        contactId: admin.contactId,
-        username: admin.username,
-        tgUserId: admin.tgUserId,
-      })
-      .returning();
-
-    if (dolivkaAccounts && row) {
-      await scheduleDolivka({
-        wsId,
-        project,
-        accountIds: dolivkaAccounts,
-        inserted: [row],
-      });
-    }
-
-    const placement = await loadPlacement(row!.id);
-    return c.json(placement!, 201);
-  },
-);
 
 // Массовое добавление: по одному URL/@username на строку. Канал, которого нет
 // в базе, заводим болванкой (title=@username) — реальные title/подписчики
@@ -596,6 +504,9 @@ app.openapi(
     // Ключ дедупа — platform + нормализованный идентификатор.
     type ParsedAdd =
       | { platform: "telegram"; key: string; uname: string }
+      // Приватный TG-канал по инвайт-ссылке (t.me/+abc): @username нет, заводим
+      // болванку по link; админа/мету подтянет drawer/sync после вступления.
+      | { platform: "telegram"; key: string; link: string }
       | {
           platform: "youtube" | "tiktok" | "dzen" | "max";
           key: string;
@@ -608,12 +519,22 @@ app.openapi(
       const platform = detectChannelPlatform(raw);
       let entry: ParsedAdd | null;
       if (platform === "telegram") {
-        const uname = extractUsername(raw);
-        if (!uname) {
+        // Единый парсер TG-адреса (правила username = TDLib is_allowed_username,
+        // см. parse-channel-input.ts): отдаёт публичный @username ИЛИ приватную
+        // инвайт-ссылку за один проход.
+        const { username, inviteLink } = parseChannelInput(raw);
+        if (username) {
+          entry = { platform, key: `telegram:${username}`, uname: username };
+        } else if (inviteLink) {
+          entry = {
+            platform,
+            key: `telegram:invite:${inviteLink.toLowerCase()}`,
+            link: inviteLink,
+          };
+        } else {
           skippedInvalid++;
           continue;
         }
-        entry = { platform, key: `telegram:${uname}`, uname };
       } else {
         const link = raw.trim();
         entry = { platform, key: `${platform}:${link.toLowerCase()}`, link };
@@ -629,11 +550,12 @@ app.openapi(
     const insertedItems: InsertedPlacement[] = [];
 
     for (const a of adds) {
-      // find-or-create канал: TG по lower(username), провайдер по lower(link).
-      const matchCh =
-        a.platform === "telegram"
-          ? sql`lower(${channels.username}) = ${a.uname}`
-          : sql`lower(${channels.link}) = ${a.link.toLowerCase()}`;
+      // find-or-create канал: публичный TG по lower(username), остальное (провайдер
+      // + приватный TG по инвайт-ссылке) — по lower(link).
+      const byUsername = "uname" in a;
+      const matchCh = byUsername
+        ? sql`lower(${channels.username}) = ${a.uname}`
+        : sql`lower(${channels.link}) = ${a.link.toLowerCase()}`;
       let [ch] = await db
         .select({ id: channels.id })
         .from(channels)
@@ -649,7 +571,7 @@ app.openapi(
         const [created] = await db
           .insert(channels)
           .values(
-            a.platform === "telegram"
+            byUsername
               ? {
                   workspaceId: wsId,
                   title: `@${a.uname}`,
@@ -659,8 +581,8 @@ app.openapi(
                 }
               : {
                   workspaceId: wsId,
-                  // title — заглушка по ссылке; sync провайдера перезапишет.
-                  title: a.link,
+                  // title — заглушка; sync провайдера / drawer перезапишет.
+                  title: a.platform === "telegram" ? "Приватный канал" : a.link,
                   link: a.link,
                   platform: a.platform,
                   createdBy: userId,
@@ -695,7 +617,6 @@ app.openapi(
           and(
             eq(projectItems.projectId, projectId),
             eq(projectItems.channelId, ch.id),
-            eq(projectItems.kind, "placement"),
           ),
         )
         .limit(1);
@@ -714,7 +635,6 @@ app.openapi(
         .values({
           workspaceId: wsId,
           projectId,
-          kind: "placement",
           channelId: ch.id,
           contactId: admin.contactId,
           username: admin.username,
@@ -832,7 +752,6 @@ app.openapi(
         and(
           eq(projectItems.id, placementId),
           eq(projectItems.projectId, projectId),
-          eq(projectItems.kind, "placement"),
         ),
       )
       .returning({ id: projectItems.id });
@@ -863,7 +782,6 @@ app.openapi(
         and(
           eq(projectItems.id, placementId),
           eq(projectItems.projectId, projectId),
-          eq(projectItems.kind, "placement"),
         ),
       )
       .returning({ id: projectItems.id });
@@ -928,7 +846,6 @@ app.openapi(
       .where(
         and(
           eq(projectItems.projectId, projectId),
-          eq(projectItems.kind, "placement"),
           eq(projectItems.clientStatus, "approved"),
           isNotNull(projectItems.shortlistedAt),
           sql`(${projectItems.username} IS NOT NULL OR ${projectItems.tgUserId} IS NOT NULL)`,
@@ -1054,7 +971,6 @@ app.openapi(
       .where(
         and(
           eq(projectItems.projectId, projectId),
-          eq(projectItems.kind, "placement"),
           eq(projectItems.clientStatus, "approved"),
           isNotNull(projectItems.shortlistedAt),
           isNotNull(projectItems.postUrl),
@@ -1375,7 +1291,6 @@ app.openapi(
         and(
           eq(projectItems.id, placementId),
           eq(projectItems.projectId, projectId),
-          eq(projectItems.kind, "placement"),
         ),
       )
       .limit(1);
@@ -1418,7 +1333,6 @@ app.get(
         and(
           eq(projectItems.id, placementId),
           eq(projectItems.projectId, projectId),
-          eq(projectItems.kind, "placement"),
         ),
       )
       .limit(1);
@@ -1472,7 +1386,6 @@ app.openapi(
         and(
           eq(projectItems.id, placementId),
           eq(projectItems.projectId, projectId),
-          eq(projectItems.kind, "placement"),
         ),
       )
       .returning({ id: projectItems.id });
@@ -1503,7 +1416,6 @@ app.openapi(
         and(
           eq(projectItems.id, placementId),
           eq(projectItems.projectId, projectId),
-          eq(projectItems.kind, "placement"),
         ),
       )
       .returning({ id: projectItems.id });
@@ -1557,7 +1469,6 @@ app.openapi(
         and(
           eq(projectItems.id, placementId),
           eq(projectItems.projectId, projectId),
-          eq(projectItems.kind, "placement"),
         ),
       )
       .limit(1);

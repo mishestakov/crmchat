@@ -1,23 +1,25 @@
 import { HTTPException } from "hono/http-exception";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
+import type { FieldDef } from "@repo/core";
 import { db } from "../db/client.ts";
 import { properties as propsTable } from "../db/schema.ts";
 
-type PropertyDef = typeof propsTable.$inferSelect;
-
-export async function loadPropertyDefs(wsId: string): Promise<PropertyDef[]> {
+// Каталог кастом-полей канала (таблица `properties`). Контакты каталога не имеют
+// — их системные поля лежат константой CONTACT_FIELD_DEFS в @repo/core.
+export async function loadChannelPropertyDefs(wsId: string): Promise<FieldDef[]> {
   return db.select().from(propsTable).where(eq(propsTable.workspaceId, wsId));
 }
 
-// Валидирует body.properties контакта против определений в workspace.
+// Валидирует body.properties сущности против определений её каталога (FieldDef[]
+// — канальные из БД или контактная константа).
 // - неизвестный ключ → 400
 // - значение неправильного типа → 400
 // - single_select с id, которого нет в values → 400
 // - multi_select: каждое значение должно быть валидным option.id
 // - null/""/[] → пропускаем (вызывающий handler решает: skip для POST, delete для PATCH).
-export function validateContactProperties(
-  defs: PropertyDef[],
+export function validateEntityProperties(
+  defs: FieldDef[],
   input: Record<string, unknown> | undefined | null,
 ): Record<string, unknown> {
   if (!input) return {};
@@ -40,7 +42,7 @@ export function validateContactProperties(
   return out;
 }
 
-function validateValue(def: PropertyDef, raw: unknown): unknown {
+function validateValue(def: FieldDef, raw: unknown): unknown {
   const expectString = (label: string) => {
     if (typeof raw !== "string") {
       throw new HTTPException(400, {
@@ -132,10 +134,10 @@ function validateValue(def: PropertyDef, raw: unknown): unknown {
   }
 }
 
-// Проверяет, что для всех required-properties значение задано (не пусто) в финальном
-// объекте контакта (после merge для PATCH или прямо input для POST).
+// Проверяет, что для всех required-полей значение задано (не пусто) в финальном
+// объекте (после merge для PATCH или прямо input для POST).
 export function enforceRequiredProperties(
-  defs: PropertyDef[],
+  defs: FieldDef[],
   finalProps: Record<string, unknown>,
 ): void {
   for (const def of defs) {

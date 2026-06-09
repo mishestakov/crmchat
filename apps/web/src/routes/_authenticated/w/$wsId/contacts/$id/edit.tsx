@@ -1,11 +1,11 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import type { Contact, Property } from "@repo/core";
+import { CONTACT_FIELD_DEFS, type Contact } from "@repo/core";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
 import { BackButton } from "../../../../../../components/back-button";
-import { ContactFormFields } from "../-contact-form-fields";
+import { PropertyFields } from "../../../../../../components/property-fields";
 
 export const Route = createFileRoute(
   "/_authenticated/w/$wsId/contacts/$id/edit",
@@ -17,18 +17,6 @@ function EditContact() {
   const { wsId, id } = Route.useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
-
-  const properties = useQuery({
-    queryKey: ["properties", wsId],
-    queryFn: async () => {
-      const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/properties",
-        { params: { path: { wsId } } },
-      );
-      if (error) throw error;
-      return data;
-    },
-  });
 
   const contact = useQuery({
     queryKey: ["contact", wsId, id],
@@ -42,7 +30,7 @@ function EditContact() {
     },
   });
 
-  if (contact.isLoading || properties.isLoading) {
+  if (contact.isLoading) {
     return (
       <div className="space-y-3 p-6">
         <BackButton />
@@ -69,7 +57,6 @@ function EditContact() {
           wsId={wsId}
           id={id}
           contact={contact.data}
-          properties={properties.data ?? []}
           onCancel={() =>
             navigate({
               to: "/w/$wsId/contacts/$id",
@@ -94,11 +81,10 @@ function EditForm(props: {
   wsId: string;
   id: string;
   contact: Contact;
-  properties: Property[];
   onCancel: () => void;
   onSaved: (saved: Contact) => void;
 }) {
-  const { contact, properties, wsId, id } = props;
+  const { contact, wsId, id } = props;
 
   const [values, setValues] = useState<Record<string, unknown>>(
     () => ({ ...(contact.properties as Record<string, unknown>) }),
@@ -106,9 +92,9 @@ function EditForm(props: {
 
   const save = useMutation({
     mutationFn: async () => {
-      // Локальное состояние всегда подмножество ключей из properties (инициализирован
-      // из contact.properties + апдейтится только через ContactFormFields). "" / []
-      // в payload бэкенд интерпретирует как «удалить ключ» — то, что нам нужно.
+      // Локальное состояние — подмножество ключей контакта (инициализировано из
+      // contact.properties, апдейтится только через PropertyFields). "" / [] в
+      // payload бэкенд интерпретирует как «удалить ключ» — то, что нам нужно.
       const { data, error } = await api.PATCH(
         "/v1/workspaces/{wsId}/contacts/{id}",
         {
@@ -130,10 +116,11 @@ function EditForm(props: {
         save.mutate();
       }}
     >
-      <ContactFormFields
-        properties={properties}
+      <PropertyFields
+        fields={CONTACT_FIELD_DEFS}
         values={values}
         onChange={setValues}
+        alwaysShownKeys={["full_name", "description"]}
       />
 
       <div className="flex items-center gap-2 pt-1">

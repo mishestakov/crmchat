@@ -65,3 +65,11 @@ specs/db-audit/
 prompts/
 prototypes/
 scripts/
+
+# локальные рабочие документы и данные (вне версионирования) — чтобы не утекали
+# случайным `git add -A`
+/plan.md
+/product.md
+/gitflow.md
+/tools/
+specs/*.txt

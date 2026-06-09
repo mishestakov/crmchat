@@ -6,6 +6,11 @@
 // начинается с буквы, [a-zA-Z0-9_], не заканчивается на `_`. Проверку
 // «нет `__`» опускаем как edge-case — TDLib сам отсеет на subscribe.
 //
+// ЕДИНСТВЕННЫЙ валидатор @username в кодовой базе: bulk-добавление каналов,
+// привязка админов и set-admin резолвят имя только через эту функцию (бывший
+// extractUsername с расходящимся правилом 2-64 удалён). Нужен только username
+// без invite — бери `parseChannelInput(x).username`.
+//
 // Возвращает один из двух слотов: `username` (→ searchPublicChat) или
 // `inviteLink` (→ joinChatByInviteLink). Каноническая форма invite —
 // `https://t.me/+<hash>`, старый /joinchat/<hash> нормализуется к

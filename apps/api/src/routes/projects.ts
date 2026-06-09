@@ -4,7 +4,6 @@ import { streamSSE } from "hono/streaming";
 import { and, asc, eq, gte, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
-  channelAdmins,
   channels,
   contacts,
   DEFAULT_OUTREACH_STAGES,
@@ -30,12 +29,10 @@ import {
   projectAccessClause,
 } from "../lib/projects-access.ts";
 import {
-  buildScheduledRows,
-  prepareAgencyLeads,
+  channelIdentifier,
   resolveProjectAccountIds,
   resolveStickyByTgUserIds,
-  resolveWarmTgUserIds,
-  type SchedulingLead,
+  scheduleLeads,
 } from "../lib/project-scheduling.ts";
 import { type WorkspaceVars } from "../middleware/assert-member.ts";
 import { nextStepSql } from "./contacts.ts";
@@ -96,8 +93,6 @@ const ProjectSchema = z
     accountsMode: AccountsModeSchema,
     accountsSelected: z.array(z.string()),
     messages: z.array(MessageSchema),
-    contactDefaultOwnerIds: z.array(z.string()),
-    contactDefaults: z.record(z.string(), z.unknown()),
     activatedAt: z.iso.datetime().nullable(),
     completedAt: z.iso.datetime().nullable(),
     // Клиент финализировал медиаплан (фаза «Согласование»): решения заморожены.
@@ -142,8 +137,6 @@ const UpdateProjectBody = z
     accountsMode: AccountsModeSchema.optional(),
     accountsSelected: z.array(z.string()).optional(),
     messages: z.array(MessageSchema).optional(),
-    contactDefaultOwnerIds: z.array(z.string()).optional(),
-    contactDefaults: z.record(z.string(), z.unknown()).optional(),
     // agency: фаза и бриф правятся в любом статусе (не snapshot-поля).
     // phase — свободная навигация по визарду, brief-* — данные кампании.
     phase: PhaseSchema.optional(),
@@ -230,9 +223,17 @@ const LeadProgressSchema = z
     // Текущая стадия канбана (id из project.stages[*].id). null = «без
     // стадии» — карточка не на канбане.
     stageId: z.string().nullable(),
-    // CSV-batch, в котором лид появился в проекте. Для фильтра таблицы
-    // лидов «Импорт: ▾» — посмотреть только что подлили.
-    importId: z.string().nullable(),
+    // Канал размещения — получатель аутрича резолвится от его админа. null
+    // быть не должно (айтем = placement), но left-join → nullable.
+    channel: z
+      .object({
+        id: z.string(),
+        title: z.string(),
+        username: z.string().nullable(),
+        link: z.string().nullable(),
+        platform: z.string(),
+      })
+      .nullable(),
   })
   .openapi("OutreachLeadProgress");
 
@@ -366,17 +367,12 @@ app.openapi(
       initialMessages = tpl.messages;
     }
 
-    // kind проставляется автоматом из workspace.mode (см. db/schema.ts рядом
-    // с projectKind). bd → outreach, agency → agency. Юзер kind не выбирает.
-    const mode = c.get("workspaceMode");
-    const kind = mode === "agency" ? "agency" : "outreach";
     const [row] = await db
       .insert(projects)
       .values({
         workspaceId: wsId,
         trackId: body.trackId,
         name: body.name,
-        kind,
         stages: initialStages,
         messages: initialMessages,
         // agency brief-поля (для bd остаются null/default). numeric → string,
@@ -471,8 +467,6 @@ app.openapi(
           "accountsMode",
           "accountsSelected",
           "messages",
-          "contactDefaultOwnerIds",
-          "contactDefaults",
           // agency text/enum-поля — прямое копирование (null валиден).
           "phase",
           "brief",
@@ -570,95 +564,69 @@ app.openapi(
       throw new HTTPException(400, { message: "List has no leads" });
     }
 
-    // Agency: жёсткий гейт готовности контактов (этап 16.8). Скоуп — только
-    // лонглист (shortlistedAt IS NULL): отобранные в шортлист уже прошли аутрич
-    // и не считаются/не получают повторный опенер (совпадает с тем, что видит
-    // экран). BD-проекты не трогаем.
-    if (project.kind === "agency") {
-      const placements = await db
-        .select({
-          hasAdmin: sql<boolean>`exists (select 1 from ${channelAdmins} where ${channelAdmins.channelId} = ${channels.id})`,
-          // Бесплатная личка канала: есть DM-группа (синкается на скане) и
-          // отправка бесплатна. has_dm НЕ используем — его пишет репликатор
-          // асинхронно, а direct_messages_chat_id кладёт сам sync.
-          hasDm: sql<boolean>`coalesce(${channels.meta} ->> 'direct_messages_chat_id', '0') <> '0'`,
-          dmStar: sql<
-            number | null
-          >`(${channels.meta} ->> 'outgoing_paid_message_star_count')::int`,
-          methodSet: sql<boolean>`(${channels.meta} -> 'contact_method' ->> 'kind') is not null`,
-        })
-        .from(projectItems)
-        .leftJoin(channels, eq(channels.id, projectItems.channelId))
-        .where(
-          and(
-            eq(projectItems.projectId, project.id),
-            eq(projectItems.kind, "placement"),
-            isNull(projectItems.shortlistedAt),
-            // Отказавшихся (available=false) в гейт не считаем (этап 16.10).
-            sql`${projectItems.available} is distinct from false`,
-          ),
-        );
-      // Готовность = совпадает с Placement.contactReady (см. campaigns.ts):
-      // привязан админ ИЛИ бесплатная личка канала.
-      const unready = placements.filter(
-        (p) => !(p.hasAdmin || p.methodSet || (p.hasDm && p.dmStar === 0)),
-      ).length;
-      if (unready > 0) {
-        throw new HTTPException(400, {
-          message: `Нельзя запустить аутрич: каналов без контакта — ${unready}. Найдите контакт или уберите их из лонглиста.`,
-        });
-      }
-    }
-
-    // Список лидов в рассылку. Agency: prepareAgencyLeads (дедуп по админу +
-    // {{каналы}} + только лонглист, без already-contacted на первом запуске).
-    // BD: identity-дедуп по lower(username) (defense-in-depth от дублей).
-    let leads: SchedulingLead[];
-    if (project.kind === "agency") {
-      const longlist = allLeads
-        .filter((l) => l.shortlistedAt === null && l.available !== false)
-        .map((l) => ({
-          id: l.id,
-          username: l.username,
-          tgUserId: l.tgUserId,
-          properties: (l.properties ?? {}) as Record<string, unknown>,
-        }));
-      leads = await prepareAgencyLeads({
-        projectId: project.id,
-        leads: longlist,
-        skipContacted: false,
+    // Жёсткий гейт готовности контактов — общий для BD и agency: канал без
+    // контакта аутричу некуда слать. Скоуп — лонглист (shortlistedAt IS NULL):
+    // у BD шортлиста нет → фильтр no-op, считаются все размещения. Отказавшихся
+    // (available=false) не считаем (этап 16.10; у BD available обычно null).
+    const placements = await db
+      .select({
+        // Опенер уйдёт админу по placement.username — это РОВНО то, что
+        // планирует prepareLeads (получатель денормализован на размещение
+        // через resolveAdminRecipient/healPlacementRecipients). Не используем
+        // exists(channel_admins): админ может быть привязан, но без публичного
+        // @username — тогда scheduler его молча пропустит, а гейт бы пропустил
+        // как «готовый» → канал активен, опенер не ушёл. Сверяемся с username.
+        hasUsername: sql<boolean>`${projectItems.username} is not null`,
+        // Бесплатная личка канала: есть DM-группа (синкается на скане) и
+        // отправка бесплатна. has_dm НЕ используем — его пишет репликатор
+        // асинхронно, а direct_messages_chat_id кладёт сам sync.
+        hasDm: sql<boolean>`coalesce(${channels.meta} ->> 'direct_messages_chat_id', '0') <> '0'`,
+        // coalesce к 0: отсутствие star-поля (несинхронизированный/старый снимок
+        // meta) трактуем как бесплатную личку, а не как «не готов» — иначе
+        // null !== 0 ложно блокировал бы активацию канала с бесплатной DM.
+        dmStar: sql<number>`coalesce((${channels.meta} ->> 'outgoing_paid_message_star_count')::int, 0)`,
+        methodSet: sql<boolean>`(${channels.meta} -> 'contact_method' ->> 'kind') is not null`,
+      })
+      .from(projectItems)
+      .leftJoin(channels, eq(channels.id, projectItems.channelId))
+      .where(
+        and(
+          eq(projectItems.projectId, project.id),
+          isNull(projectItems.shortlistedAt),
+          sql`${projectItems.available} is distinct from false`,
+        ),
+      );
+    // Готовность = опенер уйдёт по @username ИЛИ задан ручной способ связи
+    // (группа/бесплатная личка — менеджер пишет сам, не авто-цепочкой).
+    const unready = placements.filter(
+      (p) => !(p.hasUsername || p.methodSet || (p.hasDm && p.dmStar === 0)),
+    ).length;
+    if (unready > 0) {
+      throw new HTTPException(400, {
+        message: `Нельзя запустить аутрич: каналов без контакта — ${unready}. Найдите контакт или уберите их из списка.`,
       });
-    } else {
-      const seen = new Set<string>();
-      leads = [];
-      for (const l of allLeads) {
-        const key = l.username ? `u:${l.username.toLowerCase()}` : null;
-        if (!key || seen.has(key)) continue;
-        seen.add(key);
-        leads.push({
-          id: l.id,
-          username: l.username,
-          tgUserId: l.tgUserId,
-          properties: (l.properties ?? {}) as Record<string, unknown>,
-        });
-      }
     }
 
-    const tgUserIds = leads
-      .map((l) => l.tgUserId)
-      .filter((x): x is string => x !== null);
-    const priorByTgUserId = await resolveStickyByTgUserIds(wsId, tgUserIds);
-    const warmTgUserIds = await resolveWarmTgUserIds(wsId, tgUserIds);
-
+    // Лонглист → scheduled-строки общим конвейером (дедуп по админу + синтез
+    // канало-vars + sticky/warm). Только не отобранные в шортлист и не
+    // отказавшиеся; already-contacted на первом запуске не пропускаем. У BD
+    // шортлиста нет → shortlistedAt всегда null (фильтр no-op).
+    const longlist = allLeads
+      .filter((l) => l.shortlistedAt === null && l.available !== false)
+      .map((l) => ({
+        id: l.id,
+        username: l.username,
+        tgUserId: l.tgUserId,
+        properties: (l.properties ?? {}) as Record<string, unknown>,
+      }));
     const activatedAt = new Date();
-    const rows = buildScheduledRows({
+    const rows = await scheduleLeads({
       wsId,
       project,
       accountIds,
-      leads,
+      leads: longlist,
       baseTime: activatedAt,
-      priorByTgUserId,
-      warmTgUserIds,
+      skipContacted: false,
     });
 
     await db.transaction(async (tx) => {
@@ -942,11 +910,16 @@ app.openapi(
           unreadCount: sql<number>`coalesce(${contacts.unreadCount}, 0)::int`,
           nextStep: nextStepSql,
           stageId: projectItems.stageId,
-          importId: projectItems.importId,
+          channelId: channels.id,
+          channelTitle: channels.title,
+          channelUsername: channels.username,
+          channelLink: channels.link,
+          channelPlatform: channels.platform,
           total: sql<number>`count(*) OVER ()::int`,
         })
         .from(projectItems)
         .leftJoin(contacts, eq(contacts.id, projectItems.contactId))
+        .leftJoin(channels, eq(channels.id, projectItems.channelId))
         .where(and(eq(projectItems.projectId, project.id), memberFilter))
         .orderBy(asc(projectItems.createdAt))
         .limit(limit)
@@ -1062,7 +1035,15 @@ app.openapi(
           unreadCount: l.unreadCount,
           nextStep: l.nextStep,
           stageId: l.stageId,
-          importId: l.importId,
+          channel: l.channelId
+            ? {
+                id: l.channelId,
+                title: l.channelTitle ?? "",
+                username: l.channelUsername,
+                link: l.channelLink,
+                platform: l.channelPlatform ?? "telegram",
+              }
+            : null,
         };
       }),
     });
@@ -1506,16 +1487,38 @@ app.openapi(
         id: projectItems.id,
         username: projectItems.username,
         properties: projectItems.properties,
+        channelTitle: channels.title,
+        channelUsername: channels.username,
+        channelLink: channels.link,
+        channelPlatform: channels.platform,
       })
       .from(projectItems)
+      .leftJoin(channels, eq(channels.id, projectItems.channelId))
       .where(eq(projectItems.projectId, project.id))
       .limit(1)
       .offset(Math.floor(Math.random() * cnt));
     if (!row) return c.json(null);
+    // Дешёвое превью: канало-переменные синтезируем инлайн из канала сэмпла
+    // (тем же channelIdentifier, что и prepareLeads). Это приближение —
+    // {{каналы}} тут = один канал сэмпла, а при реальной отправке = склейка всех
+    // каналов админа; для превью «как примерно будет» этого достаточно, без
+    // лишних запросов prepareLeads на каждый клик «Другой лид».
+    const channelVars: Record<string, string> = {};
+    if (row.channelPlatform) {
+      const { ident, link } = channelIdentifier({
+        platform: row.channelPlatform,
+        username: row.channelUsername,
+        title: row.channelTitle,
+        link: row.channelLink,
+      });
+      channelVars.каналы = ident;
+      channelVars.канал = row.channelTitle ?? ident;
+      if (link) channelVars.ссылка = link;
+    }
     return c.json({
       id: row.id,
       username: row.username,
-      properties: row.properties,
+      properties: { ...row.properties, ...channelVars },
     });
   },
 );
@@ -1541,8 +1544,6 @@ function serializeProject(
     accountsMode: row.accountsMode,
     accountsSelected: row.accountsSelected,
     messages: row.messages,
-    contactDefaultOwnerIds: row.contactDefaultOwnerIds,
-    contactDefaults: row.contactDefaults,
     activatedAt: row.activatedAt?.toISOString() ?? null,
     completedAt: row.completedAt?.toISOString() ?? null,
     clientFinalizedAt: row.clientFinalizedAt?.toISOString() ?? null,
