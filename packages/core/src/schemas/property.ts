@@ -54,7 +54,6 @@ export const PropertySchema = z.object({
   type: PropertyTypeSchema,
   order: z.number().int(),
   required: z.boolean(),
-  showInList: z.boolean(),
   internal: z.boolean(),
   values: z.array(PropertyValueSchema).nullable(),
   createdAt: z.iso.datetime(),
@@ -68,7 +67,6 @@ export const CreatePropertySchema = PropertySchema.pick({
 })
   .extend({
     required: z.boolean().optional(),
-    showInList: z.boolean().optional(),
     values: z.array(PropertyValueSchema).optional(),
   })
   // RESERVED_PROPERTY_KEYS = preset-поля (full_name, email, ...). Их сидит сервер
@@ -85,7 +83,6 @@ export const UpdatePropertySchema = z
     name: z.string().min(1).max(120),
     order: z.number().int(),
     required: z.boolean(),
-    showInList: z.boolean(),
     values: z.array(PropertyValueSchema).nullable(),
   })
   .partial();

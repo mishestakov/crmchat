@@ -14,7 +14,6 @@ type PresetSpec = {
   name: string;
   type: PropertyType;
   required?: boolean;
-  showInList?: boolean;
   values?: PropertyValue[];
 };
 
@@ -23,13 +22,13 @@ type PresetSpec = {
 // контакта. Старые записи property с key='stage' в существующих
 // воркспейсах безвредны — они сиротствуют и не используются.
 const PRESETS: PresetSpec[] = [
-  { key: "full_name", name: "Имя", type: "text", required: true, showInList: true },
-  { key: "description", name: "Описание", type: "textarea", showInList: false },
-  { key: "telegram_username", name: "Telegram", type: "text", showInList: true },
-  // tg_user_id — служебное поле, не показываем в списке. Заполняется системно
-  // (TG-импорт, outreach worker, listener, lead→contact конверсия). Юзер не
-  // редактирует, но валидатору нужно знать что ключ существует.
-  { key: "tg_user_id", name: "TG ID", type: "text", showInList: false },
+  { key: "full_name", name: "Имя", type: "text", required: true },
+  { key: "description", name: "Описание", type: "textarea" },
+  { key: "telegram_username", name: "Telegram", type: "text" },
+  // tg_user_id — служебное поле. Заполняется системно (TG-импорт, outreach
+  // worker, listener), юзер не редактирует, но валидатору нужно знать что ключ
+  // существует.
+  { key: "tg_user_id", name: "TG ID", type: "text" },
 ];
 
 export async function seedDefaultProperties(workspaceId: string) {
@@ -43,7 +42,6 @@ export async function seedDefaultProperties(workspaceId: string) {
         type: p.type,
         order: i,
         required: p.required ?? false,
-        showInList: p.showInList ?? true,
         internal: true,
         values: p.values ?? null,
       })),

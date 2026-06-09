@@ -90,7 +90,6 @@ app.openapi(
           name: body.name,
           type: body.type,
           required: body.required ?? false,
-          showInList: body.showInList ?? true,
           // internal=true ставится только при сидинге workspace'а; пользовательский
           // POST всегда создаёт обычное (deletable, type-fixed) свойство.
           internal: false,
@@ -263,7 +262,6 @@ function serialize(row: typeof properties.$inferSelect) {
     type: row.type,
     order: row.order,
     required: row.required,
-    showInList: row.showInList,
     internal: row.internal,
     values: row.values,
     createdAt: row.createdAt.toISOString(),

@@ -55,7 +55,6 @@ export type PropertyFormValue = {
   name: string;
   type: PropertyType;
   required: boolean;
-  showInList: boolean;
   values: PropertyValue[];
 };
 
@@ -75,19 +74,17 @@ export function PropertyForm(props: {
     name: props.initial?.name ?? "",
     type: props.initial?.type ?? "text",
     required: props.initial?.required ?? false,
-    showInList: props.initial?.showInList ?? true,
     values: props.initial?.values ?? [],
   };
   const [name, setName] = useState(initialValue.name);
   const [type, setType] = useState<PropertyType>(initialValue.type);
   const [required, setRequired] = useState(initialValue.required);
-  const [showInList, setShowInList] = useState(initialValue.showInList);
   const [values, setValues] = useState<PropertyValue[]>(initialValue.values);
   const [protectedIds] = useState<Set<string>>(
     () => new Set(props.initial?.values?.map((v) => v.id) ?? []),
   );
 
-  const current: PropertyFormValue = { name, type, required, showInList, values };
+  const current: PropertyFormValue = { name, type, required, values };
   const isDirty = JSON.stringify(current) !== JSON.stringify(initialValue);
   const needsValues = type === "single_select" || type === "multi_select";
   const isValid =
@@ -105,7 +102,6 @@ export function PropertyForm(props: {
           name,
           type,
           required,
-          showInList,
           values: needsValues ? values : [],
         });
       }}
@@ -140,12 +136,6 @@ export function PropertyForm(props: {
           help="Контакт нельзя сохранить без значения"
         >
           <Toggle value={required} onChange={setRequired} />
-        </Row>
-        <Row
-          label="Показывать в карточке"
-          help="Поле появится бейджем рядом с именем в воронке"
-        >
-          <Toggle value={showInList} onChange={setShowInList} />
         </Row>
       </div>
 

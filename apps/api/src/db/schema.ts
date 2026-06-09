@@ -201,9 +201,8 @@ export const properties = pgTable(
     type: propertyType("type").notNull(),
     order: integer("order").notNull().default(0),
     required: boolean("required").notNull().default(false),
-    showInList: boolean("show_in_list").notNull().default(true),
     // true для preset-полей, засеянных при создании workspace (full_name/email/...).
-    // UI: нельзя удалить, тип фиксирован; rename/required/showInList разрешены.
+    // UI: нельзя удалить, тип фиксирован; rename/required разрешены.
     internal: boolean("internal").notNull().default(false),
     // null для скалярных типов; массив опций для single_select/multi_select.
     values: jsonb("values").$type<PropertyValue[]>(),
