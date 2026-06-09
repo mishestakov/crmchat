@@ -173,8 +173,7 @@ export const workspaceInvites = pgTable(
 // Custom-property types. По спеке data-model.md §3 — date добавим когда упрёмся.
 // multi_select хранит string[] значений option.id; single_select — одно option.id.
 // Аналог donor PROPERTY_METADATA. Createable (text/single_select/multi_select) — юзер
-// сам создаёт через UI; остальные — только через preset-сидинг при создании workspace
-// (флаг `internal`). UI отфильтровывает createable при «новое поле».
+// сам создаёт через UI; остальные типы пока неиспользуемы (заведены под будущее).
 export const propertyType = pgEnum("property_type", [
   "text",
   "single_select",
@@ -189,6 +188,10 @@ export const propertyType = pgEnum("property_type", [
 
 export type PropertyValue = { id: string; name: string };
 
+// Каталог пользовательских кастом-полей КАНАЛА (ниша, cpc/cpa-бакет, тип
+// потребления и т.п.). Channel-centric: в донор-CRM каталог висел на контактах
+// (lead-CRM наследие) — у нас контакт держит только фиксированные системные
+// поля (см. CONTACT_FIELD_DEFS в @repo/core), а кастом живёт на канале.
 export const properties = pgTable(
   "properties",
   {
@@ -201,9 +204,6 @@ export const properties = pgTable(
     type: propertyType("type").notNull(),
     order: integer("order").notNull().default(0),
     required: boolean("required").notNull().default(false),
-    // true для preset-полей, засеянных при создании workspace (full_name/email/...).
-    // UI: нельзя удалить, тип фиксирован; rename/required разрешены.
-    internal: boolean("internal").notNull().default(false),
     // null для скалярных типов; массив опций для single_select/multi_select.
     values: jsonb("values").$type<PropertyValue[]>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

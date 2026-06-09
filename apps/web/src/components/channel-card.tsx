@@ -17,8 +17,9 @@ import {
   Loader2,
   X,
 } from "lucide-react";
-import type { Channel } from "@repo/core";
+import type { Channel, FieldDef } from "@repo/core";
 import { api } from "../lib/api";
+import { PropertyFields } from "./property-fields";
 import { PLATFORMS } from "../lib/platforms";
 import { formatRelative } from "../lib/date-utils";
 import { errorMessage } from "../lib/errors";
@@ -63,6 +64,21 @@ export function ChannelCard(props: {
   const accountsQ = useOutreachAccounts(wsId);
   const hasActiveAccount =
     !!accountsQ.data && accountsQ.data.some((a) => a.status === "active");
+
+  // Каталог кастом-полей канала (тот же, что в настройках «Поля»). Нужен только
+  // в развёрнутой карточке (drawer) — в compact-превью лонглиста не тянем.
+  const propertyDefsQ = useQuery({
+    queryKey: ["properties", wsId],
+    queryFn: async () => {
+      const { data, error } = await api.GET("/v1/workspaces/{wsId}/properties", {
+        params: { path: { wsId } },
+      });
+      if (error) throw error;
+      return data;
+    },
+    enabled: !compact,
+    staleTime: 5 * 60 * 1000,
+  });
 
   // Sync свежей карточки из TG: stale-while-revalidate с TTL 24h. UI рендерит
   // что есть в БД, в фоне fetch'им свежее. На mount запускаем один раз через
@@ -118,11 +134,14 @@ export function ChannelCard(props: {
     },
   });
 
-  // PATCH /channels/{id} — пока только username. На смене бэк сбрасывает
-  // unavailable_*, поэтому после успешного PATCH даём auto-sync ещё один
-  // шанс (он попытается на новом @ через cooldown-чистый канал).
+  // PATCH /channels/{id} — username и/или кастом-свойства канала. На смене
+  // username бэк сбрасывает unavailable_*, поэтому после успешного PATCH даём
+  // auto-sync ещё один шанс (на новом @ через cooldown-чистый канал).
   const patchMut = useMutation({
-    mutationFn: async (body: { username: string | null }) => {
+    mutationFn: async (body: {
+      username?: string | null;
+      properties?: Record<string, unknown>;
+    }) => {
       const { data, error } = await api.PATCH(
         "/v1/workspaces/{wsId}/channels/{id}",
         {
@@ -217,7 +236,16 @@ export function ChannelCard(props: {
       {!compact && (
         <MetaBadges
           channel={channel}
+          propertyDefs={propertyDefsQ.data ?? []}
           onDmClick={hasDmGroup ? () => setDmOpen((v) => !v) : undefined}
+        />
+      )}
+      {!compact && (propertyDefsQ.data?.length ?? 0) > 0 && (
+        <ChannelPropertiesSection
+          defs={propertyDefsQ.data!}
+          values={channel.properties as Record<string, unknown>}
+          onSave={(properties) => patchMut.mutate({ properties })}
+          saving={patchMut.isPending}
         />
       )}
       {!compact && <AdminsSection wsId={wsId} channel={channel} />}
@@ -458,13 +486,15 @@ function Stat(props: {
 
 function MetaBadges({
   channel,
+  propertyDefs,
   onDmClick,
 }: {
   channel: Channel;
+  propertyDefs: FieldDef[];
   onDmClick?: () => void;
 }) {
   const meta = channel.meta as Record<string, unknown>;
-  const props = channel.properties as Record<string, unknown>;
+  const values = channel.properties as Record<string, unknown>;
   // Личка канала: 0 → бесплатно (готовый контакт), >0 → вручную, null → не синкали.
   const { hasDm: hasDmGroup, starCost: dmStarCost } = channelDm(meta);
   const hasLinkedChat = meta?.has_linked_chat === true;
@@ -472,14 +502,12 @@ function MetaBadges({
     typeof meta?.gift_count === "number" ? meta.gift_count : 0;
   const isBroadcastGroup = meta?.is_broadcast_group === true;
 
-  // Custom properties (CSV-импорт): ER, ниша и пр. Показываем только
-  // первичные строковые/числовые значения; multi-select оставим для
-  // отдельной view (slot не позволяет красиво поместить в badge-row).
-  const customEntries = Object.entries(props).filter(
-    ([, v]) =>
-      (typeof v === "string" && v.trim() !== "") ||
-      (typeof v === "number" && Number.isFinite(v)),
-  );
+  // Кастом-поля канала: показываем заполненные, с лейблом из каталога и
+  // человекочитаемым значением (для select — имя опции, не id). Идём по
+  // порядку каталога, а не по сырым ключам — orphan-ключи не светятся.
+  const customBadges = propertyDefs
+    .map((def) => ({ def, text: displayPropertyValue(def, values[def.key]) }))
+    .filter((x) => x.text !== null);
 
   const badges: {
     key: string;
@@ -532,13 +560,13 @@ function MetaBadges({
       ),
     });
   }
-  for (const [k, v] of customEntries) {
+  for (const { def, text } of customBadges) {
     badges.push({
-      key: `prop:${k}`,
+      key: `prop:${def.key}`,
       node: (
         <Badge tone="zinc">
-          <span className="text-zinc-500">{k}</span>{" "}
-          <span className="font-semibold text-zinc-800">{String(v)}</span>
+          <span className="text-zinc-500">{def.name}</span>{" "}
+          <span className="font-semibold text-zinc-800">{text}</span>
         </Badge>
       ),
     });
@@ -561,6 +589,74 @@ function MetaBadges({
         ) : (
           <span key={b.key}>{b.node}</span>
         ),
+      )}
+    </div>
+  );
+}
+
+// Человекочитаемое значение кастом-поля для бейджа. null = поле пустое (не
+// показываем). Для select'ов разворачиваем option.id → option.name.
+function displayPropertyValue(def: FieldDef, raw: unknown): string | null {
+  if (def.type === "multi_select") {
+    const ids = Array.isArray(raw)
+      ? raw.filter((x): x is string => typeof x === "string")
+      : [];
+    if (ids.length === 0) return null;
+    return ids
+      .map((id) => def.values?.find((v) => v.id === id)?.name ?? id)
+      .join(", ");
+  }
+  if (def.type === "single_select") {
+    if (typeof raw !== "string" || raw === "") return null;
+    return def.values?.find((v) => v.id === raw)?.name ?? raw;
+  }
+  if (def.type === "number") {
+    return typeof raw === "number" && Number.isFinite(raw) ? String(raw) : null;
+  }
+  return typeof raw === "string" && raw.trim() !== "" ? raw : null;
+}
+
+// Редактируемая секция кастом-полей канала (drawer). Тот же PropertyFields, что
+// у контакта; сохраняем через PATCH /channels/{id} { properties }. Кнопка
+// «Сохранить» — только при наличии правок (CLAUDE.md §6).
+function ChannelPropertiesSection(props: {
+  defs: FieldDef[];
+  values: Record<string, unknown>;
+  onSave: (properties: Record<string, unknown>) => void;
+  saving: boolean;
+}) {
+  const { defs, values, onSave } = props;
+  const [draft, setDraft] = useState<Record<string, unknown>>(() => ({
+    ...values,
+  }));
+  // Сервер-данные обновились (после save / внешнего sync) → синхронизируем
+  // черновик. JSON-ключ в deps, чтобы реагировать на смену значений, а не
+  // идентичности объекта.
+  const valuesKey = JSON.stringify(values);
+  useEffect(() => {
+    setDraft({ ...values });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [valuesKey]);
+
+  // dirty — только по ключам каталога (orphan-ключи в values не считаем).
+  const dirty = defs.some((d) => {
+    const a = draft[d.key];
+    const b = values[d.key];
+    return JSON.stringify(a ?? null) !== JSON.stringify(b ?? null);
+  });
+
+  return (
+    <div className="border-b border-zinc-100 px-6 py-3">
+      <PropertyFields fields={defs} values={draft} onChange={setDraft} />
+      {dirty && (
+        <button
+          type="button"
+          onClick={() => onSave(draft)}
+          disabled={props.saving}
+          className="mt-3 rounded-lg bg-emerald-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+        >
+          {props.saving ? "Сохраняем…" : "Сохранить"}
+        </button>
       )}
     </div>
   );

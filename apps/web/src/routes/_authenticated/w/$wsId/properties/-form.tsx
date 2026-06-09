@@ -9,10 +9,9 @@ import {
   type PropertyValue,
 } from "@repo/core";
 
-// Локализованные подписи для всех 9 типов (включая internal-only).
-// Internal-properties (email/url/tel/...) показываем в edit-режиме как label, потому
-// что тип фиксирован и не меняется. В create-режиме сегментированный селектор
-// фильтрует только CREATEABLE_PROPERTY_TYPES.
+// Локализованные подписи для всех 9 типов. В edit-режиме тип показываем как
+// label (он фиксирован — смена типа = миграция значений). В create-режиме
+// сегментированный селектор фильтрует только CREATEABLE_PROPERTY_TYPES.
 const TYPE_LABELS: Record<PropertyType, string> = {
   text: "Текст",
   single_select: "Одиночный выбор",
@@ -54,7 +53,6 @@ function newOptionId(): string {
 export type PropertyFormValue = {
   name: string;
   type: PropertyType;
-  required: boolean;
   values: PropertyValue[];
 };
 
@@ -73,18 +71,16 @@ export function PropertyForm(props: {
   const initialValue: PropertyFormValue = {
     name: props.initial?.name ?? "",
     type: props.initial?.type ?? "text",
-    required: props.initial?.required ?? false,
     values: props.initial?.values ?? [],
   };
   const [name, setName] = useState(initialValue.name);
   const [type, setType] = useState<PropertyType>(initialValue.type);
-  const [required, setRequired] = useState(initialValue.required);
   const [values, setValues] = useState<PropertyValue[]>(initialValue.values);
   const [protectedIds] = useState<Set<string>>(
     () => new Set(props.initial?.values?.map((v) => v.id) ?? []),
   );
 
-  const current: PropertyFormValue = { name, type, required, values };
+  const current: PropertyFormValue = { name, type, values };
   const isDirty = JSON.stringify(current) !== JSON.stringify(initialValue);
   const needsValues = type === "single_select" || type === "multi_select";
   const isValid =
@@ -101,7 +97,6 @@ export function PropertyForm(props: {
           key: isEdit ? props.initial!.key : autoKey(name),
           name,
           type,
-          required,
           values: needsValues ? values : [],
         });
       }}
@@ -130,12 +125,6 @@ export function PropertyForm(props: {
               }))}
             />
           )}
-        </Row>
-        <Row
-          label="Обязательное поле"
-          help="Контакт нельзя сохранить без значения"
-        >
-          <Toggle value={required} onChange={setRequired} />
         </Row>
       </div>
 
@@ -208,26 +197,6 @@ function Row(props: {
       </div>
       <div className="shrink-0">{props.children}</div>
     </div>
-  );
-}
-
-function Toggle(props: { value: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button
-      type="button"
-      onClick={() => props.onChange(!props.value)}
-      className={
-        "inline-flex h-6 w-11 items-center rounded-full transition-colors " +
-        (props.value ? "bg-emerald-500" : "bg-zinc-300")
-      }
-    >
-      <span
-        className={
-          "inline-block h-5 w-5 rounded-full bg-white shadow transition-transform " +
-          (props.value ? "translate-x-5" : "translate-x-0.5")
-        }
-      />
-    </button>
   );
 }
 

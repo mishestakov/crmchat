@@ -34,7 +34,6 @@ function EditProperty() {
   const update = useMutation({
     mutationFn: async (input: {
       name: string;
-      required: boolean;
       type: PropertyType;
       values: { id: string; name: string }[];
     }) => {
@@ -44,7 +43,6 @@ function EditProperty() {
           params: { path: { wsId, id: propertyId } },
           body: {
             name: input.name,
-            required: input.required,
             ...(input.type === "single_select" || input.type === "multi_select"
               ? { values: input.values }
               : {}),
@@ -69,7 +67,7 @@ function EditProperty() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["properties", wsId] });
-      qc.invalidateQueries({ queryKey: ["contacts", wsId] });
+      qc.invalidateQueries({ queryKey: ["channels", wsId] });
       router.history.back();
     },
   });
@@ -100,19 +98,15 @@ function EditProperty() {
           initial={property}
           onCancel={() => router.history.back()}
           onSave={(input) => update.mutate(input)}
-          onDelete={
-            property.internal
-              ? undefined
-              : () => {
-                  if (
-                    confirm(
-                      `Удалить «${property.name}»? Значения у контактов тоже будут стёрты.`,
-                    )
-                  ) {
-                    remove.mutate();
-                  }
-                }
-          }
+          onDelete={() => {
+            if (
+              confirm(
+                `Удалить «${property.name}»? Значения у каналов тоже будут стёрты.`,
+              )
+            ) {
+              remove.mutate();
+            }
+          }}
           saving={update.isPending}
           error={update.error ? errorMessage(update.error) : null}
         />

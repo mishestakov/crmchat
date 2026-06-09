@@ -56,9 +56,9 @@ export const ContactSchema = z.object({
 });
 export type Contact = z.infer<typeof ContactSchema>;
 
-// Значения валидируются отдельно на сервере против определений workspace'а
-// (см. apps/api/src/lib/contact-properties.ts) — здесь z.unknown(), потому что
-// схема значения зависит от runtime-определения property.type.
+// Значения валидируются отдельно на сервере против CONTACT_FIELD_DEFS
+// (см. apps/api/src/lib/entity-properties.ts) — здесь z.unknown(), потому что
+// схема значения зависит от property.type.
 // Поштучного создания контактов больше нет: 10.8 убрал кнопку «+ Новый» в
 // /contacts и страницу /contacts/new. Контакты автосоздаются listener'ом на
 // первом DM.

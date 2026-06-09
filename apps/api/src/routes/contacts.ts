@@ -12,6 +12,7 @@ import {
   type SQL,
 } from "drizzle-orm";
 import {
+  CONTACT_FIELD_DEFS,
   ContactSchema as BaseContactSchema,
   UpdateContactSchema as BaseUpdate,
 } from "@repo/core";
@@ -34,9 +35,8 @@ import {
 } from "../lib/contact-sql.ts";
 import {
   enforceRequiredProperties,
-  loadPropertyDefs,
-  validateContactProperties,
-} from "../lib/contact-properties.ts";
+  validateEntityProperties,
+} from "../lib/entity-properties.ts";
 import { ensureContactTgUserId } from "../lib/ensure-tg-user-id.ts";
 import { errMsg } from "../lib/errors.ts";
 import { getOutreachWorkerClient } from "../lib/outreach-account-client.ts";
@@ -301,10 +301,9 @@ app.openapi(
         delete merged[k];
       }
     }
-    const defs = await loadPropertyDefs(wsId);
-    const validated = validateContactProperties(defs, body.properties);
+    const validated = validateEntityProperties(CONTACT_FIELD_DEFS, body.properties);
     Object.assign(merged, validated);
-    enforceRequiredProperties(defs, merged);
+    enforceRequiredProperties(CONTACT_FIELD_DEFS, merged);
 
     await db
       .update(contacts)

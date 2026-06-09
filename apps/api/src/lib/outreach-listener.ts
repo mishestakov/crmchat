@@ -13,10 +13,8 @@ import {
   contactTgUserIdSql,
   contactUsernameSql,
 } from "./contact-sql.ts";
-import {
-  loadPropertyDefs,
-  validateContactProperties,
-} from "./contact-properties.ts";
+import { CONTACT_FIELD_DEFS } from "@repo/core";
+import { validateEntityProperties } from "./entity-properties.ts";
 import { emitContactChanged, emitProjectChanged } from "./events.ts";
 import { FINAL_OFFER_MSG_IDX } from "./project-scheduling.ts";
 import { errMsg, isUniqueViolation } from "./errors.ts";
@@ -516,12 +514,12 @@ async function ensureContactFromTraffic(opts: {
 }): Promise<void> {
   const { workspaceId, accountId, client, peerUserId, ts, isInbound } = opts;
 
-  // Cheap-guard от лишнего getUser/loadPropertyDefs: большинство DM
-  // приходят от уже импортированных контактов. ON CONFLICT ниже закрывает
-  // оставшийся race — здесь только оптимизация.
+  // Cheap-guard от лишнего getUser: большинство DM приходят от уже
+  // импортированных контактов. ON CONFLICT ниже закрывает оставшийся race —
+  // здесь только оптимизация.
   if (await findContactByTgUserId(workspaceId, peerUserId)) return;
 
-  const [tdUser, ownerRow, defs] = await Promise.all([
+  const [tdUser, ownerRow] = await Promise.all([
     (
       client.invoke({
         _: "getUser",
@@ -534,7 +532,6 @@ async function ensureContactFromTraffic(opts: {
       .where(eq(outreachAccounts.id, accountId))
       .limit(1)
       .then((rows) => rows[0]?.ownerUserId),
-    loadPropertyDefs(workspaceId),
   ]);
 
   if (!tdUser) return;
@@ -544,16 +541,12 @@ async function ensureContactFromTraffic(opts: {
   const fullName = extractFullName(tdUser);
   const username = extractActiveUsername(tdUser);
 
-  const allKeys = new Set(defs.map((d) => d.key));
-  const rawProps: Record<string, unknown> = {};
-  if (allKeys.has("tg_user_id")) rawProps.tg_user_id = peerUserId;
-  if (allKeys.has("full_name")) {
-    rawProps.full_name = fullName || (username ? `@${username}` : peerUserId);
-  }
-  if (username && allKeys.has("telegram_username")) {
-    rawProps.telegram_username = username;
-  }
-  const validated = validateContactProperties(defs, rawProps);
+  const rawProps: Record<string, unknown> = {
+    tg_user_id: peerUserId,
+    full_name: fullName || (username ? `@${username}` : peerUserId),
+  };
+  if (username) rawProps.telegram_username = username;
+  const validated = validateEntityProperties(CONTACT_FIELD_DEFS, rawProps);
   if (!("tg_user_id" in validated)) {
     validated.tg_user_id = peerUserId;
   }

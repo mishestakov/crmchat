@@ -47,18 +47,13 @@ function PropertiesList() {
     onSettled: () => qc.invalidateQueries({ queryKey: propertiesKey(wsId) }),
   });
 
-  // Системные (internal=true) поля скрыты со страницы — юзер их не создавал
-  // и не управляет ими в обычном смысле.
-  const items = (list.data ?? []).filter((p) => !p.internal);
+  // Все поля в каталоге — пользовательские кастом-поля канала.
+  const items = list.data ?? [];
 
   // motion Reorder требует controlled values. Обновляем кэш React Query
   // (он же source-of-truth) → motion видит новый порядок, анимирует.
-  // PATCH-и шлём после drag-end (а не на каждый swap).
-  //
-  // Order глобально-уникален: visible идут первыми (в drag-порядке), скрытые
-  // hidden internal — после, sequential 0..N-1. Иначе sort `ORDER BY order` в
-  // БД получает коллизии (visible.order=0, full_name.order=0), tie ломается
-  // через createdAt и порядок «не сохраняется» после рефетча.
+  // PATCH-и шлём после drag-end (а не на каждый swap). order пересчитываем
+  // sequential 0..N-1, чтобы `ORDER BY order` в БД был детерминирован.
   const onReorder = (ordered: Property[]) => {
     qc.setQueryData<Property[]>(propertiesKey(wsId), (prev) => {
       if (!prev) return prev;

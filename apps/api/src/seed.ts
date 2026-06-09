@@ -17,7 +17,6 @@ import {
   type ProjectMessage,
   type ProjectStage,
 } from "./db/schema.ts";
-import { seedDefaultProperties } from "./lib/workspace-presets.ts";
 
 // Top-100 реальных TG-каналов из исследования рынка маркетинга — для
 // демо «жирной» базы каналов в каждом workspace. Файл seed-data/top-channels.json
@@ -90,8 +89,6 @@ await db
     { workspaceId: SASHA_WS, userId: ANNA_ID, role: "member" },
   ])
   .onConflictDoNothing();
-
-await seedDefaultProperties(SASHA_WS);
 
 // Папки Саши — 4 типа работ из product.md.
 await db
@@ -539,8 +536,6 @@ await db
   ])
   .onConflictDoNothing();
 
-await seedDefaultProperties(CPP_WS);
-
 // Папки агентства = клиенты-рекламодатели (kind='client'). Реквизиты пока
 // не заполняем — поля жидкие в properties jsonb.
 await db
@@ -930,8 +925,6 @@ await db
     { workspaceId: AGENCY_WS, userId: BORIS_ID, role: "member" },
   ])
   .onConflictDoNothing();
-
-await seedDefaultProperties(AGENCY_WS);
 
 await db
   .insert(tracks)

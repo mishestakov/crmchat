@@ -5,6 +5,7 @@ import {
   type Channel,
   ChannelSchema as BaseChannelSchema,
   CreateChannelSchema as BaseCreateChannel,
+  type FieldDef,
   ImportChannelsSchema as BaseImportChannels,
   ImportChannelsResultSchema as BaseImportResult,
   parseChannelInput,
@@ -27,7 +28,12 @@ import {
 } from "../lib/channel-history.ts";
 import { respondWithCreativeMedia } from "../lib/creative-media-response.ts";
 import {
+  loadChannelPropertyDefs,
+  validateEntityProperties,
+} from "../lib/entity-properties.ts";
+import {
   isProviderPlatform,
+  resolveChannelIdentifier,
   syncChannelFromProvider,
 } from "../lib/channel-providers/index.ts";
 import {
@@ -1279,12 +1285,15 @@ app.openapi(
   },
 );
 
-// PATCH /channels/{id} — редактирование «наших» полей. На MVP только
-// username: типичный кейс — админ переименовал канал, мы поправили @ и
-// заново резолвим. На смене username сбрасываем unavailable_*-флаги, чтобы
-// next sync не упёрся в cooldown (новый @ — это логически уже другой чат).
+// PATCH /channels/{id} — редактирование «наших» полей.
+// - username: админ переименовал канал, мы поправили @ и заново резолвим. На
+//   смене сбрасываем unavailable_*-флаги, чтобы next sync не упёрся в cooldown
+//   (новый @ — это логически уже другой чат).
+// - properties: значения кастом-полей канала (ниша, cpc/cpa-бакет и т.п.).
+//   Валидируются против каталога; null/""/[] удаляют ключ, остальное мерджится.
 const PatchChannelSchema = z.object({
   username: z.string().min(1).max(64).nullable().optional(),
+  properties: z.record(z.string(), z.unknown()).optional(),
 });
 
 app.openapi(
@@ -1320,10 +1329,26 @@ app.openapi(
     }
     const usernameChanged = nextUsername !== channel.username;
 
+    // properties: валидируем по каталогу канала и мерджим поверх существующих
+    // (null/""/[] → удалить ключ). Не трогаем, если в body их нет.
+    let nextProperties = channel.properties;
+    if (body.properties !== undefined) {
+      const merged = { ...channel.properties };
+      for (const [k, v] of Object.entries(body.properties)) {
+        if (v === null || v === "" || (Array.isArray(v) && v.length === 0)) {
+          delete merged[k];
+        }
+      }
+      const defs = await loadChannelPropertyDefs(wsId);
+      Object.assign(merged, validateEntityProperties(defs, body.properties));
+      nextProperties = merged;
+    }
+
     const [updated] = await db
       .update(channels)
       .set({
         username: nextUsername,
+        properties: nextProperties,
         updatedAt: new Date(),
         // Username сменился — сбрасываем флаг недоступности и forced
         // повторный resolve. Делаем здесь, не в frontend, чтобы инвариант
@@ -1994,6 +2019,51 @@ app.openapi(
   },
 );
 
+// CSV-строка → типизированное значение кастом-поля по каталогу. null = ячейка
+// пустая/нераспознанная (не пишем). Для select'ов CSV даёт человекочитаемое имя
+// опции — резолвим по name (case-insensitive), затем по id. multi_select —
+// значения через запятую.
+// optionIndex — заранее построенный словарь lower(name|id) → id для select-поля
+// (см. buildOptionIndex). Передаётся снаружи, чтобы не делать linear .find на
+// каждую из десятков тысяч CSV-строк.
+function coerceImportPropertyValue(
+  def: FieldDef,
+  rawInput: string | undefined,
+  optionIndex: Map<string, string> | undefined,
+): unknown {
+  const raw = rawInput?.trim();
+  if (!raw) return null;
+  const resolveOption = (s: string): string | null =>
+    optionIndex?.get(s.trim().toLowerCase()) ?? null;
+  switch (def.type) {
+    case "single_select":
+      return resolveOption(raw);
+    case "multi_select": {
+      const ids = raw
+        .split(",")
+        .map((s) => resolveOption(s))
+        .filter((x): x is string => x !== null);
+      return ids.length > 0 ? Array.from(new Set(ids)) : null;
+    }
+    case "number": {
+      const n = Number(raw.replace(/\s+/g, ""));
+      return Number.isFinite(n) ? n : null;
+    }
+    default:
+      // text/textarea/email/tel/url/user_select — строка как есть.
+      return raw;
+  }
+}
+
+// Индекс опций select-поля: lower(name|id) → id. id кладём первым, name — вторым,
+// чтобы при коллизии имя имело приоритет (как старый «сначала по name»).
+function buildOptionIndex(def: FieldDef): Map<string, string> {
+  const idx = new Map<string, string>();
+  for (const v of def.values ?? []) idx.set(v.id.toLowerCase(), v.id);
+  for (const v of def.values ?? []) idx.set(v.name.toLowerCase(), v.id);
+  return idx;
+}
+
 // CSV-импорт каналов с column-mapping. Body: {rows, mapping, platform}.
 // Юзер на фронте маппит колонки в ImportWizard, бэк применяет.
 //
@@ -2002,6 +2072,8 @@ app.openapi(
 //   - synced_at IS NOT NULL → CSV пишет только properties; типизированные
 //     поля остаются от соцсети
 // admin_username и properties всегда обновляются — соцсеть их не отдаёт.
+// Кастом-поля (mapping.properties) валидируются по каталогу канала; ключи не из
+// каталога и нераспознанные select-значения молча отбрасываются.
 app.openapi(
   createRoute({
     method: "post",
@@ -2024,20 +2096,34 @@ app.openapi(
   async (c) => {
     const { wsId } = c.req.valid("param");
     const userId = c.get("userId");
-    const { rows, mapping, platform } = c.req.valid("json");
+    const { rows, mapping } = c.req.valid("json");
+
+    // Каталог кастом-полей канала — для коэрции/валидации mapping.properties.
+    const propertyDefs = await loadChannelPropertyDefs(wsId);
+    const defByKey = new Map(propertyDefs.map((d) => [d.key, d]));
+    // Индексы опций select-полей строим один раз (не на каждую строку).
+    const optionIndexByKey = new Map<string, Map<string, string>>();
+    for (const d of propertyDefs) {
+      if (d.type === "single_select" || d.type === "multi_select") {
+        optionIndexByKey.set(d.key, buildOptionIndex(d));
+      }
+    }
 
     // Step 1: применяем mapping к каждой строке CSV → нормализованный staging.
-    // Дедуп внутри батча: ключ = external_id (если есть), иначе lower(username).
+    // Идентификатор — ОДНА колонка-ссылка. Платформа детектится из домена
+    // построчно (тот же резолвер, что и ручная вставка); для TG username/инвайт
+    // извлекаются из URL. Одна точка истины — нет рассинхрона username vs link.
+    // Ключ дедупа: platform + (lower(username) | lower(link)).
     type Staged = {
       title: string;
-      externalId: string | null;
+      platform: "telegram" | "youtube" | "tiktok" | "dzen";
       username: string | null;
       link: string | null;
       memberCount: number | null;
       description: string | null;
       // lower-case без `@`, для smart-stub резолва.
       adminUsername: string | null;
-      properties: Record<string, string>;
+      properties: Record<string, unknown>;
     };
     const stagedByKey = new Map<string, Staged>();
     let skippedNoIdentifier = 0;
@@ -2045,24 +2131,21 @@ app.openapi(
 
     const pickStr = (r: Record<string, string>, h: string | undefined) =>
       h ? r[h]?.trim() || null : null;
-    const stagedKey = (s: { externalId: string | null; username: string | null }) =>
-      s.externalId ? `eid:${s.externalId}` : `un:${s.username!.toLowerCase()}`;
+    const stagedKey = (s: Pick<Staged, "platform" | "username" | "link">) =>
+      `${s.platform}:` +
+      (s.username ? `un:${s.username.toLowerCase()}` : `ln:${s.link!.toLowerCase()}`);
 
     for (const r of rows) {
-      const externalId = pickStr(r, mapping.externalId);
-      const usernameRaw = pickStr(r, mapping.username);
-      const username = usernameRaw ? usernameRaw.replace(/^@/, "") : null;
-      if (!externalId && !username) {
+      const linkRaw = pickStr(r, mapping.link);
+      // Адрес → платформа + идентификатор одним резолвером (общий с bulk).
+      const resolved = linkRaw ? resolveChannelIdentifier(linkRaw) : null;
+      if (!resolved) {
         skippedNoIdentifier++;
         continue;
       }
-      const key = stagedKey({ externalId, username });
+      const { platform, username, link } = resolved;
+      const key = stagedKey({ platform, username, link });
 
-      // CSV редко даёт явный link, но для публичного TG-канала он
-      // тривиально дерайвится из username. CSV-link имеет приоритет.
-      const linkFromCsv = pickStr(r, mapping.link);
-      const link =
-        linkFromCsv || (username && platform === "telegram" ? `https://t.me/${username}` : null);
       const description = pickStr(r, mapping.description);
       const memCntRaw = pickStr(r, mapping.memberCount);
       const memCntParsed = memCntRaw ? Number(memCntRaw.replace(/\s+/g, "")) : NaN;
@@ -2072,17 +2155,23 @@ app.openapi(
         ? adminRaw.replace(/^@/, "").toLowerCase()
         : null;
 
-      const properties: Record<string, string> = {};
+      // properties: только ключи из каталога; значение коэрсим под тип поля.
+      const properties: Record<string, unknown> = {};
       for (const [pkey, csvHeader] of Object.entries(propsMap)) {
-        const v = r[csvHeader]?.trim();
-        if (v) properties[pkey] = v;
+        const def = defByKey.get(pkey);
+        if (!def) continue;
+        const v = coerceImportPropertyValue(
+          def,
+          r[csvHeader],
+          optionIndexByKey.get(pkey),
+        );
+        if (v !== null) properties[pkey] = v;
       }
 
-      // title без явного маппинга — fallback на @username или externalId,
+      // title без явного маппинга — fallback на @username или link,
       // чтобы NOT NULL constraint не падал.
       const titleFromCsv = pickStr(r, mapping.title);
-      const title =
-        titleFromCsv || (username ? `@${username}` : `id:${externalId}`);
+      const title = titleFromCsv || (username ? `@${username}` : link!);
 
       const existing = stagedByKey.get(key);
       if (existing) {
@@ -2090,7 +2179,7 @@ app.openapi(
         // приоритетнее по непустым полям, properties мержатся.
         stagedByKey.set(key, {
           title: existing.title || title,
-          externalId: existing.externalId || externalId,
+          platform: existing.platform,
           username: existing.username || username,
           link: existing.link || link,
           memberCount: existing.memberCount ?? memberCount,
@@ -2101,7 +2190,7 @@ app.openapi(
       } else {
         stagedByKey.set(key, {
           title,
-          externalId,
+          platform,
           username,
           link,
           memberCount,
@@ -2112,22 +2201,26 @@ app.openapi(
       }
     }
 
-    // Step 2: lookup существующих каналов по external_id ИЛИ lower(username).
+    // Step 2: lookup существующих каналов по lower(username) ИЛИ lower(link).
+    // Платформа теперь построчная → не фильтруем по ней в SQL, а кладём в ключ
+    // мапы (`${platform}:un|ln:value`) и матчим уже с учётом платформы строки.
+    // link-ключ берём только у staged без username (иначе дедуп идёт по @).
     const stagedList = [...stagedByKey.values()];
-    const externalIds = stagedList
-      .map((s) => s.externalId)
-      .filter((x): x is string => !!x);
     const usernamesLower = stagedList
       .map((s) => s.username?.toLowerCase())
       .filter((x): x is string => !!x);
+    const linksLower = stagedList
+      .filter((s) => !s.username && s.link)
+      .map((s) => s.link!.toLowerCase());
 
     const existingChannels =
-      externalIds.length || usernamesLower.length
+      usernamesLower.length || linksLower.length
         ? await db
             .select({
               id: channels.id,
-              externalId: channels.externalId,
+              platform: channels.platform,
               usernameLower: sql<string | null>`lower(${channels.username})`,
+              linkLower: sql<string | null>`lower(${channels.link})`,
               syncedAt: channels.syncedAt,
               properties: channels.properties,
             })
@@ -2135,33 +2228,27 @@ app.openapi(
             .where(
               and(
                 eq(channels.workspaceId, wsId),
-                eq(channels.platform, platform),
                 or(
-                  externalIds.length
-                    ? inArray(channels.externalId, externalIds)
-                    : undefined,
                   usernamesLower.length
-                    ? inArray(
-                        sql`lower(${channels.username})`,
-                        usernamesLower,
-                      )
+                    ? inArray(sql`lower(${channels.username})`, usernamesLower)
+                    : undefined,
+                  linksLower.length
+                    ? inArray(sql`lower(${channels.link})`, linksLower)
                     : undefined,
                 ),
               ),
             )
         : [];
 
-    const byExtId = new Map<
-      string,
-      (typeof existingChannels)[number]
-    >();
-    const byUsernameLower = new Map<
-      string,
-      (typeof existingChannels)[number]
-    >();
+    // Ключ совпадает со stagedKey: `${platform}:un|ln:value`.
+    const existingByKey = new Map<string, (typeof existingChannels)[number]>();
     for (const e of existingChannels) {
-      if (e.externalId) byExtId.set(e.externalId, e);
-      if (e.usernameLower) byUsernameLower.set(e.usernameLower, e);
+      if (e.usernameLower) {
+        existingByKey.set(`${e.platform}:un:${e.usernameLower}`, e);
+      }
+      if (e.linkLower) {
+        existingByKey.set(`${e.platform}:ln:${e.linkLower}`, e);
+      }
     }
 
     // Step 3: разруливаем INSERT vs UPDATE-typed vs UPDATE-props-only.
@@ -2185,11 +2272,7 @@ app.openapi(
     const toUpdatePropsOnly: ToUpdatePropsOnly[] = [];
 
     for (const staged of stagedList) {
-      const exMatch =
-        (staged.externalId && byExtId.get(staged.externalId)) ||
-        (staged.username &&
-          byUsernameLower.get(staged.username.toLowerCase())) ||
-        null;
+      const exMatch = existingByKey.get(stagedKey(staged)) ?? null;
       if (!exMatch) {
         toInsert.push({ ...staged, __ins: true });
         continue;
@@ -2317,8 +2400,7 @@ app.openapi(
     if (toInsert.length > 0) {
       const allRows = toInsert.map((t) => ({
         workspaceId: wsId,
-        platform,
-        externalId: t.externalId,
+        platform: t.platform,
         title: t.title,
         description: t.description,
         username: t.username,
@@ -2333,12 +2415,17 @@ app.openapi(
           .values(chunk)
           .returning({
             id: channels.id,
-            externalId: channels.externalId,
+            platform: channels.platform,
             usernameLower: sql<string | null>`lower(${channels.username})`,
+            linkLower: sql<string | null>`lower(${channels.link})`,
           });
         for (const ins of inserted) {
-          if (ins.externalId) idByKey.set(`eid:${ins.externalId}`, ins.id);
-          if (ins.usernameLower) idByKey.set(`un:${ins.usernameLower}`, ins.id);
+          // Ключ как stagedKey: `${platform}:un|ln:value`.
+          if (ins.usernameLower) {
+            idByKey.set(`${ins.platform}:un:${ins.usernameLower}`, ins.id);
+          } else if (ins.linkLower) {
+            idByKey.set(`${ins.platform}:ln:${ins.linkLower}`, ins.id);
+          }
         }
         channelsCreated += inserted.length;
       }
@@ -2358,7 +2445,6 @@ app.openapi(
     if (toUpdateFull.length > 0) {
       const ids = toUpdateFull.map((u) => u.id);
       const titles = toUpdateFull.map((u) => u.title);
-      const externals = toUpdateFull.map((u) => u.externalId);
       const usernames = toUpdateFull.map((u) => u.username);
       const links = toUpdateFull.map((u) => u.link);
       const members = toUpdateFull.map((u) => u.memberCount);
@@ -2367,7 +2453,6 @@ app.openapi(
       await sqlClient`
         UPDATE channels c SET
           title = u.title,
-          external_id = COALESCE(u.external_id, c.external_id),
           username = COALESCE(u.username, c.username),
           link = COALESCE(u.link, c.link),
           member_count = COALESCE(u.member_count, c.member_count),
@@ -2377,13 +2462,12 @@ app.openapi(
         FROM unnest(
           ${ids}::text[],
           ${titles}::text[],
-          ${externals}::text[],
           ${usernames}::text[],
           ${links}::text[],
           ${members}::integer[],
           ${descs}::text[],
           ${propsJson}::text[]
-        ) AS u(id, title, external_id, username, link, member_count, description, properties)
+        ) AS u(id, title, username, link, member_count, description, properties)
         WHERE c.id = u.id
       `;
     }

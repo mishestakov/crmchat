@@ -88,19 +88,17 @@ export type CreateChannelInput = z.infer<typeof CreateChannelSchema>;
 // admin_username; типизированные поля (title/description/member_count/…)
 // остаются от соцсети.
 export const ImportChannelsMappingSchema = z.object({
-  // Идентифицирующий слот (нужен хотя бы один). external_id или username
-  // используются для дедупа.
-  externalId: z.string().optional(),
-  username: z.string().optional(),
+  // Единственный идентификатор — ссылка (URL). Платформа детектится из домена
+  // построчно (t.me / youtube / tiktok), для TG username извлекается из URL.
+  // Одна точка истины: нет рассинхрона username vs link.
   link: z.string().optional(),
   title: z.string().optional(),
   description: z.string().optional(),
   memberCount: z.string().optional(),
   adminUsername: z.string().optional(),
-  // Свободные пользовательские поля: { propertyKey: csvHeader }.
-  // propertyKey — это ключ внутри channels.properties (например 'er', 'niche').
-  // Регексп зеркалит фронтовую валидацию (см. ImportWizard) — без него
-  // через curl можно было бы записать произвольный ключ в jsonb.
+  // Кастом-поля канала: { propertyKey: csvHeader }. propertyKey должен
+  // существовать в каталоге workspace'а (таблица properties) — бэк валидирует
+  // и значение по типу поля. Регексп — дешёвый guard формата ключа.
   properties: z
     .record(
       z.string().regex(/^[a-z0-9_]+$/i, "propertyKey must match [a-z0-9_]+"),
@@ -113,7 +111,6 @@ export type ImportChannelsMapping = z.infer<typeof ImportChannelsMappingSchema>;
 export const ImportChannelsSchema = z.object({
   rows: z.array(z.record(z.string(), z.string())).max(50000),
   mapping: ImportChannelsMappingSchema,
-  platform: ChannelPlatformSchema.default("telegram"),
 });
 export type ImportChannelsInput = z.infer<typeof ImportChannelsSchema>;
 
