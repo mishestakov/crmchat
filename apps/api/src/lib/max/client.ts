@@ -179,25 +179,10 @@ export class MaxClient extends EventEmitter {
     return this.sendRequest(OPCODES.LINK_INFO, { link });
   }
 
-  contactByPhone(phone: string) {
-    return this.sendRequest(OPCODES.CONTACT_INFO_BY_PHONE, { phone });
-  }
-
   // Вступить в канал по ссылке (закрытые каналы). Ответ { chat } — если есть
   // joinTime, вступление прошло; иначе может требоваться одобрение админа.
   chatJoin(link: string) {
     return this.sendRequest(OPCODES.CHAT_JOIN, { link });
-  }
-
-  chatSubscribe(chatId: number | bigint | string, subscribe = true) {
-    return this.sendRequest(OPCODES.CHAT_SUBSCRIBE, { chatId: toInt64(chatId), subscribe });
-  }
-
-  msgGetStat(chatId: number | bigint | string, messageIds: (number | bigint | string)[]) {
-    return this.sendRequest(OPCODES.MSG_GET_STAT, {
-      chatId: toInt64(chatId),
-      messageIds: messageIds.map(toInt64),
-    });
   }
 
   // --- Send (ЛС, Фаза 3) ---

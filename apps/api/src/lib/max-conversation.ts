@@ -6,7 +6,6 @@ import { emitContactChanged, emitProjectChanged } from "./events.ts";
 import {
   getMaxWorkerClient,
   maxDialogChatId,
-  resolveMaxContactRef,
   resolveMaxPeerUserId,
   setMaxClientCreatedHook,
 } from "./max-account-client.ts";
@@ -94,45 +93,6 @@ export async function fetchMaxDialog(
   // Старые сверху, как в чат-ленте.
   out.sort((a, b) => a.time.localeCompare(b.time));
   return out;
-}
-
-// Имя+аватар контакта для шапки переписки. Кешируются в properties при привязке;
-// если их нет (старый контакт по токену) — добираем LINK_INFO и бэкфиллим один
-// раз. Best-effort: сессия мертва → отдаём что есть.
-export async function ensureMaxContactDisplay(
-  account: MaxConvAccount,
-  contactId: string,
-  props: Record<string, unknown>,
-): Promise<{ name: string; avatarUrl: string | null; userId: string | null }> {
-  let name = typeof props.full_name === "string" ? props.full_name : "";
-  let avatarUrl =
-    typeof props.max_avatar_url === "string" ? props.max_avatar_url : null;
-  let userId =
-    typeof props.max_user_id === "string" ? props.max_user_id : null;
-  const link = typeof props.max_link === "string" ? props.max_link : null;
-  // Резолвим только если нет userId или имя ещё токен-подпись — отсутствие
-  // аватара само по себе не триггерит (иначе били бы rate-limited LINK_INFO
-  // на каждое открытие у контактов без фото).
-  const stale = !userId || /^MAX: /.test(name);
-  if (stale && link) {
-    try {
-      const client = await getMaxWorkerClient(account);
-      const r = await resolveMaxContactRef(client, link);
-      const next: Record<string, unknown> = { ...props, max_user_id: r.userId };
-      if (r.name) next.full_name = r.name;
-      if (r.avatarUrl) next.max_avatar_url = r.avatarUrl;
-      await db
-        .update(contacts)
-        .set({ properties: next, updatedAt: new Date() })
-        .where(eq(contacts.id, contactId));
-      userId = r.userId;
-      name = r.name ?? name;
-      avatarUrl = r.avatarUrl ?? avatarUrl;
-    } catch {
-      /* сессия мертва — оставляем кешированное */
-    }
-  }
-  return { name, avatarUrl, userId };
 }
 
 // --- inbound listener (NOTIF_MESSAGE = cmd=0 push) ---

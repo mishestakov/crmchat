@@ -15,11 +15,6 @@ import {
   detectChannelPlatform,
   fetchProviderPost,
 } from "./channel-providers/index.ts";
-import { getMaxWorkerClient } from "./max-account-client.ts";
-import {
-  fetchMaxPostViews,
-  maxMessageIdFromUrl,
-} from "./channel-providers/max.ts";
 
 // Воркер снятия метрик опубликованных постов (фаза «Отчёт»). Менеджер жмёт
 // «снять статистику» → размещения уходят в metrics_status='pending' → этот
@@ -115,10 +110,7 @@ async function tick() {
         and(
           eq(projectItems.metricsStatus, "pending"),
           isNotNull(projectItems.postUrl),
-          // MAX не под TG-капом (свой сокет, не TDLib) — пускаем и при tgCapped.
-          tgCapped
-            ? inArray(channels.platform, ["youtube", "tiktok", "max"])
-            : undefined,
+          tgCapped ? inArray(channels.platform, ["youtube", "tiktok"]) : undefined,
         ),
       )
       .orderBy(asc(projectItems.createdAt))
@@ -173,7 +165,7 @@ async function pickReaderAccount(workspaceId: string, channelId: string | null) 
   return acc ?? null;
 }
 
-type CollectorPlatform = "youtube" | "tiktok" | "telegram" | "max";
+type CollectorPlatform = "youtube" | "tiktok" | "telegram";
 
 type MetricsRow = {
   id: string;
@@ -190,18 +182,12 @@ type MetricsRow = {
 // (общий detectChannelPlatform) только если канала нет. max/прочее → TDLib-ветка
 // (там и упрётся в «нет коллектора», коллектора для max пока нет).
 function resolvePlatform(row: MetricsRow): CollectorPlatform {
-  if (
-    row.platform === "youtube" ||
-    row.platform === "tiktok" ||
-    row.platform === "max"
-  ) {
-    return row.platform;
-  }
+  if (row.platform === "youtube" || row.platform === "tiktok") return row.platform;
   if (row.platform == null && row.postUrl) {
+    // Метрики постов Дзен/MAX не подключены (MAX-вариант есть в теге max-full) —
+    // падаем в TG-ветку, где упрёмся в «нет коллектора».
     const detected = detectChannelPlatform(row.postUrl);
-    if (detected === "max") return "max";
-    // Дзен-метрики поста пока не подключены → TG-ветка («нет коллектора»).
-    return detected === "dzen" ? "telegram" : detected;
+    return detected === "dzen" || detected === "max" ? "telegram" : detected;
   }
   return "telegram";
 }
@@ -211,64 +197,7 @@ async function runOne(row: MetricsRow, platform: CollectorPlatform) {
   if (platform === "youtube" || platform === "tiktok") {
     return runProviderMetrics(row, platform);
   }
-  if (platform === "max") return runMaxMetrics(row);
   return runTgMetrics(row);
-}
-
-// Метрики поста MAX: ссылка max.ru/<канал>/<token> → messageId → MSG_GET_STAT
-// (просмотры) через активный MAX-аккаунт ws'а. Реакции/снимок — пока не тянем.
-async function runMaxMetrics(row: MetricsRow) {
-  try {
-    if (!row.postUrl) throw new Error("у размещения нет ссылки на пост");
-    if (!row.channelId) throw new Error("у размещения нет канала");
-    const messageId = maxMessageIdFromUrl(row.postUrl);
-    if (!messageId) {
-      throw new Error("не распознал MAX-ссылку на пост (max.ru/<канал>/<id>)");
-    }
-    const [ch] = await db
-      .select({ externalId: channels.externalId })
-      .from(channels)
-      .where(eq(channels.id, row.channelId))
-      .limit(1);
-    if (!ch?.externalId) throw new Error("канал не синкан (нет chat_id)");
-    const [acc] = await db
-      .select({
-        id: outreachAccounts.id,
-        sessionToken: outreachAccounts.sessionToken,
-        meta: outreachAccounts.meta,
-      })
-      .from(outreachAccounts)
-      .where(
-        and(
-          eq(outreachAccounts.workspaceId, row.workspaceId),
-          eq(outreachAccounts.platform, "max"),
-          eq(outreachAccounts.status, "active"),
-        ),
-      )
-      .limit(1);
-    if (!acc) throw new Error("нет активного MAX-аккаунта");
-    const client = await getMaxWorkerClient(acc);
-    const views = await fetchMaxPostViews(client, ch.externalId, messageId);
-    await db
-      .update(projectItems)
-      .set({
-        metricsStatus: "done",
-        metricsViews: views,
-        metricsCollectedAt: new Date(),
-        metricsError: null,
-      })
-      .where(eq(projectItems.id, row.id));
-  } catch (e) {
-    await db
-      .update(projectItems)
-      .set({
-        metricsStatus: "error",
-        metricsError: errMsg(e),
-        metricsCollectedAt: new Date(),
-      })
-      .where(eq(projectItems.id, row.id));
-  }
-  emitProjectChanged(row.projectId);
 }
 
 // Снятие метрик YouTube/TikTok-видео по ссылке. Аккаунт не нужен, флуд-логики

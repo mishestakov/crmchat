@@ -778,6 +778,28 @@ function AdminsSection(props: { wsId: string; channel: Channel }) {
     },
   });
 
+  // MAX-админ: ссылка max.ru/u/<token> идёт через set-admin (создаст контакт с
+  // max_link, заменит админа и перенаведёт размещения) — у /admins нет maxLink.
+  const setMaxAdminMut = useMutation({
+    mutationFn: async (maxLink: string) => {
+      const { data, error } = await api.POST(
+        "/v1/workspaces/{wsId}/channels/{id}/set-admin",
+        {
+          params: { path: { wsId: props.wsId, id: props.channel.id } },
+          body: { maxLink },
+        },
+      );
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["channels", props.wsId] });
+      qc.invalidateQueries({ queryKey: ["channel", props.wsId, props.channel.id] });
+      qc.invalidateQueries({ queryKey: ["contacts", props.wsId] });
+      setAdding(false);
+    },
+  });
+
   const admins = props.channel.admins;
 
   return (
@@ -847,9 +869,13 @@ function AdminsSection(props: { wsId: string; channel: Channel }) {
           wsId={props.wsId}
           excludeIds={new Set(admins.map((a) => a.contactId))}
           onPick={(contactId) => addMut.mutate({ contactIds: [contactId] })}
-          onCreateByUsername={(username) => addMut.mutate({ usernames: [username] })}
+          onCreateByUsername={(input) =>
+            /max\.ru\/u\//i.test(input)
+              ? setMaxAdminMut.mutate(input)
+              : addMut.mutate({ usernames: [input] })
+          }
           onCancel={() => setAdding(false)}
-          loading={addMut.isPending}
+          loading={addMut.isPending || setMaxAdminMut.isPending}
         />
       )}
     </section>

@@ -266,33 +266,6 @@ export async function fetchMaxPosts(
   return posts;
 }
 
-// --- метрики поста (#2) ---
-
-// Пост-ссылка MAX: max.ru/<канал>/<base64url(int64 messageId)> → messageId.
-// Обратное к encodeMessageToken (writeBigInt64BE + base64url) в клиенте MAX.
-export function maxMessageIdFromUrl(url: string): string | null {
-  const m = url.match(/max\.ru\/[^/?#]+\/([A-Za-z0-9_-]+)/i);
-  if (!m) return null;
-  try {
-    const buf = Buffer.from(m[1]!, "base64url");
-    if (buf.length < 8) return null;
-    return buf.readBigInt64BE().toString();
-  } catch {
-    return null;
-  }
-}
-
-// Просмотры поста через MSG_GET_STAT: ответ {stats:{<msgId>:{views}}}.
-export async function fetchMaxPostViews(
-  client: MaxClient,
-  chatId: string,
-  messageId: string,
-): Promise<number | null> {
-  const res = await client.msgGetStat(chatId, [messageId]);
-  const stats = rec(rec(res.payload)?.stats);
-  return toInt(rec(stats?.[messageId])?.views);
-}
-
 // CHAT_INFO/PUBLIC_SEARCH chat → нормализованный ChannelProfile.
 function mapChatToProfile(chat: Record<string, unknown>, reach: ReachWindow): ChannelProfile {
   const opts = rec(chat.options) ?? {};

@@ -41,11 +41,7 @@ import { ensureContactTgUserId } from "../lib/ensure-tg-user-id.ts";
 import { errMsg } from "../lib/errors.ts";
 import { getOutreachWorkerClient } from "../lib/outreach-account-client.ts";
 import { sendMaxMessage } from "../lib/max-account-client.ts";
-import {
-  ensureMaxContactDisplay,
-  fetchMaxDialog,
-  pickMaxAccount,
-} from "../lib/max-conversation.ts";
+import { fetchMaxDialog, pickMaxAccount } from "../lib/max-conversation.ts";
 import { sendDocument, downloadToBytes } from "../lib/td-files.ts";
 import { resolveStickyByPeerIds } from "../lib/sticky.ts";
 import {
@@ -440,15 +436,18 @@ app.openapi(
     if (!account) {
       throw new HTTPException(412, { message: "нет активного MAX-аккаунта" });
     }
-    // Бэкфилл имени/аватара (старый контакт по токену) + актуальный peer-ref.
-    // ensureMaxContactDisplay уже резолвит userId — берём его (числовой id
-    // короткозамыкает LINK_INFO в fetchMaxDialog), fallback на max_link.
+    // Имя/аватар закешированы в момент привязки админа (set-admin резолвит
+    // LINK_INFO и пишет full_name/max_avatar_url) — отдаём из properties как есть.
     try {
-      const display = await ensureMaxContactDisplay(account, id, props);
-      const peerRef = display.userId ?? maxPeerRef(props)!;
-      const messages = await fetchMaxDialog(account, peerRef);
+      const messages = await fetchMaxDialog(account, maxPeerRef(props)!);
       return c.json({
-        peer: { name: display.name, avatarUrl: display.avatarUrl },
+        peer: {
+          name: typeof props.full_name === "string" ? props.full_name : "",
+          avatarUrl:
+            typeof props.max_avatar_url === "string"
+              ? props.max_avatar_url
+              : null,
+        },
         messages,
       });
     } catch (e) {

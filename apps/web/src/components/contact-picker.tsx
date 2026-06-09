@@ -86,7 +86,7 @@ export function ContactPicker(props: {
                   disabled={props.loading}
                   className="w-full rounded-md bg-emerald-600 px-2 py-1.5 text-left text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
                 >
-                  + Создать контакт @{uname}
+                  + Создать контакт {uname.includes("/") ? uname : `@${uname}`}
                 </button>
               );
             })()}

@@ -435,7 +435,6 @@ function Resolver({
     mutationFn: async (body: {
       contactId?: string;
       username?: string;
-      maxLink?: string;
       dm?: boolean;
       group?: { chatId: string; accountId: string };
     }) => {
@@ -461,8 +460,6 @@ function Resolver({
   // Личка канала по direct_messages_chat_id (синкается на скане), не по has_dm.
   // Стоимость null = ещё не синкали → не утверждаем «бесплатно».
   const { hasDm: hasDmGroup, starCost: dmStar } = channelDm(channel?.meta);
-  // MAX: групп и «лички канала» нет — только ЛС админу по ссылке max.ru/u/…
-  const isMaxChannel = channel?.platform === "max";
 
   return (
     <div className="flex h-full flex-col">
@@ -500,9 +497,8 @@ function Resolver({
 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3">
         {/* Личка канала — всегда видна с ценой (этап 16.9). Бесплатно → авто;
-            платно → вручную. Неизвестна (не синкали) → сначала открой ленту.
-            MAX: лички канала нет — блок скрыт. */}
-        {!isMaxChannel && hasDmGroup && (
+            платно → вручную. Неизвестна (не синкали) → сначала открой ленту. */}
+        {hasDmGroup && (
           <div
             className={
               "rounded-lg border px-3 py-2 text-xs " +
@@ -538,32 +534,21 @@ function Resolver({
           </div>
         )}
 
-        {/* Группа аккаунта (этап 16.9): из диалогов подключённых аккаунтов.
-            MAX: групп нет — блок скрыт. */}
-        {!isMaxChannel && (
-          <div>
-            <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
-              Группа аккаунта
-            </div>
-            <GroupPicker
-              wsId={wsId}
-              loading={setAdmin.isPending}
-              onPick={(chatId, accountId) =>
-                setAdmin.mutate({ group: { chatId, accountId } })
-              }
-            />
+        {/* Группа аккаунта (этап 16.9): из диалогов подключённых аккаунтов. */}
+        <div>
+          <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
+            Группа аккаунта
           </div>
-        )}
+          <GroupPicker
+            wsId={wsId}
+            loading={setAdmin.isPending}
+            onPick={(chatId, accountId) =>
+              setAdmin.mutate({ group: { chatId, accountId } })
+            }
+          />
+        </div>
 
-        {isMaxChannel && (
-          <p className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-800">
-            В MAX пишем админу в ЛС по ссылке вида{" "}
-            <code className="rounded bg-violet-100 px-1">max.ru/u/…</code> —
-            вставьте её ниже.
-          </p>
-        )}
-
-        {!isMaxChannel && suggestions.length > 0 && (
+        {suggestions.length > 0 && (
           <div>
             <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
               Возможные контакты из описания
@@ -593,11 +578,7 @@ function Resolver({
             wsId={wsId}
             excludeIds={new Set()}
             onPick={(contactId) => setAdmin.mutate({ contactId })}
-            onCreateByUsername={(input) =>
-              /max\.ru\/u\//i.test(input)
-                ? setAdmin.mutate({ maxLink: input })
-                : setAdmin.mutate({ username: input })
-            }
+            onCreateByUsername={(username) => setAdmin.mutate({ username })}
             loading={setAdmin.isPending}
           />
         </div>
