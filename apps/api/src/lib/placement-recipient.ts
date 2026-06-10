@@ -1,5 +1,6 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { db } from "../db/client.ts";
+import { scheduleDolivkaForChannel } from "./project-scheduling.ts";
 import { channelAdmins, contacts, projectItems } from "../db/schema.ts";
 
 // Получатель аутрича по каналу = первый привязанный админ-контакт. Нет админа →
@@ -41,6 +42,10 @@ export async function healPlacementRecipients(
       tgUserId: admin.tgUserId,
     })
     .where(opts.override ? base : and(base, isNull(projectItems.contactId)));
+  // Привязали получателя → идущим проектам с этим каналом планируем опенер
+  // (поздняя доливка). Внутри heal, а не у вызывающих: любой будущий вызов
+  // лечения автоматически добирает планирование, асимметрии не бывает.
+  await scheduleDolivkaForChannel(channelId);
 }
 
 // Снять персону-получателя со всех размещений канала (этап 16.8): способ связи

@@ -6,10 +6,10 @@ import {
   outreachAccounts,
   projectItems,
   scheduledMessages,
+  projects,
   tgChats,
   tgUsers,
   type ProjectMessage,
-  type projects,
 } from "../db/schema.ts";
 import { contactTgUserIdSql } from "./contact-sql.ts";
 import { resolveStickyByPeerIds } from "./sticky.ts";
@@ -399,4 +399,55 @@ export async function scheduleLeads(opts: {
     priorByTgUserId,
     warmTgUserIds,
   });
+}
+
+
+// Поздняя доливка (10.06.26, «доливка 100% нужна»): канал добавили в ИДУЩИЙ
+// проект без контакта, контакт нашли позже (set-admin/admins → heal).
+// scheduleDolivka на bulk-импорте такие размещения отбрасывает (нет
+// получателя) — без этого вызова опенер им не запланирует никто и канал
+// молча выпадает из рассылки. paused тоже планируем: worker на паузе не
+// шлёт, после resume уйдёт.
+export async function scheduleDolivkaForChannel(
+  channelId: string,
+): Promise<void> {
+  const rows = await db
+    .select({ item: projectItems, project: projects })
+    .from(projectItems)
+    .innerJoin(projects, eq(projects.id, projectItems.projectId))
+    .where(
+      and(
+        eq(projectItems.channelId, channelId),
+        inArray(projects.status, ["active", "paused"]),
+        sql`not exists (
+          select 1 from scheduled_messages sm where sm.item_id = ${projectItems.id}
+        )`,
+      ),
+    );
+  if (rows.length === 0) return;
+  const byProject = Map.groupBy(rows, (r) => r.project.id);
+  for (const group of byProject.values()) {
+    const project = group[0]!.project;
+    const accountIds = await resolveProjectAccountIds(
+      project.workspaceId,
+      project,
+    );
+    if (accountIds.length === 0) continue;
+    const newRows = await scheduleLeads({
+      wsId: project.workspaceId,
+      project,
+      accountIds,
+      leads: group.map(({ item }) => ({
+        id: item.id,
+        username: item.username,
+        tgUserId: item.tgUserId,
+        properties: (item.properties ?? {}) as Record<string, unknown>,
+      })),
+      baseTime: new Date(),
+      skipContacted: true,
+    });
+    if (newRows.length > 0) {
+      await db.insert(scheduledMessages).values(newRows);
+    }
+  }
 }

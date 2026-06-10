@@ -148,10 +148,27 @@ function LeadsPage() {
   const isDraft = seq.data?.status === "draft";
 
   const drawerLead = visibleLeads.find((l) => l.id === drawerLeadId);
-  const prepLead = isDraft
-    ? (visibleLeads.find((l) => l.id === prepLeadId) ??
-      visibleLeads.find((l) => !l.contactReady) ??
-      visibleLeads[0])
+  const noContactTotal =
+    leadsQ.data?.leads.filter((l) => !l.contactReady).length ?? 0;
+
+  // Доливка в идущий проект: каналы без контакта обрабатываются тем же
+  // инбоксом, что и драфт — вход по баннеру над таблицей, выход автоматом,
+  // когда всё обработано (контакт найден → бэк сам планирует опенер,
+  // set-admin → scheduleDolivkaForChannel).
+  const canPrep =
+    seq.data?.status === "active" || seq.data?.status === "paused";
+  const [prepMode, setPrepMode] = useState(false);
+  useEffect(() => {
+    if (prepMode && (!canPrep || noContactTotal === 0)) setPrepMode(false);
+  }, [prepMode, canPrep, noContactTotal]);
+  const showPrepInbox = isDraft || (canPrep && prepMode);
+  const inboxItems = isDraft
+    ? visibleLeads
+    : (leadsQ.data?.leads ?? []).filter((l) => !l.contactReady);
+  const prepLead = showPrepInbox
+    ? (inboxItems.find((l) => l.id === prepLeadId) ??
+      inboxItems.find((l) => !l.contactReady) ??
+      inboxItems[0])
     : undefined;
 
   return (
@@ -170,7 +187,7 @@ function LeadsPage() {
               Добавить каналы
             </button>
           )}
-          {!isDraft && (
+          {!isDraft && !prepMode && (
             <label className="inline-flex items-center gap-2 text-sm text-zinc-600">
               <input
                 type="checkbox"
@@ -179,6 +196,15 @@ function LeadsPage() {
               />
               Только не ответившие
             </label>
+          )}
+          {prepMode && (
+            <button
+              type="button"
+              onClick={() => setPrepMode(false)}
+              className="text-sm font-medium text-emerald-700 hover:text-emerald-800"
+            >
+              ← к таблице рассылки
+            </button>
           )}
           {isDraft && (
             <label className="inline-flex items-center gap-2 text-sm text-zinc-600">
@@ -256,13 +282,29 @@ function LeadsPage() {
             entity="каналов"
           />
         )}
-        {leadsQ.data && visibleLeads.length > 0 && isDraft && (
+        {canPrep && !prepMode && noContactTotal > 0 && (
+          <div className="flex items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <span>
+              {noContactTotal}{" "}
+              {pluralize(noContactTotal, "канал", "канала", "каналов")} без
+              контакта — опенер им не уйдёт, пока контакт не найден.
+            </span>
+            <button
+              type="button"
+              onClick={() => setPrepMode(true)}
+              className="shrink-0 rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-700"
+            >
+              Обработать
+            </button>
+          </div>
+        )}
+        {leadsQ.data && inboxItems.length > 0 && showPrepInbox && (
           // Инбокс подготовки (D1, как агентский лонглист): слева компактный
           // список, справа канал + резолвер выбранного. Поточная обработка —
           // удалил/нашёл контакт → фокус сам уходит к следующему проблемному.
           <div className="flex h-[calc(100vh-300px)] min-h-[420px] overflow-hidden rounded-2xl bg-white shadow-sm">
             <div className="w-72 shrink-0 overflow-y-auto border-r border-zinc-200">
-              {visibleLeads.map((l) => (
+              {inboxItems.map((l) => (
                 <button
                   key={l.id}
                   type="button"
@@ -303,7 +345,7 @@ function LeadsPage() {
             </div>
           </div>
         )}
-        {leadsQ.data && visibleLeads.length > 0 && !isDraft && (
+        {leadsQ.data && visibleLeads.length > 0 && !showPrepInbox && (
           <div className="overflow-x-auto rounded-2xl bg-white shadow-sm">
             <table className="w-full text-sm">
               <thead className="bg-zinc-50 text-xs text-zinc-500">
