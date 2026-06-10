@@ -5,6 +5,7 @@ import { X } from "lucide-react";
 import type { Channel, ImportChannelsMapping, Property } from "@repo/core";
 import { PLATFORMS, PlatformBadge, type Platform } from "../../../../lib/platforms";
 import { api } from "../../../../lib/api";
+import { ChannelBadges } from "../../../../components/channel-badges";
 import { formatMembers } from "../../../../components/channel-card";
 import { ChannelDrawer } from "../../../../components/channel-drawer";
 import { LeadChatDrawer } from "../../../../components/lead-chat-drawer";
@@ -15,11 +16,6 @@ import { formatRelative } from "../../../../lib/date-utils";
 import { channelDm } from "../../../../lib/channel-dm";
 import { errorMessage } from "../../../../lib/errors";
 import { useOutreachAccounts } from "../../../../lib/outreach-queries";
-
-// Пилюля DM-бейджа в строке каталога (кликабельная кнопка vs span-плейсхолдер
-// при ещё не синкнутом chat_id) — общий класс, чтобы не расходился вид.
-const DM_PILL =
-  "inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-700 ring-1 ring-emerald-200";
 
 // Slot'ы для column-mapping в импорте. value ∈ ImportChannelsMapping ключи +
 // 'ignore' + 'property'. Порядок = порядок в select-dropdown'е.
@@ -369,48 +365,23 @@ function ChannelsPage() {
                         <span className="font-medium text-zinc-900">
                           {c.title}
                         </span>
-                        {hasDmGroup ? (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setOpenChannelId(c.id);
-                              setOpenWithDm(true);
-                            }}
-                            title="Написать в личку канала"
-                            className={DM_PILL + " hover:bg-emerald-100"}
-                          >
-                            DM
-                          </button>
-                        ) : (
-                          c.meta?.has_dm === true && (
-                            <span
-                              title="Канал принимает прямые сообщения в личку (синхронизируется)"
-                              className={DM_PILL}
-                            >
-                              DM
-                            </span>
-                          )
-                        )}
-                        {c.unavailableSince && (
-                          <span
-                            title={`${c.unavailableReason ?? "недоступен"} · последняя попытка ${formatRelative(c.unavailableSince)}`}
-                            className="inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-zinc-500 ring-1 ring-zinc-200"
-                          >
-                            Недоступен
-                          </span>
-                        )}
-                        {/* Закрытый канал: нет публичного @username, только
-                            ссылка (приватный TG-инвайт / закрытый MAX) — читать
-                            можно лишь после вступления. */}
-                        {!c.username && c.link && (
-                          <span
-                            title="Закрытый канал — доступен после вступления"
-                            className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-amber-700 ring-1 ring-amber-200"
-                          >
-                            Закрытый
-                          </span>
-                        )}
+                        <ChannelBadges
+                          username={c.username}
+                          link={c.link}
+                          unavailableSince={c.unavailableSince}
+                          unavailableReason={c.unavailableReason}
+                          dm={
+                            hasDmGroup
+                              ? "open"
+                              : c.meta?.has_dm === true
+                                ? "syncing"
+                                : null
+                          }
+                          onDmClick={() => {
+                            setOpenChannelId(c.id);
+                            setOpenWithDm(true);
+                          }}
+                        />
                       </div>
                       {c.username && (
                         <a

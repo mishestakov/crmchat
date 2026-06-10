@@ -20,6 +20,7 @@ import { errorMessage } from "../../../../../../lib/errors";
 import { formatRelative } from "../../../../../../lib/date-utils";
 import { useClickOutside } from "../../../../../../lib/hooks";
 import { BackButton } from "../../../../../../components/back-button";
+import { ChannelBadges } from "../../../../../../components/channel-badges";
 import { ActivitySection } from "../-activities-section";
 import { ChatDrawer } from "../../../../../../components/chat-drawer";
 import { useOutreachAccounts } from "../../../../../../lib/outreach-queries";
@@ -561,22 +562,11 @@ function ChannelsSection(props: { wsId: string; contact: Contact }) {
                       <span className="font-medium text-zinc-900">
                         {ch.title}
                       </span>
-                      {ch.hasDm && (
-                        <span
-                          title="Канал принимает прямые сообщения в личку"
-                          className="inline-flex items-center rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-700 ring-1 ring-emerald-200"
-                        >
-                          DM
-                        </span>
-                      )}
-                      {ch.unavailableSince && (
-                        <span
-                          title="Telegram не отдаёт этот канал"
-                          className="inline-flex items-center rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-zinc-500 ring-1 ring-zinc-200"
-                        >
-                          Недоступен
-                        </span>
-                      )}
+                      <ChannelBadges
+                        username={ch.username}
+                        unavailableSince={ch.unavailableSince}
+                        dm={ch.hasDm ? "open" : null}
+                      />
                     </div>
                     {ch.username && (
                       <span className="text-xs text-zinc-500">

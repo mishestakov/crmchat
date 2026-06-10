@@ -6,12 +6,11 @@ import { errorMessage } from "../lib/errors";
 import { invalidateProject } from "../lib/query-keys";
 import { ChannelCard } from "./channel-card";
 import { ContactResolver } from "./contact-resolver";
-import { Drawer } from "./drawer";
 
 // Панель подготовки канала в draft-проекте (BD): слева карточка канала
 // (описание, лента — то, за чем менеджер ходил в Telegram руками на тесте
-// 10.06.26), справа резолвер контакта. После запуска клик по строке ведёт в
-// переписку (LeadChatDrawer) — эта панель только для черновика.
+// 10.06.26), справа резолвер контакта. Правая часть инбокса подготовки в
+// leads.tsx; после запуска клик по строке ведёт в переписку (LeadChatDrawer).
 type PrepLead = {
   id: string;
   username: string | null;
@@ -19,11 +18,12 @@ type PrepLead = {
   channel: { id: string; title: string; username: string | null } | null;
 };
 
-export function LeadPrepDrawer(props: {
+export function LeadPrepPane(props: {
   wsId: string;
   projectId: string;
   lead: PrepLead;
-  onClose: () => void;
+  // После удаления канала из списка — родитель выбирает следующего.
+  onRemoved: () => void;
 }) {
   const { wsId, projectId, lead } = props;
   const qc = useQueryClient();
@@ -57,7 +57,7 @@ export function LeadPrepDrawer(props: {
     },
     onSuccess: () => {
       invalidateLeads();
-      props.onClose();
+      props.onRemoved();
     },
   });
 
@@ -87,8 +87,7 @@ export function LeadPrepDrawer(props: {
       : "личка канала";
 
   return (
-    <Drawer width={920} onClose={props.onClose}>
-      <div className="flex min-h-0 flex-1">
+    <div className="flex h-full min-h-0">
         <div className="min-w-0 flex-1 overflow-hidden border-r border-zinc-200">
           {channelQ.data ? (
             <ChannelCard wsId={wsId} channel={channelQ.data} compact />
@@ -142,7 +141,6 @@ export function LeadPrepDrawer(props: {
             </p>
           )}
         </div>
-      </div>
-    </Drawer>
+    </div>
   );
 }

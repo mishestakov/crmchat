@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
@@ -8,7 +8,6 @@ import {
   MessageCircleReply,
   Plus,
   Sparkles,
-  Trash2,
 } from "lucide-react";
 import type { paths } from "@repo/api-client";
 import { api } from "../../../../../../lib/api";
@@ -16,7 +15,7 @@ import { errorMessage } from "../../../../../../lib/errors";
 import { ProjectTabs } from "../../../../../../components/project-tabs";
 import { type AccountRow } from "../../../../../../components/chat-drawer";
 import { LeadChatDrawer } from "../../../../../../components/lead-chat-drawer";
-import { LeadPrepDrawer } from "../../../../../../components/lead-prep-drawer";
+import { LeadPrepPane } from "../../../../../../components/lead-prep-pane";
 import { TruncationBanner } from "../../../../../../components/truncation-banner";
 import { AddChannelsModal } from "../../../../../../components/add-channels-modal";
 import {
@@ -57,8 +56,10 @@ function LeadsPage() {
   const [onlyUnreplied, setOnlyUnreplied] = useState(false);
   const [showAddChannels, setShowAddChannels] = useState(false);
   const [drawerLeadId, setDrawerLeadId] = useState<string | null>(null);
-  // Драфт: клик по строке открывает панель подготовки (карточка канала +
-  // резолвер контакта), не переписку — её ещё нет.
+  // Драфт — инбокс подготовки (слева список, справа канал + резолвер
+  // контакта, как агентский лонглист): выбранный лид. null → derive ниже
+  // подхватит первого «без контакта» — после удаления/резолва фокус сам
+  // переходит к следующему проблемному.
   const [prepLeadId, setPrepLeadId] = useState<string | null>(null);
 
   const seq = useProject(wsId, projectId);
@@ -146,20 +147,12 @@ function LeadsPage() {
     ).length ?? 0;
   const isDraft = seq.data?.status === "draft";
 
-  const deleteLeadMut = useMutation({
-    mutationFn: async (itemId: string) => {
-      const { error } = await api.DELETE(
-        "/v1/workspaces/{wsId}/projects/{projectId}/items/{itemId}",
-        { params: { path: { wsId, projectId, itemId } } },
-      );
-      if (error) throw error;
-    },
-    onSuccess: () =>
-      invalidateProject(qc, wsId, projectId, { leads: true }),
-  });
-
   const drawerLead = visibleLeads.find((l) => l.id === drawerLeadId);
-  const prepLead = visibleLeads.find((l) => l.id === prepLeadId);
+  const prepLead = isDraft
+    ? (visibleLeads.find((l) => l.id === prepLeadId) ??
+      visibleLeads.find((l) => !l.contactReady) ??
+      visibleLeads[0])
+    : undefined;
 
   return (
     <div className="space-y-3">
@@ -177,14 +170,16 @@ function LeadsPage() {
               Добавить каналы
             </button>
           )}
-          <label className="inline-flex items-center gap-2 text-sm text-zinc-600">
-            <input
-              type="checkbox"
-              checked={onlyUnreplied}
-              onChange={(e) => setOnlyUnreplied(e.target.checked)}
-            />
-            Только не ответившие
-          </label>
+          {!isDraft && (
+            <label className="inline-flex items-center gap-2 text-sm text-zinc-600">
+              <input
+                type="checkbox"
+                checked={onlyUnreplied}
+                onChange={(e) => setOnlyUnreplied(e.target.checked)}
+              />
+              Только не ответившие
+            </label>
+          )}
           {isDraft && (
             <label className="inline-flex items-center gap-2 text-sm text-zinc-600">
               <input
@@ -261,7 +256,54 @@ function LeadsPage() {
             entity="каналов"
           />
         )}
-        {leadsQ.data && visibleLeads.length > 0 && (
+        {leadsQ.data && visibleLeads.length > 0 && isDraft && (
+          // Инбокс подготовки (D1, как агентский лонглист): слева компактный
+          // список, справа канал + резолвер выбранного. Поточная обработка —
+          // удалил/нашёл контакт → фокус сам уходит к следующему проблемному.
+          <div className="flex h-[calc(100vh-300px)] min-h-[420px] overflow-hidden rounded-2xl bg-white shadow-sm">
+            <div className="w-72 shrink-0 overflow-y-auto border-r border-zinc-200">
+              {visibleLeads.map((l) => (
+                <button
+                  key={l.id}
+                  type="button"
+                  onClick={() => setPrepLeadId(l.id)}
+                  className={
+                    "block w-full border-b border-zinc-100 px-3 py-2 text-left " +
+                    (l.id === prepLead?.id ? "bg-emerald-50" : "hover:bg-zinc-50")
+                  }
+                >
+                  <div className="truncate text-sm font-medium text-zinc-900">
+                    {l.channel?.title ||
+                      (l.channel?.username ? `@${l.channel.username}` : "—")}
+                  </div>
+                  <div className="mt-0.5 truncate text-xs">
+                    {l.contactReady ? (
+                      <span className="text-zinc-500">
+                        {l.username ? `админ @${l.username}` : "способ связи выбран"}
+                      </span>
+                    ) : (
+                      <span className="font-medium text-amber-700">
+                        контакт не найден
+                      </span>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+            <div className="min-w-0 flex-1">
+              {prepLead && (
+                <LeadPrepPane
+                  key={prepLead.id}
+                  wsId={wsId}
+                  projectId={projectId}
+                  lead={prepLead}
+                  onRemoved={() => setPrepLeadId(null)}
+                />
+              )}
+            </div>
+          </div>
+        )}
+        {leadsQ.data && visibleLeads.length > 0 && !isDraft && (
           <div className="overflow-x-auto rounded-2xl bg-white shadow-sm">
             <table className="w-full text-sm">
               <thead className="bg-zinc-50 text-xs text-zinc-500">
@@ -275,34 +317,23 @@ function LeadsPage() {
                       {i === 0 ? "Первое" : `Сообщение ${i + 1}`}
                     </th>
                   ))}
-                  {isDraft && <th className="w-8 px-2 py-2" />}
                 </tr>
               </thead>
               <tbody>
-                {visibleLeads.map((l) => {
-                  const noContact = isDraft && !l.contactReady;
-                  return (
+                {visibleLeads.map((l) => (
                   <tr
                     key={l.id}
-                    onClick={
-                      isDraft
-                        ? () => setPrepLeadId(l.id)
-                        : () => setDrawerLeadId(l.id)
-                    }
+                    onClick={() => setDrawerLeadId(l.id)}
                     className={
                       "cursor-pointer border-t border-zinc-100 hover:bg-zinc-50 " +
-                      (l.repliedAt
-                        ? "bg-emerald-50/40"
-                        : noContact
-                          ? "bg-amber-50/60"
-                          : "")
+                      (l.repliedAt ? "bg-emerald-50/40" : "")
                     }
                   >
                     <td
                       className="sticky left-0 px-4 py-2 align-top"
                       style={{ background: "inherit" }}
                     >
-                      <LeadCell lead={l} wsId={wsId} showNoContact={noContact} />
+                      <LeadCell lead={l} wsId={wsId} />
                     </td>
                     <td className="px-4 py-2 align-top">
                       <AccountCell
@@ -321,33 +352,8 @@ function LeadsPage() {
                         </td>
                       );
                     })}
-                    {isDraft && (
-                      <td className="px-2 py-2 align-top">
-                        <button
-                          type="button"
-                          disabled={deleteLeadMut.isPending}
-                          title="Удалить лида из проекта"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (
-                              window.confirm(
-                                `Удалить лида ${
-                                  l.username ? "@" + l.username : ""
-                                } из проекта?`,
-                              )
-                            ) {
-                              deleteLeadMut.mutate(l.id);
-                            }
-                          }}
-                          className="rounded p-1 text-zinc-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </td>
-                    )}
                   </tr>
-                  );
-                })}
+                ))}
               </tbody>
             </table>
             {leadsQ.data.total > leadsQ.data.leads.length && (
@@ -366,15 +372,6 @@ function LeadsPage() {
           onClose={() => setDrawerLeadId(null)}
         />
       )}
-      {prepLead && (
-        <LeadPrepDrawer
-          key={prepLead.id}
-          wsId={wsId}
-          projectId={projectId}
-          lead={prepLead}
-          onClose={() => setPrepLeadId(null)}
-        />
-      )}
       {showAddChannels && (
         <AddChannelsModal
           wsId={wsId}
@@ -388,15 +385,7 @@ function LeadsPage() {
 }
 
 
-function LeadCell({
-  lead,
-  wsId,
-  showNoContact,
-}: {
-  lead: Lead;
-  wsId: string;
-  showNoContact?: boolean;
-}) {
+function LeadCell({ lead, wsId }: { lead: Lead; wsId: string }) {
   const ch = lead.channel;
   const channelLabel =
     ch?.title || (ch?.username ? `@${ch.username}` : "—");
@@ -407,14 +396,6 @@ function LeadCell({
       {admin && (
         <div className="text-xs text-zinc-500" title="Админ-получатель аутрича">
           админ {admin}
-        </div>
-      )}
-      {showNoContact && (
-        <div
-          className="text-xs font-medium text-amber-700"
-          title="Опенеру некуда уйти — найдите контакт или удалите канал"
-        >
-          контакт не найден
         </div>
       )}
       {lead.repliedAt && lead.contactId && (
