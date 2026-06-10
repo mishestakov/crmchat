@@ -194,9 +194,21 @@ async function onNewMessage(
 
   try {
     // Outreach-лид → отметка repliedAt + отмена pending sequence-сообщений.
+    // Заодно кладём карточку в первую стадию воронки проекта: канбан
+    // показывает только ответивших, и раньше она рождалась в «Без стадии» —
+    // менеджер растаскивал руками (тест 10.06.26). COALESCE — ручную
+    // расстановку автоматика никогда не двигает.
     const updated = await db
       .update(projectItems)
-      .set({ repliedAt: new Date() })
+      .set({
+        repliedAt: new Date(),
+        stageId: sql`COALESCE(${projectItems.stageId}, (
+          SELECT s->>'id'
+          FROM projects p, jsonb_array_elements(p.stages) s
+          WHERE p.id = ${projectItems.projectId}
+          ORDER BY (s->>'order')::numeric LIMIT 1
+        ))`,
+      })
       .where(
         and(
           eq(projectItems.workspaceId, workspaceId),
