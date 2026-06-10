@@ -102,13 +102,8 @@ export type FieldDef = {
 // служебное, заполняется системно (TG-импорт, outreach, listener).
 export const CONTACT_FIELD_DEFS: FieldDef[] = [
   { key: "full_name", name: "Имя", type: "text", required: true, values: null },
-  {
-    key: "description",
-    name: "Описание",
-    type: "textarea",
-    required: false,
-    values: null,
-  },
+  // «Описание/памятка» выпилено из пресетов (10.06.26): памятка живёт в
+  // contacts.note (автор+дата), два поля с одним смыслом путали менеджеров.
   {
     key: "telegram_username",
     name: "Telegram",

@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";
+import type { Contact } from "@repo/core";
 import { api } from "../lib/api";
 import { errorMessage } from "../lib/errors";
 import { invalidateProject } from "../lib/query-keys";
 import { ChannelCard } from "./channel-card";
+import { ContactNote } from "./chat-drawer";
 import { ContactResolver } from "./contact-resolver";
 
 // Панель подготовки канала в draft-проекте (BD): слева карточка канала
@@ -14,6 +16,7 @@ import { ContactResolver } from "./contact-resolver";
 type PrepLead = {
   id: string;
   username: string | null;
+  contactId: string | null;
   contactReady: boolean;
   channel: { id: string; title: string; username: string | null } | null;
 };
@@ -41,6 +44,24 @@ export function LeadPrepPane(props: {
       );
       if (error) throw error;
       return data;
+    },
+  });
+
+  // Контакт админа — ради пометки («не беспокоить до января») ДО запуска
+  // рассылки. Тот же queryKey, что у чата/карточки — кэш общий.
+  const contactQ = useQuery({
+    queryKey: ["contact", wsId, lead.contactId ?? ""] as const,
+    enabled: !!lead.contactId,
+    // Свои правки памятки инвалидируются мутацией NoteStrip; минута кэша
+    // гасит refetch при щёлканье по лидам туда-сюда.
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data, error } = await api.GET(
+        "/v1/workspaces/{wsId}/contacts/{id}",
+        { params: { path: { wsId, id: lead.contactId! } } },
+      );
+      if (error) throw error;
+      return data as Contact;
     },
   });
 
@@ -100,6 +121,9 @@ export function LeadPrepPane(props: {
         <div className="flex w-[360px] shrink-0 flex-col">
           {lead.contactReady && !changing ? (
             <>
+              {contactQ.data && (
+                <ContactNote wsId={wsId} contact={contactQ.data} />
+              )}
               <div className="border-b border-zinc-200 px-4 py-3">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">

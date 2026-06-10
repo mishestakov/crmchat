@@ -74,6 +74,7 @@ import {
   clearPlacementRecipients,
   healPlacementRecipients,
 } from "../lib/placement-recipient.ts";
+import { buildEntityNote } from "../lib/entity-note.ts";
 import {
   accountAccessClause,
   assertAccountAccess,
@@ -1528,6 +1529,48 @@ app.openapi(
   },
 );
 
+// Памятка о канале («не отработал», «маленький CPM») — отдельной ручкой,
+// доступной member'у: общий PATCH канала admin-only (username/properties),
+// а пометки ставят менеджеры. НЕ description — тот синкается из соцсети.
+app.openapi(
+  createRoute({
+    method: "patch",
+    path: "/v1/workspaces/{wsId}/channels/{id}/note",
+    tags: ["channels"],
+    request: {
+      params: WsIdParam,
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({ note: z.string().max(2000).nullable() }),
+          },
+        },
+      },
+    },
+    responses: {
+      200: {
+        content: { "application/json": { schema: ChannelSchema } },
+        description: "Note saved",
+      },
+    },
+  }),
+  async (c) => {
+    const { wsId, id } = c.req.valid("param");
+    await assertChannelAccess(id, wsId);
+    const { note } = c.req.valid("json");
+    const [updated] = await db
+      .update(channels)
+      .set({
+        note: await buildEntityNote(c.get("userId"), note),
+        updatedAt: new Date(),
+      })
+      .where(eq(channels.id, id))
+      .returning();
+    const [serialized] = await joinAdmins([updated!]);
+    return c.json(serialized!);
+  },
+);
+
 // История канала: последние N сообщений (plain-text), через personal-TDLib.
 // Не-текст (фото/видео/forward) → "[медиа]"; этого достаточно для оценки
 // активности канала, full-render медиа — отдельная задача.
@@ -2848,6 +2891,7 @@ async function joinAdmins(
     externalId: r.externalId,
     title: r.title,
     description: r.description,
+    note: r.note,
     username: r.username,
     link: r.link,
     memberCount: r.memberCount,

@@ -120,7 +120,7 @@ function EditForm(props: {
         fields={CONTACT_FIELD_DEFS}
         values={values}
         onChange={setValues}
-        alwaysShownKeys={["full_name", "description"]}
+        alwaysShownKeys={["full_name"]}
       />
 
       <div className="flex items-center gap-2 pt-1">

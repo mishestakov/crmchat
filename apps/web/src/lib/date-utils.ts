@@ -27,6 +27,18 @@ const dateTimeFormat = new Intl.DateTimeFormat("ru-RU", {
   minute: "2-digit",
 });
 
+// «Имя · 5 июн.» — подпись автора памятки (NoteStrip).
+export function formatNoteByline(n: {
+  byName: string | null;
+  at: string;
+}): string {
+  const d = new Date(n.at).toLocaleDateString("ru-RU", {
+    day: "numeric",
+    month: "short",
+  });
+  return `${n.byName ?? "—"} · ${d}`;
+}
+
 export function formatDateTime(iso: string | Date): string {
   if (!iso) return "";
   return dateTimeFormat.format(typeof iso === "string" ? new Date(iso) : iso);

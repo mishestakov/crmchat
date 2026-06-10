@@ -27,6 +27,7 @@ import { ChannelDrawer } from "./channel-drawer";
 import { ChatComposer } from "./chat-composer";
 import { Drawer } from "./drawer";
 import { MaxChatBody } from "./max-chat-body";
+import { NoteStrip } from "./note-strip";
 import {
   FullResMedia,
   type MessageEntity,
@@ -543,6 +544,7 @@ export function ChatPanel(props: {
             </button>
           </div>
         )}
+        <ContactNote wsId={props.wsId} contact={props.contact} />
         <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3">
           <div className="flex min-w-0 items-center gap-2">
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-sky-100 text-xs font-medium text-sky-700">
@@ -927,6 +929,42 @@ function ReplyMarkupButtons(props: {
         </div>
       ))}
     </div>
+  );
+}
+
+// Пометка об админе (T3.2): contact.note — то же поле, что
+// редактирует карточка контакта. Менеджеру в переписке важно видеть заметки
+// коллег («не беспокоить до января») не уходя из чата; пометка о канале — в
+// один клик через чип канала в шапке (карточка канала). Янтарный фон — чтобы
+// бросалась в глаза (просьба Юли, тест 10.06.26). Используется также в
+// LeadPrepPane (драфт-инбокс) — увидеть «заебали» ДО запуска рассылки.
+// Пометка об админе (T3.2): contact.note — то же поле, что в карточке
+// контакта и в инбоксе подготовки (LeadPrepPane). Менеджеру в переписке важно
+// видеть заметки коллег («не беспокоить до января») не уходя из чата; пометка
+// о канале — в один клик через чип канала в шапке (карточка канала).
+export function ContactNote(props: { wsId: string; contact: Contact }) {
+  const qc = useQueryClient();
+  return (
+    <NoteStrip
+      note={props.contact.note}
+      addLabel="пометка об админе"
+      placeholder="Например: не беспокоить до января"
+      title="Пометка об админе — видна коллегам во всех его каналах. Нажмите, чтобы изменить."
+      onSave={async (text) => {
+        const { error } = await api.PATCH(
+          "/v1/workspaces/{wsId}/contacts/{id}/note",
+          {
+            params: { path: { wsId: props.wsId, id: props.contact.id } },
+            body: { note: text || null },
+          },
+        );
+        if (error) throw error;
+        qc.invalidateQueries({
+          queryKey: ["contact", props.wsId, props.contact.id],
+        });
+        qc.invalidateQueries({ queryKey: ["contacts", props.wsId] });
+      }}
+    />
   );
 }
 

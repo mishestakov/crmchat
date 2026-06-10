@@ -22,6 +22,15 @@ export const ChannelPlatformSchema = z.enum([
 ]);
 export type ChannelPlatform = z.infer<typeof ChannelPlatformSchema>;
 
+// Памятка-предупреждение (канал/контакт): текст + кто/когда оставил.
+export const EntityNoteSchema = z.object({
+  text: z.string(),
+  byUserId: z.string(),
+  byName: z.string().nullable(),
+  at: z.iso.datetime(),
+});
+export type EntityNote = z.infer<typeof EntityNoteSchema>;
+
 export const ChannelSchema = z.object({
   id: z.string().min(1).max(64),
   workspaceId: z.string().min(1).max(64),
@@ -29,6 +38,9 @@ export const ChannelSchema = z.object({
   externalId: z.string().nullable(),
   title: z.string().min(1).max(256),
   description: z.string().nullable(),
+  // Памятка о канале (ручная, янтарная в карточке) — НЕ description, тот
+  // синкается из соцсети.
+  note: EntityNoteSchema.nullable(),
   username: z.string().nullable(),
   link: z.string().nullable(),
   memberCount: z.number().int().nullable(),

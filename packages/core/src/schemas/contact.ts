@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { EntityNoteSchema } from "./channel.ts";
 
 // Ближайший открытый reminder контакта — рендерится в карточке kanban-а.
 // Бэкенд считает через subquery; null если у контакта нет открытых напоминаний.
@@ -40,6 +41,8 @@ export const ContactSchema = z.object({
   // Каналы, в которых этот контакт записан админом (m:n через
   // channel_admins). Минимум для table-row на карточке контакта; полный
   // Channel догружается отдельным GET /channels/{id}.
+  // Памятка об админе — следует за человеком по всем его каналам.
+  note: EntityNoteSchema.nullable(),
   channels: z.array(
     z.object({
       id: z.string(),

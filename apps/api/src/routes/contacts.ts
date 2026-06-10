@@ -17,6 +17,7 @@ import {
   UpdateContactSchema as BaseUpdate,
 } from "@repo/core";
 import { db } from "../db/client.ts";
+import { buildEntityNote } from "../lib/entity-note.ts";
 import {
   contacts,
   outreachAccounts,
@@ -540,6 +541,47 @@ app.openapi(
   },
 );
 
+// Памятка об админе («в отпуске», «жёсткий негатив») — отдельной ручкой,
+// симметрично каналу (/channels/{id}/note). Текст + автор/дата на бэке.
+app.openapi(
+  createRoute({
+    method: "patch",
+    path: "/v1/workspaces/{wsId}/contacts/{id}/note",
+    tags: ["contacts"],
+    request: {
+      params: WsIdParam,
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({ note: z.string().max(2000).nullable() }),
+          },
+        },
+      },
+    },
+    responses: {
+      200: {
+        content: { "application/json": { schema: ContactSchema } },
+        description: "Note saved",
+      },
+    },
+  }),
+  async (c) => {
+    const { wsId, id } = c.req.valid("param");
+    const { note } = c.req.valid("json");
+    const [updated] = await db
+      .update(contacts)
+      .set({
+        note: await buildEntityNote(c.get("userId"), note),
+        updatedAt: new Date(),
+      })
+      .where(and(eq(contacts.id, id), contactAccessClause(wsId)))
+      .returning({ id: contacts.id });
+    if (!updated) throw new HTTPException(404, { message: "not found" });
+    const row = await selectOne(wsId, id);
+    return c.json(serialize(row!));
+  },
+);
+
 async function selectOne(wsId: string, id: string) {
   const [row] = await db
     .select({
@@ -567,6 +609,7 @@ function serialize(row: ContactRow) {
     id: row.id,
     workspaceId: row.workspaceId,
     properties: row.properties,
+    note: row.note,
     nextStep: row.nextStep,
     unreadCount: row.unreadCount,
     lastMessageAt: row.lastMessageAt ? row.lastMessageAt.toISOString() : null,

@@ -9,7 +9,6 @@ import {
   MessageCircle,
   MoreHorizontal,
   Phone,
-  Pin,
   Plus,
   Send,
   X,
@@ -21,6 +20,7 @@ import { formatRelative } from "../../../../../../lib/date-utils";
 import { useClickOutside } from "../../../../../../lib/hooks";
 import { BackButton } from "../../../../../../components/back-button";
 import { ChannelBadges } from "../../../../../../components/channel-badges";
+import { ContactNote } from "../../../../../../components/chat-drawer";
 import { ActivitySection } from "../-activities-section";
 import { ChatDrawer } from "../../../../../../components/chat-drawer";
 import { useOutreachAccounts } from "../../../../../../lib/outreach-queries";
@@ -130,6 +130,7 @@ function ContactDetail() {
       <BackButton />
       <div className="mx-auto max-w-xl space-y-3">
         <ContactView
+          wsId={wsId}
           contact={contact.data}
           onEdit={() =>
             navigate({
@@ -171,6 +172,7 @@ function ContactDetail() {
 }
 
 function ContactView(props: {
+  wsId: string;
   contact: Contact;
   onEdit: () => void;
   onDelete: () => void;
@@ -181,7 +183,6 @@ function ContactView(props: {
   const { contact } = props;
   const values = contact.properties as Record<string, unknown>;
   const fullName = stringValue(values.full_name);
-  const description = stringValue(values.description);
 
   return (
     <>
@@ -191,10 +192,9 @@ function ContactView(props: {
         </div>
         <div className="flex flex-col items-center">
           <h1 className="text-xl font-semibold">{fullName || "Без имени"}</h1>
-          <InlineDescription
-            value={description}
-            onCommit={(v) => props.onPatch("description", v)}
-          />
+          <div className="mt-3 w-full">
+            <ContactNote wsId={props.wsId} contact={contact} />
+          </div>
           <ActionsRow
             values={values}
             onOpenChat={props.onOpenChat}
@@ -203,79 +203,6 @@ function ContactView(props: {
         </div>
       </div>
     </>
-  );
-}
-
-// Сидит на properties.description, UX-смысл — «памятка для коллег». Бэк
-// удаляет ключ при "" — кнопка-крестик использует это для one-click clear.
-function InlineDescription(props: {
-  value: string;
-  onCommit: (v: string) => void;
-}) {
-  const [draft, setDraft] = useState<string | null>(null);
-  const editing = draft !== null;
-
-  const commit = () => {
-    if (draft === null) return;
-    const next = draft;
-    setDraft(null);
-    if (next !== props.value) props.onCommit(next);
-  };
-
-  if (editing) {
-    return (
-      <textarea
-        autoFocus
-        rows={3}
-        value={draft ?? ""}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") setDraft(null);
-          if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-            (e.target as HTMLTextAreaElement).blur();
-          }
-        }}
-        placeholder="Памятка для коллег — например, «не беспокоить до января»"
-        className="mt-3 w-full resize-none rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-left text-sm text-zinc-800 focus:border-amber-500 focus:outline-none"
-      />
-    );
-  }
-
-  if (!props.value) {
-    return (
-      <button
-        type="button"
-        onClick={() => setDraft("")}
-        className="mt-3 inline-flex w-full items-center gap-2 rounded-lg border border-dashed border-zinc-300 px-3 py-2 text-left text-xs text-zinc-400 hover:border-amber-300 hover:bg-amber-50 hover:text-zinc-600"
-      >
-        <Pin size={12} />
-        Памятка для коллег — например, «не беспокоить до января»
-      </button>
-    );
-  }
-
-  return (
-    <div className="mt-3 flex w-full items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-zinc-800">
-      <Pin size={12} className="mt-1 shrink-0 text-amber-600" />
-      <button
-        type="button"
-        onClick={() => setDraft(props.value)}
-        title="Изменить памятку"
-        className="flex-1 whitespace-pre-wrap text-left"
-      >
-        {props.value}
-      </button>
-      <button
-        type="button"
-        onClick={() => props.onCommit("")}
-        title="Удалить памятку"
-        aria-label="Удалить памятку"
-        className="shrink-0 rounded p-0.5 text-amber-600/70 hover:bg-amber-100 hover:text-zinc-700"
-      >
-        <X size={12} />
-      </button>
-    </div>
   );
 }
 
