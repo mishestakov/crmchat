@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
-import { Bell, Check, MoreHorizontal, StickyNote, X } from "lucide-react";
+import { Bell, Check, MoreHorizontal, StickyNote } from "lucide-react";
 import type { Activity, ActivityRepeat } from "@repo/core";
 import { api } from "../../../../../lib/api";
 import { errorMessage } from "../../../../../lib/errors";
-import { useClickOutside, useEscapeKey } from "../../../../../lib/hooks";
+import { useClickOutside } from "../../../../../lib/hooks";
+import { Modal } from "../../../../../components/modal";
 
 const REPEAT_LABELS: Record<ActivityRepeat, string> = {
   none: "Без повтора",
@@ -575,39 +576,6 @@ function Field(props: { label: string; children: React.ReactNode }) {
       <span className="mb-1.5 block text-sm text-zinc-600">{props.label}</span>
       {props.children}
     </label>
-  );
-}
-
-function Modal(props: {
-  title: string;
-  onClose: () => void;
-  children: React.ReactNode;
-}) {
-  useEscapeKey(props.onClose);
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <button
-        type="button"
-        aria-label="Закрыть"
-        onClick={props.onClose}
-        className="absolute inset-0 cursor-default bg-zinc-900/30"
-      />
-      <div className="relative w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
-        <div className="mb-4 flex items-center justify-between">
-          <div className="text-base font-semibold text-zinc-900">
-            {props.title}
-          </div>
-          <button
-            type="button"
-            onClick={props.onClose}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-zinc-400 hover:bg-zinc-100"
-          >
-            <X size={16} />
-          </button>
-        </div>
-        {props.children}
-      </div>
-    </div>
   );
 }
 

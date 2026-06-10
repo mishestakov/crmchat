@@ -26,6 +26,7 @@ import {
   type Message,
 } from "../../../../../components/messages-editor";
 import { api } from "../../../../../lib/api";
+import { copyText } from "../../../../../lib/clipboard";
 import { errorMessage } from "../../../../../lib/errors";
 import { useEventSourceEvent } from "../../../../../lib/hooks";
 import {
@@ -1148,9 +1149,11 @@ function CopyShareLink({
   if (!share) return null;
   const link = shareDeepLink(window.location.origin + share.url, step);
   const copy = () => {
-    void navigator.clipboard.writeText(link);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    void copyText(link).then((ok) => {
+      if (!ok) return;
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
   };
   return (
     <button type="button" onClick={copy} title={link} className={className}>
@@ -1205,9 +1208,11 @@ function ShareAccessBlock({
   const primaryUrl = primary ? fullUrl(primary.url) : "";
   const copy = (rawUrl: string) => {
     const f = fullUrl(rawUrl);
-    void navigator.clipboard.writeText(f);
-    setCopied(f);
-    setTimeout(() => setCopied((c) => (c === f ? null : c)), 1500);
+    void copyText(f).then((ok) => {
+      if (!ok) return;
+      setCopied(f);
+      setTimeout(() => setCopied((c) => (c === f ? null : c)), 1500);
+    });
   };
 
   // Ссылка для клиента существует всегда: если её нет (новый проект или менеджер

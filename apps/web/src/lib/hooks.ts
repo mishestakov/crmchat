@@ -5,15 +5,32 @@ import { WS_QK } from "./query-keys";
 
 // Закрытие модалки на ESC. handler пересохраняем в ref, чтобы effect не
 // перецеплялся при каждом ререндере вызывающего.
+//
+// Стек: оверлеи могут лежать друг на друге (карточка канала поверх чата,
+// диалог шаблона поверх редактора стадий) — Esc закрывает только верхний
+// (смонтированный последним), а не всю стопку разом.
+const escStack: { current: () => void }[] = [];
+
+function onWindowEsc(e: KeyboardEvent) {
+  if (e.key !== "Escape") return;
+  escStack[escStack.length - 1]?.current();
+}
+
 export function useEscapeKey(handler: () => void): void {
   const ref = useRef(handler);
   ref.current = handler;
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") ref.current();
+    if (escStack.length === 0) {
+      window.addEventListener("keydown", onWindowEsc);
+    }
+    escStack.push(ref);
+    return () => {
+      const i = escStack.indexOf(ref);
+      if (i >= 0) escStack.splice(i, 1);
+      if (escStack.length === 0) {
+        window.removeEventListener("keydown", onWindowEsc);
+      }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
   }, []);
 }
 

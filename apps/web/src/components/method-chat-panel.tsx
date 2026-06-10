@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Send } from "lucide-react";
 import { api } from "../lib/api";
 import { errorMessage } from "../lib/errors";
+import { ChatComposer } from "./chat-composer";
 
 // Чат «способа связи через чат» (этап 16.9): группа обсуждения ИЛИ личка канала.
 // История с отправителями (senderName на входящих — в группе пишут разные
@@ -115,30 +115,17 @@ export function MethodChatPanel({
           Платная личка ({starCost}⭐) — отправьте вручную в Telegram.
         </div>
       ) : (
-        <>
-          <div className="flex items-end gap-2 border-t border-zinc-200 p-2">
-            <textarea
-              rows={1}
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder="Сообщение…"
-              className="min-h-0 flex-1 resize-none rounded-lg border border-zinc-300 px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
-            />
-            <button
-              type="button"
-              onClick={() => send.mutate()}
-              disabled={!text.trim() || send.isPending}
-              className="rounded-lg bg-emerald-600 p-2 text-white hover:bg-emerald-700 disabled:opacity-50"
-            >
-              <Send size={16} />
-            </button>
-          </div>
-          {send.error && (
-            <p className="px-2 pb-1 text-xs text-red-600">
-              {errorMessage(send.error)}
-            </p>
-          )}
-        </>
+        <div className="border-t border-zinc-200 p-2">
+          <ChatComposer
+            compact
+            value={text}
+            onChange={setText}
+            onSend={() => send.mutate()}
+            sending={send.isPending}
+            placeholder="Сообщение…"
+            error={send.error ? errorMessage(send.error) : null}
+          />
+        </div>
       )}
     </div>
   );

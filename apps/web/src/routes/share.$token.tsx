@@ -5,6 +5,7 @@ import { Check, X, Users, Link as LinkIcon } from "lucide-react";
 import type { components } from "@repo/api-client";
 import { api } from "../lib/api";
 import { errorMessage } from "../lib/errors";
+import { copyText } from "../lib/clipboard";
 import { formatRub, formatViews, cpv } from "../lib/format";
 import {
   type ShareStep,
@@ -180,9 +181,11 @@ function SharePage() {
       window.location.origin + window.location.pathname,
       active,
     );
-    void navigator.clipboard.writeText(url);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    void copyText(url).then((ok) => {
+      if (!ok) return;
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
   };
   // «Набрано» = сумма клиентских цен по одобренным размещениям (попадаем ли в бюджет).
   const approved = p.placements.filter((pl) => pl.clientStatus === "approved");

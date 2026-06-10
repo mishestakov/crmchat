@@ -1,8 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { X } from "lucide-react";
 import { errorMessage } from "../lib/errors";
-import { useEscapeKey } from "../lib/hooks";
 import { Post, type ChannelMessage } from "./channel-card";
+import { Drawer } from "./drawer";
 
 // Дровер предпросмотра канала: лента постов из ЛОКАЛЬНОГО кэша TDLib
 // (бэкенд читает only_local — ноль сетевых запросов). Общий для согласования
@@ -14,7 +13,6 @@ export function ChannelPreviewDrawer(props: {
   queryFn: () => Promise<ChannelMessage[]>;
   onClose: () => void;
 }) {
-  useEscapeKey(props.onClose);
   const q = useQuery({
     queryKey: props.queryKey as unknown[],
     queryFn: props.queryFn,
@@ -22,25 +20,16 @@ export function ChannelPreviewDrawer(props: {
   });
   const posts = q.data ?? [];
   return (
-    <>
-      <div
-        className="fixed inset-0 z-40 bg-zinc-900/20"
-        onClick={props.onClose}
-      />
-      <aside className="fixed bottom-0 right-0 top-0 z-50 flex w-[480px] max-w-[95vw] flex-col bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3">
-          <div className="min-w-0">
-            <div className="truncate font-medium">{props.title}</div>
-            <div className="text-xs text-zinc-500">Предпросмотр · из кэша</div>
-          </div>
-          <button
-            type="button"
-            onClick={props.onClose}
-            className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-          >
-            <X size={18} />
-          </button>
+    <Drawer
+      width={480}
+      onClose={props.onClose}
+      title={
+        <div className="min-w-0">
+          <div className="truncate font-medium">{props.title}</div>
+          <div className="text-xs text-zinc-500">Предпросмотр · из кэша</div>
         </div>
+      }
+    >
         <div className="flex-1 overflow-y-auto bg-zinc-50 p-3">
           {q.isLoading ? (
             <p className="text-sm text-zinc-400">Загрузка…</p>
@@ -60,7 +49,6 @@ export function ChannelPreviewDrawer(props: {
             </div>
           )}
         </div>
-      </aside>
-    </>
+    </Drawer>
   );
 }

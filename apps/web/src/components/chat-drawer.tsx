@@ -6,8 +6,8 @@ import {
   CheckCheck,
   Download,
   FileText,
+  Hash,
   Pin,
-  Send,
   Tag,
   Users,
   X,
@@ -23,6 +23,10 @@ import {
 import { errorMessage } from "../lib/errors";
 import { formatFileSize } from "../lib/format";
 import { useEventSourceEvent } from "../lib/hooks";
+import { ChannelDrawer } from "./channel-drawer";
+import { ChatComposer } from "./chat-composer";
+import { Drawer } from "./drawer";
+import { MaxChatBody } from "./max-chat-body";
 import {
   FullResMedia,
   type MessageEntity,
@@ -97,9 +101,10 @@ export type MessageTagRef = {
   accountId: string;
 };
 
-// Оверлей-обёртка: backdrop + правый aside вокруг ChatPanel. Esc / клик по
-// фону закрывают. Используется из контактов / лидов / канбана (drawer-режим).
-// Для side-by-side (лонглист) панель встраивается напрямую через ChatPanel.
+// Оверлей-обёртка: Drawer вокруг ChatPanel (Esc живёт в Drawer-стеке, не в
+// панели: встроенная панель не должна перехватывать Esc у родителя).
+// Используется из контактов / лидов / канбана; для side-by-side (лонглист)
+// панель встраивается напрямую через ChatPanel.
 export function ChatDrawer(props: {
   wsId: string;
   contact: Contact;
@@ -108,25 +113,10 @@ export function ChatDrawer(props: {
   onSelectAccount: (accountId: string) => void;
   onClose: () => void;
 }) {
-  // Esc → закрыть. Живёт в обёртке, не в ChatPanel: встроенная панель не должна
-  // перехватывать Esc у родительского drawer'а (лонглист).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") props.onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [props]);
   return (
-    <>
-      <div
-        className="fixed inset-0 z-40 bg-zinc-900/20"
-        onClick={props.onClose}
-      />
-      <aside className="fixed bottom-0 right-0 top-0 z-50 flex w-[480px] max-w-[90vw] flex-col bg-white shadow-2xl">
-        <ChatPanel {...props} />
-      </aside>
-    </>
+    <Drawer width={480} onClose={props.onClose}>
+      <ChatPanel {...props} />
+    </Drawer>
   );
 }
 
@@ -154,6 +144,10 @@ export function ChatPanel(props: {
 
   const displayName = contactFullName(props.contact) || "—";
   const peerKey = props.contact.id;
+  // Карточка канала рядом с перепиской (T3.1): чипы каналов админа в шапке,
+  // клик открывает ChannelDrawer поверх чата — менеджер смотрит канал и
+  // диалог, не уходя из переписки.
+  const [openChannelId, setOpenChannelId] = useState<string | null>(null);
 
   // MAX-контакт (привязан по max.ru/u): своя переписка через MAX-сессию, TG-
   // запросы (preview/chat-history) гасим и рендерим MaxChatBody ниже. Двойная
@@ -585,6 +579,22 @@ export function ChatPanel(props: {
             )}
           </div>
         </div>
+        {props.contact.channels.length > 0 && (
+          <div className="flex gap-1 overflow-x-auto border-b border-zinc-200 px-3 py-1.5">
+            {props.contact.channels.map((ch) => (
+              <button
+                key={ch.id}
+                type="button"
+                onClick={() => setOpenChannelId(ch.id)}
+                title="Открыть карточку канала"
+                className="inline-flex shrink-0 items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-medium text-zinc-700 hover:bg-zinc-200"
+              >
+                <Hash size={11} className="text-zinc-400" />
+                {ch.title}
+              </button>
+            ))}
+          </div>
+        )}
         {fresherColleague && (
           <button
             type="button"
@@ -850,6 +860,13 @@ export function ChatPanel(props: {
           sending={sendMut.isPending}
           error={sendMut.error ? errorMessage(sendMut.error) : null}
         />
+        {openChannelId && (
+          <ChannelDrawer
+            wsId={props.wsId}
+            channelId={openChannelId}
+            onClose={() => setOpenChannelId(null)}
+          />
+        )}
     </div>
   );
 }
@@ -922,7 +939,6 @@ function ComposeFooter(props: {
   sending: boolean;
   error: string | null;
 }) {
-  const canSend = props.text.trim().length > 0 && !props.sending;
   return (
     <div className="border-t border-zinc-200 bg-white p-3">
       {props.activeProjects.length > 0 && (
@@ -937,35 +953,14 @@ function ComposeFooter(props: {
           </div>
         </div>
       )}
-      <div className="flex items-end gap-2">
-        <textarea
-          value={props.text}
-          rows={2}
-          placeholder={`Написать через ${props.accountLabel}…`}
-          onChange={(e) => props.onTextChange(e.target.value)}
-          onKeyDown={(e) => {
-            // Enter — отправка. Shift+Enter — перенос строки (нативный
-            // textarea-behavior, не перехватываем).
-            if (e.key === "Enter" && !e.shiftKey && canSend) {
-              e.preventDefault();
-              props.onSend();
-            }
-          }}
-          className="flex-1 resize-none rounded-md border border-zinc-300 px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
-        />
-        <button
-          type="button"
-          onClick={props.onSend}
-          disabled={!canSend}
-          title="Отправить (Enter); перенос — Shift+Enter"
-          className="inline-flex h-9 w-9 items-center justify-center rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40"
-        >
-          <Send size={16} />
-        </button>
-      </div>
-      {props.error && (
-        <p className="mt-1 text-xs text-red-600">{props.error}</p>
-      )}
+      <ChatComposer
+        value={props.text}
+        onChange={props.onTextChange}
+        onSend={props.onSend}
+        sending={props.sending}
+        placeholder={`Написать через ${props.accountLabel}…`}
+        error={props.error}
+      />
     </div>
   );
 }
@@ -1004,160 +999,4 @@ function formatPeerStatus(
   if (status.isOnline) return "в сети";
   if (!status.lastSeenAt) return "был недавно";
   return `был ${formatRelative(status.lastSeenAt)}`;
-}
-
-// Переписка MAX-контакта (#5): история через max-сессию (лёгкий поллинг для
-// realtime входящих) + composer. Своя панель — TG-фич (теги/upload/bot/sticky)
-// тут нет.
-function MaxChatBody(props: {
-  wsId: string;
-  contactId: string;
-  displayName: string;
-}) {
-  const qc = useQueryClient();
-  const [text, setText] = useState("");
-
-  const historyQ = useQuery({
-    queryKey: ["max-history", props.wsId, props.contactId] as const,
-    queryFn: async () => {
-      const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/contacts/{id}/max-history",
-        { params: { path: { wsId: props.wsId, id: props.contactId } } },
-      );
-      if (error) throw error;
-      return data!;
-    },
-    // Поллинг — fallback; основной realtime через SSE ниже (как TG-панель).
-    refetchInterval: 15000,
-  });
-
-  // Push входящих: NOTIF_MESSAGE-listener шлёт contact-event → инвалидируем
-  // ленту мгновенно (та же SSE-машина, что у TG-переписки).
-  useEventSourceEvent<{ contactId: string }>(
-    `/v1/workspaces/${props.wsId}/contact-stream`,
-    "contact",
-    (ev) => {
-      if (ev.contactId === props.contactId) {
-        qc.invalidateQueries({
-          queryKey: ["max-history", props.wsId, props.contactId],
-        });
-      }
-    },
-  );
-
-  const sendMut = useMutation({
-    mutationFn: async (raw: string) => {
-      const t = raw.trim();
-      if (!t) throw new Error("Пустое сообщение");
-      const { data, error } = await api.POST(
-        "/v1/workspaces/{wsId}/contacts/{id}/max-send",
-        {
-          params: { path: { wsId: props.wsId, id: props.contactId } },
-          body: { text: t },
-        },
-      );
-      if (error) throw error;
-      return data!;
-    },
-    onSuccess: () => {
-      setText("");
-      qc.invalidateQueries({
-        queryKey: ["max-history", props.wsId, props.contactId],
-      });
-    },
-  });
-
-  const messages = historyQ.data?.messages ?? [];
-  const peer = historyQ.data?.peer;
-  const name = peer?.name || props.displayName;
-
-  return (
-    <div className="flex h-full flex-col bg-white">
-      <div className="flex items-center gap-2 border-b border-zinc-100 px-4 py-2">
-        {peer?.avatarUrl ? (
-          <img
-            src={peer.avatarUrl}
-            alt=""
-            className="h-7 w-7 shrink-0 rounded-full object-cover"
-            onError={(e) => {
-              e.currentTarget.style.display = "none";
-            }}
-          />
-        ) : (
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-medium text-violet-700">
-            {(name[0] ?? "?").toUpperCase()}
-          </span>
-        )}
-        <span className="text-sm font-medium">{name}</span>
-        <span className="text-xs font-normal text-violet-600">· MAX</span>
-      </div>
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-4 py-3">
-        {historyQ.isLoading && (
-          <p className="text-sm text-zinc-400">Загрузка переписки…</p>
-        )}
-        {historyQ.error && (
-          <p className="text-sm text-red-600">{errorMessage(historyQ.error)}</p>
-        )}
-        {historyQ.isSuccess && messages.length === 0 && (
-          <p className="text-sm text-zinc-400">Переписки пока нет.</p>
-        )}
-        {messages.map((m) => (
-          <div
-            key={m.id}
-            className={`flex ${m.outgoing ? "justify-end" : "justify-start"}`}
-          >
-            <div
-              className={`max-w-[75%] whitespace-pre-wrap rounded-2xl px-3 py-1.5 text-sm ${
-                m.outgoing
-                  ? "bg-violet-600 text-white"
-                  : "bg-zinc-100 text-zinc-900"
-              }`}
-            >
-              {m.text || <span className="opacity-60">[без текста]</span>}
-              <div
-                className={`mt-0.5 text-[10px] ${
-                  m.outgoing ? "text-violet-200" : "text-zinc-400"
-                }`}
-              >
-                {new Date(m.time).toLocaleTimeString("ru-RU", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-      <div className="border-t border-zinc-100 p-3">
-        {sendMut.error && (
-          <p className="mb-1 text-xs text-red-600">
-            {errorMessage(sendMut.error)}
-          </p>
-        )}
-        <div className="flex items-end gap-2">
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                if (text.trim()) sendMut.mutate(text);
-              }
-            }}
-            rows={2}
-            placeholder="Сообщение в MAX…"
-            className="min-w-0 flex-1 resize-none rounded-lg border border-zinc-300 px-3 py-1.5 text-sm focus:border-violet-500 focus:outline-none"
-          />
-          <button
-            type="button"
-            onClick={() => sendMut.mutate(text)}
-            disabled={!text.trim() || sendMut.isPending}
-            className="shrink-0 rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-50"
-          >
-            {sendMut.isPending ? "…" : "Отправить"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
 }

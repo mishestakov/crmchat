@@ -1,4 +1,5 @@
 import { type ReactNode } from "react";
+import { X } from "lucide-react";
 import { useEscapeKey } from "../lib/hooks";
 
 // Backdrop + центрирование + ESC-закрытие. Variant 'sheet' — на мобильном
@@ -11,6 +12,8 @@ type ModalProps = {
   variant?: "sheet" | "plain";
   size?: "sm" | "md" | "lg";
   zIndex?: number;
+  // Задан → стандартная шапка «заголовок + X». Без него children рисуют свою.
+  title?: string;
 };
 
 const SIZE_CLASS = {
@@ -25,6 +28,7 @@ export function Modal({
   variant = "plain",
   size = "sm",
   zIndex = 50,
+  title,
 }: ModalProps) {
   useEscapeKey(onClose);
   const wrap =
@@ -43,7 +47,21 @@ export function Modal({
         onClick={onClose}
         className="absolute inset-0 cursor-default bg-zinc-900/30"
       />
-      <div className={inner}>{children}</div>
+      <div className={inner}>
+        {title !== undefined && (
+          <div className="mb-4 flex items-center justify-between">
+            <div className="text-base font-semibold text-zinc-900">{title}</div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex h-7 w-7 items-center justify-center rounded-md text-zinc-400 hover:bg-zinc-100"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
+        {children}
+      </div>
     </div>
   );
 }
