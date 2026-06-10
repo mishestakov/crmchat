@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   X,
@@ -16,7 +16,6 @@ import { formatPastRelative } from "../../../../../lib/date-utils";
 import { useOutreachAccounts } from "../../../../../lib/outreach-queries";
 import { LeadChatPanel } from "../../../../../components/lead-chat-drawer";
 import { MethodChatPanel } from "../../../../../components/method-chat-panel";
-import { channelDm } from "../../../../../lib/channel-dm";
 import {
   MESSAGE_TAG_LABEL,
   type MessageTagKind,
@@ -30,8 +29,7 @@ import {
   renderMessageEntities,
 } from "../../../../../lib/tg-message";
 import { ChannelCard } from "../../../../../components/channel-card";
-import { ContactPicker } from "../../../../../components/contact-picker";
-import type { Channel } from "@repo/core";
+import { ContactResolver } from "../../../../../components/contact-resolver";
 import {
   formatViews,
   type Placement,
@@ -300,13 +298,21 @@ export function PlacementPane({
             )}
           </>
         ) : (
-          <Resolver
+          <ContactResolver
             wsId={wsId}
-            projectId={projectId}
-            placement={placement}
+            channelId={channelId}
             channel={channelQ.data ?? null}
-            onRemoved={onRemoved}
+            onResolved={invalidate}
             onClose={hasMethod ? () => setChanging(false) : undefined}
+            headerAction={
+              <RemovePlacementButton
+                wsId={wsId}
+                projectId={projectId}
+                placementId={placement.id}
+                onRemoved={onRemoved}
+                className="shrink-0"
+              />
+            }
           />
         )}
       </div>
@@ -407,299 +413,6 @@ function MethodHeader({
       </button>
     </div>
   );
-}
-
-// Резолвер / смена способа связи (этап 16.8): правый рельс для канала без
-// контакта, либо режим «сменить» (onClose задан → есть «← к переписке»).
-// Суджест-чипы @ из описания, поиск/создание контакта, «в личку (0⭐)»,
-// «убрать канал». Любой выбор идёт через set-admin — глобально по каналу.
-function Resolver({
-  wsId,
-  projectId,
-  placement,
-  channel,
-  onRemoved,
-  onClose,
-}: {
-  wsId: string;
-  projectId: string;
-  placement: Placement;
-  channel: Channel | null;
-  onRemoved: () => void;
-  onClose?: () => void;
-}) {
-  const qc = useQueryClient();
-  const channelId = placement.channel?.id ?? null;
-
-  const setAdmin = useMutation({
-    mutationFn: async (body: {
-      contactId?: string;
-      username?: string;
-      dm?: boolean;
-      group?: { chatId: string; accountId: string };
-    }) => {
-      const { error } = await api.POST(
-        "/v1/workspaces/{wsId}/channels/{id}/set-admin",
-        { params: { path: { wsId, id: channelId! } }, body },
-      );
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["channel", wsId, channelId] });
-      qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] });
-      qc.invalidateQueries({ queryKey: ["channels", wsId] });
-      onClose?.();
-    },
-  });
-
-  const suggestions = useMemo(
-    () => extractHandles(channel?.description ?? "", channel?.username ?? null),
-    [channel?.description, channel?.username],
-  );
-
-  // Личка канала по direct_messages_chat_id (синкается на скане), не по has_dm.
-  // Стоимость null = ещё не синкали → не утверждаем «бесплатно».
-  const { hasDm: hasDmGroup, starCost: dmStar } = channelDm(channel?.meta);
-
-  return (
-    <div className="flex h-full flex-col">
-      <div className="border-b border-zinc-200 px-4 py-3">
-        {onClose && (
-          <button
-            type="button"
-            onClick={onClose}
-            className="mb-1.5 text-xs font-medium text-zinc-500 hover:text-zinc-700"
-          >
-            ← к переписке
-          </button>
-        )}
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div className="text-sm font-semibold text-zinc-900">
-              {onClose ? "Сменить контакт" : "Контакт админа"}
-            </div>
-            <p className="mt-0.5 text-xs text-zinc-500">
-              Кого слушаем по этому каналу. Меняется глобально — у канала во всех
-              кампаниях.
-            </p>
-          </div>
-          {/* Удаление канала — всегда вверху справа (как в режиме с контактом),
-              чтобы кнопка не «прыгала» верх-иконкой / низ-футером. */}
-          <RemovePlacementButton
-            wsId={wsId}
-            projectId={projectId}
-            placementId={placement.id}
-            onRemoved={onRemoved}
-            className="shrink-0"
-          />
-        </div>
-      </div>
-
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3">
-        {/* Личка канала — всегда видна с ценой (этап 16.9). Бесплатно → авто;
-            платно → вручную. Неизвестна (не синкали) → сначала открой ленту. */}
-        {hasDmGroup && (
-          <div
-            className={
-              "rounded-lg border px-3 py-2 text-xs " +
-              (dmStar === 0
-                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                : "border-amber-200 bg-amber-50 text-amber-800")
-            }
-          >
-            <p>
-              {dmStar === 0
-                ? "У канала открыта личка — писать можно бесплатно."
-                : dmStar !== null
-                  ? `В личку канала: ${dmStar}⭐ за сообщение (авторассылка не идёт, вручную).`
-                  : "У канала есть личка — стоимость уточняется (откройте ленту канала)."}
-            </p>
-            {dmStar !== null && (
-              <button
-                type="button"
-                onClick={() => setAdmin.mutate({ dm: true })}
-                disabled={setAdmin.isPending}
-                className={
-                  "mt-1.5 rounded-md px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50 " +
-                  (dmStar === 0
-                    ? "bg-emerald-600 hover:bg-emerald-700"
-                    : "bg-amber-600 hover:bg-amber-700")
-                }
-              >
-                {dmStar === 0
-                  ? "Использовать личку канала"
-                  : "Использовать личку (вручную)"}
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* Группа аккаунта (этап 16.9): из диалогов подключённых аккаунтов. */}
-        <div>
-          <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
-            Группа аккаунта
-          </div>
-          <GroupPicker
-            wsId={wsId}
-            loading={setAdmin.isPending}
-            onPick={(chatId, accountId) =>
-              setAdmin.mutate({ group: { chatId, accountId } })
-            }
-          />
-        </div>
-
-        {suggestions.length > 0 && (
-          <div>
-            <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
-              Возможные контакты из описания
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {suggestions.map((h) => (
-                <button
-                  key={h}
-                  type="button"
-                  onClick={() => setAdmin.mutate({ username: h })}
-                  disabled={setAdmin.isPending}
-                  title="Назначить админом канала"
-                  className="inline-flex items-center rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
-                >
-                  + @{h}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div>
-          <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
-            {onClose ? "Другой контакт" : "Привязать контакт"}
-          </div>
-          <ContactPicker
-            wsId={wsId}
-            excludeIds={new Set()}
-            onPick={(contactId) => setAdmin.mutate({ contactId })}
-            onCreateByUsername={(username) => setAdmin.mutate({ username })}
-            loading={setAdmin.isPending}
-          />
-        </div>
-
-        {setAdmin.error && (
-          <p className="text-xs text-red-600">{errorMessage(setAdmin.error)}</p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// Пикер групп аккаунта (этап 16.9): поиск по группам, в которых состоят
-// аккаунты воркспейса (tg_groups). Выбор → привязка группы как способа связи;
-// account_id нужен, чтобы потом читать/писать через аккаунт-участника (G3).
-function GroupPicker({
-  wsId,
-  onPick,
-  loading,
-}: {
-  wsId: string;
-  onPick: (chatId: string, accountId: string) => void;
-  loading: boolean;
-}) {
-  // Поиск групп БЕЗОПАСЕН для MTProto, поэтому RAM-кэш всех групп не нужен (нечем
-  // флудить). Почему (ресерч по исходникам TDLib, github.com/tdlib/td):
-  //   • /account-groups зовёт searchChats + getChat;
-  //   • searchChats → MessagesManager::search_dialogs (MessagesManager.cpp:14146)
-  //     ищет по in-memory `dialogs_hints_` и резолвит promise синхронно —
-  //     td_api.tl прямо: «This is an offline method». Ноль сетевых запросов;
-  //   • getChat для юзер-аккаунта — тоже offline (td_api.tl §getChat);
-  //   • единственный сетевой вызов — loadChats, и его делает реплитор ОДИН раз
-  //     на bootstrap, не на поиск (searchChatsOnServer мы не используем).
-  // Дебаунс 500мс — лишь чтобы не гонять offline-поиск + IPC к воркеру на каждую
-  // букву (латентность), не ради защиты от флуда.
-  const [q, setQ] = useState("");
-  const [debounced, setDebounced] = useState("");
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(q.trim()), 500);
-    return () => clearTimeout(t);
-  }, [q]);
-  const groupsQ = useQuery({
-    queryKey: ["account-groups", wsId, debounced] as const,
-    queryFn: async () => {
-      const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/account-groups",
-        { params: { path: { wsId }, query: { q: debounced || undefined } } },
-      );
-      if (error) throw error;
-      return data;
-    },
-  });
-  const groups = groupsQ.data ?? [];
-  return (
-    <div className="rounded-md border border-zinc-200 bg-zinc-50/40 p-2">
-      <input
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        placeholder="Поиск группы аккаунта"
-        className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm focus:border-emerald-500 focus:outline-none"
-      />
-      {groups.length === 0 ? (
-        <p className="mt-1.5 text-xs text-zinc-500">
-          {groupsQ.isLoading
-            ? "Загрузка…"
-            : "Группы не найдены — подтянутся по мере репликации аккаунта."}
-        </p>
-      ) : (
-        <ul className="mt-1.5 max-h-48 space-y-1 overflow-y-auto">
-          {groups.map((g) => (
-            <li key={g.chatId}>
-              <button
-                type="button"
-                onClick={() => onPick(g.chatId, g.accountId)}
-                disabled={loading}
-                className="w-full truncate rounded-md bg-white px-2 py-1.5 text-left text-sm hover:bg-emerald-100 disabled:opacity-50"
-              >
-                {g.title ?? "Без названия"}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-// Кандидаты-контакты из текста (описание канала): @username и t.me/username.
-// Только суджест — менеджер подтверждает кликом, молча в channel_admins не
-// пишем (ложные срабатывания: партнёрские каналы, упоминания).
-// Служебные пути t.me — это не username'ы (joinchat/addstickers/proxy/…), их в
-// кандидаты не берём, иначе клик создаёт мусорный контакт (fix #8).
-const RESERVED_TME_PATHS = new Set([
-  "joinchat",
-  "addstickers",
-  "addemoji",
-  "addtheme",
-  "proxy",
-  "socks",
-  "share",
-  "setlanguage",
-  "confirmphone",
-  "login",
-  "contact",
-  "iv",
-  "bg",
-]);
-
-function extractHandles(text: string, ownUsername: string | null): string[] {
-  const own = ownUsername?.toLowerCase() ?? null;
-  const out = new Set<string>();
-  const re = /(?:@|t\.me\/|telegram\.me\/)([a-zA-Z0-9_]{4,32})/gi;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    const h = m[1]!.toLowerCase();
-    if (h === own) continue;
-    if (RESERVED_TME_PATHS.has(h)) continue; // служебные ссылки t.me
-    // Боты (@…bot) теперь валидный способ связи (ручной, этап 16.9) — предлагаем.
-    out.add(h);
-  }
-  return [...out].slice(0, 8);
 }
 
 function BarField({

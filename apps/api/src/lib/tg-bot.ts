@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import { users } from "../db/schema.ts";
 import { issueBridgeToken } from "./bridge-tokens.ts";
@@ -229,18 +230,35 @@ async function onStart(message: TgMessage): Promise<void> {
   const displayName = from
     ? [from.first_name, from.last_name].filter(Boolean).join(" ") || from.username || "?"
     : "?";
+  // Регистрация и вход — один флоу (upsert на approve), но тексты разводим:
+  // новому человеку «подтвердить вход» непонятен — он ещё не регистрировался.
+  const isNew = from ? !(await findUserByTgId(from.id)) : false;
   await tgApi("sendMessage", {
     chat_id: message.chat.id,
-    text: `Подтвердить вход в CRM как «${displayName}»?`,
+    text: isNew
+      ? `Создать аккаунт в CRM и войти как «${displayName}»?`
+      : `Подтвердить вход в CRM как «${displayName}»?`,
     reply_markup: {
       inline_keyboard: [
         [
-          { text: "✅ Подтвердить", callback_data: `approve:${authToken}` },
+          {
+            text: isNew ? "✅ Создать и войти" : "✅ Подтвердить",
+            callback_data: `approve:${authToken}`,
+          },
           { text: "❌ Отмена", callback_data: `reject:${authToken}` },
         ],
       ],
     },
   });
+}
+
+async function findUserByTgId(tgId: number): Promise<boolean> {
+  const rows = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.tgUserId, String(tgId)))
+    .limit(1);
+  return rows.length > 0;
 }
 
 async function onCallback(cb: TgCallbackQuery): Promise<void> {
@@ -275,6 +293,7 @@ async function onCallback(cb: TgCallbackQuery): Promise<void> {
     const tgUser = cb.from;
     const fullName =
       [tgUser.first_name, tgUser.last_name].filter(Boolean).join(" ") || tgUser.username || "?";
+    const wasExisting = await findUserByTgId(tgUser.id);
     const [row] = await db
       .insert(users)
       .values({
@@ -300,7 +319,9 @@ async function onCallback(cb: TgCallbackQuery): Promise<void> {
       await tgApi("editMessageText", {
         chat_id: cb.message.chat.id,
         message_id: cb.message.message_id,
-        text: "Вход подтверждён ✅ Вернитесь в браузер.",
+        text: wasExisting
+          ? "Вход подтверждён ✅ Вернитесь в браузер."
+          : "Аккаунт создан ✅ Вернитесь в браузер — регистрация завершится там.",
       });
     }
   }

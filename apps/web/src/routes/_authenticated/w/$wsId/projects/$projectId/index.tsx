@@ -130,6 +130,10 @@ function SequenceDetailPage() {
   const isDone = seq.data?.status === "done";
 
   const save = useMutation({
+    // Ключ читает LaunchPanel (project-tabs): пока PATCH сообщений в полёте,
+    // «Запустить» задизейблен — иначе activate мог бы зашить в
+    // scheduled_messages старый текст цепочки.
+    mutationKey: ["project-save", projectId],
     mutationFn: async (overrides?: { messages?: Message[] }) => {
       const { data, error } = await api.PATCH(
         "/v1/workspaces/{wsId}/projects/{projectId}",
@@ -144,27 +148,6 @@ function SequenceDetailPage() {
       return data!;
     },
     onSuccess: () => invalidateProject(qc, wsId, projectId),
-  });
-
-  const activate = useMutation({
-    mutationFn: async () => {
-      await save.mutateAsync(undefined);
-      const { data, error } = await api.POST(
-        "/v1/workspaces/{wsId}/projects/{projectId}/activate",
-        { params: { path: { wsId, projectId } } },
-      );
-      if (error) throw error;
-      return data!;
-    },
-    onSuccess: () => {
-      invalidateProject(qc, wsId, projectId, { leads: true });
-      // После запуска показываем таблицу рассылки — это то место где
-      // менеджер дальше работает: видит pending/sent, отвечает.
-      navigate({
-        to: "/w/$wsId/projects/$projectId/leads",
-        params: { wsId, projectId },
-      });
-    },
   });
 
   const pause = useMutation({
@@ -273,15 +256,11 @@ function SequenceDetailPage() {
         <div className="flex items-center gap-3 rounded-2xl bg-white p-4 shadow-sm">
           {isDraft && (
             <>
-              <button
-                type="button"
-                onClick={() => activate.mutate()}
-                disabled={activate.isPending || messages.length === 0}
-                className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-              >
-                <Play size={14} />
-                {activate.isPending ? "Запускаем…" : "Запустить рассылку"}
-              </button>
+              {/* Запуск — в LaunchPanel (шапка проекта): чек-лист + кнопка
+                  видны на всех табах драфта, здесь не дублируем. */}
+              <span className="text-sm text-zinc-500">
+                Черновик — запуск из панели сверху.
+              </span>
               <button
                 type="button"
                 onClick={() => setShowDelete(true)}
@@ -506,8 +485,7 @@ function SequenceDetailPage() {
         />
       )}
 
-      {(activate.error ||
-        pause.error ||
+      {(pause.error ||
         resume.error ||
         save.error ||
         remove.error ||
@@ -515,8 +493,7 @@ function SequenceDetailPage() {
         archive.error) && (
         <div className="fixed bottom-4 right-4 max-w-sm rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 shadow-lg">
           {errorMessage(
-            activate.error ??
-              pause.error ??
+            pause.error ??
               resume.error ??
               save.error ??
               remove.error ??

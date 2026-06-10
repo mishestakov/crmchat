@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
+import { copyText } from "../../../../../../lib/clipboard";
 import { BackButton } from "../../../../../../components/back-button";
 
 export const Route = createFileRoute(
@@ -62,7 +63,7 @@ function InviteForm() {
           <div className="flex gap-2">
             <button
               onClick={async () => {
-                await navigator.clipboard.writeText(link);
+                if (!(await copyText(link))) return;
                 setCopied(true);
                 setTimeout(() => setCopied(false), 1500);
               }}

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
+import { copyText } from "../../../../../../lib/clipboard";
 import { BackButton } from "../../../../../../components/back-button";
 import { OUTREACH_QK, WS_QK } from "../../../../../../lib/query-keys";
 import { formatDateTime } from "../../../../../../lib/date-utils";
@@ -591,6 +592,7 @@ function DismissModal({
 
 function PendingInvites({ wsId }: { wsId: string }) {
   const qc = useQueryClient();
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const invites = useQuery({
     queryKey: ["workspaces", wsId, "invites"],
     queryFn: async () => {
@@ -636,11 +638,15 @@ function PendingInvites({ wsId }: { wsId: string }) {
                   </div>
                 </div>
                 <button
-                  onClick={() => navigator.clipboard.writeText(link)}
+                  onClick={async () => {
+                    if (!(await copyText(link))) return;
+                    setCopiedId(inv.id);
+                    setTimeout(() => setCopiedId(null), 1500);
+                  }}
                   className="rounded border border-zinc-300 px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-50"
                   title={link}
                 >
-                  Скопировать
+                  {copiedId === inv.id ? "Скопировано ✓" : "Скопировать"}
                 </button>
                 <button
                   onClick={() => {

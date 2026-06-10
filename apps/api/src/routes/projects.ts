@@ -223,6 +223,9 @@ const LeadProgressSchema = z
     // Текущая стадия канбана (id из project.stages[*].id). null = «без
     // стадии» — карточка не на канбане.
     stageId: z.string().nullable(),
+    // Готов ли канал к рассылке — тот же предикат, что гейт /activate
+    // (contactReadySql). Фильтр/подсветка «без контакта» в draft-списке.
+    contactReady: z.boolean(),
     // Канал размещения — получатель аутрича резолвится от его админа. null
     // быть не должно (айтем = placement), но left-join → nullable.
     channel: z
@@ -520,6 +523,92 @@ app.openapi(
   },
 );
 
+// Готовность канала к рассылке = опенер уйдёт по @username ИЛИ задан ручной
+// способ связи (группа/бесплатная личка — менеджер пишет сам, не авто-цепочкой).
+// Опенер уйдёт админу по placement.username — это РОВНО то, что планирует
+// prepareLeads (получатель денормализован на размещение через
+// resolveAdminRecipient/healPlacementRecipients). Не используем
+// exists(channel_admins): админ может быть привязан, но без публичного
+// @username — тогда scheduler его молча пропустит, а гейт бы пропустил как
+// «готовый» → канал активен, опенер не ушёл. Сверяемся с username.
+// Личка: по direct_messages_chat_id (кладёт sync), не по has_dm (его пишет
+// репликатор асинхронно). coalesce star-поля к 0: отсутствие поля трактуем
+// как бесплатную личку, иначе null ложно блокировал бы активацию.
+const contactReadySql = sql<boolean>`(
+  ${projectItems.username} is not null
+  or (${channels.meta} -> 'contact_method' ->> 'kind') is not null
+  or (
+    coalesce(${channels.meta} ->> 'direct_messages_chat_id', '0') <> '0'
+    and coalesce((${channels.meta} ->> 'outgoing_paid_message_star_count')::int, 0) = 0
+  )
+)`;
+
+// Жёсткий гейт готовности контактов — общий для BD и agency: канал без
+// контакта аутричу некуда слать. Скоуп — лонглист (shortlistedAt IS NULL):
+// у BD шортлиста нет → фильтр no-op, считаются все размещения. Отказавшихся
+// (available=false) не считаем (этап 16.10; у BD available обычно null).
+// Используется гейтом /activate и чек-листом запуска (/readiness).
+async function longlistContactReadiness(
+  projectId: string,
+): Promise<{ total: number; noContact: number }> {
+  const [row] = await db
+    .select({
+      total: sql<number>`count(*)::int`,
+      noContact: sql<number>`(count(*) filter (where not ${contactReadySql}))::int`,
+    })
+    .from(projectItems)
+    .leftJoin(channels, eq(channels.id, projectItems.channelId))
+    .where(
+      and(
+        eq(projectItems.projectId, projectId),
+        isNull(projectItems.shortlistedAt),
+        sql`${projectItems.available} is distinct from false`,
+      ),
+    );
+  return { total: row?.total ?? 0, noContact: row?.noContact ?? 0 };
+}
+
+app.openapi(
+  createRoute({
+    method: "get",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/readiness",
+    tags: ["outreach"],
+    request: { params: WsProjectParam },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({
+              // Лонглист (то, что реально уйдёт в рассылку), не все items.
+              leadsTotal: z.number().int(),
+              leadsNoContact: z.number().int(),
+              // Активные аккаунты, доступные проекту (резолв общий с /activate).
+              accountsCount: z.number().int(),
+            }),
+          },
+        },
+        description: "Чек-лист готовности к запуску (draft)",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const { projectId } = c.req.valid("param");
+    const project = await assertProjectAccess(projectId, wsId, userId, role);
+    const [readiness, accountIds] = await Promise.all([
+      longlistContactReadiness(project.id),
+      resolveProjectAccountIds(wsId, project),
+    ]);
+    return c.json({
+      leadsTotal: readiness.total,
+      leadsNoContact: readiness.noContact,
+      accountsCount: accountIds.length,
+    });
+  },
+);
+
 app.openapi(
   createRoute({
     method: "post",
@@ -564,43 +653,7 @@ app.openapi(
       throw new HTTPException(400, { message: "List has no leads" });
     }
 
-    // Жёсткий гейт готовности контактов — общий для BD и agency: канал без
-    // контакта аутричу некуда слать. Скоуп — лонглист (shortlistedAt IS NULL):
-    // у BD шортлиста нет → фильтр no-op, считаются все размещения. Отказавшихся
-    // (available=false) не считаем (этап 16.10; у BD available обычно null).
-    const placements = await db
-      .select({
-        // Опенер уйдёт админу по placement.username — это РОВНО то, что
-        // планирует prepareLeads (получатель денормализован на размещение
-        // через resolveAdminRecipient/healPlacementRecipients). Не используем
-        // exists(channel_admins): админ может быть привязан, но без публичного
-        // @username — тогда scheduler его молча пропустит, а гейт бы пропустил
-        // как «готовый» → канал активен, опенер не ушёл. Сверяемся с username.
-        hasUsername: sql<boolean>`${projectItems.username} is not null`,
-        // Бесплатная личка канала: есть DM-группа (синкается на скане) и
-        // отправка бесплатна. has_dm НЕ используем — его пишет репликатор
-        // асинхронно, а direct_messages_chat_id кладёт сам sync.
-        hasDm: sql<boolean>`coalesce(${channels.meta} ->> 'direct_messages_chat_id', '0') <> '0'`,
-        // coalesce к 0: отсутствие star-поля (несинхронизированный/старый снимок
-        // meta) трактуем как бесплатную личку, а не как «не готов» — иначе
-        // null !== 0 ложно блокировал бы активацию канала с бесплатной DM.
-        dmStar: sql<number>`coalesce((${channels.meta} ->> 'outgoing_paid_message_star_count')::int, 0)`,
-        methodSet: sql<boolean>`(${channels.meta} -> 'contact_method' ->> 'kind') is not null`,
-      })
-      .from(projectItems)
-      .leftJoin(channels, eq(channels.id, projectItems.channelId))
-      .where(
-        and(
-          eq(projectItems.projectId, project.id),
-          isNull(projectItems.shortlistedAt),
-          sql`${projectItems.available} is distinct from false`,
-        ),
-      );
-    // Готовность = опенер уйдёт по @username ИЛИ задан ручной способ связи
-    // (группа/бесплатная личка — менеджер пишет сам, не авто-цепочкой).
-    const unready = placements.filter(
-      (p) => !(p.hasUsername || p.methodSet || (p.hasDm && p.dmStar === 0)),
-    ).length;
+    const { noContact: unready } = await longlistContactReadiness(project.id);
     if (unready > 0) {
       throw new HTTPException(400, {
         message: `Нельзя запустить аутрич: каналов без контакта — ${unready}. Найдите контакт или уберите их из списка.`,
@@ -915,6 +968,7 @@ app.openapi(
           channelUsername: channels.username,
           channelLink: channels.link,
           channelPlatform: channels.platform,
+          contactReady: contactReadySql,
           total: sql<number>`count(*) OVER ()::int`,
         })
         .from(projectItems)
@@ -1035,6 +1089,7 @@ app.openapi(
           unreadCount: l.unreadCount,
           nextStep: l.nextStep,
           stageId: l.stageId,
+          contactReady: l.contactReady,
           channel: l.channelId
             ? {
                 id: l.channelId,

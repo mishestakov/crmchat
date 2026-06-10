@@ -18,6 +18,8 @@ export const OUTREACH_QK = {
     (limit !== undefined
       ? (["project-leads", wsId, projectId, limit, offset ?? 0] as const)
       : (["project-leads", wsId, projectId] as const)),
+  projectReadiness: (wsId: string, projectId: string) =>
+    ["project-readiness", wsId, projectId] as const,
   projectAnalytics: (
     wsId: string,
     projectId: string,
@@ -56,6 +58,11 @@ export function invalidateProject(
 ): void {
   qc.invalidateQueries({ queryKey: OUTREACH_QK.project(wsId, projectId) });
   qc.invalidateQueries({ queryKey: OUTREACH_QK.projects(wsId) });
+  // Чек-лист запуска (draft) зависит от лидов/аккаунтов/сообщений — дёшево
+  // инвалидировать всегда (после запуска query не маунтится).
+  qc.invalidateQueries({
+    queryKey: OUTREACH_QK.projectReadiness(wsId, projectId),
+  });
   if (opts.leads) {
     qc.invalidateQueries({ queryKey: OUTREACH_QK.projectLeads(wsId, projectId) });
   }

@@ -34,7 +34,9 @@ export function newMessage(): Message {
   return {
     id: Math.random().toString(36).slice(2, 10),
     text: "",
-    delay: { period: "hours", value: 0 },
+    // У первого сообщения delay не используется (уходит сразу при запуске).
+    // Для догоночных дефолт 3 часа — «через 0 часов» стреляло мгновенно.
+    delay: { period: "hours", value: 3 },
   };
 }
 
@@ -87,8 +89,10 @@ export function MessagesEditor(props: {
     setDraft(null);
   };
 
-  const showAddButton =
-    !disabled && !editingId && !draft && value.length > 0;
+  // Кнопка «Добавить» видна всегда (чтобы существование цепочки было
+  // очевидно ещё до сохранения первого сообщения), но пока открыт
+  // редактор — disabled.
+  const addDisabled = !!editingId || !!draft;
 
   if (value.length === 0 && !draft) {
     return (
@@ -156,13 +160,17 @@ export function MessagesEditor(props: {
           </li>
         )}
       </ol>
-      {showAddButton && (
+      {!disabled && (
         <button
           type="button"
           onClick={addMessage}
-          className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 hover:text-emerald-800"
+          disabled={addDisabled}
+          title={
+            addDisabled ? "Сначала сохраните текущее сообщение" : undefined
+          }
+          className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 hover:text-emerald-800 disabled:text-zinc-400 disabled:hover:text-zinc-400"
         >
-          <Plus size={14} /> Добавить сообщение
+          <Plus size={14} /> Добавить сообщение в цепочку
         </button>
       )}
     </div>

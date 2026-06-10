@@ -16,6 +16,7 @@ import { errorMessage } from "../../../../../../lib/errors";
 import { ProjectTabs } from "../../../../../../components/project-tabs";
 import { type AccountRow } from "../../../../../../components/chat-drawer";
 import { LeadChatDrawer } from "../../../../../../components/lead-chat-drawer";
+import { LeadPrepDrawer } from "../../../../../../components/lead-prep-drawer";
 import { TruncationBanner } from "../../../../../../components/truncation-banner";
 import { AddChannelsModal } from "../../../../../../components/add-channels-modal";
 import {
@@ -35,6 +36,10 @@ export const Route = createFileRoute(
   "/_authenticated/w/$wsId/projects/$projectId/leads",
 )({
   component: LeadsPage,
+  // ?filter=no-contact — переход из чек-листа запуска (LaunchPanel).
+  validateSearch: (search: Record<string, unknown>): { filter?: "no-contact" } => ({
+    filter: search.filter === "no-contact" ? "no-contact" : undefined,
+  }),
 });
 
 const LEADS_PAGE_LIMIT = 1000;
@@ -46,9 +51,15 @@ type LeadMessage = Lead["messages"][number];
 
 function LeadsPage() {
   const { wsId, projectId } = Route.useParams();
+  const { filter } = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const onlyNoContact = filter === "no-contact";
   const [onlyUnreplied, setOnlyUnreplied] = useState(false);
   const [showAddChannels, setShowAddChannels] = useState(false);
   const [drawerLeadId, setDrawerLeadId] = useState<string | null>(null);
+  // Драфт: клик по строке открывает панель подготовки (карточка канала +
+  // резолвер контакта), не переписку — её ещё нет.
+  const [prepLeadId, setPrepLeadId] = useState<string | null>(null);
 
   const seq = useProject(wsId, projectId);
   const accountsQ = useOutreachAccounts(wsId);
@@ -119,8 +130,11 @@ function LeadsPage() {
     if (onlyUnreplied) {
       out = out.filter((l) => !l.repliedAt);
     }
+    if (onlyNoContact) {
+      out = out.filter((l) => !l.contactReady);
+    }
     return out;
-  }, [leadsQ.data, onlyUnreplied]);
+  }, [leadsQ.data, onlyUnreplied, onlyNoContact]);
 
   // Сводка по выбранной странице (200 лидов); при больших задачах нужен
   // агрегат с бэка.
@@ -140,12 +154,12 @@ function LeadsPage() {
       );
       if (error) throw error;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({
-        queryKey: OUTREACH_QK.projectLeads(wsId, projectId),
-      });
-    },
+    onSuccess: () =>
+      invalidateProject(qc, wsId, projectId, { leads: true }),
   });
+
+  const drawerLead = visibleLeads.find((l) => l.id === drawerLeadId);
+  const prepLead = visibleLeads.find((l) => l.id === prepLeadId);
 
   return (
     <div className="space-y-3">
@@ -171,6 +185,23 @@ function LeadsPage() {
             />
             Только не ответившие
           </label>
+          {isDraft && (
+            <label className="inline-flex items-center gap-2 text-sm text-zinc-600">
+              <input
+                type="checkbox"
+                checked={onlyNoContact}
+                onChange={(e) =>
+                  navigate({
+                    search: {
+                      filter: e.target.checked ? "no-contact" : undefined,
+                    },
+                    replace: true,
+                  })
+                }
+              />
+              Только без контакта
+            </label>
+          )}
         </div>
 
         <div className="text-xs text-zinc-500">
@@ -248,23 +279,30 @@ function LeadsPage() {
                 </tr>
               </thead>
               <tbody>
-                {visibleLeads.map((l) => (
+                {visibleLeads.map((l) => {
+                  const noContact = isDraft && !l.contactReady;
+                  return (
                   <tr
                     key={l.id}
                     onClick={
-                      isDraft ? undefined : () => setDrawerLeadId(l.id)
+                      isDraft
+                        ? () => setPrepLeadId(l.id)
+                        : () => setDrawerLeadId(l.id)
                     }
                     className={
-                      "border-t border-zinc-100 " +
-                      (isDraft ? "" : "cursor-pointer hover:bg-zinc-50 ") +
-                      (l.repliedAt ? "bg-emerald-50/40" : "")
+                      "cursor-pointer border-t border-zinc-100 hover:bg-zinc-50 " +
+                      (l.repliedAt
+                        ? "bg-emerald-50/40"
+                        : noContact
+                          ? "bg-amber-50/60"
+                          : "")
                     }
                   >
                     <td
                       className="sticky left-0 px-4 py-2 align-top"
                       style={{ background: "inherit" }}
                     >
-                      <LeadCell lead={l} wsId={wsId} />
+                      <LeadCell lead={l} wsId={wsId} showNoContact={noContact} />
                     </td>
                     <td className="px-4 py-2 align-top">
                       <AccountCell
@@ -308,7 +346,8 @@ function LeadsPage() {
                       </td>
                     )}
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
             {leadsQ.data.total > leadsQ.data.leads.length && (
@@ -319,19 +358,23 @@ function LeadsPage() {
           </div>
         )}
       </div>
-      {drawerLeadId &&
-        (() => {
-          const lead = visibleLeads.find((l) => l.id === drawerLeadId);
-          if (!lead) return null;
-          return (
-            <LeadChatDrawer
-              wsId={wsId}
-              lead={lead}
-              accounts={accountsQ.data ?? []}
-              onClose={() => setDrawerLeadId(null)}
-            />
-          );
-        })()}
+      {drawerLead && (
+        <LeadChatDrawer
+          wsId={wsId}
+          lead={drawerLead}
+          accounts={accountsQ.data ?? []}
+          onClose={() => setDrawerLeadId(null)}
+        />
+      )}
+      {prepLead && (
+        <LeadPrepDrawer
+          key={prepLead.id}
+          wsId={wsId}
+          projectId={projectId}
+          lead={prepLead}
+          onClose={() => setPrepLeadId(null)}
+        />
+      )}
       {showAddChannels && (
         <AddChannelsModal
           wsId={wsId}
@@ -345,7 +388,15 @@ function LeadsPage() {
 }
 
 
-function LeadCell({ lead, wsId }: { lead: Lead; wsId: string }) {
+function LeadCell({
+  lead,
+  wsId,
+  showNoContact,
+}: {
+  lead: Lead;
+  wsId: string;
+  showNoContact?: boolean;
+}) {
   const ch = lead.channel;
   const channelLabel =
     ch?.title || (ch?.username ? `@${ch.username}` : "—");
@@ -356,6 +407,14 @@ function LeadCell({ lead, wsId }: { lead: Lead; wsId: string }) {
       {admin && (
         <div className="text-xs text-zinc-500" title="Админ-получатель аутрича">
           админ {admin}
+        </div>
+      )}
+      {showNoContact && (
+        <div
+          className="text-xs font-medium text-amber-700"
+          title="Опенеру некуда уйти — найдите контакт или удалите канал"
+        >
+          контакт не найден
         </div>
       )}
       {lead.repliedAt && lead.contactId && (
