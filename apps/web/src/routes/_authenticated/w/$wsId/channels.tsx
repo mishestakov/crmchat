@@ -400,6 +400,17 @@ function ChannelsPage() {
                             Недоступен
                           </span>
                         )}
+                        {/* Закрытый канал: нет публичного @username, только
+                            ссылка (приватный TG-инвайт / закрытый MAX) — читать
+                            можно лишь после вступления. */}
+                        {!c.username && c.link && (
+                          <span
+                            title="Закрытый канал — доступен после вступления"
+                            className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-amber-700 ring-1 ring-amber-200"
+                          >
+                            Закрытый
+                          </span>
+                        )}
                       </div>
                       {c.username && (
                         <a

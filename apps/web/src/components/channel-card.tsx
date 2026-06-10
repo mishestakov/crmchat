@@ -282,6 +282,7 @@ export function ChannelCard(props: {
           channelId={channel.id}
           platform={channel.platform}
           channelExternalId={channel.externalId}
+          channelLink={channel.link}
           syncing={syncMut.isPending}
           syncFailed={syncFailed}
           unavailable={inUnavailableCooldown}
@@ -431,17 +432,31 @@ function ChannelHero(props: {
               />
             )}
           </h2>
-          {channel.username && (
-            <a
-              href={platform.url(channel.username)}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-0.5 inline-flex items-center gap-1 text-sm text-zinc-500 hover:text-emerald-700"
-            >
-              <span>@{channel.username}</span>
-              <LinkIcon size={11} className="opacity-60" />
-            </a>
-          )}
+          <div className="mt-0.5 flex items-center gap-3 text-sm">
+            {channel.username && (
+              <a
+                href={platform.url(channel.username)}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-zinc-500 hover:text-emerald-700"
+              >
+                <span>@{channel.username}</span>
+                <LinkIcon size={11} className="opacity-60" />
+              </a>
+            )}
+            {channel.platform === "telegram" && (
+              <a
+                href={tgstatUrl(channel.username, channel.link)}
+                target="_blank"
+                rel="noreferrer"
+                title="Аналитика просмотров на TGStat"
+                className="inline-flex items-center gap-1 text-zinc-500 hover:text-emerald-700"
+              >
+                <span>TGStat</span>
+                <LinkIcon size={11} className="opacity-60" />
+              </a>
+            )}
+          </div>
           <div
             className={
               "flex items-baseline text-sm " +
@@ -477,6 +492,19 @@ function ChannelHero(props: {
         ))}
     </header>
   );
+}
+
+// TGStat: публичный канал — по @username; приватный — по хэшу инвайт-ссылки
+// (t.me/joinchat/HASH и t.me/+HASH у TGStat живут под /channel/HASH).
+// Совсем без зацепок — главная TGStat, искать руками.
+function tgstatUrl(username: string | null, link: string | null): string {
+  if (username) {
+    return `https://tgstat.ru/channel/@${username}/stat/posts-views-analyze`;
+  }
+  const hash = link?.match(/t\.me\/(?:joinchat\/|\+)([\w-]+)/i)?.[1];
+  return hash
+    ? `https://tgstat.ru/channel/${hash}/stat/posts-views-analyze`
+    : "https://tgstat.ru";
 }
 
 function Stat(props: {
@@ -938,6 +966,10 @@ function SubscribePrompt(props: { wsId: string; channelId: string }) {
       if (error) throw error;
     },
     onSuccess: () => {
+      // Приватный инвайт-канал: subscribe резолвит external_id — перечитываем
+      // и сам канал (карточка перерисуется с chat_id), и историю.
+      qc.invalidateQueries({ queryKey: ["channels", props.wsId] });
+      qc.invalidateQueries({ queryKey: ["channel", props.wsId, props.channelId] });
       qc.invalidateQueries({
         queryKey: ["channel-history", props.wsId, props.channelId],
       });
@@ -1301,6 +1333,10 @@ function PostsFeed(props: {
   channelId: string;
   platform: Platform;
   channelExternalId: string | null;
+  // Ссылка канала. У приватного TG (инвайт t.me/+…) она есть, а external_id/
+  // username — нет: chat_id узнаём только после вступления. Признак «приватный
+  // нерезолвнутый» → предлагаем подписаться вместо тупика «история недоступна».
+  channelLink: string | null;
   syncing: boolean;
   syncFailed: boolean;
   // Канал помечен недоступным и кулдаун ещё не истёк. /history всё равно
@@ -1369,9 +1405,12 @@ function PostsFeed(props: {
   useEffect(() => {
     if (!initialQ.isSuccess || metricsRefreshed.current) return;
     metricsRefreshed.current = true;
+    // И карточку (шапка/правый рельс), и список — у строки списка свой meta
+    // с avg_reach/err, без инвалидации он останется со старыми метриками.
     qc.invalidateQueries({
       queryKey: ["channel", props.wsId, props.channelId],
     });
+    qc.invalidateQueries({ queryKey: ["channels", props.wsId] });
   }, [initialQ.isSuccess, props.wsId, props.channelId, qc]);
 
   // По td_api.tl §getChatHistory: единственный надёжный сигнал «больше
@@ -1460,6 +1499,12 @@ function PostsFeed(props: {
     );
   }
   if (!props.channelExternalId) {
+    // Приватный TG-канал по инвайт-ссылке: chat_id ещё не резолвлен (узнаём
+    // только после вступления). Предлагаем подписаться — /subscribe вступит
+    // по ссылке (joinChatByInviteLink) и сохранит chat_id, лента заработает.
+    if (props.platform === "telegram" && props.channelLink) {
+      return <SubscribePrompt wsId={props.wsId} channelId={props.channelId} />;
+    }
     return (
       <div className="min-h-0 flex-1 px-6 py-4 text-sm text-zinc-400">
         Нет привязки к {platformLabel} — история недоступна.
