@@ -10,6 +10,7 @@ import {
   scheduledMessages,
 } from "../db/schema.ts";
 import { contactTgUserIdSql } from "../lib/contact-sql.ts";
+import { inputMessageText } from "../lib/td-message.ts";
 import { errMsg } from "../lib/errors.ts";
 import {
   getOutreachWorkerClient,
@@ -56,7 +57,8 @@ const SendBody = z
     accountId: z.string().min(1).max(64),
     contactId: z.string().min(1).max(64).optional(),
     tgUserId: z.string().min(1).max(32).optional(),
-    text: z.string().min(1).max(4000).optional(),
+    // 4096 — лимит длины текстового сообщения Telegram.
+    text: z.string().min(1).max(4096).optional(),
     // Стикер из пикера (T3.5) — remote file id из /sticker-sets/{setId}.
     // Уходит отдельным сообщением, text игнорируется.
     sticker: z.object({ remoteId: z.string().min(1).max(256) }).optional(),
@@ -287,27 +289,19 @@ app.openapi(
           _: "inputMessageSticker",
           sticker: { _: "inputFileRemote", id: body.sticker.remoteId },
         }
-      : {
-          _: "inputMessageText",
-          text: {
-            _: "formattedText",
-            text: body.text,
-            entities: (body.entities ?? []).map((e) => ({
-              _: "textEntity",
-              offset: e.offset,
-              length: e.length,
-              type: {
-                _: "textEntityTypeCustomEmoji",
-                custom_emoji_id: e.customEmojiId,
-              },
-            })),
-          },
-          link_preview_options: {
-            _: "linkPreviewOptions",
-            is_disabled: true,
-          },
-          clear_draft: false,
-        };
+      : inputMessageText(
+          // refine гарантирует text при отсутствии sticker.
+          body.text!,
+          (body.entities ?? []).map((e) => ({
+            _: "textEntity",
+            offset: e.offset,
+            length: e.length,
+            type: {
+              _: "textEntityTypeCustomEmoji",
+              custom_emoji_id: e.customEmojiId,
+            },
+          })),
+        );
     try {
       await client.invoke({
         _: "sendMessage",

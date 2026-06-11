@@ -216,6 +216,18 @@ export function mapCreativeMediaList(
     .filter((x): x is NonNullable<typeof x> => x !== null);
 }
 
+// inputMessageText без link preview и затирания TG-черновика — единый shape
+// всех наших текстовых отправок и правок (worker, quick-send, edit-message,
+// группа обсуждения канала). entities — для кастом-эмодзи quick-send'а.
+export function inputMessageText(text: string, entities: unknown[] = []) {
+  return {
+    _: "inputMessageText",
+    text: { _: "formattedText", text, entities },
+    link_preview_options: { _: "linkPreviewOptions", is_disabled: true },
+    clear_draft: false,
+  };
+}
+
 // fileId статичного превью стикера: thumbnail набора, а для статичного
 // webp-стикера без thumbnail — сам файл (браузер рендерит webp нативно).
 // null = превью нечем показать (анимированный без thumbnail) — рендерим

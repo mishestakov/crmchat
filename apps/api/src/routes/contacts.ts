@@ -59,6 +59,7 @@ import {
   extractFormattedText,
   extractMediaThumb,
   extractSticker,
+  inputMessageText,
   extractReactions,
 } from "../lib/td-message.ts";
 import { respondWithCreativeMedia } from "../lib/creative-media-response.ts";
@@ -730,6 +731,9 @@ const ChatMessageSchema = z.object({
   document: TdDocumentSchema.nullable(),
   // Стикер — статичное превью (байты — chat-file роут по thumbFileId).
   sticker: TdStickerSchema.nullable(),
+  // Чисто текстовое (messageText) — гейт «Изменить»: у voice/poll/гео и
+  // прочих text — наша заглушка «[голосовое]», править нечего.
+  isPlainText: z.boolean(),
   reactions: z.array(MessageReactionSchema),
   replyMarkup: ReplyMarkupSchema.nullable(),
   // Сообщение — ответ на другое (messageReplyToMessage). Текст оригинала фронт
@@ -1141,6 +1145,61 @@ app.openapi(
   },
 );
 
+// Редактирование своего текстового сообщения (editMessageText). По td_api.tl
+// гейт — messageProperties.can_be_edited, но per-message RPC ради него не
+// делаем: фронт показывает «Изменить» только на своих текстовых, а ошибку
+// TDLib (например, старше 48ч) отдаём как есть. Ленту фронт перечитает по
+// updateMessageContent → SSE. Кастом-эмодзи исходного сообщения при правке
+// заменятся юникодом — entities в edit не прокидываем (MVP).
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/contacts/{id}/chat/edit-message",
+    tags: ["contacts"],
+    request: {
+      params: WsIdParam,
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({
+              accountId: z.string().min(1).max(64),
+              messageId: z.string().min(1).max(64),
+              // 4096 — лимит длины текстового сообщения Telegram.
+              text: z.string().min(1).max(4096),
+            }),
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": { schema: z.object({ ok: z.boolean() }) },
+        },
+        description: "Edited",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const { id } = c.req.valid("param");
+    const { accountId, messageId, text } = c.req.valid("json");
+    const { chatId, client } = await resolveContactChat(wsId, id, accountId);
+    try {
+      await client.invoke({
+        _: "editMessageText",
+        chat_id: Number(chatId),
+        message_id: Number(messageId),
+        input_message_content: inputMessageText(text),
+      } as never);
+    } catch (e) {
+      throw new HTTPException(400, { message: errMsg(e) });
+    }
+    return c.json({ ok: true });
+  },
+);
+
 // Старт бота (этап 16.9): если диалога с ботом ещё нет, первое действие —
 // /start (sendBotStartMessage). Для приватного бот-чата chat_id == bot_user_id.
 // После успеха фронт перетягивает chat-history — бот пришлёт меню/приветствие.
@@ -1356,6 +1415,7 @@ function mapMessage(m: TdMessage): z.infer<typeof ChatMessageSchema> {
     media,
     document,
     sticker,
+    isPlainText: m.content._ === "messageText",
     reactions: extractReactions(m.interaction_info),
     replyMarkup: mapReplyMarkup(m.reply_markup),
     // Ответ «из другого чата» (origin != null) нашей ленте не атрибутируем —

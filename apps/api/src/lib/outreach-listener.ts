@@ -104,6 +104,15 @@ export function attachListener(
           );
           return;
         }
+        case "updateMessageContent": {
+          // Сообщение отредактировано (нами через edit-message или
+          // собеседником из его клиента) — открытая лента перечитается.
+          // updateMessageEdited не слушаем: метку «изменено» не рендерим,
+          // новый контент приходит этим апдейтом.
+          const x = update as { chat_id: number };
+          void emitChatChangedForContact(workspaceId, x.chat_id);
+          return;
+        }
         case "updateDeleteMessages": {
           // is_permanent=true — peer/мы реально удалили; false (или
           // from_cache=true) — внутренние очистки TDLib, не показатель

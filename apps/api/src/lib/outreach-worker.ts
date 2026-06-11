@@ -20,6 +20,7 @@ import {
 } from "./outreach-account-client.ts";
 import { emitProjectChanged } from "./events.ts";
 import { rememberPendingSend } from "./outreach-listener.ts";
+import { inputMessageText } from "./td-message.ts";
 import { isNowInWindow, startOfDayInTz } from "./outreach-schedule.ts";
 import {
   delayToMs,
@@ -521,12 +522,7 @@ async function sendMessagePhase(
   const sentMsg = (await client.invoke({
     _: "sendMessage",
     chat_id: userId,
-    input_message_content: {
-      _: "inputMessageText",
-      text: { _: "formattedText", text, entities: [] },
-      link_preview_options: { _: "linkPreviewOptions", is_disabled: true },
-      clear_draft: false,
-    },
+    input_message_content: inputMessageText(text),
   } as never)) as { id: number | string; chat_id: number | string };
 
   return {

@@ -10,6 +10,7 @@ import {
   Hash,
   Mail,
   MoreHorizontal,
+  Pencil,
   Pin,
   Reply,
   Smile,
@@ -94,6 +95,8 @@ type ChatMessage = {
   document: ChatDocument | null;
   // Стикер — статичное превью (байты через chat-file по thumbFileId).
   sticker: { thumbFileId: number; emoji: string } | null;
+  // Чисто текстовое (messageText) — гейт «Изменить».
+  isPlainText: boolean;
   reactions: { emoji: string; count: number }[];
   replyMarkup: ReplyMarkup | null;
   // Ответ на сообщение этого же чата: id оригинала (текст ищем в подгруженной
@@ -253,6 +256,13 @@ export function ChatPanel(props: {
     y: number;
   } | null>(null);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  // Режим редактирования своего сообщения: текст оригинала уходит в композер,
+  // prevDraft — недописанный черновик, вернём его после отправки/отмены.
+  const [editTarget, setEditTarget] = useState<{
+    id: string;
+    original: string;
+    prevDraft: string;
+  } | null>(null);
   // Ошибки действий (загрузка файла, удаление, пометка) — одной красной
   // полосой под шапкой; каждая мутация чистит её на старте успеха.
   const [actionError, setActionError] = useState<string | null>(null);
@@ -306,8 +316,47 @@ export function ChatPanel(props: {
     },
   });
 
-  // Пометка «непрочитано» — chat-level (как в Telegram), тогл в шапке + пункт
-  // меню сообщения дёргают одно и то же. Бэк синкает с TG и пишет в contacts.
+  const editMut = useMutation({
+    // prevDraft едет в args, а не читается из state: за время запроса режим
+    // могли отменить или начать править другое сообщение.
+    mutationFn: async (args: {
+      messageId: string;
+      text: string;
+      prevDraft: string;
+    }) => {
+      const { error } = await api.POST(
+        "/v1/workspaces/{wsId}/contacts/{id}/chat/edit-message",
+        {
+          params: { path: { wsId: props.wsId, id: props.contact.id } },
+          body: {
+            accountId: props.accountId,
+            messageId: args.messageId,
+            text: args.text,
+          },
+        },
+      );
+      if (error) throw error;
+    },
+    onSuccess: (_data, args) => {
+      if (editTarget?.id === args.messageId) {
+        setComposeText(args.prevDraft);
+        setEditTarget(null);
+      }
+      // Сообщения старых страниц живут в локальном olderPages и инвалидацией
+      // не перечитываются — патчим текст точечно, иначе правка «не видна».
+      setOlderPages((prev) =>
+        prev.map((m) =>
+          m.id === args.messageId ? { ...m, text: args.text } : m,
+        ),
+      );
+      qc.invalidateQueries({
+        queryKey: ["chat-history", props.wsId, props.contact.id],
+      });
+    },
+  });
+
+  // Пометка «непрочитано» — chat-level (как в Telegram), тогл-конверт в
+  // шапке. Бэк синкает с TG и пишет в contacts.
   const markUnreadMut = useMutation({
     mutationFn: async (value: boolean) => {
       const { data, error } = await api.POST(
@@ -345,6 +394,12 @@ export function ChatPanel(props: {
       // Удалили сообщение, на которое открыт reply-черновик — сбрасываем,
       // иначе отправка уйдёт с reply на несуществующий id.
       setReplyTo((prev) => (prev?.id === messageId ? null : prev));
+      // То же с режимом правки: сохранение в удалённый id — мёртвый путь.
+      if (editTarget?.id === messageId) {
+        setComposeText(editTarget.prevDraft);
+        setEditTarget(null);
+        editMut.reset();
+      }
       qc.invalidateQueries({
         queryKey: ["chat-history", props.wsId, props.contact.id],
       });
@@ -496,6 +551,7 @@ export function ChatPanel(props: {
     setLoadingMore(false);
     setReplyTo(null);
     setMsgMenu(null);
+    setEditTarget(null);
     // draftEmojiRef НЕ чистим: черновик композера переживает смену аккаунта,
     // и вставленные в него кастом-эмодзи должны уйти кастомными.
     didAutoScrollRef.current = false;
@@ -1081,6 +1137,16 @@ export function ChatPanel(props: {
           onTextChange={setComposeText}
           onSend={() => {
             const text = composeText.trim();
+            if (editTarget) {
+              if (text) {
+                editMut.mutate({
+                  messageId: editTarget.id,
+                  text,
+                  prevDraft: editTarget.prevDraft,
+                });
+              }
+              return;
+            }
             sendMut.mutate({
               text,
               entities: draftEntities(text),
@@ -1088,8 +1154,25 @@ export function ChatPanel(props: {
               clearDraft: true,
             });
           }}
-          sending={sendMut.isPending}
-          error={sendMut.error ? errorMessage(sendMut.error) : null}
+          sending={sendMut.isPending || editMut.isPending}
+          // Ошибка по текущему режиму: в правке — её, иначе — отправки.
+          // Не смешиваем, чтобы старая ошибка одного режима не маскировала
+          // другой.
+          error={
+            editTarget
+              ? editMut.error
+                ? errorMessage(editMut.error)
+                : null
+              : sendMut.error
+                ? errorMessage(sendMut.error)
+                : null
+          }
+          editTo={editTarget ? { text: editTarget.original } : null}
+          onCancelEdit={() => {
+            setComposeText(editTarget?.prevDraft ?? "");
+            setEditTarget(null);
+            editMut.reset();
+          }}
           replyTo={
             replyTo
               ? {
@@ -1112,20 +1195,44 @@ export function ChatPanel(props: {
             x={msgMenu.x}
             y={msgMenu.y}
             canCopy={!!msgMenu.m.text}
+            // Только свои чисто текстовые без форматирования (правка шлёт
+            // plain text — ссылки/жирный стёрлись бы) и моложе 48ч (лимит
+            // правки Telegram — иначе пункт-ловушка: набрал → ошибка).
+            canEdit={
+              msgMenu.m.isOutgoing &&
+              msgMenu.m.isPlainText &&
+              msgMenu.m.entities.length === 0 &&
+              Date.now() - new Date(msgMenu.m.date).getTime() <
+                48 * 3600_000
+            }
             canDelete={msgMenu.m.isOutgoing}
-            markedUnread={props.contact.markedUnread}
             onClose={() => setMsgMenu(null)}
             onReply={() => {
               setReplyTo(msgMenu.m);
+              // Reply и edit взаимоисключающие в обе стороны — иначе reply
+              // живёт невидимым под edit-плашкой и всплывает позже.
+              if (editTarget) {
+                setComposeText(editTarget.prevDraft);
+                setEditTarget(null);
+                editMut.reset();
+              }
               setMsgMenu(null);
             }}
             onCopy={() => {
               void copyText(msgMenu.m.text);
               setMsgMenu(null);
             }}
-            onMarkUnread={() => {
-              markUnreadMut.mutate(!props.contact.markedUnread);
+            onEdit={() => {
+              const m = msgMenu.m;
               setMsgMenu(null);
+              editMut.reset();
+              setEditTarget({
+                id: m.id,
+                original: m.text,
+                prevDraft: composeText,
+              });
+              setComposeText(m.text);
+              setReplyTo(null);
             }}
             onDelete={() => {
               const id = msgMenu.m.id;
@@ -1199,17 +1306,18 @@ function ReplyQuote(props: {
 
 // Контекстное меню сообщения. Два входа — правый клик по пузырю и «⋯» под
 // ним, оба открывают это. Оверлей ловит клик/правый клик мимо; Esc — через
-// общий стек (закрывает меню, не drawer). Сюда же позже въедут
-// «Изменить» (T-edit) и реакции (T3.5).
+// общий стек (закрывает меню, не drawer). Сюда же позже въедут реакции.
+// «Пометить непрочитанным» здесь нет осознанно: в Telegram это флаг диалога,
+// не сообщения — тогл-конверт в шапке чата.
 function MessageContextMenu(props: {
   x: number;
   y: number;
   canCopy: boolean;
+  canEdit: boolean;
   canDelete: boolean;
-  markedUnread: boolean;
   onReply: () => void;
   onCopy: () => void;
-  onMarkUnread: () => void;
+  onEdit: () => void;
   onDelete: () => void;
   onClose: () => void;
 }) {
@@ -1241,12 +1349,11 @@ function MessageContextMenu(props: {
             <Copy size={14} className="text-zinc-400" /> Копировать текст
           </button>
         )}
-        <button type="button" onClick={props.onMarkUnread} className={itemCls}>
-          <Mail size={14} className="text-zinc-400" />
-          {props.markedUnread
-            ? "Снять пометку «непрочитано»"
-            : "Пометить непрочитанным"}
-        </button>
+        {props.canEdit && (
+          <button type="button" onClick={props.onEdit} className={itemCls}>
+            <Pencil size={14} className="text-zinc-400" /> Изменить
+          </button>
+        )}
         {props.canDelete && (
           <button
             type="button"
@@ -1374,11 +1481,34 @@ function ComposeFooter(props: {
   // Reply-черновик: плашка «в ответ на …» над полем; null — обычная отправка.
   replyTo: { label: string; text: string } | null;
   onCancelReply: () => void;
+  // Режим редактирования сообщения: плашка с оригиналом, Enter сохраняет.
+  // Взаимоисключим с reply (вход в edit сбрасывает reply-черновик).
+  editTo: { text: string } | null;
+  onCancelEdit: () => void;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   return (
     <div className="border-t border-zinc-200 bg-white p-3">
-      {props.replyTo && (
+      {props.editTo && (
+        <div className="mb-2 flex items-start gap-2 rounded-md border-l-2 border-amber-500 bg-amber-50 px-2.5 py-1.5 text-xs">
+          <Pencil size={14} className="mt-0.5 shrink-0 text-amber-600" />
+          <div className="min-w-0 flex-1">
+            <div className="font-medium text-amber-700">
+              Редактирование сообщения
+            </div>
+            <div className="truncate text-zinc-600">{props.editTo.text}</div>
+          </div>
+          <button
+            type="button"
+            onClick={props.onCancelEdit}
+            title="Отменить редактирование"
+            className="shrink-0 text-zinc-400 hover:text-zinc-700"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
+      {!props.editTo && props.replyTo && (
         <div className="mb-2 flex items-start gap-2 rounded-md border-l-2 border-emerald-500 bg-zinc-50 px-2.5 py-1.5 text-xs">
           <Reply size={14} className="mt-0.5 shrink-0 text-emerald-600" />
           <div className="min-w-0 flex-1">

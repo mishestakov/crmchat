@@ -104,6 +104,10 @@ const ProjectSchema = z
     // project ответов (POST/PATCH/activate/...) всегда 0 — фронт инвалидирует
     // список и подтянет свежий sum.
     unreadCount: z.number().int(),
+    // Есть ли среди лидов проекта диалог с ручной пометкой «непрочитано»
+    // (contacts.marked_unread) — точка в сайдбаре при unreadCount=0.
+    // Та же семантика «только в list», что у unreadCount.
+    hasMarkedUnread: z.boolean(),
   })
   .openapi("Project");
 
@@ -287,11 +291,19 @@ app.openapi(
         AND c.unread_count > 0
         AND ${memberFilter}
     ), 0)`;
+    const markedUnreadSql = sql<boolean>`EXISTS (
+      SELECT 1 FROM project_items pi
+      JOIN contacts c ON c.id = pi.contact_id
+      WHERE pi.project_id = projects.id
+        AND c.marked_unread
+        AND ${memberFilter}
+    )`;
 
     const rows = await db
       .select({
         row: projects,
         unread: unreadSql.as("unread_count"),
+        markedUnread: markedUnreadSql.as("has_marked_unread"),
       })
       .from(projects)
       .where(
@@ -301,7 +313,9 @@ app.openapi(
         ),
       )
       .orderBy(asc(projects.createdAt));
-    return c.json(rows.map((r) => serializeProject(r.row, r.unread)));
+    return c.json(
+      rows.map((r) => serializeProject(r.row, r.unread, r.markedUnread)),
+    );
   },
 );
 
@@ -1586,6 +1600,7 @@ app.openapi(
 function serializeProject(
   row: typeof projects.$inferSelect,
   unreadCount = 0,
+  hasMarkedUnread = false,
 ) {
   return {
     id: row.id,
@@ -1609,6 +1624,7 @@ function serializeProject(
     clientFinalizedAt: row.clientFinalizedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     unreadCount,
+    hasMarkedUnread,
   };
 }
 

@@ -161,9 +161,16 @@ function ProjectsLayout() {
             />
             <span className="truncate">{p.name}</span>
             {(p.status === "active" || p.status === "paused") &&
-              p.unreadCount > 0 && (
-                <span className="ml-auto" title={`${p.unreadCount} непрочитанных`}>
-                  <UnreadBadge count={p.unreadCount} />
+              (p.unreadCount > 0 || p.hasMarkedUnread) && (
+                <span
+                  className="ml-auto"
+                  title={
+                    p.unreadCount > 0
+                      ? `${p.unreadCount} непрочитанных`
+                      : "Есть диалог, помеченный непрочитанным"
+                  }
+                >
+                  <UnreadBadge count={p.unreadCount} dot={p.hasMarkedUnread} />
                 </span>
               )}
           </Link>

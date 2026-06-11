@@ -20,6 +20,7 @@ import {
   TdMessageEntitySchema,
   extractFormattedText,
   extractMediaThumb,
+  inputMessageText,
 } from "../lib/td-message.ts";
 import {
   fetchChannelHistory,
@@ -2214,12 +2215,7 @@ app.openapi(
       const sent = (await client.invoke({
         _: "sendMessage",
         chat_id: chatId,
-        input_message_content: {
-          _: "inputMessageText",
-          text: { _: "formattedText", text, entities: [] },
-          link_preview_options: { _: "linkPreviewOptions", is_disabled: true },
-          clear_draft: false,
-        },
+        input_message_content: inputMessageText(text),
       } as never)) as {
         sending_state?: {
           _: string;
