@@ -54,9 +54,18 @@ export const TdDocumentSchema = z.object({
   size: z.number().int(),
 });
 
+// Стикер (messageSticker): рендерим статичное превью — thumbnail набора
+// (webp/jpeg), а для статичных webp-стикеров без thumbnail сам файл.
+// Анимацию (tgs/webm) не воспроизводим — MVP-срез, статики достаточно.
+export const TdStickerSchema = z.object({
+  thumbFileId: z.number().int(),
+  emoji: z.string(),
+});
+
 export type MappedEntity = z.infer<typeof TdMessageEntitySchema>;
 export type MappedThumb = z.infer<typeof TdMediaThumbSchema>;
 export type MappedDocument = z.infer<typeof TdDocumentSchema>;
+export type MappedSticker = z.infer<typeof TdStickerSchema>;
 
 const ENTITY_KIND_BY_TD: Record<string, MappedEntity["kind"] | undefined> = {
   textEntityTypeBold: "bold",
@@ -101,6 +110,15 @@ type TdDocument = {
   mime_type?: string;
   document?: { id?: number; size?: number };
 };
+// Подмножество td_api.tl `sticker`: thumbnail + file + emoji. format нужен,
+// чтобы статичный webp использовать как превью напрямую.
+export type TdStickerRaw = {
+  emoji?: string;
+  format?: { _: string };
+  full_type?: { _: string; custom_emoji_id?: number | string };
+  thumbnail?: { file?: { id?: number } };
+  sticker?: { id?: number; remote?: { id?: string } };
+};
 export type TdContent = {
   _: string;
   text?: TdFormattedText;
@@ -109,6 +127,11 @@ export type TdContent = {
   video?: TdVideo;
   animation?: TdMedia;
   document?: TdDocument;
+  sticker?: TdStickerRaw;
+  // messageAnimatedEmoji: TG конвертит сообщение из одного эмодзи (включая
+  // кастомные) в спец-тип; sticker «may be null if yet unknown».
+  animated_emoji?: { sticker?: TdStickerRaw };
+  emoji?: string;
 };
 
 // Реакции сообщения (эмодзи + счётчик) — общий разбор для ленты канала и
@@ -191,6 +214,33 @@ export function mapCreativeMediaList(
         : null;
     })
     .filter((x): x is NonNullable<typeof x> => x !== null);
+}
+
+// fileId статичного превью стикера: thumbnail набора, а для статичного
+// webp-стикера без thumbnail — сам файл (браузер рендерит webp нативно).
+// null = превью нечем показать (анимированный без thumbnail) — рендерим
+// текстовый фолбэк. Общая логика для ленты чата и пикера наборов.
+export function stickerThumbFileId(s: TdStickerRaw | undefined): number | null {
+  if (!s) return null;
+  return (
+    s.thumbnail?.file?.id ??
+    (s.format?._ === "stickerFormatWebp" ? (s.sticker?.id ?? null) : null)
+  );
+}
+
+// messageSticker / messageAnimatedEmoji (одиночное эмодзи, в т.ч. кастомное)
+// → дескриптор статичного превью. null если превью нет — тогда лента
+// показывает текстовый фолбэк («[стикер]» / юникод-символ эмодзи).
+export function extractSticker(content: TdContent): MappedSticker | null {
+  const s =
+    content._ === "messageSticker"
+      ? content.sticker
+      : content._ === "messageAnimatedEmoji"
+        ? content.animated_emoji?.sticker
+        : undefined;
+  const thumbFileId = stickerThumbFileId(s);
+  if (thumbFileId == null) return null;
+  return { thumbFileId, emoji: content.emoji || (s?.emoji ?? "") };
 }
 
 // messageDocument → дескриптор файла (fileId для скачивания). null если не документ.

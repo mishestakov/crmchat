@@ -17,6 +17,9 @@ export function ChatComposer(props: {
   compact?: boolean;
   // Акцент площадки (MAX — фиолетовый).
   accent?: "emerald" | "violet";
+  // Слот над кнопкой отправки (кнопка эмодзи-пикера в TG-чате) — справа
+  // колонкой, чтобы не ужимать textarea с двух сторон.
+  beforeSend?: React.ReactNode;
 }) {
   const canSend = props.value.trim().length > 0 && !props.sending;
   // height=auto перед замером — иначе scrollHeight не уменьшается при
@@ -26,7 +29,10 @@ export function ChatComposer(props: {
     const ta = taRef.current;
     if (!ta) return;
     ta.style.height = "auto";
-    ta.style.height = `${Math.min(ta.scrollHeight, window.innerHeight * 0.4)}px`;
+    // border-box: в height входит рамка, а в scrollHeight — нет. Без поправки
+    // контенту вечно не хватает 2px и скроллбар не гаснет.
+    const borders = ta.offsetHeight - ta.clientHeight;
+    ta.style.height = `${Math.min(ta.scrollHeight + borders, window.innerHeight * 0.4)}px`;
   }, [props.value]);
   const violet = props.accent === "violet";
   return (
@@ -51,20 +57,23 @@ export function ChatComposer(props: {
             (violet ? "focus:border-violet-500" : "focus:border-emerald-500")
           }
         />
-        <button
-          type="button"
-          onClick={props.onSend}
-          disabled={!canSend}
-          title="Отправить (Enter); перенос — Shift+Enter"
-          className={
-            "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-white disabled:opacity-40 " +
-            (violet
-              ? "bg-violet-600 hover:bg-violet-700"
-              : "bg-emerald-600 hover:bg-emerald-700")
-          }
-        >
-          <Send size={16} />
-        </button>
+        <div className="flex shrink-0 flex-col items-center gap-1">
+          {props.beforeSend}
+          <button
+            type="button"
+            onClick={props.onSend}
+            disabled={!canSend}
+            title="Отправить (Enter); перенос — Shift+Enter"
+            className={
+              "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-white disabled:opacity-40 " +
+              (violet
+                ? "bg-violet-600 hover:bg-violet-700"
+                : "bg-emerald-600 hover:bg-emerald-700")
+            }
+          >
+            <Send size={16} />
+          </button>
+        </div>
       </div>
       {props.error && (
         <p className="mt-1 text-xs text-red-600">{props.error}</p>

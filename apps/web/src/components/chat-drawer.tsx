@@ -12,6 +12,7 @@ import {
   MoreHorizontal,
   Pin,
   Reply,
+  Smile,
   Tag,
   Trash2,
   Users,
@@ -34,7 +35,9 @@ import { ChatComposer } from "./chat-composer";
 import { Drawer } from "./drawer";
 import { MaxChatBody } from "./max-chat-body";
 import { NoteStrip } from "./note-strip";
+import { StickerPicker } from "./sticker-picker";
 import {
+  chatFileUrl,
   FullResMedia,
   type MessageEntity,
   MessageMediaThumb,
@@ -89,6 +92,8 @@ type ChatMessage = {
   mediaThumb: MessageThumb | null;
   media: { kind: "photo" | "video"; width: number; height: number } | null;
   document: ChatDocument | null;
+  // Стикер — статичное превью (байты через chat-file по thumbFileId).
+  sticker: { thumbFileId: number; emoji: string } | null;
   reactions: { emoji: string; count: number }[];
   replyMarkup: ReplyMarkup | null;
   // Ответ на сообщение этого же чата: id оригинала (текст ищем в подгруженной
@@ -208,6 +213,39 @@ export function ChatPanel(props: {
   });
 
   const [composeText, setComposeText] = useState("");
+  // Кастом-эмодзи, вставленные в черновик из пикера: символ → custom_emoji_id.
+  // Офсеты при редактировании текста не трекаем — перед отправкой находим
+  // вхождения этих символов (по УЖЕ обрезанному тексту — он и уходит) и
+  // вешаем entity на каждое. Допущение MVP: одинаковый символ в черновике =
+  // один и тот же кастом-эмодзи.
+  const draftEmojiRef = useRef(new Map<string, string>());
+  const draftEntities = (text: string) => {
+    const ents: { offset: number; length: number; customEmojiId: string }[] =
+      [];
+    const claimed: [number, number][] = [];
+    // Длинные символы первыми: кастом-❤️ не должен забрать префикс у ❤️‍🔥.
+    const items = [...draftEmojiRef.current]
+      .filter(([emoji]) => emoji.length > 0)
+      .sort((a, b) => b[0].length - a[0].length);
+    for (const [emoji, id] of items) {
+      for (
+        let i = text.indexOf(emoji);
+        i !== -1;
+        i = text.indexOf(emoji, i + emoji.length)
+      ) {
+        const end = i + emoji.length;
+        // Не режем ZWJ-последовательность (❤️ внутри набранного ❤️‍🔥) и не
+        // плодим пересекающиеся entities — TDLib такие отвергает целиком.
+        if (text.charCodeAt(end) === 0x200d) continue;
+        if (claimed.some(([s, e]) => i < e && end > s)) continue;
+        claimed.push([i, end]);
+        ents.push({ offset: i, length: emoji.length, customEmojiId: id });
+      }
+    }
+    ents.sort((a, b) => a.offset - b.offset);
+    // Лимит Telegram — 100 кастом-эмодзи на сообщение; лишние уйдут юникодом.
+    return ents.slice(0, 100);
+  };
   // Контекстное меню сообщения (правый клик / «⋯») + reply-черновик композера.
   const [msgMenu, setMsgMenu] = useState<{
     m: ChatMessage;
@@ -218,12 +256,24 @@ export function ChatPanel(props: {
   // Ошибки действий (загрузка файла, удаление, пометка) — одной красной
   // полосой под шапкой; каждая мутация чистит её на старте успеха.
   const [actionError, setActionError] = useState<string | null>(null);
+  // Единая отправка через quick-send (отмена цепочек + cooldown-гейт на
+  // бэке): черновик композера, текст бот-кнопки, стикер/кастом-эмодзи из
+  // пикера. Параметры — аргументом, не из state: бот-кнопка шлёт свой text
+  // без reply-черновика; clearDraft — стирать ли черновик после успеха
+  // (true только когда отправляли его самого).
   const sendMut = useMutation({
-    // Параметры — аргументом, не из state: composer шлёт черновик (+ reply,
-    // если открыт), кнопка бот-клавиатуры шлёт свой text без reply-черновика.
-    mutationFn: async (args: { text: string; replyToMessageId?: string }) => {
-      const text = args.text.trim();
-      if (!text) throw new Error("Пустое сообщение");
+    mutationFn: async (args: {
+      text?: string;
+      entities?: { offset: number; length: number; customEmojiId: string }[];
+      sticker?: { remoteId: string };
+      replyToMessageId?: string;
+      clearDraft?: boolean;
+    }) => {
+      // text уходит как есть — офсеты entities посчитаны по нему; черновик
+      // тримится в onSend ДО построения entities, тут не перетримливаем.
+      if (!args.text?.trim() && !args.sticker) {
+        throw new Error("Пустое сообщение");
+      }
       const { data, error } = await api.POST(
         "/v1/workspaces/{wsId}/quick-send",
         {
@@ -231,7 +281,9 @@ export function ChatPanel(props: {
           body: {
             accountId: props.accountId,
             contactId: props.contact.id,
-            text,
+            text: args.text,
+            entities: args.entities,
+            sticker: args.sticker,
             replyToMessageId: args.replyToMessageId,
           },
         },
@@ -240,7 +292,10 @@ export function ChatPanel(props: {
       return data!;
     },
     onSuccess: (_data, args) => {
-      setComposeText("");
+      if (args.clearDraft) {
+        setComposeText("");
+        draftEmojiRef.current = new Map();
+      }
       if (args.replyToMessageId) setReplyTo(null);
       qc.invalidateQueries({
         queryKey: ["chat-history", props.wsId, props.contact.id],
@@ -441,6 +496,8 @@ export function ChatPanel(props: {
     setLoadingMore(false);
     setReplyTo(null);
     setMsgMenu(null);
+    // draftEmojiRef НЕ чистим: черновик композера переживает смену аккаунта,
+    // и вставленные в него кастом-эмодзи должны уйти кастомными.
     didAutoScrollRef.current = false;
   }, [props.accountId]);
 
@@ -733,10 +790,13 @@ export function ChatPanel(props: {
             })}
           </div>
         )}
+        {/* overflow-x-hidden — продуктовое требование: горизонтального
+            скролла в ленте не бывает ни при каком контенте; неразрывные
+            строки клампятся (текст и цитаты переносим через break-words). */}
         <div
           ref={scrollRef}
           onScroll={onScroll}
-          className="flex-1 overflow-y-auto bg-zinc-50 p-4"
+          className="flex-1 overflow-y-auto overflow-x-hidden bg-zinc-50 p-4"
         >
           <>
             {initialQ.isLoading && (
@@ -825,7 +885,22 @@ export function ChatPanel(props: {
                                 : "ring-1 ring-zinc-200")
                           }
                         >
-                          {m.media ? (
+                          {m.sticker ? (
+                            <img
+                              src={chatFileUrl({
+                                wsId: props.wsId,
+                                contactId: props.contact.id,
+                                accountId: props.accountId,
+                                fileId: m.sticker.thumbFileId,
+                                name: "sticker.webp",
+                                mime: "image/webp",
+                              })}
+                              alt={m.sticker.emoji || "стикер"}
+                              title={m.sticker.emoji}
+                              loading="lazy"
+                              className="h-28 w-28 object-contain p-1"
+                            />
+                          ) : m.media ? (
                             <FullResMedia
                               src={
                                 `/v1/workspaces/${props.wsId}/contacts/${props.contact.id}/chat-media/${m.id}` +
@@ -857,13 +932,14 @@ export function ChatPanel(props: {
                             )}
                             {m.document && (
                               <a
-                                href={
-                                  `/v1/workspaces/${props.wsId}/contacts/${props.contact.id}/chat-file` +
-                                  `?accountId=${encodeURIComponent(props.accountId)}` +
-                                  `&fileId=${m.document.fileId}` +
-                                  `&name=${encodeURIComponent(m.document.fileName)}` +
-                                  `&mime=${encodeURIComponent(m.document.mimeType)}`
-                                }
+                                href={chatFileUrl({
+                                  wsId: props.wsId,
+                                  contactId: props.contact.id,
+                                  accountId: props.accountId,
+                                  fileId: m.document.fileId,
+                                  name: m.document.fileName,
+                                  mime: m.document.mimeType,
+                                })}
                                 download={m.document.fileName}
                                 className={
                                   "mb-1 flex items-center gap-2 rounded-md px-2 py-1.5 " +
@@ -982,6 +1058,19 @@ export function ChatPanel(props: {
           </>
         </div>
         <ComposeFooter
+          wsId={props.wsId}
+          contactId={props.contact.id}
+          accountId={props.accountId}
+          onSendSticker={(remoteId) =>
+            sendMut.mutate({
+              sticker: { remoteId },
+              replyToMessageId: replyTo?.id,
+            })
+          }
+          onPickCustomEmoji={(id, emoji) => {
+            setComposeText((t) => t + emoji);
+            draftEmojiRef.current.set(emoji, id);
+          }}
           activeProjects={previewQ.data ?? []}
           accountLabel={
             accountById.get(props.accountId)
@@ -990,12 +1079,15 @@ export function ChatPanel(props: {
           }
           text={composeText}
           onTextChange={setComposeText}
-          onSend={() =>
+          onSend={() => {
+            const text = composeText.trim();
             sendMut.mutate({
-              text: composeText,
+              text,
+              entities: draftEntities(text),
               replyToMessageId: replyTo?.id,
-            })
-          }
+              clearDraft: true,
+            });
+          }}
           sending={sendMut.isPending}
           error={sendMut.error ? errorMessage(sendMut.error) : null}
           replyTo={
@@ -1086,7 +1178,7 @@ function ReplyQuote(props: {
           {author}
         </span>
       )}
-      <span className="block max-h-8 overflow-hidden text-xs leading-4">
+      <span className="block max-h-8 overflow-hidden break-words text-xs leading-4">
         {snippet}
       </span>
     </>
@@ -1265,17 +1357,25 @@ export function ContactNote(props: { wsId: string; contact: Contact }) {
 }
 
 function ComposeFooter(props: {
+  wsId: string;
+  contactId: string;
+  accountId: string;
   activeProjects: { id: string; name: string }[];
   accountLabel: string;
   text: string;
   onTextChange: (v: string) => void;
   onSend: () => void;
+  // Стикер из пикера отправляется сразу, минуя поле; кастом-эмодзи
+  // вставляется в черновик (его юникод-фолбэк), entity вешается при отправке.
+  onSendSticker: (remoteId: string) => void;
+  onPickCustomEmoji: (id: string, emoji: string) => void;
   sending: boolean;
   error: string | null;
   // Reply-черновик: плашка «в ответ на …» над полем; null — обычная отправка.
   replyTo: { label: string; text: string } | null;
   onCancelReply: () => void;
 }) {
+  const [pickerOpen, setPickerOpen] = useState(false);
   return (
     <div className="border-t border-zinc-200 bg-white p-3">
       {props.replyTo && (
@@ -1309,14 +1409,48 @@ function ComposeFooter(props: {
           </div>
         </div>
       )}
-      <ChatComposer
-        value={props.text}
-        onChange={props.onTextChange}
-        onSend={props.onSend}
-        sending={props.sending}
-        placeholder={`Написать через ${props.accountLabel}…`}
-        error={props.error}
-      />
+      <div className="relative">
+        {pickerOpen && (
+          <StickerPicker
+            // remount на смену аккаунта: наборы другие, и внутренний стейт
+            // (вкладка + строка поиска) должен сброситься.
+            key={props.accountId}
+            wsId={props.wsId}
+            contactId={props.contactId}
+            accountId={props.accountId}
+            onClose={() => setPickerOpen(false)}
+            onUnicode={(e) => props.onTextChange(props.text + e)}
+            onSticker={(remoteId) => {
+              props.onSendSticker(remoteId);
+              setPickerOpen(false);
+            }}
+            onCustomEmoji={props.onPickCustomEmoji}
+          />
+        )}
+        <ChatComposer
+          value={props.text}
+          onChange={props.onTextChange}
+          onSend={props.onSend}
+          sending={props.sending}
+          placeholder={`Написать через ${props.accountLabel}…`}
+          error={props.error}
+          beforeSend={
+            <button
+              type="button"
+              onClick={() => setPickerOpen((o) => !o)}
+              title="Эмодзи и стикеры"
+              className={
+                "rounded p-1 " +
+                (pickerOpen
+                  ? "bg-zinc-100 text-emerald-600"
+                  : "text-zinc-400 hover:text-zinc-700")
+              }
+            >
+              <Smile size={20} />
+            </button>
+          }
+        />
+      </div>
     </div>
   );
 }

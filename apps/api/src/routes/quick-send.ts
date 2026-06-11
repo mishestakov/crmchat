@@ -56,12 +56,33 @@ const SendBody = z
     accountId: z.string().min(1).max(64),
     contactId: z.string().min(1).max(64).optional(),
     tgUserId: z.string().min(1).max(32).optional(),
-    text: z.string().min(1).max(4000),
+    text: z.string().min(1).max(4000).optional(),
+    // Стикер из пикера (T3.5) — remote file id из /sticker-sets/{setId}.
+    // Уходит отдельным сообщением, text игнорируется.
+    sticker: z.object({ remoteId: z.string().min(1).max(256) }).optional(),
+    // Кастом-эмодзи (premium) поверх text: entity на юникод-фолбэке, offsets
+    // в UTF-16 (как JS .length). MVP-пикер шлёт одно эмодзи одним сообщением
+    // (text = символ, один entity), но shape сразу финальный — вставка в
+    // середину текста контракт не поменяет.
+    entities: z
+      .array(
+        z.object({
+          offset: z.number().int().nonnegative(),
+          length: z.number().int().positive(),
+          customEmojiId: z.string().min(1).max(32),
+        }),
+      )
+      // Лимит Telegram на кастом-эмодзи в сообщении.
+      .max(100)
+      .optional(),
     // Ответ на конкретное сообщение этого же чата (контекст-меню в переписке).
     replyToMessageId: z.string().min(1).max(64).optional(),
   })
   .refine((v) => !!v.contactId || !!v.tgUserId, {
     message: "Either contactId or tgUserId is required",
+  })
+  .refine((v) => !!v.text || !!v.sticker, {
+    message: "text or sticker is required",
   })
   .openapi("QuickSendBody");
 
@@ -259,6 +280,34 @@ app.openapi(
       throw new HTTPException(503, { message: "tg client unavailable" });
     }
 
+    // Содержимое: стикер (inputFileRemote — remote id живёт между рестартами
+    // TDLib) или текст с опц. custom-emoji entities.
+    const inputContent = body.sticker
+      ? {
+          _: "inputMessageSticker",
+          sticker: { _: "inputFileRemote", id: body.sticker.remoteId },
+        }
+      : {
+          _: "inputMessageText",
+          text: {
+            _: "formattedText",
+            text: body.text,
+            entities: (body.entities ?? []).map((e) => ({
+              _: "textEntity",
+              offset: e.offset,
+              length: e.length,
+              type: {
+                _: "textEntityTypeCustomEmoji",
+                custom_emoji_id: e.customEmojiId,
+              },
+            })),
+          },
+          link_preview_options: {
+            _: "linkPreviewOptions",
+            is_disabled: true,
+          },
+          clear_draft: false,
+        };
     try {
       await client.invoke({
         _: "sendMessage",
@@ -273,15 +322,7 @@ app.openapi(
               },
             }
           : {}),
-        input_message_content: {
-          _: "inputMessageText",
-          text: { _: "formattedText", text: body.text, entities: [] },
-          link_preview_options: {
-            _: "linkPreviewOptions",
-            is_disabled: true,
-          },
-          clear_draft: false,
-        },
+        input_message_content: inputContent,
       } as never);
 
       // Privacy-policy: помечаем прочитанным только при отправке ответа, не

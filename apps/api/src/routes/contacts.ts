@@ -52,11 +52,13 @@ import {
   TdDocumentSchema,
   TdMediaThumbSchema,
   TdMessageEntitySchema,
+  TdStickerSchema,
   MessageReactionSchema,
   extractCreativeMedia,
   extractDocument,
   extractFormattedText,
   extractMediaThumb,
+  extractSticker,
   extractReactions,
 } from "../lib/td-message.ts";
 import { respondWithCreativeMedia } from "../lib/creative-media-response.ts";
@@ -726,6 +728,8 @@ const ChatMessageSchema = z.object({
     })
     .nullable(),
   document: TdDocumentSchema.nullable(),
+  // Стикер — статичное превью (байты — chat-file роут по thumbFileId).
+  sticker: TdStickerSchema.nullable(),
   reactions: z.array(MessageReactionSchema),
   replyMarkup: ReplyMarkupSchema.nullable(),
   // Сообщение — ответ на другое (messageReplyToMessage). Текст оригинала фронт
@@ -1333,6 +1337,7 @@ function mapMessage(m: TdMessage): z.infer<typeof ChatMessageSchema> {
   const reply = m.reply_to?._ === "messageReplyToMessage" ? m.reply_to : null;
   const mediaThumb = extractMediaThumb(m.content);
   const document = extractDocument(m.content);
+  const sticker = extractSticker(m.content);
   const cm = extractCreativeMedia(m.content);
   const media = cm
     ? { kind: cm.kind, width: cm.width, height: cm.height }
@@ -1341,14 +1346,16 @@ function mapMessage(m: TdMessage): z.infer<typeof ChatMessageSchema> {
     id: String(m.id),
     date: new Date(m.date * 1000).toISOString(),
     isOutgoing: m.is_outgoing,
-    // Sticker/voice/audio/location/poll/… — без текста и без thumb;
-    // короткий type-label, чтобы пузырь не был пустым. Документ рендерится
-    // отдельным пузырём → fallback-label не нужен.
-    text: text || (mediaThumb || document ? "" : fallbackLabel(m.content._)),
+    // Voice/audio/location/poll/… — без текста и без thumb; короткий
+    // type-label, чтобы пузырь не был пустым. Документ и стикер с превью
+    // рендерятся сами → fallback не нужен.
+    text:
+      text || (mediaThumb || document || sticker ? "" : fallbackLabel(m.content)),
     entities,
     mediaThumb,
     media,
     document,
+    sticker,
     reactions: extractReactions(m.interaction_info),
     replyMarkup: mapReplyMarkup(m.reply_markup),
     // Ответ «из другого чата» (origin != null) нашей ленте не атрибутируем —
@@ -1372,8 +1379,11 @@ function mapMessage(m: TdMessage): z.infer<typeof ChatMessageSchema> {
   };
 }
 
-function fallbackLabel(contentType: string): string {
-  switch (contentType) {
+function fallbackLabel(content: TdContent): string {
+  switch (content._) {
+    // Одиночное эмодзи (в т.ч. кастомное) без статичного превью — сам символ.
+    case "messageAnimatedEmoji":
+      return content.emoji ?? "";
     case "messageVoiceNote":
       return "[голосовое]";
     case "messageVideoNote":
@@ -1391,7 +1401,7 @@ function fallbackLabel(contentType: string): string {
     case "messagePoll":
       return "[опрос]";
     default:
-      return `[${contentType.replace(/^message/, "")}]`;
+      return `[${content._.replace(/^message/, "")}]`;
   }
 }
 
@@ -1529,7 +1539,11 @@ app.get("/v1/workspaces/:wsId/contacts/:id/chat-file", async (c) => {
     headers: {
       "Content-Type": mime,
       "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(name)}`,
-      "Cache-Control": "private, max-age=300",
+      // Час, не сутки: после пересоздания TDLib-базы (re-login аккаунта)
+      // fileId раздаются заново с малых чисел — тот же URL может указать на
+      // другой файл. Часа хватает, чтобы не перекачивать превью стикеров при
+      // каждом открытии пикера/чата, а окно «чужих байтов» после re-auth мало.
+      "Cache-Control": "private, max-age=3600",
     },
   });
 });

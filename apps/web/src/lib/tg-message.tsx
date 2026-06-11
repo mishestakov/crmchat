@@ -232,3 +232,20 @@ function EntitySpan(props: { e: MessageEntity; inner: string }) {
       return <span className="font-medium opacity-90">{inner}</span>;
   }
 }
+
+// URL file-proxy личного чата (байты по fileId аккаунта через
+// /contacts/{id}/chat-file): документы, превью стикеров в ленте и пикере.
+export function chatFileUrl(p: {
+  wsId: string;
+  contactId: string;
+  accountId: string;
+  fileId: number;
+  name: string;
+  mime: string;
+}): string {
+  return (
+    `/v1/workspaces/${p.wsId}/contacts/${p.contactId}/chat-file` +
+    `?accountId=${encodeURIComponent(p.accountId)}&fileId=${p.fileId}` +
+    `&name=${encodeURIComponent(p.name)}&mime=${encodeURIComponent(p.mime)}`
+  );
+}
