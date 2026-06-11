@@ -127,6 +127,13 @@ export function attachListener(
           pendingSends.delete(
             k(accountId, String(x.message.chat_id), String(x.old_message_id)),
           );
+          // Сообщение получило постоянный id вместо временного — открытая
+          // лента должна перечитаться, иначе reply/удаление по свежему
+          // сообщению целятся в уже несуществующий временный id.
+          void emitChatChangedForContact(
+            workspaceId,
+            Number(x.message.chat_id),
+          );
           return;
         }
         case "updateMessageSendFailed": {
@@ -193,6 +200,10 @@ async function onNewMessage(
         errMsg(e),
       );
     }
+    // Открытый drawer должен увидеть исходящее из другой сессии (телефон /
+    // офиц. клиент / worker). Без события лента обновлялась только когда
+    // получатель прочитает (read-outbox) или при переоткрытии чата (T3.8).
+    void emitChatChangedForContact(workspaceId, msg.chat_id);
     return;
   }
   // Только private DM от user'а — sender = messageSenderUser, и в TDLib
