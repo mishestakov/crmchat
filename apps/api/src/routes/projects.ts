@@ -24,6 +24,7 @@ import {
 import { pickDefined } from "../lib/pick-defined.ts";
 import { emitProjectChanged, subscribeProject } from "../lib/events.ts";
 import { myAccountIdsSql } from "../lib/outreach-access.ts";
+import { channelIsRknSql } from "../lib/rkn-registry.ts";
 import {
   assertProjectAccess,
   projectAccessClause,
@@ -247,6 +248,10 @@ const LeadProgressSchema = z
         username: z.string().nullable(),
         link: z.string().nullable(),
         platform: z.string(),
+        // РКН-индикация в списках лидов: memberCount > 10k и !isRkn —
+        // красная тревога «Нет РКН».
+        memberCount: z.number().int().nullable(),
+        isRkn: z.boolean(),
       })
       .nullable(),
   })
@@ -1005,6 +1010,8 @@ app.openapi(
           channelUsername: channels.username,
           channelLink: channels.link,
           channelPlatform: channels.platform,
+          channelMemberCount: channels.memberCount,
+          channelIsRkn: channelIsRknSql,
           contactReady: contactReadySql,
           total: sql<number>`count(*) OVER ()::int`,
         })
@@ -1145,6 +1152,8 @@ app.openapi(
                 username: l.channelUsername,
                 link: l.channelLink,
                 platform: l.channelPlatform ?? "telegram",
+                memberCount: l.channelMemberCount,
+                isRkn: l.channelIsRkn ?? false,
               }
             : null,
         };

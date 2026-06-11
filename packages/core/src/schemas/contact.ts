@@ -55,6 +55,8 @@ export const ContactSchema = z.object({
       lastMessageAt: z.iso.datetime().nullable(),
       hasDm: z.boolean(),
       unavailableSince: z.iso.datetime().nullable(),
+      // Есть в реестре РКН (live-матчинг со словарём rkn_records).
+      isRkn: z.boolean(),
     }),
   ),
   createdBy: z.string().min(1).max(64),

@@ -23,6 +23,7 @@ import outreachAccounts from "./routes/outreach-accounts.ts";
 import outreachSchedule from "./routes/outreach-schedule.ts";
 import projects from "./routes/projects.ts";
 import quickSend from "./routes/quick-send.ts";
+import rkn from "./routes/rkn.ts";
 import shareClient from "./routes/share-client.ts";
 import shares from "./routes/shares.ts";
 import stageTemplates from "./routes/stage-templates.ts";
@@ -50,6 +51,8 @@ const protectedApp = new OpenAPIHono<{ Variables: SessionVars }>();
 protectedApp.use("/v1/*", requireSession);
 protectedApp.route("/", me);
 protectedApp.route("/", workspaces);
+// Словарь РКН — глобальный (реестр один на всех), только requireSession.
+protectedApp.route("/", rkn);
 // /v1/invites/:code GET + POST accept — только requireSession, без
 // assertMember (приглашённый ещё не member).
 protectedApp.route("/", publicInvites);

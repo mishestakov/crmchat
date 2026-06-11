@@ -370,6 +370,8 @@ function ChannelsPage() {
                           link={c.link}
                           unavailableSince={c.unavailableSince}
                           unavailableReason={c.unavailableReason}
+                          isRkn={c.isRkn}
+                          memberCount={c.memberCount}
                           dm={
                             hasDmGroup
                               ? "open"

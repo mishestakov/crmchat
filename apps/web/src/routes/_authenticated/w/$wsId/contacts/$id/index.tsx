@@ -493,6 +493,8 @@ function ChannelsSection(props: { wsId: string; contact: Contact }) {
                         username={ch.username}
                         unavailableSince={ch.unavailableSince}
                         dm={ch.hasDm ? "open" : null}
+                        isRkn={ch.isRkn}
+                        memberCount={ch.memberCount}
                       />
                     </div>
                     {ch.username && (

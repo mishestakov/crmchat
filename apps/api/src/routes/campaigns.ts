@@ -19,6 +19,7 @@ import {
   tgUsers,
 } from "../db/schema.ts";
 import { assertProjectAccess } from "../lib/projects-access.ts";
+import { channelIsRknSql } from "../lib/rkn-registry.ts";
 import {
   hasPendingOpeners,
   resolveStickyByTgUserIds,
@@ -121,6 +122,8 @@ const PlacementSchema = z
         // has_dm / outgoing_paid_message_star_count).
         hasDm: z.boolean(),
         dmStarCost: z.number().int().nullable(),
+        // РКН-индикация: memberCount > 10k и !isRkn — красная тревога.
+        isRkn: z.boolean(),
       })
       .nullable(),
     adminContactId: z.string().nullable(),
@@ -1048,6 +1051,7 @@ function placementColumns() {
     // Живой признак «у канала есть привязанный админ» — не зависит от снапшота
     // item.contact_id (админа могли привязать уже после создания размещения).
     channelHasAdmin: sql<boolean>`exists (select 1 from ${channelAdmins} where ${channelAdmins.channelId} = ${channels.id})`,
+    channelIsRkn: channelIsRknSql,
     // Явно выбранный способ связи (группа / личка-канала) в meta.contact_method
     // (этап 16.9): тоже готовый контакт.
     channelMethodSet: sql<boolean>`(${channels.meta} -> 'contact_method' ->> 'kind') is not null`,
@@ -1160,6 +1164,7 @@ function serializePlacement(
     channelDmStarCost: number | null;
     channelHasAdmin: boolean;
     channelMethodSet: boolean;
+    channelIsRkn: boolean;
     adminUsername: string | null;
     unread: number | null;
     teamKnowsAdmin: boolean;
@@ -1191,6 +1196,7 @@ function serializePlacement(
           err: row.channelErr,
           hasDm: row.channelHasDm,
           dmStarCost: row.channelDmStarCost,
+          isRkn: row.channelIsRkn,
         }
       : null,
     adminContactId: row.contactId,

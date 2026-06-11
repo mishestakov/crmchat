@@ -35,6 +35,7 @@ import {
 } from "../../../../../lib/outreach-queries";
 import { OUTREACH_QK } from "../../../../../lib/query-keys";
 import { PlatformBadge } from "../../../../../lib/platforms";
+import { ChannelBadges } from "../../../../../components/channel-badges";
 import {
   type ShareStep,
   shareDeepLink,
@@ -908,6 +909,13 @@ function BloggerRow({
           <div className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-900">
             {ch?.title ?? "Канал удалён"}
           </div>
+          {ch && (
+            <ChannelBadges
+              username={ch.username}
+              isRkn={ch.isRkn}
+              memberCount={ch.memberCount}
+            />
+          )}
           {p.unread > 0 && (
             <span className="shrink-0 rounded-full bg-emerald-500 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-white">
               {p.unread}

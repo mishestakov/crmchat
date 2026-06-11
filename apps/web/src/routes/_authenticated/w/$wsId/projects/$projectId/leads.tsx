@@ -14,6 +14,7 @@ import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
 import { ProjectTabs } from "../../../../../../components/project-tabs";
 import { type AccountRow } from "../../../../../../components/chat-drawer";
+import { ChannelBadges } from "../../../../../../components/channel-badges";
 import { LeadChatDrawer } from "../../../../../../components/lead-chat-drawer";
 import { LeadPrepPane } from "../../../../../../components/lead-prep-pane";
 import { TruncationBanner } from "../../../../../../components/truncation-banner";
@@ -384,9 +385,19 @@ function LeadsPage() {
                     (l.id === prepLead?.id ? "bg-emerald-50" : "hover:bg-zinc-50")
                   }
                 >
-                  <div className="truncate text-sm font-medium text-zinc-900">
-                    {l.channel?.title ||
-                      (l.channel?.username ? `@${l.channel.username}` : "—")}
+                  <div className="flex items-center gap-2 text-sm font-medium text-zinc-900">
+                    <span className="truncate">
+                      {l.channel?.title ||
+                        (l.channel?.username ? `@${l.channel.username}` : "—")}
+                    </span>
+                    {l.channel && (
+                      <ChannelBadges
+                        username={l.channel.username}
+                        link={l.channel.link}
+                        isRkn={l.channel.isRkn}
+                        memberCount={l.channel.memberCount}
+                      />
+                    )}
                   </div>
                   <div className="mt-0.5 truncate text-xs">
                     {l.contactReady ? (
@@ -538,7 +549,17 @@ function LeadCell({
   };
   return (
     <div className="space-y-0.5">
-      <div className="font-medium">{channelLabel}</div>
+      <div className="flex items-center gap-2">
+        <span className="font-medium">{channelLabel}</span>
+        {ch && (
+          <ChannelBadges
+            username={ch.username}
+            link={ch.link}
+            isRkn={ch.isRkn}
+            memberCount={ch.memberCount}
+          />
+        )}
+      </div>
       {admin && (
         <div className="text-xs text-zinc-500" title="Админ-получатель аутрича">
           админ {admin}

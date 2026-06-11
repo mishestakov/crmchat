@@ -64,6 +64,8 @@ import {
   assertChannelAccess,
   channelAccessClause,
 } from "../lib/channels-access.ts";
+import { channelIsRknSql } from "../lib/rkn-registry.ts";
+import { ilikeContains } from "../lib/ilike.ts";
 import { contactAccessClause } from "../lib/contacts-access.ts";
 import {
   findSubscribedReaderAccount,
@@ -285,11 +287,10 @@ app.openapi(
     const { wsId } = c.req.valid("param");
     const { q } = c.req.valid("query");
     // Поиск: ILIKE по title + username. Юзер вводит подстроку, regex не
-    // нужен — escape '%' и '_' чтобы спецсимволы не превращали запрос в
-    // wildcard'ный.
+    // нужен — ilikeContains эскейпит спецсимволы LIKE.
     const term = q?.trim();
     const searchClause = term
-      ? sql`(${channels.title} ILIKE ${"%" + term.replace(/[%_]/g, "\\$&") + "%"} OR ${channels.username} ILIKE ${"%" + term.replace(/[%_]/g, "\\$&") + "%"})`
+      ? sql`(${channels.title} ILIKE ${ilikeContains(term)} OR ${channels.username} ILIKE ${ilikeContains(term)})`
       : undefined;
     // Сортировка: member_count desc (NULLS LAST для не-засинканных) — топ
     // канал сверху, главный сигнал ценности; created_at — tie-breaker.
@@ -2781,7 +2782,7 @@ async function joinAdmins(
   if (rows.length === 0) return [];
   const wsId = rows[0]!.workspaceId;
   const channelIds = rows.map((r) => r.id);
-  const [adminRows, thumbRows] = await Promise.all([
+  const [adminRows, thumbRows, rknRows] = await Promise.all([
     db
       .select({
         channelId: channelAdmins.channelId,
@@ -2799,8 +2800,14 @@ async function joinAdmins(
       })
       .from(channelThumbnails)
       .where(inArray(channelThumbnails.channelId, channelIds)),
+    // РКН-матчинг батчем по индексу rkn_records.match_key (T4.5).
+    db
+      .select({ id: channels.id, isRkn: channelIsRknSql })
+      .from(channels)
+      .where(inArray(channels.id, channelIds)),
   ]);
   const thumbByChannel = new Map(thumbRows.map((t) => [t.channelId, t.b64]));
+  const rknByChannel = new Map(rknRows.map((r) => [r.id, r.isRkn]));
 
   // Диалоги команды с админами (tg_chats, воркспейс-wide) → «кружочки» в таблице.
   // Ключ — tg_user_id админа. Один запрос на весь батч каналов.
@@ -2899,6 +2906,7 @@ async function joinAdmins(
     unavailableLastCheckAt: r.unavailableLastCheckAt?.toISOString() ?? null,
     unavailableReason: r.unavailableReason ?? null,
     thumbnailB64: thumbByChannel.get(r.id) ?? null,
+    isRkn: rknByChannel.get(r.id) ?? false,
     admins: byChannel.get(r.id) ?? [],
     createdBy: r.createdBy,
     createdAt: r.createdAt.toISOString(),

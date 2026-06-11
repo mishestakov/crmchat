@@ -54,6 +54,10 @@ export const ChannelSchema = z.object({
   // Минитамбнейл из соцсети (base64 jpeg). Тянется LEFT JOIN'ом из
   // channel_thumbnails — если ещё не было соц-pull'а или картинки нет.
   thumbnailB64: z.string().nullable(),
+  // Страница есть в реестре РКН (live-матчинг по username/инвайт-хэшу со
+  // словарём rkn_records, суточный синк с Госуслуг). При memberCount > 10k
+  // и false UI показывает красную тревогу «Нет РКН».
+  isRkn: z.boolean(),
   // Админы канала (плоский список). Sticky-аккаунт берётся из contact'а
   // первого админа (UI-колонка «закреплён за»).
   admins: z.array(

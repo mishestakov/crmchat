@@ -1223,3 +1223,45 @@ export const projectShares = pgTable(
   (t) => [index("project_shares_project_id_idx").on(t.projectId)],
 );
 
+// --- РКН-реестр (T4.5) ---
+// Глобальный словарь страниц из реестра РКН (Госуслуги, SocNet_reestr):
+// НЕ workspace-scoped — реестр один на всех. ~200k строк, полный дамп всех
+// соцсетей (ВК/TG/YT/…). Синк — rkn-registry worker раз в сутки, диффом по
+// uid с guard'ом «не применять, если удаляется >2% — выгрузка подозрительна».
+export const rknRecords = pgTable(
+  "rkn_records",
+  {
+    // Уникальный id реестровой записи (из самого реестра).
+    uid: text("uid").primaryKey(),
+    // Название соцсети как в реестре («ВКонтакте», «Telegram», …).
+    network: text("network").notNull(),
+    url: text("url").notNull(),
+    // Название страницы (заполнено почти всегда).
+    title: text("title"),
+    // active | reissued (перевыпущенная запись — тоже действующая).
+    status: text("status").notNull(),
+    // Нормализованный ключ матчинга с channels: "<platform>:<lower-username>"
+    // или "telegram:+<invite-hash>" для приватных. NULL — не наша платформа
+    // или url не распарсился. Вычисляется при синке (lib/rkn-registry.ts).
+    matchKey: text("match_key"),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("rkn_records_match_key_idx").on(t.matchKey),
+    index("rkn_records_network_idx").on(t.network),
+    // ORDER BY url в пагинации страницы реестра — index scan вместо
+    // сортировки всех 200k на каждый запрос.
+    index("rkn_records_url_idx").on(t.url),
+  ],
+);
+
+// Мета синка РКН — singleton-строка (id='rkn'): дата последнего успешного
+// синка + статус последней попытки (ok / текст ошибки) для страницы реестра.
+export const rknSync = pgTable("rkn_sync", {
+  id: text("id").primaryKey(),
+  lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
+  lastStatus: text("last_status"),
+  total: integer("total").notNull().default(0),
+});

@@ -31,6 +31,8 @@ import {
 } from "../lib/contacts-access.ts";
 import { subscribeContacts } from "../lib/events.ts";
 import { onMarkedUnread } from "../lib/outreach-listener.ts";
+import { channelRknExistsSqlText } from "../lib/rkn-registry.ts";
+import { ilikeContains } from "../lib/ilike.ts";
 import type { TdClient } from "../lib/tdlib/index.ts";
 import {
   contactTgUserIdSql,
@@ -122,6 +124,7 @@ type ChannelRow = {
   lastMessageAt: string | null;
   hasDm: boolean;
   unavailableSince: string | null;
+  isRkn: boolean;
 };
 const channelsSql = sql<ChannelRow[]>`(
   SELECT COALESCE(
@@ -133,7 +136,8 @@ const channelsSql = sql<ChannelRow[]>`(
         'memberCount', ch.member_count,
         'lastMessageAt', ch.last_message_at,
         'hasDm', COALESCE((ch.meta->>'has_dm')::boolean, false),
-        'unavailableSince', ch.unavailable_since
+        'unavailableSince', ch.unavailable_since,
+        'isRkn', ${sql.raw(channelRknExistsSqlText("ch"))}
       )
       ORDER BY ch.last_message_at DESC NULLS LAST, ch.title
     ),
@@ -204,7 +208,7 @@ app.openapi(
     const conditions: SQL[] = [contactAccessClause(wsId)];
 
     if (q && q.trim()) {
-      const pat = `%${q.trim()}%`;
+      const pat = ilikeContains(q.trim());
       const matchOr = or(
         ...SEARCHABLE_KEYS.map(
           (k) => ilike(sql`${contacts.properties}->>${k}`, pat) as SQL,

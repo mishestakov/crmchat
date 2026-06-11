@@ -19,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import type { Channel, FieldDef } from "@repo/core";
+import { RknBadge } from "./channel-badges";
 import { api } from "../lib/api";
 import { PropertyFields } from "./property-fields";
 import { PLATFORMS, type Platform } from "../lib/platforms";
@@ -489,6 +490,12 @@ function ChannelHero(props: {
                 <LinkIcon size={11} className="opacity-60" />
               </a>
             )}
+            {/* РКН прямо в hero — тот же RknBadge, что в списках. */}
+            <RknBadge
+              isRkn={channel.isRkn}
+              memberCount={channel.memberCount}
+              withIcon
+            />
           </div>
           <div
             className={
