@@ -3,6 +3,7 @@ import { and, desc, ilike, or, sql, count, eq } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import { rknRecords, rknSync } from "../db/schema.ts";
 import { ilikeContains } from "../lib/ilike.ts";
+import { getRknSyncProgress } from "../lib/rkn-registry.ts";
 import type { SessionVars } from "../middleware/require-session.ts";
 
 // Страница словаря РКН: поиск по реестру (главный сценарий — проверить
@@ -35,6 +36,16 @@ const RknListSchema = z
     registryTotal: z.number().int(),
     // Размер страницы — фронт считает пагинацию от него, не хардкодит.
     pageSize: z.number().int(),
+    // Идущий прямо сейчас синк (in-memory у воркера): фронт показывает
+    // прогресс-полосу и поллит, пока не null. total=0 — ещё нет первой
+    // страницы.
+    syncProgress: z
+      .object({
+        startedAt: z.iso.datetime(),
+        fetched: z.number().int(),
+        total: z.number().int(),
+      })
+      .nullable(),
   })
   .openapi("RknList");
 
@@ -123,6 +134,7 @@ app.openapi(
       lastStatus: meta?.lastStatus ?? null,
       registryTotal: meta?.total ?? 0,
       pageSize: PAGE_SIZE,
+      syncProgress: getRknSyncProgress(),
     });
   },
 );

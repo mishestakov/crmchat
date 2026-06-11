@@ -164,6 +164,10 @@ async function fetchAll(): Promise<RegistryRecord[]> {
     total = t;
     if (rawCount === 0) break;
     for (const it of items) out.set(it.uid, it);
+    if (state.progress) {
+      state.progress.fetched = out.size;
+      state.progress.total = total;
+    }
     if (page % 50 === 0) {
       console.log(`[rkn-registry] fetch ${out.size}/${total}`);
     }
@@ -180,6 +184,11 @@ const CHUNK = 1000;
 
 export async function syncRknRegistry(): Promise<void> {
   console.log("[rkn-registry] sync started");
+  state.progress = {
+    startedAt: new Date().toISOString(),
+    fetched: 0,
+    total: 0,
+  };
   try {
     const fetched = await fetchAll();
     const fresh = new Map(fetched.map((r) => [r.uid, r]));
@@ -281,6 +290,8 @@ export async function syncRknRegistry(): Promise<void> {
         set: { lastStatus: `error: ${msg}` },
       })
       .catch(() => {});
+  } finally {
+    state.progress = null;
   }
 }
 
@@ -288,15 +299,28 @@ export async function syncRknRegistry(): Promise<void> {
 // успешного синка). Первый запуск после деплоя с пустой таблицей синкнет
 // сразу. globalThis-стейт против двойного интервала при HMR (как у
 // outreach-worker).
+type SyncProgress = {
+  startedAt: string;
+  fetched: number;
+  total: number;
+};
 type RknWorkerState = {
   timer: ReturnType<typeof setInterval> | null;
   running: boolean;
+  // Прогресс идущего синка (страница РКН показывает полосу). In-memory:
+  // single-instance, потеря при рестарте безвредна — синк начнётся заново.
+  progress: SyncProgress | null;
 };
 const globalRef = globalThis as { __rknWorker?: RknWorkerState };
 const state: RknWorkerState = (globalRef.__rknWorker ??= {
   timer: null,
   running: false,
+  progress: null,
 });
+
+export function getRknSyncProgress(): SyncProgress | null {
+  return state.progress;
+}
 
 async function checkAndSync() {
   if (state.running) return;

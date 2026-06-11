@@ -4,6 +4,7 @@ import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import { errorMessage } from "../../../../lib/errors";
 import { formatRelative } from "../../../../lib/date-utils";
+import { ProgressBar } from "../../../../components/progress-bar";
 import { SearchInput } from "../../../../components/search-input";
 
 // Словарь РКН (T4.5): поиск по реестру страниц с Госуслуг. Главный сценарий —
@@ -26,6 +27,13 @@ function RknPage() {
     queryKey: ["rkn", q, network, page] as const,
     // Старые данные на экране, пока едет новая страница — таблица не мигает.
     placeholderData: keepPreviousData,
+    // Пока идёт синк — поллим, чтобы прогресс-полоса и итог обновились сами.
+    // Пустой реестр (первый синк мог стартовать после загрузки страницы) —
+    // тоже поллим, иначе «ещё не загружен» не обновится без действий юзера.
+    refetchInterval: (query) =>
+      query.state.data?.syncProgress || !query.state.data?.lastSyncAt
+        ? 4000
+        : false,
     queryFn: async () => {
       const { data, error } = await api.GET("/v1/rkn", {
         params: {
@@ -44,6 +52,10 @@ function RknPage() {
   const d = listQ.data;
   const pages = d ? Math.max(1, Math.ceil(d.filteredTotal / d.pageSize)) : 1;
   const syncFailed = d?.lastStatus && d.lastStatus !== "ok";
+  const prog = d?.syncProgress ?? null;
+  const progPct = prog?.total
+    ? Math.min(100, Math.round((prog.fetched / prog.total) * 100))
+    : 0;
 
   return (
     <div className="p-6">
@@ -52,9 +64,31 @@ function RknPage() {
         <div className="text-xs text-zinc-500">
           {d?.lastSyncAt
             ? `Обновлено ${formatRelative(d.lastSyncAt)} · ${d.registryTotal.toLocaleString("ru")} записей · автообновление раз в сутки`
-            : "Реестр ещё не загружен — первый синк идёт несколько минут"}
+            : !prog &&
+              "Реестр ещё не загружен — первый синк идёт несколько минут"}
         </div>
       </div>
+      {prog && (
+        <div className="mb-3 mt-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2">
+          <div className="flex items-baseline justify-between text-xs text-sky-800">
+            <span>
+              {progPct >= 100
+                ? "Обновление реестра: применяем изменения…"
+                : `Обновление реестра: ${progPct}%`}
+              {prog.total > 0 &&
+                progPct < 100 &&
+                ` · ${prog.fetched.toLocaleString("ru")} из ${prog.total.toLocaleString("ru")}`}
+            </span>
+            <span>начато {formatRelative(prog.startedAt)}</span>
+          </div>
+          <ProgressBar
+            pct={progPct}
+            className="mt-1.5"
+            trackClass="bg-sky-100"
+            fillClass="bg-sky-500"
+          />
+        </div>
+      )}
       {syncFailed && (
         <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-800">
           Последняя попытка обновления не удалась: {d!.lastStatus} — показаны

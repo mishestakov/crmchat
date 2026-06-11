@@ -36,6 +36,7 @@ import {
 import { OUTREACH_QK } from "../../../../../lib/query-keys";
 import { PlatformBadge } from "../../../../../lib/platforms";
 import { ChannelBadges } from "../../../../../components/channel-badges";
+import { ProgressBar } from "../../../../../components/progress-bar";
 import {
   type ShareStep,
   shareDeepLink,
@@ -537,15 +538,13 @@ function LonglistPhase({
       <div className="shrink-0 border-b border-zinc-200 bg-white px-4 py-2.5">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <div className="flex items-center gap-2">
-            <div className="h-1.5 w-32 overflow-hidden rounded-full bg-zinc-200">
-              <div
-                className={
-                  "h-full rounded-full " +
-                  (unready === 0 && total > 0 ? "bg-emerald-500" : "bg-amber-400")
-                }
-                style={{ width: `${pct}%` }}
-              />
-            </div>
+            <ProgressBar
+              pct={pct}
+              className="w-32"
+              fillClass={
+                unready === 0 && total > 0 ? "bg-emerald-500" : "bg-amber-400"
+              }
+            />
             <span className="text-xs text-zinc-600">
               Контакты {ready}/{total}
               {unready > 0 && (
@@ -1924,14 +1923,9 @@ function WrapupPhase({ wsId, campaign }: { wsId: string; campaign: Campaign }) {
                   {completed} из {rows.length}
                 </span>
               </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-zinc-200">
-                <div
-                  className="h-full bg-emerald-500 transition-all"
-                  style={{
-                    width: `${Math.round((completed / rows.length) * 100)}%`,
-                  }}
-                />
-              </div>
+              <ProgressBar
+                pct={Math.round((completed / rows.length) * 100)}
+              />
             </div>
           );
         })()}
