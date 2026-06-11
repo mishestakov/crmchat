@@ -3,12 +3,17 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { api } from "../lib/api";
 import { errorMessage } from "../lib/errors";
+import { invalidateProject } from "../lib/query-keys";
 import { Modal } from "./modal";
 
 // Массовое добавление каналов в проект (placements/bulk). Общий компонент для
 // BD и agency — несущий слой канало-центричной схемы один. Каждая строка ввода
 // — @username или ссылка; канал заводится/находится в базе, получатель аутрича
-// резолвится от админа канала. Рассылка отсюда НЕ запускается.
+// резолвится от админа канала.
+//
+// В draft рассылка отсюда не запускается (гейт /activate). В идущем проекте —
+// горячая доливка планирует опенеры сразу, поэтому пропс outreach включает
+// плашку-ясность («уйдут сразу» / «запустишь кнопкой») и стоп-кран «на паузу».
 //
 // Тексты параметризованы (agency говорит «блогеры в лонглист», BD — «каналы»).
 // База каналов (queryKey ["channels", wsId]) инвалидируется всегда; остальное —
@@ -21,6 +26,9 @@ export function AddChannelsModal(props: {
   // Существительное во множественном для счётчика («каналов»/«блогеров»).
   unit?: string;
   onAdded?: () => void;
+  // Идущий проект: status + «есть ли неотправленные опенеры» (outreachHot из
+  // /leads). undefined = draft/done — плашка не рисуется.
+  outreach?: { status: "active" | "paused"; hot: boolean };
 }) {
   const {
     wsId,
@@ -29,8 +37,20 @@ export function AddChannelsModal(props: {
     title = "Добавить каналы",
     unit = "каналов",
     onAdded,
+    outreach,
   } = props;
   const qc = useQueryClient();
+
+  const pause = useMutation({
+    mutationFn: async () => {
+      const { error } = await api.POST(
+        "/v1/workspaces/{wsId}/projects/{projectId}/pause",
+        { params: { path: { wsId, projectId } } },
+      );
+      if (error) throw error;
+    },
+    onSuccess: () => invalidateProject(qc, wsId, projectId),
+  });
   const [bulkText, setBulkText] = useState("");
   const bulkLines = bulkText
     .split("\n")
@@ -81,11 +101,41 @@ export function AddChannelsModal(props: {
         </div>
       ) : (
         <>
-          <p className="mb-4 text-xs text-zinc-500">
+          <p className="mb-3 text-xs text-zinc-500">
             По одной ссылке или @username на строку. Каналы сразу просканируются
             (подписчики, описание, личка) и сопоставятся с базой контактов.
-            Рассылка не запускается — это отдельная кнопка «Запустить аутрич».
+            {!outreach &&
+              " Рассылка не запускается — это отдельная кнопка «Запустить аутрич»."}
           </p>
+          {outreach?.hot ? (
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <p>
+                {outreach.status === "paused"
+                  ? "Проект на паузе, но рассылка по списку не закончена: новым каналам с известным контактом опенер запланируется и уйдёт после возобновления."
+                  : "Рассылка идёт: новым каналам с известным контактом опенер уйдёт сразу, без отдельного подтверждения."}
+              </p>
+              {outreach.status === "active" && (
+                <button
+                  type="button"
+                  disabled={pause.isPending}
+                  onClick={() => pause.mutate()}
+                  className="mt-1.5 rounded-md bg-amber-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+                >
+                  {pause.isPending
+                    ? "Ставим на паузу…"
+                    : "Сначала поставить проект на паузу"}
+                </button>
+              )}
+              {pause.error && (
+                <p className="mt-1 text-red-600">{errorMessage(pause.error)}</p>
+              )}
+            </div>
+          ) : outreach ? (
+            <div className="mb-4 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+              Рассылка по списку уже отыграна — новым каналам ничего не уйдёт
+              само. Запустить по ним рассылку можно кнопкой на странице лидов.
+            </div>
+          ) : null}
           <textarea
             autoFocus
             rows={7}

@@ -402,12 +402,108 @@ export async function scheduleLeads(opts: {
 }
 
 
+// «Рассылка по списку ещё идёт» = в проекте есть неотправленные опенеры.
+// Разделяет доливку на горячую и холодную: пока опенеры стоят в очереди,
+// новые лиды просто встают в хвост (ожидаемо); когда список отыгран,
+// немедленная отправка для юзера — сюрприз, новых запускает явная кнопка
+// («Запустить рассылку по новым», schedule-new-leads).
+export async function hasPendingOpeners(projectId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: scheduledMessages.id })
+    .from(scheduledMessages)
+    .where(
+      and(
+        eq(scheduledMessages.projectId, projectId),
+        eq(scheduledMessages.status, "pending"),
+        eq(scheduledMessages.messageIdx, 0),
+      ),
+    )
+    .limit(1);
+  return !!row;
+}
+
+// Размещения лонглиста, до которых авто-рассылка ещё не добиралась: нет ни
+// pending (в очереди), ни sent (цепочка начата), ни failed (постоянная ошибка
+// — переотправка упадёт так же). Cancelled не блокирует: после скипа лида его
+// pending удаляются, а «Вернуть в рассылку» приводит сюда же.
+const unscheduledLeadSql = sql`not exists (
+  select 1 from scheduled_messages sm
+  where sm.item_id = ${projectItems.id}
+    and sm.status in ('pending', 'sent', 'failed')
+)`;
+
+// Сколько лидов лонглиста ждут явного запуска (баннер на странице лидов).
+// username is not null: без-контактные лиды под отдельным баннером
+// («Обработать» → прет-инбокс), сюда не двоим.
+export async function countUnscheduledLeads(projectId: string): Promise<number> {
+  return db.$count(
+    projectItems,
+    and(
+      eq(projectItems.projectId, projectId),
+      isNotNull(projectItems.username),
+      isNull(projectItems.shortlistedAt),
+      isNull(projectItems.skippedAt),
+      sql`${projectItems.available} is distinct from false`,
+      unscheduledLeadSql,
+    ),
+  );
+}
+
+// Допланировать опенеры незапланированным лидам проекта (холодная доливка по
+// явной кнопке, возврат скипнутого лида). Возвращает число админов, вставших
+// в очередь. itemId сужает до одного размещения (unskip).
+export async function scheduleUnscheduledLeads(opts: {
+  project: typeof projects.$inferSelect;
+  itemId?: string;
+}): Promise<number> {
+  const { project } = opts;
+  const accountIds = await resolveProjectAccountIds(
+    project.workspaceId,
+    project,
+  );
+  if (accountIds.length === 0) return 0;
+  const items = await db
+    .select()
+    .from(projectItems)
+    .where(
+      and(
+        eq(projectItems.projectId, project.id),
+        ...(opts.itemId ? [eq(projectItems.id, opts.itemId)] : []),
+        isNotNull(projectItems.username),
+        isNull(projectItems.shortlistedAt),
+        isNull(projectItems.skippedAt),
+        sql`${projectItems.available} is distinct from false`,
+        unscheduledLeadSql,
+      ),
+    )
+    .orderBy(asc(projectItems.createdAt));
+  if (items.length === 0) return 0;
+  const newRows = await scheduleLeads({
+    wsId: project.workspaceId,
+    project,
+    accountIds,
+    leads: items.map((item) => ({
+      id: item.id,
+      username: item.username,
+      tgUserId: item.tgUserId,
+      properties: (item.properties ?? {}) as Record<string, unknown>,
+    })),
+    baseTime: new Date(),
+    skipContacted: true,
+  });
+  if (newRows.length > 0) {
+    await db.insert(scheduledMessages).values(newRows);
+  }
+  return new Set(newRows.map((r) => r.itemId)).size;
+}
+
 // Поздняя доливка (10.06.26, «доливка 100% нужна»): канал добавили в ИДУЩИЙ
 // проект без контакта, контакт нашли позже (set-admin/admins → heal).
 // scheduleDolivka на bulk-импорте такие размещения отбрасывает (нет
 // получателя) — без этого вызова опенер им не запланирует никто и канал
 // молча выпадает из рассылки. paused тоже планируем: worker на паузе не
-// шлёт, после resume уйдёт.
+// шлёт, после resume уйдёт. Холодный проект (опенеры отыграны) НЕ планируем
+// — там новых запускает явная кнопка (см. hasPendingOpeners).
 export async function scheduleDolivkaForChannel(
   channelId: string,
 ): Promise<void> {
@@ -419,6 +515,7 @@ export async function scheduleDolivkaForChannel(
       and(
         eq(projectItems.channelId, channelId),
         inArray(projects.status, ["active", "paused"]),
+        isNull(projectItems.skippedAt),
         sql`not exists (
           select 1 from scheduled_messages sm where sm.item_id = ${projectItems.id}
         )`,
@@ -428,6 +525,7 @@ export async function scheduleDolivkaForChannel(
   const byProject = Map.groupBy(rows, (r) => r.project.id);
   for (const group of byProject.values()) {
     const project = group[0]!.project;
+    if (!(await hasPendingOpeners(project.id))) continue;
     const accountIds = await resolveProjectAccountIds(
       project.workspaceId,
       project,

@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
@@ -171,6 +171,39 @@ function LeadsPage() {
       inboxItems[0])
     : undefined;
 
+  // Холодная доливка: список отыгран → новые лиды не планируются сами,
+  // запускает явная кнопка. Счёт с бэка (страница может быть обрезана).
+  const unscheduledCount = leadsQ.data?.unscheduledCount ?? 0;
+  const scheduleNew = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.POST(
+        "/v1/workspaces/{wsId}/projects/{projectId}/schedule-new-leads",
+        { params: { path: { wsId, projectId } } },
+      );
+      if (error) throw error;
+      return data!;
+    },
+    onSuccess: () => invalidateProject(qc, wsId, projectId, { leads: true }),
+  });
+
+  // Точечный стоп-кран: исключить лида из авто-рассылки / вернуть обратно.
+  const skipLead = useMutation({
+    mutationFn: async (vars: { itemId: string; skipped: boolean }) => {
+      const path = { wsId, projectId, itemId: vars.itemId };
+      const { error } = vars.skipped
+        ? await api.POST(
+            "/v1/workspaces/{wsId}/projects/{projectId}/items/{itemId}/unskip",
+            { params: { path } },
+          )
+        : await api.POST(
+            "/v1/workspaces/{wsId}/projects/{projectId}/items/{itemId}/skip",
+            { params: { path } },
+          );
+      if (error) throw error;
+    },
+    onSuccess: () => invalidateProject(qc, wsId, projectId, { leads: true }),
+  });
+
   return (
     <div className="space-y-3">
       <ProjectTabs wsId={wsId} projectId={projectId} />
@@ -298,6 +331,43 @@ function LeadsPage() {
             </button>
           </div>
         )}
+        {canPrep && !prepMode && unscheduledCount > 0 && (
+          // Холодная доливка / возвращённые скипы: рассылка по списку уже
+          // отыграна, новых сама не подхватит — явный запуск.
+          <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+            <div className="flex items-center justify-between gap-3">
+              <span>
+                {unscheduledCount}{" "}
+                {pluralize(unscheduledCount, "лид", "лида", "лидов")} вне
+                рассылки — опенер им не запланирован.
+                {seq.data?.status === "paused" &&
+                  " Проект на паузе: после запуска уйдут при возобновлении."}
+              </span>
+              <button
+                type="button"
+                disabled={scheduleNew.isPending}
+                onClick={() => scheduleNew.mutate()}
+                className="shrink-0 rounded-lg bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50"
+              >
+                {scheduleNew.isPending
+                  ? "Запускаем…"
+                  : `Запустить рассылку (${unscheduledCount})`}
+              </button>
+            </div>
+            {scheduleNew.data?.scheduled === 0 && (
+              <p className="mt-1.5 text-xs text-sky-700">
+                Новых отправок не получилось: эти админы уже контактированы в
+                проекте или авто-опенер им не адресуется (бот/ручной способ
+                связи).
+              </p>
+            )}
+            {scheduleNew.error && (
+              <p className="mt-1.5 text-xs text-red-600">
+                {errorMessage(scheduleNew.error)}
+              </p>
+            )}
+          </div>
+        )}
         {leadsQ.data && inboxItems.length > 0 && showPrepInbox && (
           // Инбокс подготовки (D1, как агентский лонглист): слева компактный
           // список, справа канал + резолвер выбранного. Поточная обработка —
@@ -367,15 +437,26 @@ function LeadsPage() {
                     key={l.id}
                     onClick={() => setDrawerLeadId(l.id)}
                     className={
-                      "cursor-pointer border-t border-zinc-100 hover:bg-zinc-50 " +
-                      (l.repliedAt ? "bg-emerald-50/40" : "")
+                      "group cursor-pointer border-t border-zinc-100 hover:bg-zinc-50 " +
+                      (l.repliedAt ? "bg-emerald-50/40 " : "") +
+                      (l.skippedAt ? "opacity-60" : "")
                     }
                   >
                     <td
                       className="sticky left-0 px-4 py-2 align-top"
                       style={{ background: "inherit" }}
                     >
-                      <LeadCell lead={l} wsId={wsId} />
+                      <LeadCell
+                        lead={l}
+                        wsId={wsId}
+                        canSkip={canPrep}
+                        onToggleSkip={() =>
+                          skipLead.mutate({
+                            itemId: l.id,
+                            skipped: !!l.skippedAt,
+                          })
+                        }
+                      />
                     </td>
                     <td className="px-4 py-2 align-top">
                       <AccountCell
@@ -420,6 +501,14 @@ function LeadsPage() {
           projectId={projectId}
           onClose={() => setShowAddChannels(false)}
           onAdded={() => invalidateProject(qc, wsId, projectId, { leads: true })}
+          outreach={
+            canPrep && seq.data
+              ? {
+                  status: seq.data.status as "active" | "paused",
+                  hot: leadsQ.data?.outreachHot ?? false,
+                }
+              : undefined
+          }
         />
       )}
     </div>
@@ -427,11 +516,26 @@ function LeadsPage() {
 }
 
 
-function LeadCell({ lead, wsId }: { lead: Lead; wsId: string }) {
+function LeadCell({
+  lead,
+  wsId,
+  canSkip,
+  onToggleSkip,
+}: {
+  lead: Lead;
+  wsId: string;
+  // Исключение из рассылки доступно в active/paused (в draft лида удаляют).
+  canSkip: boolean;
+  onToggleSkip: () => void;
+}) {
   const ch = lead.channel;
   const channelLabel =
     ch?.title || (ch?.username ? `@${ch.username}` : "—");
   const admin = lead.username ? `@${lead.username}` : null;
+  const toggleSkip = (e: React.MouseEvent) => {
+    e.stopPropagation(); // клик по строке открывает drawer
+    onToggleSkip();
+  };
   return (
     <div className="space-y-0.5">
       <div className="font-medium">{channelLabel}</div>
@@ -449,6 +553,33 @@ function LeadCell({ lead, wsId }: { lead: Lead; wsId: string }) {
         >
           → контакт
         </Link>
+      )}
+      {lead.skippedAt ? (
+        <div className="flex items-center gap-1.5 text-xs">
+          <span className="rounded bg-zinc-200 px-1.5 py-0.5 text-zinc-600">
+            исключён из рассылки
+          </span>
+          {canSkip && (
+            <button
+              type="button"
+              onClick={toggleSkip}
+              className="font-medium text-emerald-700 hover:underline"
+            >
+              вернуть
+            </button>
+          )}
+        </div>
+      ) : (
+        canSkip && (
+          <button
+            type="button"
+            onClick={toggleSkip}
+            title="Отменить запланированные сообщения этому лиду"
+            className="text-xs text-zinc-400 opacity-0 hover:text-red-600 hover:underline group-hover:opacity-100"
+          >
+            исключить из рассылки
+          </button>
+        )
       )}
     </div>
   );

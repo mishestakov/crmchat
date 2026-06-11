@@ -30,9 +30,12 @@ import {
 } from "../lib/projects-access.ts";
 import {
   channelIdentifier,
+  countUnscheduledLeads,
+  hasPendingOpeners,
   resolveProjectAccountIds,
   resolveStickyByTgUserIds,
   scheduleLeads,
+  scheduleUnscheduledLeads,
 } from "../lib/project-scheduling.ts";
 import { type WorkspaceVars } from "../middleware/assert-member.ts";
 import { nextStepSql } from "./contacts.ts";
@@ -233,6 +236,8 @@ const LeadProgressSchema = z
     // Готов ли канал к рассылке — тот же предикат, что гейт /activate
     // (contactReadySql). Фильтр/подсветка «без контакта» в draft-списке.
     contactReady: z.boolean(),
+    // Исключён из авто-рассылки (POST /items/{id}/skip). Бейдж + «Вернуть».
+    skippedAt: z.iso.datetime().nullable(),
     // Канал размещения — получатель аутрича резолвится от его админа. null
     // быть не должно (айтем = placement), но left-join → nullable.
     channel: z
@@ -928,6 +933,14 @@ app.openapi(
               total: z.number().int(),
               totalCount: z.number().int(),
               repliedCount: z.number().int(),
+              // Лиды лонглиста, до которых авто-рассылка не добиралась
+              // (холодная доливка / возвращённые скипы). Баннер «Запустить
+              // рассылку по новым» в active/paused.
+              unscheduledCount: z.number().int(),
+              // Есть ли неотправленные опенеры (рассылка по списку идёт).
+              // Плашка-ясность в модалке добавления каналов: горячо → «новые
+              // уйдут сразу», холодно → «новых запускает кнопка».
+              outreachHot: z.boolean(),
               leads: z.array(LeadProgressSchema),
             }),
           },
@@ -958,9 +971,12 @@ app.openapi(
               AND sm.account_id IN ${myAccountIdsSql(wsId, userId)}
           )`;
 
-    // repliedAgg + leadRows независимы — параллелим. repliedCount по всему
-    // списку (не пагинированному) для шапки «N ответили из M».
-    const [repliedCount, leadRows] = await Promise.all([
+    // Агрегаты + leadRows независимы — параллелим. Счётчики по всему списку
+    // (не пагинированному): repliedCount для шапки «N ответили из M»,
+    // unscheduledCount/outreachHot — для баннера «Запустить» и плашки в
+    // модалке добавления. Для draft оба не используются UI.
+    const [repliedCount, unscheduledCount, outreachHot, leadRows] =
+      await Promise.all([
       db.$count(
         projectItems,
         and(
@@ -969,6 +985,8 @@ app.openapi(
           memberFilter,
         ),
       ),
+      countUnscheduledLeads(project.id),
+      hasPendingOpeners(project.id),
       db
         .select({
           id: projectItems.id,
@@ -981,6 +999,7 @@ app.openapi(
           markedUnread: sql<boolean>`coalesce(${contacts.markedUnread}, false)`,
           nextStep: nextStepSql,
           stageId: projectItems.stageId,
+          skippedAt: projectItems.skippedAt,
           channelId: channels.id,
           channelTitle: channels.title,
           channelUsername: channels.username,
@@ -999,7 +1018,14 @@ app.openapi(
     ]);
 
     if (leadRows.length === 0) {
-      return c.json({ total: 0, totalCount, repliedCount, leads: [] });
+      return c.json({
+        total: 0,
+        totalCount,
+        repliedCount,
+        unscheduledCount,
+        outreachHot,
+        leads: [],
+      });
     }
 
     // Все scheduled_messages для этих лидов одним запросом, агрегируем в JS.
@@ -1066,6 +1092,8 @@ app.openapi(
       total: leadRows[0]?.total ?? 0,
       totalCount,
       repliedCount,
+      unscheduledCount,
+      outreachHot,
       leads: leadRows.map((l) => {
         const items = byLead.get(l.id) ?? [];
         // Аккаунт берём из первого scheduled_message — все сообщения этого
@@ -1109,6 +1137,7 @@ app.openapi(
           nextStep: l.nextStep,
           stageId: l.stageId,
           contactReady: l.contactReady,
+          skippedAt: l.skippedAt?.toISOString() ?? null,
           channel: l.channelId
             ? {
                 id: l.channelId,
@@ -1214,6 +1243,144 @@ app.openapi(
       throw new HTTPException(404, { message: "item not found" });
     }
     return c.body(null, 204);
+  },
+);
+
+// Исключение лида из авто-рассылки в идущем проекте — точечный стоп-кран
+// вместо паузы всей кампании (в draft лида просто удаляют). Pending-строки
+// удаляем (не cancel): лид возвращается в «незапланированное» состояние, и
+// «Вернуть в рассылку» / явный запуск работают тем же путём, что доливка,
+// без дублей (item, msg_idx). Уже отправленное (sent) не трогаем — история.
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/items/{itemId}/skip",
+    tags: ["outreach"],
+    request: {
+      params: WsProjectParam.extend({ itemId: z.string().min(1).max(64) }),
+    },
+    responses: { 204: { description: "Skipped" } },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const { projectId, itemId } = c.req.valid("param");
+    const project = await assertProjectAccess(projectId, wsId, userId, role);
+    if (project.status !== "active" && project.status !== "paused") {
+      throw new HTTPException(400, {
+        message: "Исключать из рассылки можно только в запущенном проекте",
+      });
+    }
+    const result = await db
+      .update(projectItems)
+      .set({ skippedAt: new Date() })
+      .where(
+        and(eq(projectItems.id, itemId), eq(projectItems.projectId, projectId)),
+      )
+      .returning({ id: projectItems.id });
+    if (result.length === 0) {
+      throw new HTTPException(404, { message: "item not found" });
+    }
+    await db
+      .delete(scheduledMessages)
+      .where(
+        and(
+          eq(scheduledMessages.itemId, itemId),
+          eq(scheduledMessages.status, "pending"),
+        ),
+      );
+    emitProjectChanged(projectId);
+    return c.body(null, 204);
+  },
+);
+
+// Возврат скипнутого лида в рассылку. Если рассылка по списку ещё идёт
+// (горячо) и цепочка лида не начата — опенер сразу встаёт в очередь; если
+// список отыгран (холодно) — лид попадает под баннер «Запустить рассылку
+// по новым» (то же правило, что у доливки).
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/items/{itemId}/unskip",
+    tags: ["outreach"],
+    request: {
+      params: WsProjectParam.extend({ itemId: z.string().min(1).max(64) }),
+    },
+    responses: { 204: { description: "Unskipped" } },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const { projectId, itemId } = c.req.valid("param");
+    const project = await assertProjectAccess(projectId, wsId, userId, role);
+    const result = await db
+      .update(projectItems)
+      .set({ skippedAt: null })
+      .where(
+        and(eq(projectItems.id, itemId), eq(projectItems.projectId, projectId)),
+      )
+      .returning({ id: projectItems.id });
+    if (result.length === 0) {
+      throw new HTTPException(404, { message: "item not found" });
+    }
+    if (
+      (project.status === "active" || project.status === "paused") &&
+      (await hasPendingOpeners(project.id))
+    ) {
+      await scheduleUnscheduledLeads({ project, itemId });
+    }
+    emitProjectChanged(projectId);
+    return c.body(null, 204);
+  },
+);
+
+// Явный запуск рассылки по лидам, до которых она не добиралась: холодная
+// доливка (список отыгран — авто-планирования нет) и возвращённые скипы.
+// Кнопка баннера «N новых лидов вне рассылки» на странице лидов.
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/schedule-new-leads",
+    tags: ["outreach"],
+    request: { params: WsProjectParam },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({ scheduled: z.number().int() }),
+          },
+        },
+        description: "Опенеры запланированы",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const { projectId } = c.req.valid("param");
+    const project = await assertProjectAccess(projectId, wsId, userId, role);
+    if (project.status !== "active" && project.status !== "paused") {
+      throw new HTTPException(400, {
+        message: "Запускать рассылку по новым можно только в запущенном проекте",
+      });
+    }
+    if (project.messages.length === 0) {
+      throw new HTTPException(400, {
+        message: "У проекта нет цепочки сообщений — нечего слать",
+      });
+    }
+    const accountIds = await resolveProjectAccountIds(wsId, project);
+    if (accountIds.length === 0) {
+      throw new HTTPException(400, {
+        message: "Нет активных Telegram-аккаунтов для рассылки",
+      });
+    }
+    const scheduled = await scheduleUnscheduledLeads({ project });
+    emitProjectChanged(projectId);
+    return c.json({ scheduled });
   },
 );
 

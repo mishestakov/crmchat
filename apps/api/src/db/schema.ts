@@ -729,6 +729,10 @@ export const projectItems = pgTable(
     contactId: text("contact_id").references(() => contacts.id, {
       onDelete: "set null",
     }),
+    // Исключён из авто-рассылки менеджером (active/paused; в draft лидов
+    // просто удаляют). Pending-сообщения при скипе удаляются; «Вернуть в
+    // рассылку» снимает метку и перепланирует опенер, если цепочка не начата.
+    skippedAt: timestamp("skipped_at", { withTimezone: true }),
 
     // Снимок свойств для подстановки {{key}} в шаблонах. {{каналы}}/{{канал}}/
     // {{ссылка}} синтезируются из базы каналов на активации (см. prepareLeads),
@@ -1218,3 +1222,4 @@ export const projectShares = pgTable(
   },
   (t) => [index("project_shares_project_id_idx").on(t.projectId)],
 );
+

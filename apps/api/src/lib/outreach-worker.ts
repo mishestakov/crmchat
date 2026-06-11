@@ -337,11 +337,9 @@ async function processAccount(accountId: string, items: DueItem[]) {
     }
 
     try {
-      const { tgUserId, tgChatId, tgPlaceholderId } = await sendMessagePhase(
-        client,
-        lead,
-        item.text,
-      );
+      const sent = await sendMessagePhase(client, lead, item);
+      if (!sent) continue; // пауза/отмена за время typing — row остаётся pending
+      const { tgUserId, tgChatId, tgPlaceholderId } = sent;
       // Оптимистично sent сразу после возврата TDLib'а — TG уже принял
       // сообщение, юзер должен увидеть «отправлено» в UI без задержки.
       // Залипание-и-закрытие чата выполним ниже, оно влияет только на
@@ -474,12 +472,12 @@ type LeadRow = typeof projectItems.$inferSelect;
 async function sendMessagePhase(
   client: TdClient,
   lead: LeadRow,
-  text: string,
+  item: DueItem,
 ): Promise<{
   tgUserId: string;
   tgChatId: string;
   tgPlaceholderId: string;
-}> {
+} | null> {
   if (!lead.username) {
     throw new Error("lead has no @username — cannot resolve TG user");
   }
@@ -519,10 +517,32 @@ async function sendMessagePhase(
   } as never);
   await sleep(randomMs(TYPING_MIN_MS, TYPING_MAX_MS));
 
+  // Typing-окно 15-40с — самое широкое место, где юзер успевает нажать
+  // «паузу проекта» или отменить сообщение, а откатить send уже нечем.
+  // Перечитываем оба статуса перед фактической отправкой; не active /
+  // не pending → выходим, row остаётся как есть (после resume уйдёт).
+  const [fresh] = await db
+    .select({
+      msgStatus: scheduledMessages.status,
+      projectStatus: projects.status,
+    })
+    .from(scheduledMessages)
+    .innerJoin(projects, eq(projects.id, scheduledMessages.projectId))
+    .where(eq(scheduledMessages.id, item.id))
+    .limit(1);
+  if (
+    !fresh ||
+    fresh.msgStatus !== "pending" ||
+    fresh.projectStatus !== "active"
+  ) {
+    await client.invoke({ _: "closeChat", chat_id: userId } as never);
+    return null;
+  }
+
   const sentMsg = (await client.invoke({
     _: "sendMessage",
     chat_id: userId,
-    input_message_content: inputMessageText(text),
+    input_message_content: inputMessageText(item.text),
   } as never)) as { id: number | string; chat_id: number | string };
 
   return {
