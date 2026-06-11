@@ -247,6 +247,11 @@ export const contacts = pgTable(
     // outreach-listener (входящее DM от tg_user_id, который у нас в contacts);
     // обнуляется явным POST /read из фронта.
     unreadCount: integer("unread_count").notNull().default(0),
+    // Ручная пометка «непрочитано» («вернуться позже»). В Telegram это флаг
+    // диалога (chat.is_marked_as_unread), не сообщения. Двусторонний синк:
+    // пишет outreach-listener на updateChatIsMarkedAsUnread, ставится из CRM
+    // через toggleChatIsMarkedAsUnread (+ та же запись сюда).
+    markedUnread: boolean("marked_unread").notNull().default(false),
     // Время последнего входящего сообщения от контакта — для сортировки кoлонок
     // канбана «свежий ответ сверху» в будущем + для UI-подсказок «X мин назад».
     lastMessageAt: timestamp("last_message_at", { withTimezone: true }),

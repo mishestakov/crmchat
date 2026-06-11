@@ -80,6 +80,17 @@ export function attachListener(
           void onReadInbox(workspaceId, x.chat_id, x.unread_count);
           return;
         }
+        case "updateChatIsMarkedAsUnread": {
+          // Ручная пометка «непрочитано» (наша ручка mark-unread или офиц.
+          // клиент юзера) — зеркалим в contacts. Ручка после toggle пишет
+          // через тот же onMarkedUnread напрямую; эхо-апдейт гасится guard'ом.
+          const x = update as {
+            chat_id: number;
+            is_marked_as_unread: boolean;
+          };
+          void onMarkedUnread(workspaceId, x.chat_id, x.is_marked_as_unread);
+          return;
+        }
         case "updateChatReadOutbox": {
           const x = update as {
             chat_id: number;
@@ -220,7 +231,7 @@ async function onNewMessage(
 
     if (updated.length > 0) {
       const leadIds = updated.map((u) => u.id);
-      const cancelled = await db
+      await db
         .update(scheduledMessages)
         .set({ status: "cancelled", error: "lead replied" })
         .where(
@@ -230,9 +241,11 @@ async function onNewMessage(
             // только холодную цепочку — финальный оффер на ответ не гасим.
             lt(scheduledMessages.messageIdx, FINAL_OFFER_MSG_IDX),
           ),
-        )
-        .returning({ projectId: scheduledMessages.projectId });
-      for (const projectId of new Set(cancelled.map((r) => r.projectId))) {
+        );
+      // Эмитим по самим ответившим, а не по отменённым сообщениям: лид,
+      // ответивший после последнего касания (отменять нечего), тоже должен
+      // live появиться на канбане.
+      for (const projectId of new Set(updated.map((u) => u.projectId))) {
         emitProjectChanged(projectId);
       }
     }
@@ -352,17 +365,56 @@ async function onReadInbox(
       .returning({
         id: contacts.id,
         unreadCount: contacts.unreadCount,
+        markedUnread: contacts.markedUnread,
         lastMessageAt: contacts.lastMessageAt,
       });
     for (const t of touched) {
       emitContactChanged(workspaceId, {
         contactId: t.id,
         unreadCount: t.unreadCount,
+        markedUnread: t.markedUnread,
         lastMessageAt: t.lastMessageAt?.toISOString() ?? null,
       });
     }
   } catch (e) {
     console.error("[outreach-listener] onReadInbox:", errMsg(e));
+  }
+}
+
+export async function onMarkedUnread(
+  workspaceId: string,
+  chatId: number,
+  markedUnread: boolean,
+): Promise<void> {
+  if (chatId <= 0) return; // только private DM
+  const tgUserIdStr = String(chatId);
+  try {
+    const touched = await db
+      .update(contacts)
+      .set({ markedUnread })
+      .where(
+        and(
+          eq(contacts.workspaceId, workspaceId),
+          sql`${contactTgUserIdSql} = ${tgUserIdStr}`,
+          sql`${contacts.markedUnread} <> ${markedUnread}`,
+        ),
+      )
+      .returning({
+        id: contacts.id,
+        unreadCount: contacts.unreadCount,
+        markedUnread: contacts.markedUnread,
+        lastMessageAt: contacts.lastMessageAt,
+      });
+    for (const t of touched) {
+      emitContactChanged(workspaceId, {
+        contactId: t.id,
+        unreadCount: t.unreadCount,
+        markedUnread: t.markedUnread,
+        lastMessageAt: t.lastMessageAt?.toISOString() ?? null,
+      });
+    }
+  } catch (e) {
+    console.error("[outreach-listener] onMarkedUnread:", errMsg(e));
   }
 }
 
@@ -403,6 +455,7 @@ async function emitChatChangedForContact(
       .select({
         id: contacts.id,
         unreadCount: contacts.unreadCount,
+        markedUnread: contacts.markedUnread,
         lastMessageAt: contacts.lastMessageAt,
       })
       .from(contacts)
@@ -417,6 +470,7 @@ async function emitChatChangedForContact(
     emitContactChanged(workspaceId, {
       contactId: contactRow.id,
       unreadCount: contactRow.unreadCount,
+      markedUnread: contactRow.markedUnread,
       lastMessageAt: contactRow.lastMessageAt?.toISOString() ?? null,
     });
   } catch (e) {

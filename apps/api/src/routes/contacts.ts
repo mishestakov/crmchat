@@ -30,6 +30,8 @@ import {
   contactAccessClause,
 } from "../lib/contacts-access.ts";
 import { subscribeContacts } from "../lib/events.ts";
+import { onMarkedUnread } from "../lib/outreach-listener.ts";
+import type { TdClient } from "../lib/tdlib/index.ts";
 import {
   contactTgUserIdSql,
   contactUsernameSql,
@@ -612,6 +614,7 @@ function serialize(row: ContactRow) {
     note: row.note,
     nextStep: row.nextStep,
     unreadCount: row.unreadCount,
+    markedUnread: row.markedUnread,
     lastMessageAt: row.lastMessageAt ? row.lastMessageAt.toISOString() : null,
     primaryAccountId: row.primaryAccountId,
     chatAccounts: row.chatAccounts,
@@ -725,6 +728,11 @@ const ChatMessageSchema = z.object({
   document: TdDocumentSchema.nullable(),
   reactions: z.array(MessageReactionSchema),
   replyMarkup: ReplyMarkupSchema.nullable(),
+  // Сообщение — ответ на другое (messageReplyToMessage). Текст оригинала фронт
+  // берёт из своей подгруженной ленты по id; replyQuote — выделенная цитата,
+  // если отвечали на кусок текста (фолбэк, когда оригинала нет в окне).
+  replyToId: z.string().nullable(),
+  replyQuote: z.string().nullable(),
   // id альбома (media_album_id), если сообщение — часть альбома; иначе null.
   // Фронт группирует по нему при пометке сообщения (фаза «Запуск»).
   albumId: z.string().nullable(),
@@ -976,6 +984,159 @@ app.openapi(
   },
 );
 
+// Резолв «контакт + аккаунт → TDLib-чат» для chat-ручек (mark-unread,
+// delete-messages; следующие кандидаты — edit и реакции). Аккаунт проверяется
+// на принадлежность воркспейсу — как в chat-history: иначе можно дёргать
+// чужой аккаунт по известному id (и холодный getOutreachWorkerClient привяжет
+// его listener к чужому workspace).
+async function resolveContactChat(
+  wsId: string,
+  contactId: string,
+  accountId: string,
+): Promise<{ chatId: string; client: TdClient }> {
+  const contact = await assertContactAccess(contactId, wsId);
+  const tgUserId = tgUserIdOf(contact.properties);
+  if (!tgUserId) {
+    throw new HTTPException(400, { message: "У контакта нет TG ID" });
+  }
+  const [acc] = await db
+    .select({ id: outreachAccounts.id })
+    .from(outreachAccounts)
+    .where(
+      and(
+        eq(outreachAccounts.id, accountId),
+        eq(outreachAccounts.workspaceId, wsId),
+      ),
+    )
+    .limit(1);
+  if (!acc) throw new HTTPException(404, { message: "account not found" });
+  const [chatRow] = await db
+    .select({ chatId: tgChats.chatId })
+    .from(tgChats)
+    .where(
+      and(eq(tgChats.accountId, accountId), eq(tgChats.peerUserId, tgUserId)),
+    )
+    .limit(1);
+  if (!chatRow) {
+    throw new HTTPException(400, {
+      message: "У этого аккаунта ещё нет диалога с контактом",
+    });
+  }
+  const client = await getOutreachWorkerClient({
+    id: accountId,
+    workspaceId: wsId,
+  });
+  if (!client) {
+    throw new HTTPException(503, { message: "tg client unavailable" });
+  }
+  return { chatId: chatRow.chatId, client };
+}
+
+// Пометка диалога «непрочитано» (chat-level, как в Telegram: флаг чата, не
+// сообщения — «отмотать прочитанность до сообщения N» протокол не умеет).
+// Дёргаем toggleChatIsMarkedAsUnread — пометка видна и в офиц. клиенте;
+// зеркало в contacts пишем сразу тем же onMarkedUnread (не ждём эха апдейта,
+// guard <> в нём делает эхо no-op).
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/contacts/{id}/chat/mark-unread",
+    tags: ["contacts"],
+    request: {
+      params: WsIdParam,
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({
+              accountId: z.string().min(1).max(64),
+              value: z.boolean(),
+            }),
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({ markedUnread: z.boolean() }),
+          },
+        },
+        description: "Toggled",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const { id } = c.req.valid("param");
+    const { accountId, value } = c.req.valid("json");
+    const { chatId, client } = await resolveContactChat(wsId, id, accountId);
+    try {
+      await client.invoke({
+        _: "toggleChatIsMarkedAsUnread",
+        chat_id: Number(chatId),
+        is_marked_as_unread: value,
+      } as never);
+    } catch (e) {
+      throw new HTTPException(400, { message: errMsg(e) });
+    }
+    await onMarkedUnread(wsId, Number(chatId), value);
+    return c.json({ markedUnread: value });
+  },
+);
+
+// Удаление сообщений — всегда «у обоих» (deleteMessages revoke=true; в private
+// DM Telegram это позволяет). Фронт показывает пункт только на своих
+// исходящих; если TDLib удалить не может — отдаём его ошибку как есть.
+// Ленту фронт перетянет сам: придёт updateDeleteMessages → SSE contact event.
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/contacts/{id}/chat/delete-messages",
+    tags: ["contacts"],
+    request: {
+      params: WsIdParam,
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({
+              accountId: z.string().min(1).max(64),
+              messageIds: z.array(z.string().min(1).max(64)).min(1).max(100),
+            }),
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": { schema: z.object({ ok: z.boolean() }) },
+        },
+        description: "Deleted",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const { id } = c.req.valid("param");
+    const { accountId, messageIds } = c.req.valid("json");
+    const { chatId, client } = await resolveContactChat(wsId, id, accountId);
+    try {
+      await client.invoke({
+        _: "deleteMessages",
+        chat_id: Number(chatId),
+        message_ids: messageIds.map(Number),
+        revoke: true,
+      } as never);
+    } catch (e) {
+      throw new HTTPException(400, { message: errMsg(e) });
+    }
+    return c.json({ ok: true });
+  },
+);
+
 // Старт бота (этап 16.9): если диалога с ботом ещё нет, первое действие —
 // /start (sendBotStartMessage). Для приватного бот-чата chat_id == bot_user_id.
 // После успеха фронт перетягивает chat-history — бот пришлёт меню/приветствие.
@@ -1117,6 +1278,16 @@ type TdMessage = {
   date: number;
   is_outgoing: boolean;
   content: TdContent;
+  // По td_api.tl (messageReplyToMessage): origin/content заполнены только
+  // для ответа на сообщение ИЗ ДРУГОГО чата («ответить в другом чате» — ей
+  // пользуются и в личках, цитируя пост канала); для same-chat оба null.
+  reply_to?: {
+    _: string;
+    message_id?: number | string;
+    quote?: { text?: { text?: string } };
+    origin?: unknown;
+    content?: TdContent;
+  };
   reply_markup?: TdReplyMarkup;
   media_album_id?: number | string;
   interaction_info?: {
@@ -1159,6 +1330,7 @@ function mapReplyMarkup(
 
 function mapMessage(m: TdMessage): z.infer<typeof ChatMessageSchema> {
   const { text, entities } = extractFormattedText(m.content);
+  const reply = m.reply_to?._ === "messageReplyToMessage" ? m.reply_to : null;
   const mediaThumb = extractMediaThumb(m.content);
   const document = extractDocument(m.content);
   const cm = extractCreativeMedia(m.content);
@@ -1179,6 +1351,20 @@ function mapMessage(m: TdMessage): z.infer<typeof ChatMessageSchema> {
     document,
     reactions: extractReactions(m.interaction_info),
     replyMarkup: mapReplyMarkup(m.reply_markup),
+    // Ответ «из другого чата» (origin != null) нашей ленте не атрибутируем —
+    // message_id там из id-пространства чужого чата, по нему легко найти не
+    // то сообщение. Отдаём только текст (цитата или контент оригинала),
+    // фронт нарисует некликабельную цитату.
+    replyToId:
+      reply && !reply.origin && reply.message_id
+        ? String(reply.message_id)
+        : null,
+    replyQuote:
+      reply?.quote?.text?.text ||
+      (reply?.origin && reply.content
+        ? extractFormattedText(reply.content).text
+        : "") ||
+      null,
     albumId:
       m.media_album_id && String(m.media_album_id) !== "0"
         ? String(m.media_album_id)

@@ -1,19 +1,25 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   Check,
   CheckCheck,
+  Copy,
   Download,
   FileText,
   Hash,
+  Mail,
+  MoreHorizontal,
   Pin,
+  Reply,
   Tag,
+  Trash2,
   Users,
   X,
 } from "lucide-react";
 import type { Contact } from "@repo/core";
 import { api, sendContactDocument } from "../lib/api";
+import { copyText } from "../lib/clipboard";
 import {
   formatDateTime,
   formatHHMM,
@@ -22,7 +28,7 @@ import {
 } from "../lib/date-utils";
 import { errorMessage } from "../lib/errors";
 import { formatFileSize } from "../lib/format";
-import { useEventSourceEvent } from "../lib/hooks";
+import { useEscapeKey, useEventSourceEvent } from "../lib/hooks";
 import { ChannelDrawer } from "./channel-drawer";
 import { ChatComposer } from "./chat-composer";
 import { Drawer } from "./drawer";
@@ -85,6 +91,10 @@ type ChatMessage = {
   document: ChatDocument | null;
   reactions: { emoji: string; count: number }[];
   replyMarkup: ReplyMarkup | null;
+  // Ответ на сообщение этого же чата: id оригинала (текст ищем в подгруженной
+  // ленте) + цитата-кусок, если отвечали на выделенный фрагмент.
+  replyToId: string | null;
+  replyQuote: string | null;
   albumId: string | null;
 };
 
@@ -198,10 +208,21 @@ export function ChatPanel(props: {
   });
 
   const [composeText, setComposeText] = useState("");
+  // Контекстное меню сообщения (правый клик / «⋯») + reply-черновик композера.
+  const [msgMenu, setMsgMenu] = useState<{
+    m: ChatMessage;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  // Ошибки действий (загрузка файла, удаление, пометка) — одной красной
+  // полосой под шапкой; каждая мутация чистит её на старте успеха.
+  const [actionError, setActionError] = useState<string | null>(null);
   const sendMut = useMutation({
-    // Текст — параметр: composer шлёт черновик, reply-кнопка бота шлёт свой text.
-    mutationFn: async (raw: string) => {
-      const text = raw.trim();
+    // Параметры — аргументом, не из state: composer шлёт черновик (+ reply,
+    // если открыт), кнопка бот-клавиатуры шлёт свой text без reply-черновика.
+    mutationFn: async (args: { text: string; replyToMessageId?: string }) => {
+      const text = args.text.trim();
       if (!text) throw new Error("Пустое сообщение");
       const { data, error } = await api.POST(
         "/v1/workspaces/{wsId}/quick-send",
@@ -211,14 +232,16 @@ export function ChatPanel(props: {
             accountId: props.accountId,
             contactId: props.contact.id,
             text,
+            replyToMessageId: args.replyToMessageId,
           },
         },
       );
       if (error) throw error;
       return data!;
     },
-    onSuccess: () => {
+    onSuccess: (_data, args) => {
       setComposeText("");
+      if (args.replyToMessageId) setReplyTo(null);
       qc.invalidateQueries({
         queryKey: ["chat-history", props.wsId, props.contact.id],
       });
@@ -228,15 +251,60 @@ export function ChatPanel(props: {
     },
   });
 
+  // Пометка «непрочитано» — chat-level (как в Telegram), тогл в шапке + пункт
+  // меню сообщения дёргают одно и то же. Бэк синкает с TG и пишет в contacts.
+  const markUnreadMut = useMutation({
+    mutationFn: async (value: boolean) => {
+      const { data, error } = await api.POST(
+        "/v1/workspaces/{wsId}/contacts/{id}/chat/mark-unread",
+        {
+          params: { path: { wsId: props.wsId, id: props.contact.id } },
+          body: { accountId: props.accountId, value },
+        },
+      );
+      if (error) throw error;
+      return data!;
+    },
+    onSuccess: () => {
+      setActionError(null);
+      qc.invalidateQueries({
+        queryKey: ["contact", props.wsId, props.contact.id],
+      });
+    },
+    onError: (e) => setActionError(errorMessage(e)),
+  });
+
+  const deleteMsgMut = useMutation({
+    mutationFn: async (messageId: string) => {
+      const { error } = await api.POST(
+        "/v1/workspaces/{wsId}/contacts/{id}/chat/delete-messages",
+        {
+          params: { path: { wsId: props.wsId, id: props.contact.id } },
+          body: { accountId: props.accountId, messageIds: [messageId] },
+        },
+      );
+      if (error) throw error;
+    },
+    onSuccess: (_data, messageId) => {
+      setActionError(null);
+      // Удалили сообщение, на которое открыт reply-черновик — сбрасываем,
+      // иначе отправка уйдёт с reply на несуществующий id.
+      setReplyTo((prev) => (prev?.id === messageId ? null : prev));
+      qc.invalidateQueries({
+        queryKey: ["chat-history", props.wsId, props.contact.id],
+      });
+    },
+    onError: (e) => setActionError(errorMessage(e)),
+  });
+
   // Drag-drop файла → отправка документом (бэкенд шлёт через TDLib). Тег
   // ставится вручную из чата после доставки. dragDepth — счётчик enter/leave
   // (leave летит и от дочерних элементов, булев флаг мигал бы).
   const [dragDepth, setDragDepth] = useState(0);
   const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
   const uploadFile = async (file: File) => {
     setUploading(true);
-    setUploadError(null);
+    setActionError(null);
     try {
       await sendContactDocument(
         props.wsId,
@@ -253,7 +321,7 @@ export function ChatPanel(props: {
         ],
       });
     } catch (e) {
-      setUploadError(e instanceof Error ? e.message : "Ошибка отправки файла");
+      setActionError(e instanceof Error ? e.message : "Ошибка отправки файла");
     } finally {
       setUploading(false);
     }
@@ -344,6 +412,11 @@ export function ChatPanel(props: {
             props.accountId,
           ],
         });
+        // И сам контакт: unread/markedUnread в шапке должны жить (пометку
+        // могли поставить с телефона при открытом drawer'е).
+        qc.invalidateQueries({
+          queryKey: ["contact", props.wsId, props.contact.id],
+        });
       }
     },
   );
@@ -366,6 +439,8 @@ export function ChatPanel(props: {
     setHasMore(true);
     setLoadMoreError(null);
     setLoadingMore(false);
+    setReplyTo(null);
+    setMsgMenu(null);
     didAutoScrollRef.current = false;
   }, [props.accountId]);
 
@@ -380,6 +455,17 @@ export function ChatPanel(props: {
   const peerStatus = initialQ.data?.peerStatus ?? null;
   const peerIsBot = initialQ.data?.peerIsBot ?? false;
   const chatId = initialQ.data?.chatId ?? null;
+
+  // Оригиналы для reply-цитат ищем в подгруженной ленте; клик по цитате и
+  // jumpTo из фазы «Запуск» — один механизм (скролл + подсветка).
+  const msgById = new Map(messages.map((mm) => [mm.id, mm]));
+  const jumpToMessage = useCallback((id: string) => {
+    const el = msgRefs.current.get(id);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightId(id);
+    setTimeout(() => setHighlightId(null), 1800);
+  }, []);
 
   // Пометка сообщения (фаза «Запуск»). Альбом не собираем на фронте — храним
   // albumId, сервер дочитает весь альбом при рендере (надёжнее: не зависим от
@@ -411,13 +497,8 @@ export function ChatPanel(props: {
   const jumpMessageId = props.jumpTo?.messageId;
   useEffect(() => {
     if (jumpNonce == null || !jumpMessageId) return;
-    const el = msgRefs.current.get(jumpMessageId);
-    if (!el) return;
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
-    setHighlightId(jumpMessageId);
-    const t = setTimeout(() => setHighlightId(null), 1800);
-    return () => clearTimeout(t);
-  }, [jumpNonce, jumpMessageId]);
+    jumpToMessage(jumpMessageId);
+  }, [jumpNonce, jumpMessageId, jumpToMessage]);
 
   // Auto-scroll к низу на новое сообщение, только если юзер уже у дна.
   const newestId = initialQ.data?.messages[0]?.id ?? null;
@@ -532,12 +613,12 @@ export function ChatPanel(props: {
             {uploading ? "Отправляем файл…" : "Отпустите — отправить файл в чат"}
           </div>
         )}
-        {uploadError && (
+        {actionError && (
           <div className="flex items-center justify-between gap-2 border-b border-red-200 bg-red-50 px-4 py-1.5 text-xs text-red-700">
-            <span className="truncate">{uploadError}</span>
+            <span className="truncate">{actionError}</span>
             <button
               type="button"
-              onClick={() => setUploadError(null)}
+              onClick={() => setActionError(null)}
               className="shrink-0 text-red-400 hover:text-red-700"
             >
               ✕
@@ -558,6 +639,24 @@ export function ChatPanel(props: {
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              disabled={markUnreadMut.isPending}
+              onClick={() => markUnreadMut.mutate(!props.contact.markedUnread)}
+              title={
+                props.contact.markedUnread
+                  ? "Диалог помечен непрочитанным — снять пометку"
+                  : "Пометить непрочитанным («вернуться позже») — видно и в Telegram"
+              }
+              className={
+                "rounded p-1 disabled:opacity-50 " +
+                (props.contact.markedUnread
+                  ? "bg-amber-100 text-amber-700 hover:bg-amber-200"
+                  : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700")
+              }
+            >
+              <Mail size={16} />
+            </button>
             {props.contact.primaryAccountId !== props.accountId && (
               <button
                 type="button"
@@ -710,6 +809,10 @@ export function ChatPanel(props: {
                         }
                       >
                         <div
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            setMsgMenu({ m, x: e.clientX, y: e.clientY });
+                          }}
                           className={
                             "overflow-hidden rounded-lg text-sm transition-shadow " +
                             (m.isOutgoing
@@ -737,6 +840,21 @@ export function ChatPanel(props: {
                             m.mediaThumb && <MessageMediaThumb thumb={m.mediaThumb} />
                           )}
                           <div className="px-3 py-2">
+                            {(m.replyToId || m.replyQuote) && (
+                              <ReplyQuote
+                                original={
+                                  m.replyToId
+                                    ? (msgById.get(m.replyToId) ?? null)
+                                    : null
+                                }
+                                quote={m.replyQuote}
+                                peerName={displayName}
+                                inOutgoing={m.isOutgoing}
+                                onJump={() =>
+                                  m.replyToId && jumpToMessage(m.replyToId)
+                                }
+                              />
+                            )}
                             {m.document && (
                               <a
                                 href={
@@ -795,12 +913,25 @@ export function ChatPanel(props: {
                         {m.replyMarkup && (
                           <ReplyMarkupButtons
                             markup={m.replyMarkup}
-                            onSendText={(t) => sendMut.mutate(t)}
+                            onSendText={(t) => sendMut.mutate({ text: t })}
                             disabled={sendMut.isPending}
                           />
                         )}
-                        {props.onTagMessage && (
-                          <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              const r =
+                                e.currentTarget.getBoundingClientRect();
+                              setMsgMenu({ m, x: r.left, y: r.bottom + 4 });
+                            }}
+                            title="Действия с сообщением"
+                            className="rounded px-1 py-0.5 text-zinc-400 opacity-0 transition-opacity hover:text-zinc-700 group-hover:opacity-100"
+                          >
+                            <MoreHorizontal size={13} />
+                          </button>
+                          {props.onTagMessage && (
+                            <>
                             {props.taggedKindByMessageId?.[m.id] && (
                               <span className="rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">
                                 {MESSAGE_TAG_LABEL[
@@ -840,8 +971,9 @@ export function ChatPanel(props: {
                                 <Tag size={11} /> пометить
                               </button>
                             )}
-                          </div>
-                        )}
+                            </>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
@@ -858,9 +990,23 @@ export function ChatPanel(props: {
           }
           text={composeText}
           onTextChange={setComposeText}
-          onSend={() => sendMut.mutate(composeText)}
+          onSend={() =>
+            sendMut.mutate({
+              text: composeText,
+              replyToMessageId: replyTo?.id,
+            })
+          }
           sending={sendMut.isPending}
           error={sendMut.error ? errorMessage(sendMut.error) : null}
+          replyTo={
+            replyTo
+              ? {
+                  label: replyTo.isOutgoing ? "Вы" : displayName,
+                  text: replyTo.text || "медиа",
+                }
+              : null
+          }
+          onCancelReply={() => setReplyTo(null)}
         />
         {openChannelId && (
           <ChannelDrawer
@@ -869,6 +1015,156 @@ export function ChatPanel(props: {
             onClose={() => setOpenChannelId(null)}
           />
         )}
+        {msgMenu && (
+          <MessageContextMenu
+            x={msgMenu.x}
+            y={msgMenu.y}
+            canCopy={!!msgMenu.m.text}
+            canDelete={msgMenu.m.isOutgoing}
+            markedUnread={props.contact.markedUnread}
+            onClose={() => setMsgMenu(null)}
+            onReply={() => {
+              setReplyTo(msgMenu.m);
+              setMsgMenu(null);
+            }}
+            onCopy={() => {
+              void copyText(msgMenu.m.text);
+              setMsgMenu(null);
+            }}
+            onMarkUnread={() => {
+              markUnreadMut.mutate(!props.contact.markedUnread);
+              setMsgMenu(null);
+            }}
+            onDelete={() => {
+              const id = msgMenu.m.id;
+              setMsgMenu(null);
+              if (
+                window.confirm(
+                  "Удалить сообщение у обоих? В Telegram у собеседника оно тоже исчезнет.",
+                )
+              ) {
+                deleteMsgMut.mutate(id);
+              }
+            }}
+          />
+        )}
+    </div>
+  );
+}
+
+// Цитата в пузыре: на что отвечает сообщение. Оригинал ищем в подгруженной
+// ленте — клик скроллит к нему; если оригинал за окном подгрузки, показываем
+// replyQuote (выделенный кусок) или generic-подпись без клика.
+function ReplyQuote(props: {
+  original: ChatMessage | null;
+  quote: string | null;
+  peerName: string;
+  inOutgoing: boolean;
+  onJump: () => void;
+}) {
+  const snippet =
+    props.quote ||
+    props.original?.text ||
+    (props.original ? "медиа" : "сообщение выше");
+  const author = props.original
+    ? props.original.isOutgoing
+      ? "Вы"
+      : props.peerName
+    : null;
+  const cls = props.inOutgoing
+    ? "border-emerald-200 bg-emerald-700/40 text-emerald-50"
+    : "border-emerald-500 bg-zinc-100 text-zinc-700";
+  const inner = (
+    <>
+      {author && (
+        <span
+          className={
+            "block text-[10px] font-medium " +
+            (props.inOutgoing ? "text-emerald-100" : "text-emerald-700")
+          }
+        >
+          {author}
+        </span>
+      )}
+      <span className="block max-h-8 overflow-hidden text-xs leading-4">
+        {snippet}
+      </span>
+    </>
+  );
+  if (!props.original) {
+    return <div className={`mb-1 rounded border-l-2 px-2 py-1 ${cls}`}>{inner}</div>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={props.onJump}
+      className={`mb-1 block w-full rounded border-l-2 px-2 py-1 text-left hover:opacity-80 ${cls}`}
+    >
+      {inner}
+    </button>
+  );
+}
+
+// Контекстное меню сообщения. Два входа — правый клик по пузырю и «⋯» под
+// ним, оба открывают это. Оверлей ловит клик/правый клик мимо; Esc — через
+// общий стек (закрывает меню, не drawer). Сюда же позже въедут
+// «Изменить» (T-edit) и реакции (T3.5).
+function MessageContextMenu(props: {
+  x: number;
+  y: number;
+  canCopy: boolean;
+  canDelete: boolean;
+  markedUnread: boolean;
+  onReply: () => void;
+  onCopy: () => void;
+  onMarkUnread: () => void;
+  onDelete: () => void;
+  onClose: () => void;
+}) {
+  useEscapeKey(props.onClose);
+  const itemCls =
+    "flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-zinc-50";
+  // Не выезжаем за низ/право окна (меню ≈ 4 пункта × ~34px).
+  const top = Math.min(props.y, window.innerHeight - 160);
+  const left = Math.min(props.x, window.innerWidth - 240);
+  return (
+    <div
+      className="fixed inset-0 z-50"
+      onClick={props.onClose}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        props.onClose();
+      }}
+    >
+      <div
+        style={{ top, left }}
+        className="absolute w-56 rounded-lg border border-zinc-200 bg-white py-1 shadow-lg"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button type="button" onClick={props.onReply} className={itemCls}>
+          <Reply size={14} className="text-zinc-400" /> Ответить
+        </button>
+        {props.canCopy && (
+          <button type="button" onClick={props.onCopy} className={itemCls}>
+            <Copy size={14} className="text-zinc-400" /> Копировать текст
+          </button>
+        )}
+        <button type="button" onClick={props.onMarkUnread} className={itemCls}>
+          <Mail size={14} className="text-zinc-400" />
+          {props.markedUnread
+            ? "Снять пометку «непрочитано»"
+            : "Пометить непрочитанным"}
+        </button>
+        {props.canDelete && (
+          <button
+            type="button"
+            onClick={props.onDelete}
+            className={itemCls + " text-red-600"}
+          >
+            <Trash2 size={14} /> Удалить у обоих
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -976,9 +1272,31 @@ function ComposeFooter(props: {
   onSend: () => void;
   sending: boolean;
   error: string | null;
+  // Reply-черновик: плашка «в ответ на …» над полем; null — обычная отправка.
+  replyTo: { label: string; text: string } | null;
+  onCancelReply: () => void;
 }) {
   return (
     <div className="border-t border-zinc-200 bg-white p-3">
+      {props.replyTo && (
+        <div className="mb-2 flex items-start gap-2 rounded-md border-l-2 border-emerald-500 bg-zinc-50 px-2.5 py-1.5 text-xs">
+          <Reply size={14} className="mt-0.5 shrink-0 text-emerald-600" />
+          <div className="min-w-0 flex-1">
+            <div className="font-medium text-emerald-700">
+              {props.replyTo.label}
+            </div>
+            <div className="truncate text-zinc-600">{props.replyTo.text}</div>
+          </div>
+          <button
+            type="button"
+            onClick={props.onCancelReply}
+            title="Отменить ответ"
+            className="shrink-0 text-zinc-400 hover:text-zinc-700"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
       {props.activeProjects.length > 0 && (
         <div className="mb-2 flex items-start gap-2 rounded-md bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-800">
           <AlertTriangle size={14} className="shrink-0 mt-0.5" />

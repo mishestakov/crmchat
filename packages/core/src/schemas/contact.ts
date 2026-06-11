@@ -21,6 +21,9 @@ export const ContactSchema = z.object({
   // Непрочитанные TG-входящие. Канбан рисует badge если > 0, обнуляется
   // на open-карточки или явный mark-read.
   unreadCount: z.number().int().nonnegative(),
+  // Ручная пометка «непрочитано» (в TG это флаг диалога, «вернуться позже»).
+  // Синкается с офиц. клиентом в обе стороны через TDLib.
+  markedUnread: z.boolean(),
   lastMessageAt: z.iso.datetime().nullable(),
   // Sticky outreach-аккаунт за этим контактом (см. schema.ts
   // contacts.primaryAccountId). Колонка таблицы «Контакты» рендерит имя

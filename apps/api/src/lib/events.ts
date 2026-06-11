@@ -36,6 +36,9 @@ export type ContactEvent = {
   contactId: string;
   unreadCount: number;
   lastMessageAt: string | null;
+  // Ручная пометка «непрочитано». Опционально: эмиттеры, которые флаг не
+  // знают (MAX, создание контакта), его не шлют — фронт тогда не трогает.
+  markedUnread?: boolean;
 };
 const contactChannel = createChannel<ContactEvent>("ws");
 export const emitContactChanged = (

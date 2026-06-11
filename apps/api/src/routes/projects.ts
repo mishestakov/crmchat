@@ -209,6 +209,9 @@ const LeadProgressSchema = z
     // Для лидов без contactId всегда 0. Бэйдж на канбане; синхронизация через
     // contact-stream SSE — листенер на /kanban апдейтит лидов с этим contactId.
     unreadCount: z.number().int(),
+    // Ручная пометка «непрочитано» с контакта (chat-level флаг TG) — бэйдж-
+    // точка на канбане при unreadCount=0.
+    markedUnread: z.boolean(),
     // Ближайший открытый reminder контакта. Рендерится на канбан-карточке как
     // Bell-иконка + дата (Сегодня / DD.MM, красным если просрочен). Берётся
     // через nextStepSql subquery с привязанного contact'а; для лидов без
@@ -961,6 +964,7 @@ app.openapi(
           repliedAt: projectItems.repliedAt,
           contactId: projectItems.contactId,
           unreadCount: sql<number>`coalesce(${contacts.unreadCount}, 0)::int`,
+          markedUnread: sql<boolean>`coalesce(${contacts.markedUnread}, false)`,
           nextStep: nextStepSql,
           stageId: projectItems.stageId,
           channelId: channels.id,
@@ -1087,6 +1091,7 @@ app.openapi(
           repliedAt: l.repliedAt?.toISOString() ?? null,
           contactId: l.contactId,
           unreadCount: l.unreadCount,
+          markedUnread: l.markedUnread,
           nextStep: l.nextStep,
           stageId: l.stageId,
           contactReady: l.contactReady,

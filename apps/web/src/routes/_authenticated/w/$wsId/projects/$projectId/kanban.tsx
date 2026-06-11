@@ -127,6 +127,8 @@ function KanbanPage() {
     contactId: string;
     unreadCount: number;
     lastMessageAt: string | null;
+    // Опционален: эмиттеры, не знающие флаг (MAX), его не шлют — не трогаем.
+    markedUnread?: boolean;
   }>(`/v1/workspaces/${wsId}/contact-stream`, "contact", (ev) => {
     qc.setQueriesData<LeadsResponse>(
       { queryKey: OUTREACH_QK.projectLeads(wsId, projectId) },
@@ -135,9 +137,15 @@ function KanbanPage() {
         let changed = false;
         const nextLeads = prev.leads.map((l) => {
           if (l.contactId !== ev.contactId) return l;
-          if (l.unreadCount === ev.unreadCount) return l;
+          const markedUnread = ev.markedUnread ?? l.markedUnread;
+          if (
+            l.unreadCount === ev.unreadCount &&
+            l.markedUnread === markedUnread
+          ) {
+            return l;
+          }
           changed = true;
-          return { ...l, unreadCount: ev.unreadCount };
+          return { ...l, unreadCount: ev.unreadCount, markedUnread };
         });
         return changed ? { ...prev, leads: nextLeads } : prev;
       },
@@ -353,17 +361,25 @@ function LeadCard(props: {
     >
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1 font-medium truncate">{display}</div>
-        {unread > 0 && (
+        {(unread > 0 || lead.markedUnread) && (
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
               props.onOpenChat();
             }}
-            title={`${unread} непрочитанных — открыть чат`}
+            title={
+              unread > 0
+                ? `${unread} непрочитанных — открыть чат`
+                : "Помечен непрочитанным — открыть чат"
+            }
             className="hover:opacity-80"
           >
-            <UnreadBadge count={unread} />
+            {unread > 0 ? (
+              <UnreadBadge count={unread} />
+            ) : (
+              <span className="block h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-500" />
+            )}
           </button>
         )}
       </div>

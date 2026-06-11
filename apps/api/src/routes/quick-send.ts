@@ -57,6 +57,8 @@ const SendBody = z
     contactId: z.string().min(1).max(64).optional(),
     tgUserId: z.string().min(1).max(32).optional(),
     text: z.string().min(1).max(4000),
+    // Ответ на конкретное сообщение этого же чата (контекст-меню в переписке).
+    replyToMessageId: z.string().min(1).max(64).optional(),
   })
   .refine((v) => !!v.contactId || !!v.tgUserId, {
     message: "Either contactId or tgUserId is required",
@@ -261,6 +263,16 @@ app.openapi(
       await client.invoke({
         _: "sendMessage",
         chat_id: Number(tgUserId),
+        // td_api.tl: reply_to:InputMessageReplyTo, для same-chat ответа —
+        // inputMessageReplyToMessage (quote не передаём — отвечаем целиком).
+        ...(body.replyToMessageId
+          ? {
+              reply_to: {
+                _: "inputMessageReplyToMessage",
+                message_id: Number(body.replyToMessageId),
+              },
+            }
+          : {}),
         input_message_content: {
           _: "inputMessageText",
           text: { _: "formattedText", text: body.text, entities: [] },
