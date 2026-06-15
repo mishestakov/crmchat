@@ -753,7 +753,9 @@ function humanizeSendError(raw: string | null): string {
   }
   if (/USER_PRIVACY_RESTRICTED/i.test(raw)) return "Закрытая приватность";
   if (/USER_IS_BLOCKED|YOU_BLOCKED_USER/i.test(raw)) return "Заблокирован";
-  if (/PEER_FLOOD/i.test(raw)) return "Аккаунт зарезан TG";
+  // PEER_FLOOD — антиспам TG на письма НОВЫМ/незнакомым, не бан аккаунта.
+  // «Зарезан» пугало менеджеров зря: аккаунт жив, ограничение временное.
+  if (/PEER_FLOOD/i.test(raw)) return "TG ограничил: писать новым";
   if (/USER_DEACTIVATED|INPUT_USER_DEACTIVATED/i.test(raw)) return "Аккаунт удалён";
   if (/CHAT_WRITE_FORBIDDEN/i.test(raw)) return "Писать запрещено";
   if (/PHONE_NOT_SUPPORTED/i.test(raw)) return "Только @username";

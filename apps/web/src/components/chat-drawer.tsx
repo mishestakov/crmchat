@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -23,7 +23,9 @@ import type { Contact } from "@repo/core";
 import { api, sendContactDocument } from "../lib/api";
 import { copyText } from "../lib/clipboard";
 import {
+  dayKey,
   formatDateTime,
+  formatDaySeparator,
   formatHHMM,
   formatPastRelative,
   formatRelative,
@@ -906,12 +908,23 @@ export function ChatPanel(props: {
                       Это начало переписки
                     </p>
                   )}
-                  {messages.map((m) => {
+                  {messages.map((m, i) => {
                     const readByPeer =
                       m.isOutgoing && isIdAtMost(m.id, lastReadOutboxId);
+                    // Разделитель суток: перед первым сообщением и на стыке дней.
+                    const prev = i > 0 ? messages[i - 1] : null;
+                    const showDay =
+                      !prev || dayKey(prev.date) !== dayKey(m.date);
                     return (
+                      <Fragment key={m.id}>
+                        {showDay && (
+                          <div className="my-1 flex justify-center">
+                            <span className="rounded-full bg-zinc-200/80 px-2.5 py-0.5 text-[11px] font-medium text-zinc-600">
+                              {formatDaySeparator(m.date)}
+                            </span>
+                          </div>
+                        )}
                       <div
-                        key={m.id}
                         ref={(el) => {
                           const map = msgRefs.current;
                           if (el) map.set(m.id, el);
@@ -1107,6 +1120,7 @@ export function ChatPanel(props: {
                           )}
                         </div>
                       </div>
+                      </Fragment>
                     );
                   })}
                 </div>

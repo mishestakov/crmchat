@@ -54,6 +54,36 @@ export function formatHHMM(iso: string | Date): string {
   return hhmmFormat.format(typeof iso === "string" ? new Date(iso) : iso);
 }
 
+// Ключ суток в локальном времени — для группировки сообщений по дням в ленте.
+export function dayKey(iso: string | Date): string {
+  const d = typeof iso === "string" ? new Date(iso) : iso;
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
+const dayMonthFormat = new Intl.DateTimeFormat("ru-RU", {
+  day: "numeric",
+  month: "long",
+});
+const dayMonthYearFormat = new Intl.DateTimeFormat("ru-RU", {
+  day: "numeric",
+  month: "long",
+  year: "numeric",
+});
+
+// Заголовок-разделитель дня в ленте чата: «Сегодня» / «Вчера» / «15 июня» /
+// «15 июня 2024 г.» (год добавляем только если не текущий).
+export function formatDaySeparator(iso: string | Date): string {
+  const d = typeof iso === "string" ? new Date(iso) : iso;
+  const now = new Date();
+  if (dayKey(d) === dayKey(now)) return "Сегодня";
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (dayKey(d) === dayKey(yesterday)) return "Вчера";
+  return d.getFullYear() === now.getFullYear()
+    ? dayMonthFormat.format(d)
+    : dayMonthYearFormat.format(d);
+}
+
 // Прошлое для sent/read/replied: «только что» / «N мин. назад» / «N ч. назад»
 // / абс дата+время после 8 часов. Без секунд — они визуально шумят.
 export function formatPastRelative(iso: string | Date): string {
