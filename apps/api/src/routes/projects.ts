@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { streamSSE } from "hono/streaming";
+import { streamSSENoBuffer } from "../lib/sse.ts";
 import { and, asc, eq, gte, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
@@ -1834,7 +1834,7 @@ app.get(
       .limit(1);
     if (!row) throw new HTTPException(404, { message: "project not found" });
 
-    return streamSSE(c, async (stream) => {
+    return streamSSENoBuffer(c, async (stream) => {
       let unsub = () => {};
       stream.onAbort(() => {
         unsub();

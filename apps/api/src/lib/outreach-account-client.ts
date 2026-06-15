@@ -111,6 +111,13 @@ export async function clearPendingOutreachClient(
   await pendingStoreFor(workspaceId).clear();
 }
 
+// Текущее auth-состояние живого pending-клиента воркспейса без его создания.
+// null — клиента нет. qr-stream использует это, чтобы не сносить клиент,
+// который Telegram мог уже авторизовать по QR, при реконнекте SSE.
+export function peekPendingOutreachClient(workspaceId: string) {
+  return pendingStoreFor(workspaceId).peek();
+}
+
 export async function persistOutreachAccount(
   workspaceId: string,
   userId: string,

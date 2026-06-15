@@ -1,5 +1,6 @@
 import {
   attachAuthStateBus,
+  type AuthState,
   type AuthStateBus,
 } from "./auth-state.ts";
 import {
@@ -29,6 +30,10 @@ export type PendingStore = {
   // им владеет рабочий кэш (worker/personal). Возвращает entry для caller'а.
   promote: () => PendingEntry | null;
   clear: () => Promise<void>;
+  // Текущее auth-состояние живого pending-клиента без его создания. null —
+  // клиента нет. Нужно qr-stream'у, чтобы отличить реконнект SSE (переиспользуем
+  // живой клиент) от новой попытки (нужен чистый клиент).
+  peek: () => AuthState | null;
 };
 
 const PENDING_TTL_MS = 5 * 60_000;
@@ -113,6 +118,7 @@ export function createPendingTdStore(opts: {
     getOrCreate,
     promote,
     clear,
+    peek: () => entry?.authBus.current() ?? null,
   };
 }
 

@@ -55,6 +55,10 @@ const TYPING_MIN_MS = 15_000;
 const TYPING_MAX_MS = 40_000;
 const POST_SEND_MIN_MS = 60_000;
 const POST_SEND_MAX_MS = 150_000;
+// Бэкофф для неизвестной ошибки отправки: сдвигаем send_at вперёд, чтобы
+// битая «голова» очереди аккаунта не блокировала остальные его сообщения
+// (worker берёт 1 msg/аккаунт/tick по самому старому send_at).
+const UNKNOWN_ERROR_BACKOFF_MS = 10 * 60_000;
 
 // State через globalThis — иначе при HMR в dev новый module-instance видит
 // `timer=null`, стартует свой setInterval, а старый продолжает крутиться в
@@ -456,7 +460,24 @@ async function processAccount(accountId: string, items: DueItem[]) {
           .set({ status: "failed", error: msg })
           .where(eq(scheduledMessages.id, item.id));
         emitProjectChanged(item.projectId);
+        // continue, не return: permanent — ошибка уровня сообщения, не аккаунта
+        // (flood/killed выше — уровня аккаунта, там return верен). При текущем
+        // кэпе items=1 эквивалентно, но останется корректным если кэп поднимут.
+        continue;
       }
+      // Неизвестная ошибка. Раньше catch молча проглатывал её, и сообщение
+      // оставалось pending — если падала «голова» очереди аккаунта, она каждый
+      // tick блокировала все остальные его сообщения, и затык был невидим.
+      // Теперь: логируем всегда (повторы в логах = устойчивая проблема) и
+      // сдвигаем send_at в хвост, чтобы следующие due-сообщения аккаунта пошли.
+      console.error(
+        `[outreach-worker] unknown send error, account ${accountId}, msg ${item.id} (@${lead.username}): ${msg}`,
+      );
+      await db
+        .update(scheduledMessages)
+        .set({ sendAt: new Date(Date.now() + UNKNOWN_ERROR_BACKOFF_MS) })
+        .where(eq(scheduledMessages.id, item.id));
+      emitProjectChanged(item.projectId);
     }
   }
 }
@@ -507,6 +528,22 @@ async function sendMessagePhase(
   const userId = cached
     ? Number(cached.userId)
     : await resolveAndCheckNotBot(client, username);
+
+  // Материализуем приватный чат в локальном состоянии ИМЕННО этого аккаунта —
+  // только на cache-hit. На cache-miss resolveAndCheckNotBot уже звал
+  // searchPublicChat, который грузит чат, и openChat работает. А на cache-hit мы
+  // search пропускаем: если данный outreach-аккаунт ещё ни разу не открывал
+  // этого peer'а, openChat падает "Chat not found" — раньше эта ошибка молча
+  // оставляла сообщение pending и блокировала всю очередь аккаунта (1 msg/tick
+  // по самой старой голове). createPrivateChat (td_api.tl:12370, force:false)
+  // догружает чат сетевым запросом при необходимости.
+  if (cached) {
+    await client.invoke({
+      _: "createPrivateChat",
+      user_id: userId,
+      force: false,
+    } as never);
+  }
 
   // chatTypePrivate convention: chat_id = user_id.
   await client.invoke({ _: "openChat", chat_id: userId } as never);

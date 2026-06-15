@@ -17,6 +17,7 @@ import {
   clearPendingOutreachClient,
   deleteOutreachAccount,
   getOrCreatePendingOutreachClient,
+  peekPendingOutreachClient,
   persistOutreachAccount,
 } from "../lib/outreach-account-client.ts";
 import {
@@ -380,10 +381,17 @@ app.openapi(
 app.get("/v1/workspaces/:wsId/outreach/accounts/auth/qr-stream", async (c) => {
   const wsId = c.get("workspaceId");
   const userId = c.get("userId");
-  // Свежий pending-клиент для QR-флоу, и сразу invoke requestQrCodeAuthentication
-  // — TDLib ответит updateAuthorizationStateWaitOtherDeviceConfirmation с link'ом,
-  // который streamAuthState прочитает из current().
-  await clearPendingOutreachClient(wsId);
+  // НЕ сносим pending на каждом GET. EventSource переподключается (idle-таймаут
+  // прокси, кратковременный обрыв), и безусловный clear убивал бы клиента,
+  // который Telegram мог уже авторизовать по QR, — отсюда «телега пишет успех,
+  // CRM не видит». Сносим только если живого in-progress клиента нет (или он в
+  // терминальном closed/logging_out): это новая попытка, нужен чистый клиент.
+  // Иначе переиспользуем — tdRequestQr идемпотентен, а bus.current() уже держит
+  // свежий link или ready, доставленный пока SSE был в обрыве.
+  const prev = peekPendingOutreachClient(wsId);
+  if (!prev || prev.kind === "closed" || prev.kind === "logging_out") {
+    await clearPendingOutreachClient(wsId);
+  }
   const pending = await getOrCreatePendingOutreachClient(wsId);
   await tdRequestQr(pending);
 

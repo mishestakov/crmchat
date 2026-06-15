@@ -1,6 +1,6 @@
 import type { Context } from "hono";
-import { streamSSE } from "hono/streaming";
 import { errMsg } from "../errors.ts";
+import { streamSSENoBuffer } from "../sse.ts";
 import type { AuthStateBus } from "./auth-state.ts";
 
 // SSE-стрим текущего auth-state для UI. На каждый push событием 'state' летит
@@ -13,7 +13,7 @@ export function streamAuthState<S>(
   read: () => Promise<S> | S,
   isTerminal?: (s: S) => boolean,
 ): Response {
-  return streamSSE(c, async (stream) => {
+  return streamSSENoBuffer(c, async (stream) => {
     let closed = false;
     let inflight: Promise<void> | null = null;
     let dirty = false;

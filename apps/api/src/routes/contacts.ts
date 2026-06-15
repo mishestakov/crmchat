@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { streamSSE } from "hono/streaming";
+import { streamSSENoBuffer } from "../lib/sse.ts";
 import {
   and,
   eq,
@@ -695,8 +695,12 @@ export async function readOnTelegram(
 // resolveStickyByPeerIds. Это естественный backfill: юзер открыл drawer →
 // мы попутно уточнили sticky без отдельного RPC.
 //
-// viewMessages здесь НЕ дёргаем — иначе случайно отметим непрочитанные ИХ
-// сообщения как прочитанные при простом просмотре.
+// viewMessages здесь НЕ дёргаем — и это осознанное продуктовое решение, не
+// баг. Прочитанность в Telegram выставляется ТОЛЬКО когда менеджер отвечает
+// (см. readOnTelegram после quick-send). Причина — приватность менеджера: он
+// не хочет «палить» собеседнику, что открыл и прочитал диалог, чтобы его не
+// дёргали «ну что, ну когда». Поэтому простой просмотр в CRM read-mark не
+// ставит. НЕ возвращаться к этому без пересмотра требования.
 const historyFetched = new Set<string>();
 const historyKey = (accountId: string, chatId: string) =>
   `${accountId}:${chatId}`;
@@ -1485,7 +1489,7 @@ function fallbackLabel(content: TdContent): string {
 // окажется проблемой — отфильтровать в subscribeContacts.
 app.get("/v1/workspaces/:wsId/contact-stream", (c) => {
   const wsId = c.get("workspaceId");
-  return streamSSE(c, async (stream) => {
+  return streamSSENoBuffer(c, async (stream) => {
     let closed = false;
     const unsub = subscribeContacts(wsId, (payload) => {
       if (closed) return;
