@@ -454,6 +454,33 @@ async function processAccount(accountId: string, items: DueItem[]) {
         await evictWorkerClient(accountId);
         return;
       }
+      // PEER_FLOOD — антиспам TG на письма НОВЫМ/незнакомым (не бан аккаунта).
+      // Срока ретрая Telegram не даёт, а повторные cold-заходы во флуде
+      // эскалируют к реальному бану. 80/20: поймали раз — весь аккаунт на паузу
+      // до начала завтрашнего дня (в tz воркспейса; окно расписания догейтит до
+      // рабочего часа). Грубее «только холодных», но безопаснее и проще —
+      // переиспользуем cooldown (UI уже показывает «молчит до…»). Сообщение
+      // перепланируем на завтра, не failed.
+      if (/PEER_FLOOD/i.test(msg)) {
+        const until = startOfDayInTz(
+          new Date(Date.now() + 24 * 60 * 60 * 1000),
+          outreachSchedule.timezone,
+        );
+        await setAccountCooldown(
+          accountId,
+          until.getTime(),
+          "TG ограничил письма новым (PEER_FLOOD) — пауза до завтра",
+        );
+        await db
+          .update(scheduledMessages)
+          .set({ sendAt: until })
+          .where(eq(scheduledMessages.id, item.id));
+        emitProjectChanged(item.projectId);
+        console.warn(
+          `[outreach-worker] PEER_FLOOD on account ${accountId}: пауза до ${until.toISOString()}`,
+        );
+        return;
+      }
       if (isPermanentSendError(msg)) {
         await db
           .update(scheduledMessages)
@@ -657,7 +684,9 @@ function stripAt(s: string): string {
 }
 
 function isPermanentSendError(msg: string): boolean {
-  return /USERNAME_INVALID|USERNAME_NOT_OCCUPIED|PEER_FLOOD|USER_PRIVACY_RESTRICTED|USER_IS_BLOCKED|USER_DEACTIVATED|YOU_BLOCKED_USER|CHAT_WRITE_FORBIDDEN|INPUT_USER_DEACTIVATED|PHONE_NOT_SUPPORTED|MESSAGE_EMPTY|MESSAGE_TOO_LONG|No such public user|Username not occupied|Bot can't initiate conversation|BOT_SKIPPED|DELETED_SKIPPED|NOT_PRIVATE/i.test(
+  // PEER_FLOOD НЕ здесь: это не permanent, а временный антиспам — обрабатывается
+  // отдельной веткой (cooldown аккаунта до завтра), см. processAccount.
+  return /USERNAME_INVALID|USERNAME_NOT_OCCUPIED|USER_PRIVACY_RESTRICTED|USER_IS_BLOCKED|USER_DEACTIVATED|YOU_BLOCKED_USER|CHAT_WRITE_FORBIDDEN|INPUT_USER_DEACTIVATED|PHONE_NOT_SUPPORTED|MESSAGE_EMPTY|MESSAGE_TOO_LONG|No such public user|Username not occupied|Bot can't initiate conversation|BOT_SKIPPED|DELETED_SKIPPED|NOT_PRIVATE/i.test(
     msg,
   );
 }
