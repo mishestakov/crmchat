@@ -525,28 +525,31 @@ async function sendMessagePhase(
   // Cache miss ⇒ unseen username: резолвим через searchPublicChat и
   // проверяем тип через getUser (offline после search'а; userTypeBot из
   // td_api.tl:732 — точная семантика, без эвристики @*bot).
-  const userId = cached
+  let userId = cached
     ? Number(cached.userId)
     : await resolveAndCheckNotBot(client, username);
 
-  // Материализуем приватный чат в локальном состоянии ИМЕННО этого аккаунта —
-  // только на cache-hit. На cache-miss resolveAndCheckNotBot уже звал
-  // searchPublicChat, который грузит чат, и openChat работает. А на cache-hit мы
-  // search пропускаем: если данный outreach-аккаунт ещё ни разу не открывал
-  // этого peer'а, openChat падает "Chat not found" — раньше эта ошибка молча
-  // оставляла сообщение pending и блокировала всю очередь аккаунта (1 msg/tick
-  // по самой старой голове). createPrivateChat (td_api.tl:12370, force:false)
-  // догружает чат сетевым запросом при необходимости.
-  if (cached) {
-    await client.invoke({
-      _: "createPrivateChat",
-      user_id: userId,
-      force: false,
-    } as never);
+  // Открываем чат. chatTypePrivate convention: chat_id = user_id.
+  // На cache-hit user_id взят из tg_users, а его мог зарезолвить ДРУГОЙ аккаунт:
+  // в Telegram access_hash пользователя per-account, поэтому этот клиент по
+  // «чужому» user_id чат открыть не может ("Chat info not found" / "Chat not
+  // found"). В этом случае резолвим публичный чат на ЭТОМ клиенте через
+  // searchPublicChat (получаем собственный access_hash) и повторяем openChat.
+  // На cache-miss resolveAndCheckNotBot уже отработал на этом клиенте — повтор
+  // не нужен (потому и гейтим на cached).
+  try {
+    await client.invoke({ _: "openChat", chat_id: userId } as never);
+  } catch (e) {
+    if (cached && /not found/i.test(errMsg(e))) {
+      // Резолвим на ЭТОМ клиенте и берём ЕГО user_id: обычно тот же (нужен лишь
+      // свой access_hash), но если @username переуказан — актуальный владелец.
+      // Переприсваиваем, чтобы sendChatAction/sendMessage ниже шли по нему.
+      userId = await resolveAndCheckNotBot(client, username);
+      await client.invoke({ _: "openChat", chat_id: userId } as never);
+    } else {
+      throw e;
+    }
   }
-
-  // chatTypePrivate convention: chat_id = user_id.
-  await client.invoke({ _: "openChat", chat_id: userId } as never);
   await client.invoke({
     _: "sendChatAction",
     chat_id: userId,
