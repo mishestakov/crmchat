@@ -15,6 +15,7 @@ import { errorMessage } from "../../../../../../lib/errors";
 import { ProjectTabs } from "../../../../../../components/project-tabs";
 import { type AccountRow } from "../../../../../../components/chat-drawer";
 import { ChannelBadges } from "../../../../../../components/channel-badges";
+import { UnreadBadge } from "../../../../../../components/unread-badge";
 import { LeadChatDrawer } from "../../../../../../components/lead-chat-drawer";
 import { LeadPrepPane } from "../../../../../../components/lead-prep-pane";
 import { TruncationBanner } from "../../../../../../components/truncation-banner";
@@ -558,6 +559,19 @@ function LeadCell({
             isRkn={ch.isRkn}
             memberCount={ch.memberCount}
           />
+        )}
+        {/* Чип непрочитанных — как на канбане. Виден и при снятой галочке
+            «только не ответившие»: клик по строке открывает чат. */}
+        {(lead.unreadCount > 0 || lead.markedUnread) && (
+          <span
+            title={
+              lead.unreadCount > 0
+                ? `${lead.unreadCount} непрочитанных — открыть чат`
+                : "Помечено непрочитанным"
+            }
+          >
+            <UnreadBadge count={lead.unreadCount} dot={lead.markedUnread} />
+          </span>
         )}
       </div>
       {admin && (
