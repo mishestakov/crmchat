@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
   contacts,
@@ -8,6 +8,7 @@ import {
   scheduledMessages,
   tgChats,
   tgUsers,
+  workspaces,
 } from "../db/schema.ts";
 import {
   contactTgUserIdSql,
@@ -16,7 +17,14 @@ import {
 import { CONTACT_FIELD_DEFS } from "@repo/core";
 import { validateEntityProperties } from "./entity-properties.ts";
 import { emitContactChanged, emitProjectChanged } from "./events.ts";
-import { FINAL_OFFER_MSG_IDX } from "./project-scheduling.ts";
+import {
+  FINAL_OFFER_MSG_IDX,
+  FOLLOWUP_PENDING_SENTINEL,
+} from "./project-scheduling.ts";
+import {
+  PEER_FLOOD_COOLDOWN_REASON,
+  peerFloodCooldownUntil,
+} from "./outreach-schedule.ts";
 import { errMsg, isUniqueViolation } from "./errors.ts";
 import type { TdClient } from "./tdlib/index.ts";
 import { extractActiveUsername, extractFullName } from "./tdlib/td-user.ts";
@@ -449,12 +457,86 @@ async function onSendFailed(
   if (!id) return;
   pendingSends.delete(key);
   try {
-    const rows = await db
-      .update(scheduledMessages)
-      .set({ status: "failed", error: errText, sentAt: null })
+    // Контекст упавшего сообщения. БЕЗ join на workspaces: пометка failed /
+    // повтор не должны зависеть от наличия воркспейса (иначе пустой join тихо
+    // оставит сообщение в подвешенном статусе). workspaceId — своя колонка; tz
+    // для PEER_FLOOD-паузы дочитываем отдельным запросом ниже.
+    const [row] = await db
+      .select({
+        itemId: scheduledMessages.itemId,
+        messageIdx: scheduledMessages.messageIdx,
+        projectId: scheduledMessages.projectId,
+        workspaceId: scheduledMessages.workspaceId,
+      })
+      .from(scheduledMessages)
       .where(eq(scheduledMessages.id, id))
-      .returning({ projectId: scheduledMessages.projectId });
-    if (rows[0]) emitProjectChanged(rows[0].projectId);
+      .limit(1);
+    if (!row) return;
+
+    // Догоны этого лида (idx больше упавшего, кроме финального оффера), которые
+    // worker мог преждевременно запланировать на оптимистичном sent. Ветки
+    // ниже взаимоисключающие (PEER_FLOOD с return), условие используется раз.
+    const laterFollowups = and(
+      eq(scheduledMessages.itemId, row.itemId),
+      gt(scheduledMessages.messageIdx, row.messageIdx),
+      lt(scheduledMessages.messageIdx, FINAL_OFFER_MSG_IDX),
+      eq(scheduledMessages.status, "pending"),
+    );
+
+    if (/PEER_FLOOD/i.test(errText)) {
+      // PEER_FLOOD приходит асинхронно (worker уже оптимистично поставил sent и
+      // запланировал догон). Антиспам на письма новым, не бан. Аккаунт — на
+      // паузу до завтра; упавшее сообщение — на повтор завтра (не failed); догон
+      // — назад в «ждёт» (sentinel), он перепланируется когда повтор реально
+      // уйдёт. Окно расписания догейтит повтор до рабочего часа.
+      const [ws] = await db
+        .select({ schedule: workspaces.outreachSchedule })
+        .from(workspaces)
+        .where(eq(workspaces.id, row.workspaceId))
+        .limit(1);
+      const tz = ws?.schedule?.timezone ?? "Europe/Moscow";
+      const until = peerFloodCooldownUntil(tz);
+      // Пауза + повтор + сброс догонов — один логический шаг, атомарно: частичный
+      // сбой иначе вернёт баг с осиротевшим догоном.
+      await db.transaction(async (tx) => {
+        await tx
+          .update(outreachAccounts)
+          .set({
+            cooldownUntil: until,
+            cooldownReason: PEER_FLOOD_COOLDOWN_REASON,
+            updatedAt: new Date(),
+          })
+          .where(eq(outreachAccounts.id, accountId));
+        await tx
+          .update(scheduledMessages)
+          .set({ status: "pending", sendAt: until, error: null, sentAt: null })
+          .where(eq(scheduledMessages.id, id));
+        await tx
+          .update(scheduledMessages)
+          .set({ sendAt: FOLLOWUP_PENDING_SENTINEL })
+          .where(laterFollowups);
+      });
+      emitProjectChanged(row.projectId);
+      console.warn(
+        `[outreach-listener] PEER_FLOOD on account ${accountId}: пауза до ${until.toISOString()}, msg ${id} на повтор завтра`,
+      );
+      return;
+    }
+
+    // Прочий провал: помечаем failed и гасим цепочку догонов лида — первое
+    // сообщение не дошло, гнаться за человеком бессмысленно (финальный оффер не
+    // трогаем, у него своя семантика «для ответивших»). Атомарно.
+    await db.transaction(async (tx) => {
+      await tx
+        .update(scheduledMessages)
+        .set({ status: "failed", error: errText, sentAt: null })
+        .where(eq(scheduledMessages.id, id));
+      await tx
+        .update(scheduledMessages)
+        .set({ status: "cancelled", error: "prior step failed" })
+        .where(laterFollowups);
+    });
+    emitProjectChanged(row.projectId);
   } catch (e) {
     console.error("[outreach-listener] onSendFailed:", errMsg(e));
   }

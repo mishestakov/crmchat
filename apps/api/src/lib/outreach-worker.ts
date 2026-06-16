@@ -21,7 +21,12 @@ import {
 import { emitProjectChanged } from "./events.ts";
 import { rememberPendingSend } from "./outreach-listener.ts";
 import { inputMessageText } from "./td-message.ts";
-import { isNowInWindow, startOfDayInTz } from "./outreach-schedule.ts";
+import {
+  isNowInWindow,
+  PEER_FLOOD_COOLDOWN_REASON,
+  peerFloodCooldownUntil,
+  startOfDayInTz,
+} from "./outreach-schedule.ts";
 import {
   delayToMs,
   resolveWarmTgUserIds,
@@ -462,15 +467,11 @@ async function processAccount(accountId: string, items: DueItem[]) {
       // переиспользуем cooldown (UI уже показывает «молчит до…»). Сообщение
       // перепланируем на завтра, не failed.
       if (/PEER_FLOOD/i.test(msg)) {
-        const until = startOfDayInTz(
-          new Date(Date.now() + 24 * 60 * 60 * 1000),
-          outreachSchedule.timezone,
-        );
-        await setAccountCooldown(
-          accountId,
-          until.getTime(),
-          "TG ограничил письма новым (PEER_FLOOD) — пауза до завтра",
-        );
+        // Sync-путь: sendMessage кинул PEER_FLOOD до scheduleNextFollowup, так
+        // что догон ещё не запланирован — сбрасывать нечего (в отличие от
+        // async-пути в outreach-listener.onSendFailed).
+        const until = peerFloodCooldownUntil(outreachSchedule.timezone);
+        await setAccountCooldown(accountId, until.getTime(), PEER_FLOOD_COOLDOWN_REASON);
         await db
           .update(scheduledMessages)
           .set({ sendAt: until })

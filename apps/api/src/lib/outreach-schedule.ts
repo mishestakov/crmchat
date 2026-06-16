@@ -53,3 +53,14 @@ export function startOfDayInTz(now: Date, tz: string): Date {
   const elapsedMs = ((hour * 60 + minute) * 60 + second) * 1000;
   return new Date(now.getTime() - elapsedMs);
 }
+
+// PEER_FLOOD = временный антиспам TG на письма новым (не бан). Пауза аккаунта
+// до начала следующего дня в tz воркспейса (окно расписания догейтит до
+// рабочего часа). Один источник правды для воркера (sync-throw из sendMessage)
+// и листенера (async updateMessageSendFailed — основной путь).
+export const PEER_FLOOD_COOLDOWN_REASON =
+  "TG ограничил письма новым (PEER_FLOOD) — пауза до завтра";
+
+export function peerFloodCooldownUntil(tz: string): Date {
+  return startOfDayInTz(new Date(Date.now() + 24 * 60 * 60 * 1000), tz);
+}
