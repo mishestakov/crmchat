@@ -152,6 +152,22 @@ function KanbanPage() {
     );
   });
 
+  // contact-stream выше патчит unreadCount у УЖЕ загруженных лидов, но не умеет
+  // ДОБАВИТЬ карточку, которая только что зашла на доску (лид ответил → бэкенд
+  // ставит repliedAt + стадию). Такой лид появлялся только при случайном
+  // рефетче — отсюда «в списке счётчик есть, на канбане пусто, потом прорастает».
+  // project-stream «changed» шлётся ровно на эти изменения (как в табличном
+  // виде) → перезапрашиваем лиды, чтобы новый ответивший появился сразу.
+  useEventSourceEvent(
+    `/v1/workspaces/${wsId}/projects/${projectId}/stream`,
+    "changed",
+    () => {
+      qc.invalidateQueries({
+        queryKey: OUTREACH_QK.projectLeads(wsId, projectId),
+      });
+    },
+  );
+
   const stages = projectQ.data?.stages ?? [];
   // Канбан показывает лидов после ответа peer'а (project_items.repliedAt).
   // Контакт заводится на входящем (см. outreach-listener), карточка на канбане
