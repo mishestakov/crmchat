@@ -67,6 +67,87 @@ type HandlerEntry = {
 };
 const handlers = new Map<string, HandlerEntry>();
 
+// Диагностика доставляемости входящих (TG_RX_DEBUG=1). Трассируем сообщение
+// сквозь весь серверный конвейер одним прогоном: приём от TDLib (ВСЕ апдейты) →
+// дисптач → onNewMessage (резолв контакта / тихие дропы) → onReadInbox (счётчик)
+// → SSE emit (есть ли подписчики). Коннект/авторизацию логируем всегда (редкие).
+const RX_DEBUG = process.env.TG_RX_DEBUG === "1";
+// Префикс с ISO-временем приёма («момент получил TDLib») — самодостаточно, не
+// зависит от docker logs -t. Лаг доставки = это время минус date= в строке.
+function rxlog(msg: string): void {
+  if (RX_DEBUG) console.log(`[tg-rx] ${new Date().toISOString()} ${msg}`);
+}
+function rxlogAlways(msg: string): void {
+  console.log(`[tg-rx] ${new Date().toISOString()} ${msg}`);
+}
+
+// Firehose-шум, не относящийся к «сообщение долетело/счётчик»: прогресс файлов,
+// статус онлайн, «печатает», счётчик онлайн-участников. Всё остальное логируем.
+const RX_NOISE = new Set<string>([
+  "updateFile",
+  "updateFileDownload",
+  "updateFileDownloads",
+  "updateFileAddedToDownloads",
+  "updateFileRemovedFromDownloads",
+  "updateFileGenerationStart",
+  "updateFileGenerationStop",
+  "updateUserStatus",
+  "updateChatAction",
+  "updateChatOnlineMemberCount",
+]);
+
+// Ключевые поля известных апдейтов в одну строку. Для незнакомых — только тип
+// (его и так видно). Цель — увидеть, какой апдейт принёс инфу о сообщении, даже
+// если switch ниже его не обрабатывает.
+type RxUpdate = {
+  _?: string;
+  chat_id?: number | string;
+  message?: { id?: number | string; chat_id?: number | string; is_outgoing?: boolean; date?: number };
+  last_message?: { id?: number | string; date?: number };
+  chat?: { id?: number | string; last_message?: { id?: number | string } };
+  unread_count?: number;
+  last_read_inbox_message_id?: number | string;
+  last_read_outbox_message_id?: number | string;
+  message_id?: number | string;
+  message_ids?: unknown[];
+  is_permanent?: boolean;
+  is_marked_as_unread?: boolean;
+  old_message_id?: number | string;
+  error?: { message?: string };
+};
+function rxDetail(u: RxUpdate): string {
+  switch (u._) {
+    // date = unix-секунды отправки сервером Telegram («момент отдал сервер»).
+    // Момент приёма нашим TDLib = таймстамп самой строки лога (его ставит
+    // docker/journald). Разница date↔строка = лаг доставки (сигнал throttle).
+    case "updateNewMessage":
+      return ` chat=${u.message?.chat_id} msg=${u.message?.id} outgoing=${u.message?.is_outgoing} date=${u.message?.date}`;
+    case "updateChatLastMessage":
+      return ` chat=${u.chat_id} lastMsg=${u.last_message?.id} date=${u.last_message?.date}`;
+    case "updateNewChat":
+      return ` chat=${u.chat?.id} lastMsg=${u.chat?.last_message?.id}`;
+    case "updateChatReadInbox":
+      return ` chat=${u.chat_id} unread=${u.unread_count} lastRead=${u.last_read_inbox_message_id}`;
+    case "updateChatReadOutbox":
+      return ` chat=${u.chat_id} lastReadOut=${u.last_read_outbox_message_id}`;
+    case "updateMessageContent":
+      return ` chat=${u.chat_id} msg=${u.message_id}`;
+    case "updateDeleteMessages":
+      return ` chat=${u.chat_id} ids=${u.message_ids?.length} permanent=${u.is_permanent}`;
+    case "updateChatIsMarkedAsUnread":
+      return ` chat=${u.chat_id} marked=${u.is_marked_as_unread}`;
+    case "updateMessageSendSucceeded":
+      return ` chat=${u.message?.chat_id} oldId=${u.old_message_id} newId=${u.message?.id}`;
+    case "updateMessageSendFailed":
+      return ` chat=${u.message?.chat_id} oldId=${u.old_message_id} err=${u.error?.message}`;
+    case "updateUnreadMessageCount":
+    case "updateUnreadChatCount":
+      return ` unread=${u.unread_count}`;
+    default:
+      return "";
+  }
+}
+
 export function attachListener(
   accountId: string,
   workspaceId: string,
@@ -77,6 +158,23 @@ export function attachListener(
   const handler = (update: unknown) => {
     try {
       const u = update as { _?: string };
+      // Диагностика доставляемости: логируем ВСЕ апдейты (тип + ключевые поля),
+      // а не только те, что обрабатываем — чтобы поймать и «TDLib ничего не
+      // прислал» (throttle/коннект), и «прислал нужное, но мы это не слушаем»
+      // (напр. updateChatLastMessage/updateNewChat несут last_message, а мы
+      // ловим только updateNewMessage). Коннект и авторизацию логируем ВСЕГДА
+      // (редкие, критичные); остальное — под TG_RX_DEBUG=1, кроме firehose-шума.
+      if (u._ === "updateConnectionState") {
+        rxlogAlways(
+          `${accountId} connection=${(update as { state?: { _?: string } }).state?._}`,
+        );
+      } else if (u._ === "updateAuthorizationState") {
+        rxlogAlways(
+          `${accountId} auth=${(update as { authorization_state?: { _?: string } }).authorization_state?._}`,
+        );
+      } else if (RX_DEBUG && u._ && !RX_NOISE.has(u._)) {
+        rxlog(`${accountId} ${u._}${rxDetail(update as RxUpdate)}`);
+      }
       switch (u._) {
         case "updateNewMessage": {
           const msg = (update as { message: TdMessage }).message;
@@ -226,9 +324,15 @@ async function onNewMessage(
   // Только private DM от user'а — sender = messageSenderUser, и в TDLib
   // private chat_id == user_id. Боты технически тоже user'ы, но бот не
   // пишет нам сам, если мы не подписались.
-  if (msg.sender_id._ !== "messageSenderUser") return;
+  if (msg.sender_id._ !== "messageSenderUser") {
+    rxlog(`${accountId} onNewMessage drop chat=${msg.chat_id} reason=sender_not_user(${msg.sender_id._})`);
+    return;
+  }
   const senderUserId = msg.sender_id.user_id;
-  if (msg.chat_id !== senderUserId) return;
+  if (msg.chat_id !== senderUserId) {
+    rxlog(`${accountId} onNewMessage drop chat=${msg.chat_id} reason=chat!=sender(${senderUserId})`);
+    return;
+  }
   const senderIdStr = String(senderUserId);
 
   try {
@@ -354,9 +458,11 @@ async function onNewMessage(
         );
       }
       // emit на новый contact идёт изнутри ensureContactFromTraffic.
+      rxlog(`${accountId} onNewMessage resolved=new(ensure) sender=${senderIdStr}`);
       return;
     }
 
+    rxlog(`${accountId} onNewMessage resolved=existing sender=${senderIdStr} contacts=${touched.length}`);
     for (const t of touched) {
       emitContactChanged(workspaceId, {
         contactId: t.id,
@@ -396,6 +502,22 @@ export async function onReadInbox(
         markedUnread: contacts.markedUnread,
         lastMessageAt: contacts.lastMessageAt,
       });
+    rxlog(`onReadInbox chat=${chatId} unread=${unreadCount} touched=${touched.length}`);
+    // 0 строк — либо нет контакта с таким tg_user_id (мэппинг сломан → счётчик
+    // никогда не обновится), либо счётчик уже равен. Различаем под флагом.
+    if (RX_DEBUG && touched.length === 0) {
+      const [c] = await db
+        .select({ id: contacts.id })
+        .from(contacts)
+        .where(
+          and(
+            eq(contacts.workspaceId, workspaceId),
+            sql`${contactTgUserIdSql} = ${tgUserIdStr}`,
+          ),
+        )
+        .limit(1);
+      rxlog(`onReadInbox chat=${chatId} touched=0 contactExists=${!!c}`);
+    }
     for (const t of touched) {
       emitContactChanged(workspaceId, {
         contactId: t.id,

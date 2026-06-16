@@ -40,6 +40,14 @@ services:
       context: .
       dockerfile: apps/api/Dockerfile
     restart: unless-stopped
+    # Ротация логов: 4 файла × 50 МБ = 200 МБ потолок, старое выбрасывается
+    # (FIFO). Без этого json-file растёт безгранично и забивает диск, особенно
+    # с диагностикой TG_RX_DEBUG. Применяется при пересоздании контейнера.
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "4"
     environment:
       NODE_ENV: production
       PORT: "3000"
@@ -58,6 +66,10 @@ services:
       TELEGRAM_API_ID: ${TELEGRAM_API_ID}
       TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
       TG_PROXY_URL: ${TG_PROXY_URL:-}
+      # Диагностика доставляемости входящих ([tg-rx] в логах). Временно включено
+      # (1) для отладки «сообщения не доходят»; объём ограничен ротацией логов
+      # (200 МБ, см. logging выше). После поимки бага выставить TG_RX_DEBUG=0.
+      TG_RX_DEBUG: ${TG_RX_DEBUG:-1}
       TDLIB_DATA_DIR: /data/td
       # YouTube Data API v3 key — синк/метрики YouTube-каналов (TikTok без ключа).
       YOUTUBE_KEY: ${YOUTUBE_KEY:-}

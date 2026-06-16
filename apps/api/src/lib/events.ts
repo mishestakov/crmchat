@@ -16,7 +16,14 @@ function createChannel<T>(prefix: string) {
   const key = (id: string) => `${prefix}:${id}`;
   return {
     emit: (id: string, payload: T) => {
-      bus.emit(key(id), payload);
+      const ch = key(id);
+      // Диагностика доставляемости (TG_RX_DEBUG=1): сколько SSE-подписчиков
+      // получит это событие. 0 → никто не слушает (фронт не на странице/не
+      // подключён) → событие теряется не из-за бэка.
+      if (process.env.TG_RX_DEBUG === "1") {
+        console.log(`[tg-rx] emit ${ch} listeners=${bus.listenerCount(ch)}`);
+      }
+      bus.emit(ch, payload);
     },
     subscribe: (id: string, cb: (payload: T) => void) => {
       const ch = key(id);
