@@ -8,7 +8,7 @@
 FROM node:24-alpine AS builder
 
 RUN apk add --no-cache git \
-  && npm install -g pnpm@10.33.1
+  && npm install -g pnpm@11.5.2
 
 WORKDIR /app
 

@@ -1,0 +1,45 @@
+# Yandex-инфра оверрайд (накладывается поверх docker-compose.prod.yml):
+#   docker compose --env-file .env.production \
+#     -f docker-compose.prod.yml -f docker-compose.port.yml up -d --build
+#
+# Отличия Яндекса от базового prod.yml:
+#  - сборка через network: host (egress билда),
+#  - VM IPv6-only с NAT64 → IPv4-форсинг из prod.yml (extra_hosts/sysctls/
+#    NODE_OPTIONS) тут СБРАСываем, сеть с IPv6,
+#  - gateway (nginx) на host-сети слушает 3102 (наружный вход),
+#  - MTU docker-сети занижен до 1280: путь хоста = 1400, и без этого крупные
+#    пакеты контейнера (тяжёлые TG-апдейты) чёрно-дырились бы из-за резаного
+#    ICMPv6 PMTUD → часть сообщений не доходила. 1280 = IPv6-минимум, влезает.
+services:
+  api:
+    build:
+      network: host
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: ""
+    extra_hosts: !reset []
+    sysctls: !reset {}
+  api-migrate:
+    build:
+      network: host
+  web:
+    build:
+      network: host
+  gateway:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      - api
+      - web
+    volumes:
+      - ./deploy/gateway-host.conf:/etc/nginx/conf.d/default.conf:ro
+
+networks:
+  default:
+    enable_ipv6: true
+    driver_opts:
+      com.docker.network.driver.mtu: "1280"
+    ipam:
+      config:
+        - subnet: fd00:3102::/64

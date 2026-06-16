@@ -102,8 +102,8 @@ const RX_NOISE = new Set<string>([
 type RxUpdate = {
   _?: string;
   chat_id?: number | string;
-  message?: { id?: number | string; chat_id?: number | string; is_outgoing?: boolean; date?: number };
-  last_message?: { id?: number | string; date?: number };
+  message?: { id?: number | string; chat_id?: number | string; is_outgoing?: boolean; date?: number; content?: { _?: string } };
+  last_message?: { id?: number | string; date?: number; content?: { _?: string } };
   chat?: { id?: number | string; last_message?: { id?: number | string } };
   unread_count?: number;
   last_read_inbox_message_id?: number | string;
@@ -121,9 +121,9 @@ function rxDetail(u: RxUpdate): string {
     // Момент приёма нашим TDLib = таймстамп самой строки лога (его ставит
     // docker/journald). Разница date↔строка = лаг доставки (сигнал throttle).
     case "updateNewMessage":
-      return ` chat=${u.message?.chat_id} msg=${u.message?.id} outgoing=${u.message?.is_outgoing} date=${u.message?.date}`;
+      return ` chat=${u.message?.chat_id} msg=${u.message?.id} outgoing=${u.message?.is_outgoing} date=${u.message?.date} content=${u.message?.content?._}`;
     case "updateChatLastMessage":
-      return ` chat=${u.chat_id} lastMsg=${u.last_message?.id} date=${u.last_message?.date}`;
+      return ` chat=${u.chat_id} lastMsg=${u.last_message?.id} date=${u.last_message?.date} content=${u.last_message?.content?._}`;
     case "updateNewChat":
       return ` chat=${u.chat?.id} lastMsg=${u.chat?.last_message?.id}`;
     case "updateChatReadInbox":

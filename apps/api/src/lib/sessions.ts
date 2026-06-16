@@ -35,7 +35,10 @@ export async function createSession(
     httpOnly: true,
     sameSite: "Lax",
     path: "/",
-    secure: process.env.NODE_ENV === "production",
+    // secure-cookie выводим из схемы WEB_ORIGIN, а не из NODE_ENV: внутренняя
+    // Yandex-инфра ходит по http (http://…:3102), там secure-cookie не долетел бы
+    // и логин бы ломался. HTTPS-деплой получит secure автоматически.
+    secure: (process.env.WEB_ORIGIN ?? "").startsWith("https://"),
     maxAge: SESSION_TTL_SEC,
   });
   return id;

@@ -14,6 +14,9 @@ dist/
 .turbo/
 .env
 .env.production
+.env.production.*
+/backups/
+*.dump
 *.tsbuildinfo
 
 # TDLib per-account binlog/files — persistent FS state, в проде volume
