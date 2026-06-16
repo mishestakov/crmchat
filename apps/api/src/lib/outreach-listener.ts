@@ -372,7 +372,7 @@ async function onNewMessage(
   }
 }
 
-async function onReadInbox(
+export async function onReadInbox(
   workspaceId: string,
   chatId: number,
   unreadCount: number,

@@ -9,6 +9,7 @@ import {
   FileText,
   Hash,
   Mail,
+  MailOpen,
   MoreHorizontal,
   Paperclip,
   Pencil,
@@ -367,6 +368,29 @@ export function ChatPanel(props: {
         {
           params: { path: { wsId: props.wsId, id: props.contact.id } },
           body: { accountId: props.accountId, value },
+        },
+      );
+      if (error) throw error;
+      return data!;
+    },
+    onSuccess: () => {
+      setActionError(null);
+      qc.invalidateQueries({
+        queryKey: ["contact", props.wsId, props.contact.id],
+      });
+    },
+    onError: (e) => setActionError(errorMessage(e)),
+  });
+
+  // «Прочитать всё» — осознанное чтение: шлёт viewMessages (блогер увидит
+  // «прочитано»), гасит счётчик и снимает ручную пометку. Антипод markUnreadMut.
+  const markReadMut = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.POST(
+        "/v1/workspaces/{wsId}/contacts/{id}/chat/mark-read",
+        {
+          params: { path: { wsId: props.wsId, id: props.contact.id } },
+          body: { accountId: props.accountId },
         },
       );
       if (error) throw error;
@@ -778,24 +802,46 @@ export function ChatPanel(props: {
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              disabled={markUnreadMut.isPending}
-              onClick={() => markUnreadMut.mutate(!props.contact.markedUnread)}
-              title={
-                props.contact.markedUnread
-                  ? "Диалог помечен непрочитанным — снять пометку"
-                  : "Пометить непрочитанным («вернуться позже») — видно и в Telegram"
-              }
-              className={
-                "rounded p-1 disabled:opacity-50 " +
-                (props.contact.markedUnread
-                  ? "bg-amber-100 text-amber-700 hover:bg-amber-200"
-                  : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700")
-              }
-            >
-              <Mail size={16} />
-            </button>
+            {/* Две иконки рядом (не морфящаяся одна): открытый конверт —
+                «прочитать всё», закрытый — «пометить непрочитанным». Активна
+                всегда ровно одна (они антиподы), вторая приглушена. */}
+            {(() => {
+              const hasUnread =
+                props.contact.unreadCount > 0 || props.contact.markedUnread;
+              return (
+                <>
+                  <button
+                    type="button"
+                    disabled={markReadMut.isPending || !hasUnread}
+                    onClick={() => markReadMut.mutate()}
+                    title={
+                      "Прочитать всё" +
+                      (props.contact.unreadCount > 0
+                        ? ` (${props.contact.unreadCount})`
+                        : "") +
+                      " — блогер увидит «прочитано»"
+                    }
+                    className={
+                      "rounded p-1 disabled:opacity-40 " +
+                      (hasUnread
+                        ? "text-emerald-600 hover:bg-emerald-50"
+                        : "text-zinc-400")
+                    }
+                  >
+                    <MailOpen size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={markUnreadMut.isPending || hasUnread}
+                    onClick={() => markUnreadMut.mutate(true)}
+                    title="Пометить непрочитанным («вернуться позже») — видно и в Telegram"
+                    className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 disabled:opacity-40"
+                  >
+                    <Mail size={16} />
+                  </button>
+                </>
+              );
+            })()}
             {props.contact.primaryAccountId !== props.accountId && (
               <button
                 type="button"

@@ -30,7 +30,7 @@ import {
   contactAccessClause,
 } from "../lib/contacts-access.ts";
 import { subscribeContacts } from "../lib/events.ts";
-import { onMarkedUnread } from "../lib/outreach-listener.ts";
+import { onMarkedUnread, onReadInbox } from "../lib/outreach-listener.ts";
 import { channelRknExistsSqlText } from "../lib/rkn-registry.ts";
 import { ilikeContains } from "../lib/ilike.ts";
 import type { TdClient } from "../lib/tdlib/index.ts";
@@ -1101,6 +1101,58 @@ app.openapi(
     }
     await onMarkedUnread(wsId, Number(chatId), value);
     return c.json({ markedUnread: value });
+  },
+);
+
+// «Прочитать всё»: осознанное действие менеджера — в отличие от пассивного
+// просмотра (тот read-mark НЕ делает, см. chat-history), здесь шлём viewMessages
+// до последнего сообщения (блогер увидит «прочитано») и снимаем ручную пометку.
+// Зеркало в contacts (unreadCount=0, markedUnread=false) пишем сразу, не дожидаясь
+// эха updateChatReadInbox от TG — throttled-связь может тормозить, а guard <> в
+// onReadInbox/onMarkedUnread делает эхо no-op.
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/contacts/{id}/chat/mark-read",
+    tags: ["contacts"],
+    request: {
+      params: WsIdParam,
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({ accountId: z.string().min(1).max(64) }),
+          },
+        },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": { schema: z.object({ ok: z.boolean() }) },
+        },
+        description: "Read",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const { id } = c.req.valid("param");
+    const { accountId } = c.req.valid("json");
+    const { chatId, client } = await resolveContactChat(wsId, id, accountId);
+    try {
+      await readOnTelegram(wsId, accountId, chatId);
+      await client.invoke({
+        _: "toggleChatIsMarkedAsUnread",
+        chat_id: Number(chatId),
+        is_marked_as_unread: false,
+      } as never);
+    } catch (e) {
+      throw new HTTPException(400, { message: errMsg(e) });
+    }
+    await onReadInbox(wsId, Number(chatId), 0);
+    await onMarkedUnread(wsId, Number(chatId), false);
+    return c.json({ ok: true });
   },
 );
 

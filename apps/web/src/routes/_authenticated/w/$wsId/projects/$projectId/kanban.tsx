@@ -309,7 +309,9 @@ function Column(props: {
         <span className="font-medium">{props.title}</span>
         <span className="text-zinc-500">{props.leads.length}</span>
       </div>
-      <div className="flex-1 space-y-2 overflow-y-auto">
+      {/* min-h-0 обязателен: без него flex-ребёнок не сжимается ниже контента,
+          растёт, и overflow-hidden колонки обрезает список без скролла. */}
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto">
         {props.leads.map((l) => (
           <LeadCard
             key={l.id}
