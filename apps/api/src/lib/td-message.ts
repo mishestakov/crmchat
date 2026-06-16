@@ -228,6 +228,44 @@ export function inputMessageText(text: string, entities: unknown[] = []) {
   };
 }
 
+// Инлайн-форматирование композера: менеджер оборачивает выделение маркерами
+// (тулбар/хоткеи во фронте), здесь вырезаем маркеры и строим TG-entities.
+//   **жирный**  __подчёркнутый__  `моноширинный`
+// СВОЙ узкий парсер на 3 маркера, а НЕ TDLib MarkdownV2: у V2 строгое
+// экранирование (`!` `.` `-` …) — обычный текст ронял бы парс. Здесь всё, кроме
+// наших маркеров, — литерал. offset/length в UTF-16 code units (== JS .length),
+// как требует td_api (textEntity). Кастом-эмодзи сюда не примешиваем — их
+// entities считаются на клиенте по сырому тексту, парсим маркеры только когда
+// эмодзи-entities нет (см. quick-send).
+export function parseInlineEntities(raw: string): {
+  text: string;
+  entities: unknown[];
+} {
+  const re = /\*\*([\s\S]+?)\*\*|__([\s\S]+?)__|`([^`]+?)`/g;
+  const entities: unknown[] = [];
+  let out = "";
+  let last = 0;
+  for (let m = re.exec(raw); m; m = re.exec(raw)) {
+    out += raw.slice(last, m.index);
+    const [inner, type] =
+      m[1] !== undefined
+        ? [m[1], "textEntityTypeBold"]
+        : m[2] !== undefined
+          ? [m[2], "textEntityTypeUnderline"]
+          : [m[3]!, "textEntityTypeCode"];
+    entities.push({
+      _: "textEntity",
+      offset: out.length,
+      length: inner.length,
+      type: { _: type },
+    });
+    out += inner;
+    last = m.index + m[0].length;
+  }
+  out += raw.slice(last);
+  return { text: out, entities };
+}
+
 // fileId статичного превью стикера: thumbnail набора, а для статичного
 // webp-стикера без thumbnail — сам файл (браузер рендерит webp нативно).
 // null = превью нечем показать (анимированный без thumbnail) — рендерим

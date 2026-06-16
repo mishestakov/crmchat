@@ -1,5 +1,14 @@
 import { useEffect, useRef } from "react";
-import { Send } from "lucide-react";
+import { Bold, Code, Send, Underline } from "lucide-react";
+
+// Кнопки форматирования: оборачивают выделение маркером, который бэкенд парсит в
+// TG-entity. key/shift — хоткей (Ctrl+<key>, опц. с Shift); onKeyDown ищет запись
+// по ним, так что кнопка и хоткей берут связку из одного места.
+const FMT_BUTTONS = [
+  { marker: "**", key: "b", shift: false, title: "Жирный (Ctrl+B)", Icon: Bold },
+  { marker: "__", key: "u", shift: false, title: "Подчёркнутый (Ctrl+U)", Icon: Underline },
+  { marker: "`", key: "m", shift: true, title: "Моноширинный (Ctrl+Shift+M)", Icon: Code },
+] as const;
 
 // Единое поле отправки для всех чатов (TG-переписка, MAX, группа/личка
 // канала): autosize до ~40% окна, Enter — отправить, Shift+Enter — перенос.
@@ -17,11 +26,19 @@ export function ChatComposer(props: {
   compact?: boolean;
   // Акцент площадки (MAX — фиолетовый).
   accent?: "emerald" | "violet";
-  // Слот над кнопкой отправки (кнопка эмодзи-пикера в TG-чате) — справа
-  // колонкой, чтобы не ужимать textarea с двух сторон.
-  beforeSend?: React.ReactNode;
+  // Слот в левом ряду тулбара (скрепка + эмодзи в TG-чате) — слева, рядом с
+  // кнопками форматирования; справа остаётся только «Отправить».
+  tools?: React.ReactNode;
+  // Тулбар форматирования (B/U/моно) + Ctrl+B/Ctrl+U/Ctrl+Shift+M. Только для
+  // чатов, где бэкенд парсит маркеры (TG quick-send/edit) — в MAX и пр. маркеры
+  // ушли бы литералом, поэтому гейтим пропом.
+  formatting?: boolean;
+  // Разрешить отправку при пустом тексте (есть что слать помимо текста —
+  // например, вложения в стейджинге).
+  canSendEmpty?: boolean;
 }) {
-  const canSend = props.value.trim().length > 0 && !props.sending;
+  const canSend =
+    (props.value.trim().length > 0 || !!props.canSendEmpty) && !props.sending;
   // height=auto перед замером — иначе scrollHeight не уменьшается при
   // удалении строк.
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -35,8 +52,45 @@ export function ChatComposer(props: {
     ta.style.height = `${Math.min(ta.scrollHeight + borders, window.innerHeight * 0.4)}px`;
   }, [props.value]);
   const violet = props.accent === "violet";
+  // Оборачивает выделение (или позицию каретки) парой маркеров и возвращает
+  // каретку внутрь — бэкенд распарсит маркеры в TG-entities при отправке.
+  const wrap = (marker: string) => {
+    const ta = taRef.current;
+    if (!ta) return;
+    const { selectionStart: s, selectionEnd: e } = ta;
+    const v = props.value;
+    props.onChange(v.slice(0, s) + marker + v.slice(s, e) + marker + v.slice(e));
+    requestAnimationFrame(() => {
+      ta.focus();
+      ta.selectionStart = s + marker.length;
+      ta.selectionEnd = e + marker.length;
+    });
+  };
+  const fmtBtn =
+    "inline-flex h-6 w-6 items-center justify-center rounded text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700";
   return (
     <>
+      {(props.tools || props.formatting) && (
+        <div className="mb-1 flex items-center gap-0.5">
+          {props.tools}
+          {props.tools && props.formatting && (
+            <span className="mx-1 h-4 w-px bg-zinc-200" />
+          )}
+          {props.formatting &&
+            FMT_BUTTONS.map(({ marker, title, Icon }) => (
+              <button
+                key={marker}
+                type="button"
+                className={fmtBtn}
+                title={title}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => wrap(marker)}
+              >
+                <Icon size={14} />
+              </button>
+            ))}
+        </div>
+      )}
       <div className="flex items-end gap-2">
         <textarea
           ref={taRef}
@@ -45,6 +99,18 @@ export function ChatComposer(props: {
           placeholder={props.placeholder}
           onChange={(e) => props.onChange(e.target.value)}
           onKeyDown={(e) => {
+            // Хоткеи форматирования (как в TG): Ctrl+B / Ctrl+U / Ctrl+Shift+M.
+            if (props.formatting && (e.ctrlKey || e.metaKey) && !e.altKey) {
+              const k = e.key.toLowerCase();
+              const btn = FMT_BUTTONS.find(
+                (b) => b.key === k && b.shift === e.shiftKey,
+              );
+              if (btn) {
+                e.preventDefault();
+                wrap(btn.marker);
+                return;
+              }
+            }
             // Enter — отправка. Shift+Enter — перенос строки (нативный
             // textarea-behavior, не перехватываем).
             if (e.key === "Enter" && !e.shiftKey && canSend) {
@@ -57,23 +123,20 @@ export function ChatComposer(props: {
             (violet ? "focus:border-violet-500" : "focus:border-emerald-500")
           }
         />
-        <div className="flex shrink-0 flex-col items-center gap-1">
-          {props.beforeSend}
-          <button
-            type="button"
-            onClick={props.onSend}
-            disabled={!canSend}
-            title="Отправить (Enter); перенос — Shift+Enter"
-            className={
-              "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-white disabled:opacity-40 " +
-              (violet
-                ? "bg-violet-600 hover:bg-violet-700"
-                : "bg-emerald-600 hover:bg-emerald-700")
-            }
-          >
-            <Send size={16} />
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={props.onSend}
+          disabled={!canSend}
+          title="Отправить (Enter); перенос — Shift+Enter"
+          className={
+            "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-white disabled:opacity-40 " +
+            (violet
+              ? "bg-violet-600 hover:bg-violet-700"
+              : "bg-emerald-600 hover:bg-emerald-700")
+          }
+        >
+          <Send size={16} />
+        </button>
       </div>
       {props.error && (
         <p className="mt-1 text-xs text-red-600">{props.error}</p>

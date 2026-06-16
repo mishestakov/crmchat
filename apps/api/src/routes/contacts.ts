@@ -47,7 +47,8 @@ import { errMsg } from "../lib/errors.ts";
 import { getOutreachWorkerClient } from "../lib/outreach-account-client.ts";
 import { sendMaxMessage } from "../lib/max-account-client.ts";
 import { fetchMaxDialog, pickMaxAccount } from "../lib/max-conversation.ts";
-import { sendDocument, downloadToBytes } from "../lib/td-files.ts";
+import { sendMedia, downloadToBytes } from "../lib/td-files.ts";
+import type { OutgoingFile } from "../lib/td-files.ts";
 import { resolveStickyByPeerIds } from "../lib/sticky.ts";
 import {
   type TdContent,
@@ -62,6 +63,7 @@ import {
   extractMediaThumb,
   extractSticker,
   inputMessageText,
+  parseInlineEntities,
   extractReactions,
 } from "../lib/td-message.ts";
 import { respondWithCreativeMedia } from "../lib/creative-media-response.ts";
@@ -1158,7 +1160,8 @@ app.openapi(
 // делаем: фронт показывает «Изменить» только на своих текстовых, а ошибку
 // TDLib (например, старше 48ч) отдаём как есть. Ленту фронт перечитает по
 // updateMessageContent → SSE. Кастом-эмодзи исходного сообщения при правке
-// заменятся юникодом — entities в edit не прокидываем (MVP).
+// заменятся юникодом (их entities в edit не прокидываем, MVP), но инлайн-
+// форматирование (**жирный**/__подч__/`моно`) парсим — тулбар работает и здесь.
 app.openapi(
   createRoute({
     method: "post",
@@ -1195,11 +1198,12 @@ app.openapi(
     const { accountId, messageId, text } = c.req.valid("json");
     const { chatId, client } = await resolveContactChat(wsId, id, accountId);
     try {
+      const fmt = parseInlineEntities(text);
       await client.invoke({
         _: "editMessageText",
         chat_id: Number(chatId),
         message_id: Number(messageId),
-        input_message_content: inputMessageText(text),
+        input_message_content: inputMessageText(fmt.text, fmt.entities),
       } as never);
     } catch (e) {
       throw new HTTPException(400, { message: errMsg(e) });
@@ -1531,27 +1535,19 @@ function tgUserIdOf(properties: unknown): string | null {
   return typeof v === "string" ? v : null;
 }
 
-// Отправка файла документом в чат (drag-drop). Plain-роут (не OpenAPI) — proще
-// для multipart; auth берётся из wsApp.use(assertMember). Тег не ставим — менеджер
-// пометит сообщение из чата после доставки.
-app.post("/v1/workspaces/:wsId/contacts/:id/send-document", async (c) => {
-  const wsId = c.get("workspaceId");
-  const contactId = c.req.param("id");
-  const body = await c.req.parseBody();
-  const file = body["file"];
-  const accountId = body["accountId"];
-  const caption = typeof body["caption"] === "string" ? body["caption"] : "";
-  if (!(file instanceof File)) {
-    throw new HTTPException(400, { message: "file required" });
-  }
-  if (typeof accountId !== "string") {
-    throw new HTTPException(400, { message: "accountId required" });
-  }
-  if (file.size > 20 * 1024 * 1024) {
-    throw new HTTPException(413, { message: "Файл больше 20 МБ" });
-  }
-  // accountId приходит из body — проверяем принадлежность воркспейсу
-  // (getOutreachWorkerClient кэширует по account.id и сам по ws не скоупит).
+// Резолв «аккаунт+контакт → клиент+tgUserId» для multipart-роутов (accountId
+// приходит из body, а getOutreachWorkerClient кэширует по account.id и сам по ws
+// НЕ скоупит — проверяем принадлежность воркспейсу здесь).
+const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+// Агрегатный потолок батча: байты всех файлов держатся в памяти разом
+// (arrayBuffer + копия + запись на диск) — без этого 10×20 МБ × N параллельных
+// запросов могут уронить API-процесс.
+const MAX_BATCH_BYTES = 50 * 1024 * 1024;
+async function resolveChatTarget(
+  wsId: string,
+  contactId: string,
+  accountId: string,
+): Promise<{ client: TdClient; tgUserId: string }> {
   const [acc] = await db
     .select({ id: outreachAccounts.id })
     .from(outreachAccounts)
@@ -1573,8 +1569,63 @@ app.post("/v1/workspaces/:wsId/contacts/:id/send-document", async (c) => {
   }
   const client = await getOutreachWorkerClient({ id: accountId, workspaceId: wsId });
   if (!client) throw new HTTPException(503, { message: "tg client unavailable" });
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  await sendDocument(client, Number(tgUserId), bytes, file.name, caption);
+  return { client, tgUserId };
+}
+
+// Отправка файлов в чат (скрепка/drag-drop композера и drag-drop договора в
+// placement-drawer). Plain-роут (не OpenAPI) — проще для multipart; auth берётся
+// из wsApp.use(assertMember). Тег не ставим — менеджер пометит сообщение из чата
+// после доставки. asFile=true → всё документом без пережатия; иначе картинки
+// уходят сжатыми фото, прочее — документом (sendMedia сам группирует в альбомы).
+// caption (подпись) — общий, на первый месседж.
+app.post("/v1/workspaces/:wsId/contacts/:id/send-media", async (c) => {
+  const wsId = c.get("workspaceId");
+  const contactId = c.req.param("id");
+  const body = await c.req.parseBody({ all: true });
+  const accountId = body["accountId"];
+  const rawCaption = typeof body["caption"] === "string" ? body["caption"] : "";
+  const asFile = body["asFile"] === "true";
+  // Ответ на сообщение (reply) — опц.; в sendMedia вешается на первый месседж.
+  const replyToRaw = body["replyToMessageId"];
+  const replyToMessageId =
+    typeof replyToRaw === "string" && replyToRaw ? Number(replyToRaw) : undefined;
+  if (typeof accountId !== "string") {
+    throw new HTTPException(400, { message: "accountId required" });
+  }
+  // parseBody({all}) отдаёт массив при нескольких одноимённых полях, иначе одно
+  // значение — нормализуем к массиву File.
+  const raw = body["file"];
+  const files = (Array.isArray(raw) ? raw : [raw]).filter(
+    (f): f is File => f instanceof File,
+  );
+  if (files.length === 0) throw new HTTPException(400, { message: "file required" });
+  if (files.length > 10) {
+    throw new HTTPException(400, { message: "Не больше 10 файлов за раз" });
+  }
+  if (files.some((f) => f.size > MAX_UPLOAD_BYTES)) {
+    throw new HTTPException(413, { message: "Файл больше 20 МБ" });
+  }
+  if (files.reduce((sum, f) => sum + f.size, 0) > MAX_BATCH_BYTES) {
+    throw new HTTPException(413, { message: "Суммарно файлы больше 50 МБ" });
+  }
+  const { client, tgUserId } = await resolveChatTarget(wsId, contactId, accountId);
+  const outgoing: OutgoingFile[] = await Promise.all(
+    files.map(async (f) => ({
+      bytes: new Uint8Array(await f.arrayBuffer()),
+      name: f.name,
+      mime: f.type,
+    })),
+  );
+  // Подпись парсим как и текст сообщения: **жирный**/__подч__/`моно` → entities.
+  const caption = parseInlineEntities(rawCaption);
+  await sendMedia(
+    client,
+    Number(tgUserId),
+    outgoing,
+    asFile,
+    caption,
+    replyToMessageId,
+  );
   return c.body(null, 204);
 });
 
@@ -1589,7 +1640,7 @@ app.get("/v1/workspaces/:wsId/contacts/:id/chat-file", async (c) => {
   if (typeof accountId !== "string" || !Number.isFinite(fileId)) {
     throw new HTTPException(400, { message: "accountId & fileId required" });
   }
-  // accountId из query → проверяем принадлежность воркспейсу (как в send-document).
+  // accountId из query → проверяем принадлежность воркспейсу (как в send-media).
   const [acc] = await db
     .select({ id: outreachAccounts.id })
     .from(outreachAccounts)

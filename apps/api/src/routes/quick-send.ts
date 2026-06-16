@@ -10,7 +10,7 @@ import {
   scheduledMessages,
 } from "../db/schema.ts";
 import { contactTgUserIdSql } from "../lib/contact-sql.ts";
-import { inputMessageText } from "../lib/td-message.ts";
+import { inputMessageText, parseInlineEntities } from "../lib/td-message.ts";
 import { errMsg } from "../lib/errors.ts";
 import {
   getOutreachWorkerClient,
@@ -283,25 +283,34 @@ app.openapi(
     }
 
     // Содержимое: стикер (inputFileRemote — remote id живёт между рестартами
-    // TDLib) или текст с опц. custom-emoji entities.
-    const inputContent = body.sticker
-      ? {
-          _: "inputMessageSticker",
-          sticker: { _: "inputFileRemote", id: body.sticker.remoteId },
-        }
-      : inputMessageText(
-          // refine гарантирует text при отсутствии sticker.
-          body.text!,
-          (body.entities ?? []).map((e) => ({
-            _: "textEntity",
-            offset: e.offset,
-            length: e.length,
-            type: {
-              _: "textEntityTypeCustomEmoji",
-              custom_emoji_id: e.customEmojiId,
-            },
-          })),
-        );
+    // TDLib) или текст. Если в драфте есть кастом-эмодзи — отдаём их entities
+    // как есть (offsets посчитаны клиентом по сырому тексту, инлайн-маркеры тут
+    // НЕ парсим, иначе сдвинем offsets; редкий комбо-кейс). Иначе парсим
+    // **жирный**/__подч__/`моно` в TG-entities.
+    let inputContent;
+    if (body.sticker) {
+      inputContent = {
+        _: "inputMessageSticker",
+        sticker: { _: "inputFileRemote", id: body.sticker.remoteId },
+      };
+    } else if (body.entities?.length) {
+      inputContent = inputMessageText(
+        // refine гарантирует text при отсутствии sticker.
+        body.text!,
+        body.entities.map((e) => ({
+          _: "textEntity",
+          offset: e.offset,
+          length: e.length,
+          type: {
+            _: "textEntityTypeCustomEmoji",
+            custom_emoji_id: e.customEmojiId,
+          },
+        })),
+      );
+    } else {
+      const fmt = parseInlineEntities(body.text!);
+      inputContent = inputMessageText(fmt.text, fmt.entities);
+    }
     try {
       await client.invoke({
         _: "sendMessage",

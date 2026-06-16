@@ -659,7 +659,7 @@ export function ProductionPane({
 
   // Зона помеченного сообщения в шаге: рендер на лету + «убрать», иначе подсказка.
   // Drop-зона договора: дроп файла на блок «Договор» → отправляем блогеру (тот же
-  // send-document, что и чат), менеджер пометит сообщение в чате после доставки.
+  // send-media, что и чат), менеджер пометит сообщение в чате после доставки.
   const [docDragOver, setDocDragOver] = useState(false);
   const [docUploading, setDocUploading] = useState(false);
   const [docError, setDocError] = useState<string | null>(null);

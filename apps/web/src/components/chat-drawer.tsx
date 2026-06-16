@@ -10,6 +10,7 @@ import {
   Hash,
   Mail,
   MoreHorizontal,
+  Paperclip,
   Pencil,
   Pin,
   Reply,
@@ -20,7 +21,7 @@ import {
   X,
 } from "lucide-react";
 import type { Contact } from "@repo/core";
-import { api, sendContactDocument } from "../lib/api";
+import { api, sendContactMedia } from "../lib/api";
 import { copyText } from "../lib/clipboard";
 import {
   dayKey,
@@ -409,21 +410,42 @@ export function ChatPanel(props: {
     onError: (e) => setActionError(errorMessage(e)),
   });
 
-  // Drag-drop файла → отправка документом (бэкенд шлёт через TDLib). Тег
-  // ставится вручную из чата после доставки. dragDepth — счётчик enter/leave
-  // (leave летит и от дочерних элементов, булев флаг мигал бы).
+  // Вложения композера: скрепка/drag-drop складывают файлы в стейджинг, менеджер
+  // правит подпись и галочку «Отправить файлом», затем шлёт кнопкой отправки.
+  // dragDepth — счётчик enter/leave (leave летит и от дочерних, булев флаг мигал
+  // бы). asFile=false → картинки уходят сжатыми фото, прочее всегда документом.
   const [dragDepth, setDragDepth] = useState(0);
-  const [uploading, setUploading] = useState(false);
-  const uploadFile = async (file: File) => {
-    setUploading(true);
-    setActionError(null);
-    try {
-      await sendContactDocument(
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [sendAsFile, setSendAsFile] = useState(false);
+  const addFiles = (files: File[]) => {
+    if (files.length) setPendingFiles((p) => [...p, ...files].slice(0, 10));
+  };
+  // Галочка «Отправить файлом» осмысленна только когда ВСЕ вложения — картинки
+  // (выбор «сжать или оригинал»); в миксе не-картинки всё равно идут документом.
+  const allImages =
+    pendingFiles.length > 0 &&
+    pendingFiles.every((f) => f.type.startsWith("image/"));
+  const mediaMut = useMutation({
+    mutationFn: (args: {
+      files: File[];
+      asFile: boolean;
+      caption: string;
+      replyToMessageId?: string;
+    }) =>
+      sendContactMedia(
         props.wsId,
         props.contact.id,
         props.accountId,
-        file,
-      );
+        args.files,
+        args.asFile,
+        args.caption,
+        args.replyToMessageId,
+      ),
+    onSuccess: () => {
+      setPendingFiles([]);
+      setSendAsFile(false);
+      setComposeText("");
+      setReplyTo(null);
       qc.invalidateQueries({
         queryKey: [
           "chat-history",
@@ -432,12 +454,8 @@ export function ChatPanel(props: {
           props.accountId,
         ],
       });
-    } catch (e) {
-      setActionError(e instanceof Error ? e.message : "Ошибка отправки файла");
-    } finally {
-      setUploading(false);
-    }
-  };
+    },
+  });
 
   // Старт бота (этап 16.9): первое действие в пустом бот-диалоге. После — бот
   // присылает меню/приветствие, перетягиваем историю.
@@ -558,6 +576,13 @@ export function ChatPanel(props: {
     // и вставленные в него кастом-эмодзи должны уйти кастомными.
     didAutoScrollRef.current = false;
   }, [props.accountId]);
+
+  // Вложения сбрасываем при смене КОНТАКТА (а не аккаунта): иначе застейдженные
+  // файлы могли бы уйти не тому собеседнику.
+  useEffect(() => {
+    setPendingFiles([]);
+    setSendAsFile(false);
+  }, [props.contact.id]);
 
   useEffect(() => {
     if (initialQ.data && initialQ.data.messages.length === 0) setHasMore(false);
@@ -719,13 +744,12 @@ export function ChatPanel(props: {
         if (!chatId) return;
         e.preventDefault();
         setDragDepth(0);
-        const f = e.dataTransfer.files?.[0];
-        if (f) void uploadFile(f);
+        addFiles(Array.from(e.dataTransfer.files ?? []));
       }}
     >
-        {(dragDepth > 0 || uploading) && (
+        {dragDepth > 0 && (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-emerald-50/90 text-sm font-medium text-emerald-700">
-            {uploading ? "Отправляем файл…" : "Отпустите — отправить файл в чат"}
+            Отпустите — прикрепить файлы
           </div>
         )}
         {actionError && (
@@ -1161,6 +1185,17 @@ export function ChatPanel(props: {
               }
               return;
             }
+            // Есть вложения — уходят медиа-роутом (подпись = текст черновика).
+            // asFile учитываем только когда всё картинки (в миксе галочки нет).
+            if (pendingFiles.length) {
+              mediaMut.mutate({
+                files: pendingFiles,
+                asFile: allImages && sendAsFile,
+                caption: text,
+                replyToMessageId: replyTo?.id,
+              });
+              return;
+            }
             sendMut.mutate({
               text,
               entities: draftEntities(text),
@@ -1168,19 +1203,27 @@ export function ChatPanel(props: {
               clearDraft: true,
             });
           }}
-          sending={sendMut.isPending || editMut.isPending}
-          // Ошибка по текущему режиму: в правке — её, иначе — отправки.
-          // Не смешиваем, чтобы старая ошибка одного режима не маскировала
-          // другой.
-          error={
-            editTarget
-              ? editMut.error
-                ? errorMessage(editMut.error)
-                : null
-              : sendMut.error
-                ? errorMessage(sendMut.error)
-                : null
+          sending={
+            sendMut.isPending || editMut.isPending || mediaMut.isPending
           }
+          pendingFiles={pendingFiles}
+          allImages={allImages}
+          onAddFiles={addFiles}
+          onRemoveFile={(i) =>
+            setPendingFiles((p) => p.filter((_, idx) => idx !== i))
+          }
+          sendAsFile={sendAsFile}
+          onToggleAsFile={setSendAsFile}
+          // Ошибка активного режима (правка / вложения / текст) — не смешиваем,
+          // чтобы старая ошибка одного не маскировала другой.
+          error={(() => {
+            const m = editTarget
+              ? editMut
+              : pendingFiles.length
+                ? mediaMut
+                : sendMut;
+            return m.error ? errorMessage(m.error) : null;
+          })()}
           editTo={editTarget ? { text: editTarget.original } : null}
           onCancelEdit={() => {
             setComposeText(editTarget?.prevDraft ?? "");
@@ -1477,6 +1520,45 @@ export function ContactNote(props: { wsId: string; contact: Contact }) {
   );
 }
 
+// Превью одного вложения в стейджинге: картинки — миниатюрой (object URL,
+// чистим при размонтировании), прочее — иконкой с именем. × убирает из набора.
+function AttachmentChip(props: { file: File; onRemove: () => void }) {
+  const isImg = props.file.type.startsWith("image/");
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isImg) return;
+    const u = URL.createObjectURL(props.file);
+    setUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [props.file, isImg]);
+  return (
+    <div className="relative">
+      {isImg && url ? (
+        <img
+          src={url}
+          alt={props.file.name}
+          className="h-16 w-16 rounded object-cover"
+        />
+      ) : (
+        <div className="flex h-16 w-16 flex-col items-center justify-center gap-1 rounded bg-white px-1 text-center">
+          <FileText size={20} className="text-zinc-400" />
+          <span className="w-full truncate text-[10px] text-zinc-500">
+            {props.file.name}
+          </span>
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={props.onRemove}
+        title="Убрать"
+        className="absolute -right-1 -top-1 inline-flex h-4 w-4 items-center justify-center rounded-full bg-zinc-700 text-white hover:bg-zinc-900"
+      >
+        <X size={10} />
+      </button>
+    </div>
+  );
+}
+
 function ComposeFooter(props: {
   wsId: string;
   contactId: string;
@@ -1499,8 +1581,18 @@ function ComposeFooter(props: {
   // Взаимоисключим с reply (вход в edit сбрасывает reply-черновик).
   editTo: { text: string } | null;
   onCancelEdit: () => void;
+  // Вложения в стейджинге: скрепка/drag-drop складывают сюда, плашка показывает
+  // превью + чекбокс «Отправить файлом», отправка — общей кнопкой. allImages —
+  // все ли вложения картинки (от этого зависит видимость чекбокса).
+  pendingFiles: File[];
+  allImages: boolean;
+  onAddFiles: (files: File[]) => void;
+  onRemoveFile: (index: number) => void;
+  sendAsFile: boolean;
+  onToggleAsFile: (v: boolean) => void;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   return (
     <div className="border-t border-zinc-200 bg-white p-3">
       {props.editTo && (
@@ -1553,6 +1645,42 @@ function ComposeFooter(props: {
           </div>
         </div>
       )}
+      {props.pendingFiles.length > 0 && (
+        <div className="mb-2 rounded-md border border-zinc-200 bg-zinc-50 p-2">
+          <div className="flex flex-wrap gap-2">
+            {props.pendingFiles.map((f, i) => (
+              <AttachmentChip
+                key={`${f.name}-${f.size}-${i}`}
+                file={f}
+                onRemove={() => props.onRemoveFile(i)}
+              />
+            ))}
+          </div>
+          {/* В миксе не-картинки всё равно уходят документом — выбора нет,
+              прячем (см. allImages в ChatPanel). */}
+          {props.allImages && (
+            <label className="mt-2 flex w-fit items-center gap-1.5 text-xs text-zinc-600">
+              <input
+                type="checkbox"
+                checked={props.sendAsFile}
+                onChange={(e) => props.onToggleAsFile(e.target.checked)}
+              />
+              Отправить файлом (без сжатия картинок)
+            </label>
+          )}
+        </div>
+      )}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          props.onAddFiles(Array.from(e.target.files ?? []));
+          // сброс — иначе повторный выбор того же файла не триггерит change.
+          e.target.value = "";
+        }}
+      />
       <div className="relative">
         {pickerOpen && (
           <StickerPicker
@@ -1576,22 +1704,34 @@ function ComposeFooter(props: {
           onChange={props.onTextChange}
           onSend={props.onSend}
           sending={props.sending}
+          formatting
+          canSendEmpty={props.pendingFiles.length > 0}
           placeholder={`Написать через ${props.accountLabel}…`}
           error={props.error}
-          beforeSend={
-            <button
-              type="button"
-              onClick={() => setPickerOpen((o) => !o)}
-              title="Эмодзи и стикеры"
-              className={
-                "rounded p-1 " +
-                (pickerOpen
-                  ? "bg-zinc-100 text-emerald-600"
-                  : "text-zinc-400 hover:text-zinc-700")
-              }
-            >
-              <Smile size={20} />
-            </button>
+          tools={
+            <>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                title="Прикрепить файлы"
+                className="inline-flex h-6 w-6 items-center justify-center rounded text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+              >
+                <Paperclip size={16} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setPickerOpen((o) => !o)}
+                title="Эмодзи и стикеры"
+                className={
+                  "inline-flex h-6 w-6 items-center justify-center rounded " +
+                  (pickerOpen
+                    ? "bg-zinc-100 text-emerald-600"
+                    : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700")
+                }
+              >
+                <Smile size={16} />
+              </button>
+            </>
           }
         />
       </div>

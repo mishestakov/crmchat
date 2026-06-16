@@ -1,4 +1,4 @@
-import { writeFile, readFile, rm, mkdtemp } from "node:fs/promises";
+import { writeFile, readFile, rm, mkdtemp, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { TdClient } from "./tdlib/client.ts";
@@ -10,35 +10,123 @@ function safeBaseName(name: string): string {
   return name.replace(/[/\\]/g, "_").trim() || "file";
 }
 
-// Отправка файла документом в чат через TDLib. TDLib берёт АБСОЛЮТНЫЙ путь к
-// файлу (inputFileLocal) и грузит его на сервер ФОНОВО — поэтому temp нельзя
-// удалять сразу после sendMessage (оборвём загрузку); чистим с задержкой.
-// id отправленного сообщения временный (меняется при доставке) и здесь НЕ нужен:
-// пометка тегом (договор/акт) делается вручную из чата, когда у сообщения уже
-// финальный id (осознанно не связываемся с временными id — 80/20).
-export async function sendDocument(
-  client: TdClient,
-  chatId: number,
-  bytes: Uint8Array,
-  fileName: string,
-  caption: string,
-): Promise<void> {
-  const dir = await mkdtemp(join(tmpdir(), "tgdoc-"));
-  const path = join(dir, safeBaseName(fileName));
-  await writeFile(path, bytes);
-  const cleanup = () => void rm(dir, { recursive: true, force: true }).catch(() => {});
-  try {
-    await client.invoke({
-      _: "sendMessage",
-      chat_id: chatId,
-      input_message_content: {
+export type OutgoingFile = { bytes: Uint8Array; name: string; mime: string };
+
+// Картинку шлём как inputMessagePhoto (TG пережимает, показывает инлайн-фото)
+// или как inputMessageDocument (оригинал, качается файлом). Выбор — чекбокс
+// «Отправить файлом» во фронте (asFile). Не-картинки всегда документ.
+function isPhoto(f: OutgoingFile, asFile: boolean): boolean {
+  return !asFile && f.mime.startsWith("image/");
+}
+
+// caption (formattedText: текст + entities форматирования) вешаем только на
+// первый месседж (для альбома TG показывает подпись под всем альбомом).
+// Остальные получают пустой EMPTY_CAPTION.
+export type Caption = { text: string; entities: unknown[] };
+const EMPTY_CAPTION: Caption = { text: "", entities: [] };
+
+function mediaContent(path: string, asPhoto: boolean, caption: Caption) {
+  const cap = { _: "formattedText", text: caption.text, entities: caption.entities };
+  return asPhoto
+    ? {
+        _: "inputMessagePhoto",
+        photo: { _: "inputFileLocal", path },
+        thumbnail: null,
+        video: null,
+        added_sticker_file_ids: [],
+        // 0/0 — TDLib сам прочитает размеры из файла.
+        width: 0,
+        height: 0,
+        caption: cap,
+        show_caption_above_media: false,
+        self_destruct_type: null,
+        has_spoiler: false,
+      }
+    : {
         _: "inputMessageDocument",
         document: { _: "inputFileLocal", path },
         thumbnail: null,
         disable_content_type_detection: false,
-        caption: { _: "formattedText", text: caption, entities: [] },
-      },
-    } as never);
+        caption: cap,
+      };
+}
+
+// Отправка одного или нескольких файлов в чат через TDLib. TDLib берёт
+// АБСОЛЮТНЫЙ путь (inputFileLocal) и грузит фоново — поэтому temp нельзя удалять
+// сразу (оборвём загрузку), чистим с задержкой. id отправленных сообщений
+// временные и здесь НЕ нужны (тег ставится вручную из чата после доставки).
+//
+// Группировка: 1 файл → sendMessage; 2–10 → sendMessageAlbum. Фото и документы
+// в один альбом мешать НЕЛЬЗЯ (td_api: документы группируются только с
+// документами) — шлём раздельными альбомами, фото первыми. Чанки по 10 (предел
+// альбома). caption и reply_to — на самый первый отправленный месседж.
+export async function sendMedia(
+  client: TdClient,
+  chatId: number,
+  files: OutgoingFile[],
+  asFile: boolean,
+  caption: Caption,
+  replyToMessageId?: number,
+): Promise<void> {
+  const dir = await mkdtemp(join(tmpdir(), "tgmedia-"));
+  const cleanup = () => void rm(dir, { recursive: true, force: true }).catch(() => {});
+  try {
+    // Каждый файл — в свою индекс-подпапку: имя в TG = basename, а уникальность
+    // пути даёт папка (иначе одноимённые файлы перетёрли бы друг друга). Записи
+    // независимы — пишем параллельно.
+    const items = await Promise.all(
+      files.map(async (f, i) => {
+        const sub = join(dir, String(i));
+        await mkdir(sub);
+        const path = join(sub, safeBaseName(f.name));
+        await writeFile(path, f.bytes);
+        return { path, asPhoto: isPhoto(f, asFile) };
+      }),
+    );
+
+    // Фото и документы — раздельными альбомами (td_api не даёт смешивать), фото
+    // первыми; внутри типа чанки по 10 (предел альбома). caption — на самый
+    // первый отправленный месседж, дальше пусто.
+    const groups = [
+      { asPhoto: true, paths: items.filter((it) => it.asPhoto).map((it) => it.path) },
+      { asPhoto: false, paths: items.filter((it) => !it.asPhoto).map((it) => it.path) },
+    ].filter((g) => g.paths.length > 0);
+
+    // reply_to: InputMessageReplyTo (td_api), inputMessageReplyToMessage для
+    // ответа в том же чате — только на первый отправленный месседж.
+    const replyTo =
+      replyToMessageId != null
+        ? { _: "inputMessageReplyToMessage", message_id: replyToMessageId }
+        : null;
+
+    let firstUsed = false;
+    for (const g of groups) {
+      for (let i = 0; i < g.paths.length; i += 10) {
+        const chunk = g.paths.slice(i, i + 10);
+        const contents = chunk.map((p) => {
+          const content = mediaContent(p, g.asPhoto, firstUsed ? EMPTY_CAPTION : caption);
+          firstUsed = true;
+          return content;
+        });
+        // caption/reply берёт только самый первый месседж; запоминаем ДО map'а.
+        const isFirstSend = !replyTo ? false : i === 0 && g === groups[0];
+        await client.invoke(
+          (chunk.length === 1
+            ? {
+                _: "sendMessage",
+                chat_id: chatId,
+                ...(isFirstSend ? { reply_to: replyTo } : {}),
+                input_message_content: contents[0],
+              }
+            : {
+                _: "sendMessageAlbum",
+                chat_id: chatId,
+                ...(isFirstSend ? { reply_to: replyTo } : {}),
+                input_message_contents: contents,
+              }) as never,
+        );
+      }
+    }
   } catch (e) {
     cleanup();
     throw e;
