@@ -199,11 +199,27 @@ function LeadsPage() {
   const inboxItems = isDraft
     ? visibleLeads
     : (leadsQ.data?.leads ?? []).filter((l) => !l.contactReady);
-  const prepLead = showPrepInbox
-    ? (inboxItems.find((l) => l.id === prepLeadId) ??
-      inboxItems.find((l) => !l.contactReady) ??
-      inboxItems[0])
-    : undefined;
+  // Позиционный курсор: обработал/удалил лида — он уходит из инбокса, и
+  // активным становится тот, кто встал на его место (по запомненному индексу),
+  // а не первый в списке. Очередь едет под фиксированным курсором, без прыжка.
+  // prepCursorRef = -1 до первого выбора → стартуем с первого проблемного.
+  const prepCursorRef = useRef(-1);
+  const prepLead = useMemo(() => {
+    if (!showPrepInbox || inboxItems.length === 0) return undefined;
+    const found = prepLeadId
+      ? inboxItems.find((l) => l.id === prepLeadId)
+      : undefined;
+    if (found) return found;
+    if (prepCursorRef.current >= 0) {
+      return inboxItems[Math.min(prepCursorRef.current, inboxItems.length - 1)];
+    }
+    return inboxItems.find((l) => !l.contactReady) ?? inboxItems[0];
+  }, [showPrepInbox, inboxItems, prepLeadId]);
+  useEffect(() => {
+    if (!prepLead) return;
+    const idx = inboxItems.findIndex((l) => l.id === prepLead.id);
+    if (idx >= 0) prepCursorRef.current = idx;
+  }, [prepLead, inboxItems]);
 
   // Холодная доливка: список отыгран → новые лиды не планируются сами,
   // запускает явная кнопка. Счёт с бэка (страница может быть обрезана).
