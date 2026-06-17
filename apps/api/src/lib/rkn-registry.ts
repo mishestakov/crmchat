@@ -33,73 +33,139 @@ type RegistryRecord = {
 };
 
 // url реестра → нормализованный ключ матчинга с channels (формат должен
-// байт-в-байт совпадать с channelRknKeySql ниже). Не наши сети (ВК/ОК/…) —
-// null: храним для поиска по реестру, но не матчим.
+// байт-в-байт совпадать с кандидатами channelRknExistsSqlText ниже). Не наши
+// сети (ВК/ОК/…) — null: храним для поиска по реестру, но не матчим.
+// URL в реестр вносят люди руками — до парсинга канонизируем: https:////host,
+// отсутствие схемы, percent-encoded кириллица в хендлах, query/fragment-хвосты
+// (?share_to/?ysclid/?si). По анализу дампа 11.06.26 правила покрывают ~99%
+// записей наших платформ; осознанно нерезолвимы шортнеры (clck.ru) и
+// редиректы через чужой домен (vk.com/away.php).
+// Служебные одно-сегментные пути площадок — не хендлы, ключи из них были бы
+// мусором с риском ложного матча (канал с username='watch').
+const SERVICE_PATHS = new Set([
+  "watch",
+  "shorts",
+  "playlist",
+  "results",
+  "feed",
+  "live",
+  "channel",
+  "discover",
+  "explore",
+  "foryou",
+  "video",
+  "search",
+  "tag",
+]);
+
 export function rknMatchKey(
   network: string | null,
   url: string | null,
 ): string | null {
   if (!network || !url) return null;
-  const u = url.trim();
+  let u = url.trim();
+  try {
+    u = decodeURIComponent(u);
+  } catch {
+    // кривой percent-encoding — парсим как есть
+  }
+  u = u.replace(/^(https?):\/+/i, "$1://");
+  u = u.split("?")[0]!.split("#")[0]!;
   switch (network) {
     case "Telegram": {
-      let m = u.match(/t\.me\/(?:s\/)?([A-Za-z0-9_]+)\/?$/i);
+      // @? — встречается t.me/@user; (?:\/\d+)? — ссылка на конкретный пост.
+      let m = u.match(
+        /(?:t|telegram)\.me\/+(?:s\/)?@?([A-Za-z0-9_]+)(?:\/\d+)?\/?$/i,
+      );
       if (m) return `telegram:${m[1]!.toLowerCase()}`;
       // Приватный инвайт: хэш регистрозависимый, не lower'им.
-      m = u.match(/t\.me\/(?:joinchat\/|\+)([A-Za-z0-9_-]+)/i);
+      m = u.match(/(?:t|telegram)\.me\/+(?:joinchat\/|\+)([A-Za-z0-9_-]+)/i);
       if (m) return `telegram:+${m[1]}`;
       return null;
     }
     case "YouTube": {
-      const m = u.match(
-        /youtube\.com\/(?:@|c\/|user\/)?([A-Za-z0-9_.-]+)\/?$/i,
-      );
-      return m ? `youtube:${m[1]!.toLowerCase()}` : null;
+      // Канонический id канала — матчится с channels.external_id.
+      let m = u.match(/youtube\.com\/.*channel\/(UC[\w-]+)/i);
+      if (m) return `youtube:${m[1]!.toLowerCase()}`;
+      // Хендл бывает кириллическим (после decode) — берём «до слэша».
+      // Служебные пути (watch, shorts, …) — не хендлы, мусорный ключ мог бы
+      // ложно сматчиться с каналом username='watch'.
+      m = u.match(/youtube\.com\/+(?:@|c\/|user\/)?([^/]+?)\/?$/i);
+      return m && !SERVICE_PATHS.has(m[1]!.toLowerCase())
+        ? `youtube:${m[1]!.toLowerCase()}`
+        : null;
     }
     case "TikTok": {
-      const m = u.match(/tiktok\.com\/@([A-Za-z0-9_.]+)/i);
+      // С «@» — из любого места (бывают ссылки на видео /@user/video/123);
+      // без «@» — только чистый хвост, со стоп-листом служебных путей.
+      let m = u.match(/tiktok\.com\/+@([A-Za-z0-9_.]+)/i);
+      if (!m) {
+        m = u.match(/tiktok\.com\/+([A-Za-z0-9_.]+)\/?$/i);
+        if (m && SERVICE_PATHS.has(m[1]!.toLowerCase())) m = null;
+      }
       return m ? `tiktok:${m[1]!.toLowerCase()}` : null;
     }
     case "Дзен": {
-      const m = u.match(/dzen\.ru\/(?:id\/)?([A-Za-z0-9_.-]+)\/?$/i);
-      return m ? `dzen:${m[1]!.toLowerCase()}` : null;
+      // dzen.ru/<slug> | /id/<hex> (канонический id → external_id) |
+      // /profile/editor/<то же> (редакторская ссылка).
+      const m = u.match(
+        /dzen\.ru\/+(?:profile\/editor\/)?(?:id\/)?([A-Za-z0-9_.-]+)\/?$/i,
+      );
+      return m && !["profile", "editor", "id"].includes(m[1]!.toLowerCase())
+        ? `dzen:${m[1]!.toLowerCase()}`
+        : null;
     }
     case "MAX": {
-      // max.ru/join/<hash> — приватные инвайты, по ним не матчим.
-      const m = u.match(/max\.ru\/([A-Za-z0-9_.-]+)\/?$/i);
-      return m && m[1]!.toLowerCase() !== "join"
-        ? `max:${m[1]!.toLowerCase()}`
-        : null;
+      // Приватный инвайт max.ru/join/<hash> — ключ по хэшу, как t.me/+.
+      let m = u.match(/max\.ru\/+join\/([A-Za-z0-9_-]+)/i);
+      if (m) return `max:+${m[1]}`;
+      m = u.match(/max\.ru\/+([A-Za-z0-9_.-]+)\/?$/i);
+      return m ? `max:${m[1]!.toLowerCase()}` : null;
     }
     default:
       return null;
   }
 }
 
-// Тот же ключ со стороны channels, SQL-выражением — для EXISTS-подзапросов
-// в списках (каталог, лиды, лонглист, contact.channels). username каналов
-// в БД без «@»; приватный TG — хэш из link. Текст параметризован алиасом,
-// потому что встраивается и в drizzle-запросы (channels), и в raw-подзапросы
-// с алиасом (ch в contact.channels).
+// Те же ключи со стороны channels, SQL-выражением — для EXISTS-подзапросов
+// в списках (каталог, лиды, лонглист, contact.channels). Кандидатов до трёх:
+// по username (без «@» в БД), по external_id (канонические id — YouTube UC…,
+// Дзен hex) и по инвайт-хэшу из link (приватный TG). Текст параметризован
+// алиасом, потому что встраивается и в drizzle-запросы (channels), и в
+// raw-подзапросы с алиасом (ch в contact.channels).
 export function channelRknExistsSqlText(alias: string): string {
   // status-фильтр: матчим только действующие записи — появись в реестре
   // «исключённые», они не должны давать спокойный бейдж «РКН».
   // Флаг 'i' у regexp_match — как /i в rknMatchKey (T.me/JoinChat/…).
+  // NULL-кандидаты в ANY безвредны (NULL-сравнение не матчится); '||' сам
+  // пропагирует NULL при NULL-username/external_id — CASE не нужен.
   return `EXISTS (
   SELECT 1 FROM rkn_records rr
   WHERE rr.status IN ('active', 'reissued')
-    AND rr.match_key = ${alias}.platform || ':' || (
-    CASE
-      WHEN ${alias}.username IS NOT NULL THEN lower(${alias}.username)
-      WHEN ${alias}.platform = 'telegram' AND ${alias}.link ~* 't\\.me/(joinchat/|\\+)'
-        THEN '+' || (regexp_match(${alias}.link, 't\\.me/(?:joinchat/|\\+)([A-Za-z0-9_-]+)', 'i'))[1]
-      ELSE NULL
-    END
-  ))`;
+    AND rr.match_key = ANY (ARRAY[
+      ${alias}.platform || ':' || lower(${alias}.username),
+      ${alias}.platform || ':' || lower(${alias}.external_id),
+      CASE WHEN ${alias}.platform = 'telegram' AND ${alias}.link ~* 't\\.me/(joinchat/|\\+)'
+        THEN 'telegram:+' || (regexp_match(${alias}.link, 't\\.me/(?:joinchat/|\\+)([A-Za-z0-9_-]+)', 'i'))[1] END,
+      CASE WHEN ${alias}.platform = 'max' AND ${alias}.link ~* 'max\\.ru/join/'
+        THEN 'max:+' || (regexp_match(${alias}.link, 'max\\.ru/join/([A-Za-z0-9_-]+)', 'i'))[1] END
+    ]))`;
 }
 export const channelIsRknSql = sql<boolean>`${sql.raw(
   channelRknExistsSqlText("channels"),
 )}`;
+
+// Порог закона: регистрация в реестре обязательна только для страниц с
+// аудиторией > 10к (мирроринг RKN_THRESHOLD на фронте). Канал «отбракован по
+// РКН», лишь если обязан И не в реестре — это ровно условие красной пилюли
+// «Нет РКН». memberCount NULL (соц-синк не прошёл) → сравнение даёт NULL →
+// НЕ заблокирован (свежий импорт со «неизвестным размером» шлём, оператор
+// уточнит вручную). Малые (<10к) шлём — реклама у них легальна без реестра.
+export const RKN_THRESHOLD = 10_000;
+export const channelRknBlockedSql = sql<boolean>`(
+  not ${channelIsRknSql}
+  and ${channels.memberCount} > ${RKN_THRESHOLD}
+)`;
 
 async function fetchPage(pageNum: number): Promise<{
   total: number;

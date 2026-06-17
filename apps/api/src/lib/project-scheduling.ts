@@ -12,6 +12,7 @@ import {
   type ProjectMessage,
 } from "../db/schema.ts";
 import { contactTgUserIdSql } from "./contact-sql.ts";
+import { channelRknBlockedSql } from "./rkn-registry.ts";
 import { resolveStickyByPeerIds } from "./sticky.ts";
 import { substituteVariables } from "./substitute-variables.ts";
 
@@ -229,6 +230,7 @@ async function prepareLeads(opts: {
       channelUsername: channels.username,
       link: channels.link,
       title: channels.title,
+      rknBlocked: channelRknBlockedSql,
     })
     .from(projectItems)
     .leftJoin(channels, eq(channels.id, projectItems.channelId))
@@ -248,9 +250,21 @@ async function prepareLeads(opts: {
     string,
     { idents: string[]; title: string | null; link: string | null }
   >();
+  // РКН-гейт: админ годен, если ХОТЬ ОДИН его канал не отбракован по РКН
+  // (lenient-OR — у одного админа обычно один канал; редкий микс трактуем в
+  // пользу отправки: опенер один на админа и адресован легальному каналу).
+  // «Отбракован» = обязан регистрироваться (>10к) и не в реестре — то же
+  // условие, что красная пилюля «Нет РКН» (channelRknBlockedSql). Малые
+  // (<10к) и неизвестные по размеру не блокируются. Отсев — в цикле ниже.
+  // СЛОТ «уже работает на платформе»: будущая третья причина отбраковки —
+  // канал в эфире у нас (синк CPV/CPC/CPA с YT-кластера, реф ~/MAX). Пока
+  // паркед: данных нет, фильтр не добавляем. Появится здесь же — ещё один
+  // Set исключённых ключей + причина в readiness.
+  const sendableKeys = new Set<string>();
   for (const r of channelRows) {
     if (!r.adminUsername) continue;
     const key = r.adminUsername.toLowerCase();
+    if (!r.rknBlocked) sendableKeys.add(key);
     const entry = canals.get(key) ?? { idents: [], title: null, link: null };
     const { ident, link } = channelIdentifier({
       platform: r.platform,
@@ -322,6 +336,9 @@ async function prepareLeads(opts: {
     const key = l.username.toLowerCase();
     if (botUsernames.has(l.username.replace(/^@/, "").toLowerCase())) continue;
     if (l.tgUserId && botTgIds.has(l.tgUserId)) continue;
+    // РКН-отбраковка: каналу, обязанному регистрироваться и не в реестре,
+    // опенер не шлём (гейт квалификации).
+    if (!sendableKeys.has(key)) continue;
     if (seen.has(key)) continue;
     seen.add(key);
     if (opts.skipContacted && contacted.has(key)) continue;
@@ -432,21 +449,32 @@ const unscheduledLeadSql = sql`not exists (
     and sm.status in ('pending', 'sent', 'failed')
 )`;
 
-// Сколько лидов лонглиста ждут явного запуска (баннер на странице лидов).
-// username is not null: без-контактные лиды под отдельным баннером
-// («Обработать» → прет-инбокс), сюда не двоим.
+// Сколько лидов лонглиста ждут явного запуска («Дослать новым» на странице
+// лидов). Считаем только реально отправляемых: есть username (без-контактные
+// — отбраковка, не сюда) И не отбракован по РКН (иначе кнопка обещала бы
+// отправку, которой prepareLeads всё равно не сделает). Должен совпадать с
+// выборкой scheduleUnscheduledLeads — иначе счётчик врёт.
 export async function countUnscheduledLeads(projectId: string): Promise<number> {
-  return db.$count(
-    projectItems,
-    and(
-      eq(projectItems.projectId, projectId),
-      isNotNull(projectItems.username),
-      isNull(projectItems.shortlistedAt),
-      isNull(projectItems.skippedAt),
-      sql`${projectItems.available} is distinct from false`,
-      unscheduledLeadSql,
-    ),
-  );
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(projectItems)
+    .leftJoin(channels, eq(channels.id, projectItems.channelId))
+    .where(
+      and(
+        eq(projectItems.projectId, projectId),
+        isNotNull(projectItems.username),
+        isNull(projectItems.shortlistedAt),
+        isNull(projectItems.skippedAt),
+        sql`${projectItems.available} is distinct from false`,
+        // «не отбракован» = `is not true`, а НЕ `not (...)`: при NULL
+        // (неизвестный размер, не в реестре) `not NULL`=NULL → WHERE молча
+        // выкинул бы свежий импорт. `is not true` трактует NULL как годен —
+        // зеркалит `!r.rknBlocked` (=!null=true) в prepareLeads.
+        sql`${channelRknBlockedSql} is not true`,
+        unscheduledLeadSql,
+      ),
+    );
+  return row?.n ?? 0;
 }
 
 // Допланировать опенеры незапланированным лидам проекта (холодная доливка по
@@ -463,8 +491,14 @@ export async function scheduleUnscheduledLeads(opts: {
   );
   if (accountIds.length === 0) return 0;
   const items = await db
-    .select()
+    .select({
+      id: projectItems.id,
+      username: projectItems.username,
+      tgUserId: projectItems.tgUserId,
+      properties: projectItems.properties,
+    })
     .from(projectItems)
+    .leftJoin(channels, eq(channels.id, projectItems.channelId))
     .where(
       and(
         eq(projectItems.projectId, project.id),
@@ -473,6 +507,11 @@ export async function scheduleUnscheduledLeads(opts: {
         isNull(projectItems.shortlistedAt),
         isNull(projectItems.skippedAt),
         sql`${projectItems.available} is distinct from false`,
+        // Отбракованных по РКН не планируем и здесь (мирроринг гейта в
+        // prepareLeads) — счётчик и действие должны совпадать. `is not true`,
+        // а не `not (...)`: NULL (неизвестный размер) = годен (см.
+        // countUnscheduledLeads).
+        sql`${channelRknBlockedSql} is not true`,
         unscheduledLeadSql,
       ),
     )

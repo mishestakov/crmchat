@@ -145,7 +145,7 @@ function RknPage() {
                 <td className="px-3 py-1.5 text-zinc-600">{r.network}</td>
                 <td className="px-3 py-1.5">
                   <a
-                    href={r.url}
+                    href={externalHref(r.url)}
                     target="_blank"
                     rel="noreferrer"
                     className="text-sky-700 hover:underline"
@@ -196,6 +196,16 @@ function RknPage() {
       )}
     </div>
   );
+}
+
+// URL в реестр вносят люди: бывает без схемы (голый href ушёл бы относительным
+// путём нашего SPA) и с битой схемой (https:/host — браузер принял бы «https»
+// за хост). Чиним только href, сырой url показываем как есть.
+function externalHref(url: string): string {
+  const u = url.trim().replace(/^(https?):\/+/i, "$1://");
+  return /^https?:\/\//i.test(u)
+    ? u
+    : `https://${u.replace(/^[/@:]+/, "")}`;
 }
 
 function NetworkChip(props: {

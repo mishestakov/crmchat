@@ -24,7 +24,8 @@ import {
 import { pickDefined } from "../lib/pick-defined.ts";
 import { emitProjectChanged, subscribeProject } from "../lib/events.ts";
 import { myAccountIdsSql } from "../lib/outreach-access.ts";
-import { channelIsRknSql } from "../lib/rkn-registry.ts";
+import { channelIsRknSql, channelRknBlockedSql } from "../lib/rkn-registry.ts";
+import { contactReadySql } from "../lib/contact-sql.ts";
 import {
   assertProjectAccess,
   projectAccessClause,
@@ -557,31 +558,27 @@ app.openapi(
 // resolveAdminRecipient/healPlacementRecipients). Не используем
 // exists(channel_admins): админ может быть привязан, но без публичного
 // @username — тогда scheduler его молча пропустит, а гейт бы пропустил как
-// «готовый» → канал активен, опенер не ушёл. Сверяемся с username.
-// Личка: по direct_messages_chat_id (кладёт sync), не по has_dm (его пишет
-// репликатор асинхронно). coalesce star-поля к 0: отсутствие поля трактуем
-// как бесплатную личку, иначе null ложно блокировал бы активацию.
-const contactReadySql = sql<boolean>`(
-  ${projectItems.username} is not null
-  or (${channels.meta} -> 'contact_method' ->> 'kind') is not null
-  or (
-    coalesce(${channels.meta} ->> 'direct_messages_chat_id', '0') <> '0'
-    and coalesce((${channels.meta} ->> 'outgoing_paid_message_star_count')::int, 0) = 0
-  )
-)`;
-
-// Жёсткий гейт готовности контактов — общий для BD и agency: канал без
-// контакта аутричу некуда слать. Скоуп — лонглист (shortlistedAt IS NULL):
-// у BD шортлиста нет → фильтр no-op, считаются все размещения. Отказавшихся
+// Гейт квалификации лонглиста — общий для BD и agency. Разбивает лонглист
+// (shortlistedAt IS NULL; у BD шортлиста нет → фильтр no-op) на три
+// взаимоисключающих корзины (в сумме = total):
+//   noContact — нет контакта (аутричу некуда слать); чинится резолвером;
+//   noRkn     — контакт есть, но канал не в реестре РКН (жёсткий отсев,
+//               чинится только регистрацией в РКН → синк реестра);
+//   eligible  — годен к рассылке (контакт И РКН).
+// Приоритет причины — контакт первее РКН (его чинят первым). Отказавшихся
 // (available=false) не считаем (этап 16.10; у BD available обычно null).
-// Используется гейтом /activate и чек-листом запуска (/readiness).
-async function longlistContactReadiness(
-  projectId: string,
-): Promise<{ total: number; noContact: number }> {
+// Используется сводкой запуска и чек-листом готовности (/readiness).
+async function longlistContactReadiness(projectId: string): Promise<{
+  total: number;
+  noContact: number;
+  noRkn: number;
+  eligible: number;
+}> {
   const [row] = await db
     .select({
       total: sql<number>`count(*)::int`,
       noContact: sql<number>`(count(*) filter (where not ${contactReadySql}))::int`,
+      noRkn: sql<number>`(count(*) filter (where ${contactReadySql} and ${channelRknBlockedSql}))::int`,
     })
     .from(projectItems)
     .leftJoin(channels, eq(channels.id, projectItems.channelId))
@@ -592,7 +589,12 @@ async function longlistContactReadiness(
         sql`${projectItems.available} is distinct from false`,
       ),
     );
-  return { total: row?.total ?? 0, noContact: row?.noContact ?? 0 };
+  const total = row?.total ?? 0;
+  const noContact = row?.noContact ?? 0;
+  const noRkn = row?.noRkn ?? 0;
+  // eligible = остаток партиции (корзины взаимоисключающие) — не отдельный
+  // count-фильтр, чтобы не гонять РКН-EXISTS лишний раз в этом запросе.
+  return { total, noContact, noRkn, eligible: total - noContact - noRkn };
 }
 
 app.openapi(
@@ -606,9 +608,13 @@ app.openapi(
         content: {
           "application/json": {
             schema: z.object({
-              // Лонглист (то, что реально уйдёт в рассылку), не все items.
+              // Лонглист целиком (shortlistedAt null, не отказ).
               leadsTotal: z.number().int(),
+              // Корзины квалификации (взаимоисключающие, в сумме = leadsTotal).
+              // eligible реально уйдёт в рассылку; noContact/noRkn — отбраковка.
+              leadsEligible: z.number().int(),
               leadsNoContact: z.number().int(),
+              leadsNoRkn: z.number().int(),
               // Активные аккаунты, доступные проекту (резолв общий с /activate).
               accountsCount: z.number().int(),
             }),
@@ -630,7 +636,9 @@ app.openapi(
     ]);
     return c.json({
       leadsTotal: readiness.total,
+      leadsEligible: readiness.eligible,
       leadsNoContact: readiness.noContact,
+      leadsNoRkn: readiness.noRkn,
       accountsCount: accountIds.length,
     });
   },
@@ -680,13 +688,13 @@ app.openapi(
       throw new HTTPException(400, { message: "List has no leads" });
     }
 
-    const { noContact: unready } = await longlistContactReadiness(project.id);
-    if (unready > 0) {
-      throw new HTTPException(400, {
-        message: `Нельзя запустить аутрич: каналов без контакта — ${unready}. Найдите контакт или уберите их из списка.`,
-      });
-    }
-
+    // Гейт квалификации НЕ блокирует запуск: отбракованных (без контакта /
+    // без РКН) не планируем, а откладываем — они видны во вкладке
+    // «Отбракованные» и обратимы (нашёлся контакт / зарегали РКН → ручной
+    // прогон по новым). Фильтр по контакту/РКН живёт в prepareLeads (единый
+    // чокпоинт для активации, доливки и прогона). Фронт показывает сводку
+    // «N из M, отложено K» перед запуском (см. LaunchPanel).
+    //
     // Лонглист → scheduled-строки общим конвейером (дедуп по админу + синтез
     // канало-vars + sticky/warm). Только не отобранные в шортлист и не
     // отказавшиеся; already-contacted на первом запуске не пропускаем. У BD
@@ -708,6 +716,12 @@ app.openapi(
       baseTime: activatedAt,
       skipContacted: false,
     });
+    if (rows.length === 0) {
+      throw new HTTPException(400, {
+        message:
+          "Нет годных каналов для запуска: все отбракованы (нет контакта или нет регистрации в РКН).",
+      });
+    }
 
     await db.transaction(async (tx) => {
       // postgres-js биндит каждое значение как отдельный $N; лимит ~65k

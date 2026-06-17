@@ -5,6 +5,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { useState } from "react";
 import { CircleAlert, CircleCheck, Play } from "lucide-react";
 import { api } from "../lib/api";
 import { errorMessage } from "../lib/errors";
@@ -12,6 +13,7 @@ import { useProject } from "../lib/outreach-queries";
 import { OUTREACH_QK, invalidateProject } from "../lib/query-keys";
 import { rememberLastProjectView } from "../lib/last-project-view";
 import { BackButton } from "./back-button";
+import { Modal } from "./modal";
 
 // Шапка проекта — три равноправных представления:
 //   • Канбан — основной рабочий экран (карточки по стадиям, drawer-чаты).
@@ -107,6 +109,8 @@ function LaunchPanel(props: {
   const { wsId, projectId, messagesCount } = props;
   const qc = useQueryClient();
   const navigate = useNavigate();
+  // Сводка-подтверждение перед запуском, когда часть каналов отбракована.
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const readinessQ = useQuery({
     queryKey: OUTREACH_QK.projectReadiness(wsId, projectId),
@@ -147,11 +151,20 @@ function LaunchPanel(props: {
   const r = readinessQ.data;
   if (!r) return null;
 
+  // Гейт квалификации: отбракованные (без контакта / без РКН) НЕ блокируют
+  // запуск — их откладываем, шлём годным. Запуск возможен, если есть ≥1
+  // годный канал. Перед запуском с отбраковкой показываем сводку.
   const listOk = r.leadsTotal > 0;
-  const contactsOk = listOk && r.leadsNoContact === 0;
+  const eligibleOk = r.leadsEligible > 0;
   const accountsOk = r.accountsCount > 0;
   const chainOk = messagesCount > 0;
-  const allOk = listOk && contactsOk && accountsOk && chainOk;
+  const allOk = eligibleOk && accountsOk && chainOk;
+  const deferred = r.leadsNoContact + r.leadsNoRkn;
+
+  const launch = () => {
+    if (deferred > 0) setConfirmOpen(true);
+    else activate.mutate();
+  };
 
   const itemCls = (ok: boolean) =>
     "inline-flex items-center gap-1 hover:underline " +
@@ -168,24 +181,26 @@ function LaunchPanel(props: {
       <Link
         to="/w/$wsId/projects/$projectId/leads"
         params={{ wsId, projectId }}
-        className={itemCls(listOk)}
+        className={itemCls(eligibleOk)}
       >
-        {icon(listOk)}
-        {listOk ? `Каналы: ${r.leadsTotal}` : "Список пуст — добавьте каналы"}
+        {icon(eligibleOk)}
+        {!listOk
+          ? "Список пуст — добавьте каналы"
+          : `Готовы к отправке: ${r.leadsEligible} из ${r.leadsTotal}`}
       </Link>
-      <Link
-        to="/w/$wsId/projects/$projectId/leads"
-        params={{ wsId, projectId }}
-        search={{ filter: contactsOk ? undefined : "no-contact" }}
-        className={itemCls(contactsOk)}
-      >
-        {icon(contactsOk)}
-        {r.leadsNoContact > 0
-          ? `Без контакта: ${r.leadsNoContact} — показать`
-          : listOk
-            ? "Контакты у всех"
-            : "Контакты появятся со списком"}
-      </Link>
+      {deferred > 0 && (
+        // Отбраковка не блокирует запуск — информер со ссылкой во вкладку.
+        <Link
+          to="/w/$wsId/projects/$projectId/leads"
+          params={{ wsId, projectId }}
+          search={{ filter: "rejected" }}
+          className="inline-flex items-center gap-1 text-amber-700 hover:underline"
+        >
+          <CircleAlert size={13} className="text-amber-600" />
+          Отбраковано: {deferred} ({r.leadsNoContact} без контакта,{" "}
+          {r.leadsNoRkn} без РКН) — показать
+        </Link>
+      )}
       <Link
         to="/w/$wsId/projects/$projectId/accounts"
         params={{ wsId, projectId }}
@@ -212,7 +227,7 @@ function LaunchPanel(props: {
         )}
         <button
           type="button"
-          onClick={() => activate.mutate()}
+          onClick={launch}
           disabled={!allOk || activate.isPending || savingMessages}
           title={allOk ? undefined : "Закройте пункты чек-листа слева"}
           className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
@@ -225,6 +240,49 @@ function LaunchPanel(props: {
               : "Запустить рассылку"}
         </button>
       </div>
+      {confirmOpen && (
+        <Modal
+          onClose={() => setConfirmOpen(false)}
+          size="sm"
+          title={`Запустить ${r.leadsEligible} из ${r.leadsTotal}?`}
+        >
+          <p className="text-xs text-zinc-500">
+            Отбракованные не получат опенер. Они останутся в списке и вернутся
+            в работу автоматически (нашёлся контакт / зарегали РКН).
+          </p>
+          <ul className="mt-3 space-y-1 text-sm text-zinc-700">
+            <li>Отложено: {deferred}</li>
+            {r.leadsNoContact > 0 && (
+              <li className="text-zinc-500">
+                • без контакта: {r.leadsNoContact}
+              </li>
+            )}
+            {r.leadsNoRkn > 0 && (
+              <li className="text-zinc-500">• без РКН: {r.leadsNoRkn}</li>
+            )}
+          </ul>
+          <div className="mt-4 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setConfirmOpen(false)}
+              className="rounded-lg px-3 py-1.5 text-sm font-medium text-zinc-600 hover:bg-zinc-100"
+            >
+              Отмена
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setConfirmOpen(false);
+                activate.mutate();
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
+            >
+              <Play size={12} />
+              Запустить {r.leadsEligible}
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

@@ -7,6 +7,7 @@ import {
   CheckCheck,
   MessageCircleReply,
   Plus,
+  Send,
   Sparkles,
 } from "lucide-react";
 import type { paths } from "@repo/api-client";
@@ -14,7 +15,10 @@ import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
 import { ProjectTabs } from "../../../../../../components/project-tabs";
 import { type AccountRow } from "../../../../../../components/chat-drawer";
-import { ChannelBadges } from "../../../../../../components/channel-badges";
+import {
+  ChannelBadges,
+  RKN_THRESHOLD,
+} from "../../../../../../components/channel-badges";
 import { UnreadBadge } from "../../../../../../components/unread-badge";
 import { LeadChatDrawer } from "../../../../../../components/lead-chat-drawer";
 import { LeadPrepPane } from "../../../../../../components/lead-prep-pane";
@@ -37,9 +41,16 @@ export const Route = createFileRoute(
   "/_authenticated/w/$wsId/projects/$projectId/leads",
 )({
   component: LeadsPage,
-  // ?filter=no-contact — переход из чек-листа запуска (LaunchPanel).
-  validateSearch: (search: Record<string, unknown>): { filter?: "no-contact" } => ({
-    filter: search.filter === "no-contact" ? "no-contact" : undefined,
+  // ?filter — сегмент списка: unreplied (не ответившие) или rejected (вся
+  // отбраковка: без контакта + без РКН). Пусто = все. Из LaunchPanel приходит
+  // ?filter=rejected.
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { filter?: "unreplied" | "rejected" } => ({
+    filter:
+      search.filter === "unreplied" || search.filter === "rejected"
+        ? search.filter
+        : undefined,
   }),
 });
 
@@ -50,12 +61,24 @@ type LeadsResponse =
 type Lead = LeadsResponse["leads"][number];
 type LeadMessage = Lead["messages"][number];
 
+// Причина отбраковки лида — зеркало бэк-гейта (prepareLeads / readiness):
+// контакт первее, затем РКН (обязан регистрироваться >10к и не в реестре =
+// красная пилюля «Нет РКН»). null — лид годен к отправке.
+type RejectReason = "no-contact" | "no-rkn";
+function rejectReason(lead: Lead): RejectReason | null {
+  if (!lead.contactReady) return "no-contact";
+  const ch = lead.channel;
+  if (ch && !ch.isRkn && ch.memberCount != null && ch.memberCount > RKN_THRESHOLD)
+    return "no-rkn";
+  return null;
+}
+
 function LeadsPage() {
   const { wsId, projectId } = Route.useParams();
   const { filter } = Route.useSearch();
   const navigate = Route.useNavigate();
-  const onlyNoContact = filter === "no-contact";
-  const [onlyUnreplied, setOnlyUnreplied] = useState(false);
+  const onlyUnreplied = filter === "unreplied";
+  const onlyRejected = filter === "rejected";
   const [showAddChannels, setShowAddChannels] = useState(false);
   const [drawerLeadId, setDrawerLeadId] = useState<string | null>(null);
   // Драфт — инбокс подготовки (слева список, справа канал + резолвер
@@ -133,11 +156,18 @@ function LeadsPage() {
     if (onlyUnreplied) {
       out = out.filter((l) => !l.repliedAt);
     }
-    if (onlyNoContact) {
-      out = out.filter((l) => !l.contactReady);
+    if (onlyRejected) {
+      out = out.filter((l) => rejectReason(l) !== null);
     }
     return out;
-  }, [leadsQ.data, onlyUnreplied, onlyNoContact]);
+  }, [leadsQ.data, onlyUnreplied, onlyRejected]);
+
+  // Счётчик отбраковки на странице (для сегмента фильтра).
+  const rejectedTotal = useMemo(
+    () =>
+      leadsQ.data?.leads.filter((l) => rejectReason(l) !== null).length ?? 0,
+    [leadsQ.data],
+  );
 
   // Сводка по выбранной странице (200 лидов); при больших задачах нужен
   // агрегат с бэка.
@@ -163,7 +193,9 @@ function LeadsPage() {
   useEffect(() => {
     if (prepMode && (!canPrep || noContactTotal === 0)) setPrepMode(false);
   }, [prepMode, canPrep, noContactTotal]);
-  const showPrepInbox = isDraft || (canPrep && prepMode);
+  // В режиме отбраковки показываем плоскую таблицу (с причиной у каждой
+  // строки), а не prep-инбокс — он только про поиск контакта.
+  const showPrepInbox = !onlyRejected && (isDraft || (canPrep && prepMode));
   const inboxItems = isDraft
     ? visibleLeads
     : (leadsQ.data?.leads ?? []).filter((l) => !l.contactReady);
@@ -206,6 +238,28 @@ function LeadsPage() {
     onSuccess: () => invalidateProject(qc, wsId, projectId, { leads: true }),
   });
 
+  // Один сегмент-контрол вместо россыпи чекбоксов/чипов: «Все · Не ответившие ·
+  // Отбракованные». «Не ответившие» — только когда уже что-то отправлено
+  // (не в draft); «Отбракованные» — только когда есть кого браковать.
+  const segments: { key: "unreplied" | "rejected" | undefined; label: string }[] =
+    [
+      { key: undefined, label: "Все" },
+      ...(!isDraft
+        ? [{ key: "unreplied" as const, label: "Не ответившие" }]
+        : []),
+      ...(rejectedTotal > 0 || onlyRejected
+        ? [{ key: "rejected" as const, label: `Отбракованные · ${rejectedTotal}` }]
+        : []),
+    ];
+  const setFilter = (key: "unreplied" | "rejected" | undefined) =>
+    navigate({ search: { filter: key }, replace: true });
+  // Резолвер контактов: из draft открыт всегда (prep-инбокс), в активном —
+  // через «Найти контакты» из вкладки отбраковки.
+  const openResolver = () => {
+    if (canPrep) setPrepMode(true);
+    setFilter(undefined);
+  };
+
   return (
     <div className="space-y-3">
       <ProjectTabs wsId={wsId} projectId={projectId} />
@@ -222,17 +276,7 @@ function LeadsPage() {
               Добавить каналы
             </button>
           )}
-          {!isDraft && !prepMode && (
-            <label className="inline-flex items-center gap-2 text-sm text-zinc-600">
-              <input
-                type="checkbox"
-                checked={onlyUnreplied}
-                onChange={(e) => setOnlyUnreplied(e.target.checked)}
-              />
-              Только не ответившие
-            </label>
-          )}
-          {prepMode && (
+          {prepMode ? (
             <button
               type="button"
               onClick={() => setPrepMode(false)}
@@ -240,23 +284,49 @@ function LeadsPage() {
             >
               ← к таблице рассылки
             </button>
+          ) : (
+            segments.length > 1 && (
+              <div className="inline-flex rounded-lg bg-zinc-100 p-0.5 text-sm">
+                {segments.map((s) => {
+                  const active = filter === s.key;
+                  return (
+                    <button
+                      key={s.label}
+                      type="button"
+                      onClick={() => setFilter(s.key)}
+                      className={
+                        "rounded-md px-3 py-1 font-medium transition-colors " +
+                        (active
+                          ? "bg-white text-zinc-900 shadow-sm"
+                          : "text-zinc-500 hover:text-zinc-800")
+                      }
+                    >
+                      {s.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )
           )}
-          {isDraft && (
-            <label className="inline-flex items-center gap-2 text-sm text-zinc-600">
-              <input
-                type="checkbox"
-                checked={onlyNoContact}
-                onChange={(e) =>
-                  navigate({
-                    search: {
-                      filter: e.target.checked ? "no-contact" : undefined,
-                    },
-                    replace: true,
-                  })
-                }
-              />
-              Только без контакта
-            </label>
+          {canPrep && !prepMode && unscheduledCount > 0 && (
+            // Холодная доливка: годные лиды без запланированного опенера
+            // (счётчик уже исключает отбракованных по РКН — кнопка не no-op).
+            <button
+              type="button"
+              disabled={scheduleNew.isPending}
+              onClick={() => scheduleNew.mutate()}
+              title={
+                seq.data?.status === "paused"
+                  ? "Проект на паузе — уйдут после возобновления"
+                  : "Запланировать опенер новым лидам"
+              }
+              className="ml-auto inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-sky-700 ring-1 ring-sky-200 hover:bg-sky-50 disabled:opacity-50"
+            >
+              <Send size={14} />
+              {scheduleNew.isPending
+                ? "Планируем…"
+                : `Дослать новым (${unscheduledCount})`}
+            </button>
           )}
         </div>
 
@@ -264,6 +334,11 @@ function LeadsPage() {
           {onlyUnreplied ? (
             <>
               {visibleLeads.length} не ответили из {total}{" "}
+              {pluralize(total, "канала", "каналов", "каналов")}
+            </>
+          ) : onlyRejected ? (
+            <>
+              {visibleLeads.length} отбракованных из {total}{" "}
               {pluralize(total, "канала", "каналов", "каналов")}
             </>
           ) : (
@@ -307,7 +382,9 @@ function LeadsPage() {
           leadsQ.data.leads.length > 0 &&
           visibleLeads.length === 0 && (
             <div className="rounded-2xl bg-white p-6 text-sm text-zinc-500 shadow-sm">
-              Все ответили — фильтр пуст.
+              {onlyRejected
+                ? "Отбракованных нет — все каналы годны к отправке."
+                : "Все ответили — фильтр пуст."}
             </div>
           )}
         {leadsQ.data && leadsQ.data.leads.length === LEADS_PAGE_LIMIT && (
@@ -317,57 +394,33 @@ function LeadsPage() {
             entity="каналов"
           />
         )}
-        {canPrep && !prepMode && noContactTotal > 0 && (
-          <div className="flex items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        {scheduleNew.data?.scheduled === 0 && (
+          <p className="text-xs text-zinc-500">
+            Новых отправок не получилось: эти админы уже контактированы или
+            опенер им не адресуется (бот/ручной способ связи).
+          </p>
+        )}
+        {scheduleNew.error && (
+          <p className="text-xs text-red-600">
+            {errorMessage(scheduleNew.error)}
+          </p>
+        )}
+        {onlyRejected && noContactTotal > 0 && (
+          // «Без контакта» — половина отбраковки, чинится резолвером. Вход в
+          // тот же prep-инбокс, что и из draft (no-РКН вернётся сам при синке).
+          <div className="flex items-center justify-between gap-3 rounded-xl bg-zinc-50 px-4 py-2 text-sm text-zinc-600">
             <span>
               {noContactTotal}{" "}
               {pluralize(noContactTotal, "канал", "канала", "каналов")} без
-              контакта — опенер им не уйдёт, пока контакт не найден.
+              контакта — найдите контакт, и опенер уйдёт автоматически.
             </span>
             <button
               type="button"
-              onClick={() => setPrepMode(true)}
-              className="shrink-0 rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-700"
+              onClick={openResolver}
+              className="shrink-0 font-medium text-emerald-700 hover:underline"
             >
-              Обработать
+              Найти контакты →
             </button>
-          </div>
-        )}
-        {canPrep && !prepMode && unscheduledCount > 0 && (
-          // Холодная доливка / возвращённые скипы: рассылка по списку уже
-          // отыграна, новых сама не подхватит — явный запуск.
-          <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
-            <div className="flex items-center justify-between gap-3">
-              <span>
-                {unscheduledCount}{" "}
-                {pluralize(unscheduledCount, "лид", "лида", "лидов")} вне
-                рассылки — опенер им не запланирован.
-                {seq.data?.status === "paused" &&
-                  " Проект на паузе: после запуска уйдут при возобновлении."}
-              </span>
-              <button
-                type="button"
-                disabled={scheduleNew.isPending}
-                onClick={() => scheduleNew.mutate()}
-                className="shrink-0 rounded-lg bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50"
-              >
-                {scheduleNew.isPending
-                  ? "Запускаем…"
-                  : `Запустить рассылку (${unscheduledCount})`}
-              </button>
-            </div>
-            {scheduleNew.data?.scheduled === 0 && (
-              <p className="mt-1.5 text-xs text-sky-700">
-                Новых отправок не получилось: эти админы уже контактированы в
-                проекте или авто-опенер им не адресуется (бот/ручной способ
-                связи).
-              </p>
-            )}
-            {scheduleNew.error && (
-              <p className="mt-1.5 text-xs text-red-600">
-                {errorMessage(scheduleNew.error)}
-              </p>
-            )}
           </div>
         )}
         {leadsQ.data && inboxItems.length > 0 && showPrepInbox && (
@@ -577,6 +630,15 @@ function LeadCell({
       {admin && (
         <div className="text-xs text-zinc-500" title="Админ-получатель аутрича">
           админ {admin}
+        </div>
+      )}
+      {!lead.contactReady && (
+        // Отбраковка «без контакта» — опенер не уйдёт, пока не найден контакт
+        // (no-rkn виден красной пилюлей РКН рядом с названием — не дублируем).
+        <div>
+          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700">
+            без контакта
+          </span>
         </div>
       )}
       {lead.repliedAt && lead.contactId && (
