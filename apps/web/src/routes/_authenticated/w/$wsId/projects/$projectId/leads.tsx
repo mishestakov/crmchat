@@ -61,13 +61,14 @@ type LeadsResponse =
 type Lead = LeadsResponse["leads"][number];
 type LeadMessage = Lead["messages"][number];
 
-// Причина отбраковки лида — зеркало бэк-гейта (prepareLeads / readiness):
-// контакт первее, затем РКН (обязан регистрироваться >10к и не в реестре =
-// красная пилюля «Нет РКН»). null — лид годен к отправке.
-type RejectReason = "no-contact" | "no-rkn";
+// Причина отбраковки лида — зеркало бэк-гейта (prepareLeads / readiness).
+// Приоритет: контакт → уже работает у нас → РКН (>10к и не в реестре = красная
+// пилюля «Нет РКН»). null — лид годен к отправке.
+type RejectReason = "no-contact" | "working" | "no-rkn";
 function rejectReason(lead: Lead): RejectReason | null {
   if (!lead.contactReady) return "no-contact";
   const ch = lead.channel;
+  if (ch?.alreadyWorking) return "working";
   if (ch && !ch.isRkn && ch.memberCount != null && ch.memberCount > RKN_THRESHOLD)
     return "no-rkn";
   return null;
@@ -654,6 +655,14 @@ function LeadCell({
         <div>
           <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700">
             без контакта
+          </span>
+        </div>
+      )}
+      {lead.contactReady && ch?.alreadyWorking && (
+        // Уже работает у нас на платформе (CPC/CPA) — партнёра не питчим.
+        <div>
+          <span className="rounded bg-sky-100 px-1.5 py-0.5 text-xs font-medium text-sky-700">
+            уже работает
           </span>
         </div>
       )}

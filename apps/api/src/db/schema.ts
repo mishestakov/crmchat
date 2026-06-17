@@ -1265,3 +1265,25 @@ export const rknSync = pgTable("rkn_sync", {
   lastStatus: text("last_status"),
   total: integer("total").notNull().default(0),
 });
+
+// Каналы, уже работающие у нас на платформе (CPC/CPA-активность) — гейт
+// отбраковки «уже работает». Суточный синк с YT-кластера (tgads + cpa_network),
+// bulk-replace. Зеркало rkn_records: natural-key из выгрузки + source + derived
+// match_key для матча с channels (по тем же кандидатам, что РКН).
+export const platformActiveChannels = pgTable(
+  "platform_active_channels",
+  {
+    // tg_chat_id из выгрузки рекл-платформ — natural key (дедуп при синке).
+    tgChatId: text("tg_chat_id").primaryKey(),
+    // cpc | cpa | both — в какой системе канал крутится (подпись отбраковки).
+    source: text("source").notNull(),
+    // Нормализованный ключ матчинга с channels ("telegram:<username>" или
+    // "telegram:-100<id>"). NULL — выгрузка не дала матчабельной идентичности
+    // (тогда канал не сматчить, гейт его не накроет). Заполняется при ингесте.
+    matchKey: text("match_key"),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("platform_active_channels_match_key_idx").on(t.matchKey)],
+);

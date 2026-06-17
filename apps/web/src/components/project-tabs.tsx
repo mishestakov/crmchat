@@ -159,7 +159,9 @@ function LaunchPanel(props: {
   const accountsOk = r.accountsCount > 0;
   const chainOk = messagesCount > 0;
   const allOk = eligibleOk && accountsOk && chainOk;
-  const deferred = r.leadsNoContact + r.leadsNoRkn;
+  // Отложено = всё, что не уйдёт = total − eligible. Не сумма корзин вручную:
+  // авто-корректно, если добавится новая причина отбраковки.
+  const deferred = r.leadsTotal - r.leadsEligible;
 
   const launch = () => {
     if (deferred > 0) setConfirmOpen(true);
@@ -197,8 +199,7 @@ function LaunchPanel(props: {
           className="inline-flex items-center gap-1 text-amber-700 hover:underline"
         >
           <CircleAlert size={13} className="text-amber-600" />
-          Отбраковано: {deferred} ({r.leadsNoContact} без контакта,{" "}
-          {r.leadsNoRkn} без РКН) — показать
+          Отбраковано: {deferred} — показать
         </Link>
       )}
       <Link
@@ -255,6 +256,11 @@ function LaunchPanel(props: {
             {r.leadsNoContact > 0 && (
               <li className="text-zinc-500">
                 • без контакта: {r.leadsNoContact}
+              </li>
+            )}
+            {r.leadsWorking > 0 && (
+              <li className="text-zinc-500">
+                • уже работает у нас: {r.leadsWorking}
               </li>
             )}
             {r.leadsNoRkn > 0 && (

@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, isNotNull } from "drizzle-orm";
 import { db, sql } from "./db/client.ts";
 import {
   channelAdmins,
   channels,
   contacts,
+  platformActiveChannels,
   projects,
   projectItems,
   stageTemplates,
@@ -1029,6 +1030,29 @@ await db
 console.log(
   `[ws_agency] seeded: clients=2, campaign=1 (draft longlist), placements=${placementRows.length}, channels=${agChannels.channels}`,
 );
+
+// Демо-данные гейта «уже работает на платформе»: помечаем часть каналов как
+// крутящиеся у нас в CPC/CPA, чтобы отбраковка «уже работает» была видна в дев.
+// Боевые данные — суточный синк выгрузки с YT (tgads + cpa_network); локально
+// не гоняется, поэтому здесь синтетика по уже засиженным каналам.
+const workingSeed = await db
+  .select({ username: channels.username })
+  .from(channels)
+  .where(isNotNull(channels.username))
+  .limit(8);
+if (workingSeed.length > 0) {
+  await db
+    .insert(platformActiveChannels)
+    .values(
+      workingSeed.map((c, i) => ({
+        tgChatId: `seed_${i}`,
+        source: (["both", "cpc", "cpa"] as const)[i % 3]!,
+        matchKey: `telegram:${c.username!.toLowerCase()}`,
+      })),
+    )
+    .onConflictDoNothing({ target: platformActiveChannels.tgChatId });
+  console.log(`[platform_active] seeded ${workingSeed.length} working channels`);
+}
 
 console.log("done — full demo seed complete");
 

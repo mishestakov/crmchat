@@ -25,6 +25,7 @@ import { pickDefined } from "../lib/pick-defined.ts";
 import { emitProjectChanged, subscribeProject } from "../lib/events.ts";
 import { myAccountIdsSql } from "../lib/outreach-access.ts";
 import { channelIsRknSql, channelRknBlockedSql } from "../lib/rkn-registry.ts";
+import { channelAlreadyWorkingSql } from "../lib/platform-active.ts";
 import { contactReadySql } from "../lib/contact-sql.ts";
 import {
   assertProjectAccess,
@@ -253,6 +254,8 @@ const LeadProgressSchema = z
         // красная тревога «Нет РКН».
         memberCount: z.number().int().nullable(),
         isRkn: z.boolean(),
+        // Уже работает у нас на платформе (CPC/CPA) — причина отбраковки.
+        alreadyWorking: z.boolean(),
       })
       .nullable(),
   })
@@ -559,18 +562,19 @@ app.openapi(
 // exists(channel_admins): админ может быть привязан, но без публичного
 // @username — тогда scheduler его молча пропустит, а гейт бы пропустил как
 // Гейт квалификации лонглиста — общий для BD и agency. Разбивает лонглист
-// (shortlistedAt IS NULL; у BD шортлиста нет → фильтр no-op) на три
-// взаимоисключающих корзины (в сумме = total):
+// (shortlistedAt IS NULL; у BD шортлиста нет → фильтр no-op) на
+// взаимоисключающие корзины (в сумме = total):
 //   noContact — нет контакта (аутричу некуда слать); чинится резолвером;
-//   noRkn     — контакт есть, но канал не в реестре РКН (жёсткий отсев,
-//               чинится только регистрацией в РКН → синк реестра);
-//   eligible  — годен к рассылке (контакт И РКН).
-// Приоритет причины — контакт первее РКН (его чинят первым). Отказавшихся
-// (available=false) не считаем (этап 16.10; у BD available обычно null).
+//   working   — уже работает у нас на платформе (CPC/CPA) → не пере-питчим;
+//   noRkn     — контакт есть, не работает, но канал не в реестре РКН (>10к);
+//   eligible  — годен к рассылке (контакт И не работает И РКН-ок).
+// Приоритет причины: контакт → «уже работает» → РКН (партнёра не трогаем
+// раньше, чем легальность). Отказавшихся (available=false) не считаем.
 // Используется сводкой запуска и чек-листом готовности (/readiness).
 async function longlistContactReadiness(projectId: string): Promise<{
   total: number;
   noContact: number;
+  working: number;
   noRkn: number;
   eligible: number;
 }> {
@@ -578,7 +582,8 @@ async function longlistContactReadiness(projectId: string): Promise<{
     .select({
       total: sql<number>`count(*)::int`,
       noContact: sql<number>`(count(*) filter (where not ${contactReadySql}))::int`,
-      noRkn: sql<number>`(count(*) filter (where ${contactReadySql} and ${channelRknBlockedSql}))::int`,
+      working: sql<number>`(count(*) filter (where ${contactReadySql} and ${channelAlreadyWorkingSql}))::int`,
+      noRkn: sql<number>`(count(*) filter (where ${contactReadySql} and not ${channelAlreadyWorkingSql} and ${channelRknBlockedSql}))::int`,
     })
     .from(projectItems)
     .leftJoin(channels, eq(channels.id, projectItems.channelId))
@@ -591,10 +596,17 @@ async function longlistContactReadiness(projectId: string): Promise<{
     );
   const total = row?.total ?? 0;
   const noContact = row?.noContact ?? 0;
+  const working = row?.working ?? 0;
   const noRkn = row?.noRkn ?? 0;
   // eligible = остаток партиции (корзины взаимоисключающие) — не отдельный
-  // count-фильтр, чтобы не гонять РКН-EXISTS лишний раз в этом запросе.
-  return { total, noContact, noRkn, eligible: total - noContact - noRkn };
+  // count-фильтр, чтобы не гонять EXISTS-предикаты лишний раз.
+  return {
+    total,
+    noContact,
+    working,
+    noRkn,
+    eligible: total - noContact - working - noRkn,
+  };
 }
 
 app.openapi(
@@ -614,6 +626,7 @@ app.openapi(
               // eligible реально уйдёт в рассылку; noContact/noRkn — отбраковка.
               leadsEligible: z.number().int(),
               leadsNoContact: z.number().int(),
+              leadsWorking: z.number().int(),
               leadsNoRkn: z.number().int(),
               // Активные аккаунты, доступные проекту (резолв общий с /activate).
               accountsCount: z.number().int(),
@@ -638,6 +651,7 @@ app.openapi(
       leadsTotal: readiness.total,
       leadsEligible: readiness.eligible,
       leadsNoContact: readiness.noContact,
+      leadsWorking: readiness.working,
       leadsNoRkn: readiness.noRkn,
       accountsCount: accountIds.length,
     });
@@ -1026,6 +1040,7 @@ app.openapi(
           channelPlatform: channels.platform,
           channelMemberCount: channels.memberCount,
           channelIsRkn: channelIsRknSql,
+          channelAlreadyWorking: channelAlreadyWorkingSql,
           contactReady: contactReadySql,
           total: sql<number>`count(*) OVER ()::int`,
         })
@@ -1168,6 +1183,7 @@ app.openapi(
                 platform: l.channelPlatform ?? "telegram",
                 memberCount: l.channelMemberCount,
                 isRkn: l.channelIsRkn ?? false,
+                alreadyWorking: l.channelAlreadyWorking ?? false,
               }
             : null,
         };

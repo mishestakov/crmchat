@@ -1,6 +1,7 @@
 import { inArray, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import { channels, rknRecords, rknSync } from "../db/schema.ts";
+import { channelMatchCandidatesSqlText } from "./channel-match-keys.ts";
 import { errMsg } from "./errors.ts";
 
 // РКН-реестр (T4.5): суточный синк словаря страниц с Госуслуг + матчинг с
@@ -127,29 +128,15 @@ export function rknMatchKey(
   }
 }
 
-// Те же ключи со стороны channels, SQL-выражением — для EXISTS-подзапросов
-// в списках (каталог, лиды, лонглист, contact.channels). Кандидатов до трёх:
-// по username (без «@» в БД), по external_id (канонические id — YouTube UC…,
-// Дзен hex) и по инвайт-хэшу из link (приватный TG). Текст параметризован
-// алиасом, потому что встраивается и в drizzle-запросы (channels), и в
-// raw-подзапросы с алиасом (ch в contact.channels).
+// Матч channels ↔ rkn_records по match_key. Кандидаты ключей канала — общий
+// channelMatchCandidatesSqlText (тот же, что у гейта «уже работает»).
 export function channelRknExistsSqlText(alias: string): string {
   // status-фильтр: матчим только действующие записи — появись в реестре
   // «исключённые», они не должны давать спокойный бейдж «РКН».
-  // Флаг 'i' у regexp_match — как /i в rknMatchKey (T.me/JoinChat/…).
-  // NULL-кандидаты в ANY безвредны (NULL-сравнение не матчится); '||' сам
-  // пропагирует NULL при NULL-username/external_id — CASE не нужен.
   return `EXISTS (
   SELECT 1 FROM rkn_records rr
   WHERE rr.status IN ('active', 'reissued')
-    AND rr.match_key = ANY (ARRAY[
-      ${alias}.platform || ':' || lower(${alias}.username),
-      ${alias}.platform || ':' || lower(${alias}.external_id),
-      CASE WHEN ${alias}.platform = 'telegram' AND ${alias}.link ~* 't\\.me/(joinchat/|\\+)'
-        THEN 'telegram:+' || (regexp_match(${alias}.link, 't\\.me/(?:joinchat/|\\+)([A-Za-z0-9_-]+)', 'i'))[1] END,
-      CASE WHEN ${alias}.platform = 'max' AND ${alias}.link ~* 'max\\.ru/join/'
-        THEN 'max:+' || (regexp_match(${alias}.link, 'max\\.ru/join/([A-Za-z0-9_-]+)', 'i'))[1] END
-    ]))`;
+    AND rr.match_key = ANY (${channelMatchCandidatesSqlText(alias)}))`;
 }
 export const channelIsRknSql = sql<boolean>`${sql.raw(
   channelRknExistsSqlText("channels"),

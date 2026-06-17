@@ -13,6 +13,7 @@ import {
 } from "../db/schema.ts";
 import { contactTgUserIdSql } from "./contact-sql.ts";
 import { channelRknBlockedSql } from "./rkn-registry.ts";
+import { channelAlreadyWorkingSql } from "./platform-active.ts";
 import { resolveStickyByPeerIds } from "./sticky.ts";
 import { substituteVariables } from "./substitute-variables.ts";
 
@@ -248,6 +249,7 @@ async function prepareLeads(opts: {
       link: channels.link,
       title: channels.title,
       rknBlocked: channelRknBlockedSql,
+      alreadyWorking: channelAlreadyWorkingSql,
     })
     .from(projectItems)
     .leftJoin(channels, eq(channels.id, projectItems.channelId))
@@ -272,16 +274,15 @@ async function prepareLeads(opts: {
   // пользу отправки: опенер один на админа и адресован легальному каналу).
   // «Отбракован» = обязан регистрироваться (>10к) и не в реестре — то же
   // условие, что красная пилюля «Нет РКН» (channelRknBlockedSql). Малые
-  // (<10к) и неизвестные по размеру не блокируются. Отсев — в цикле ниже.
-  // СЛОТ «уже работает на платформе»: будущая третья причина отбраковки —
-  // канал в эфире у нас (синк CPV/CPC/CPA с YT-кластера, реф ~/MAX). Пока
-  // паркед: данных нет, фильтр не добавляем. Появится здесь же — ещё один
-  // Set исключённых ключей + причина в readiness.
+  // (<10к) и неизвестные по размеру не блокируются.
+  // «Уже работает на платформе»: канал уже крутится у нас в CPC/CPA
+  // (platform_active_channels, суточный синк) — партнёра не пере-питчим.
+  // Тоже lenient-OR и тоже исключение из sendable.
   const sendableKeys = new Set<string>();
   for (const r of channelRows) {
     if (!r.adminUsername) continue;
     const key = r.adminUsername.toLowerCase();
-    if (!r.rknBlocked) sendableKeys.add(key);
+    if (!r.rknBlocked && !r.alreadyWorking) sendableKeys.add(key);
     const entry = canals.get(key) ?? { idents: [], title: null, link: null };
     const { ident, link } = channelIdentifier({
       platform: r.platform,
@@ -488,6 +489,8 @@ export async function countUnscheduledLeads(projectId: string): Promise<number> 
         // выкинул бы свежий импорт. `is not true` трактует NULL как годен —
         // зеркалит `!r.rknBlocked` (=!null=true) в prepareLeads.
         sql`${channelRknBlockedSql} is not true`,
+        // «уже работает у нас» — тоже не планируем (EXISTS, NULL не бывает).
+        sql`not ${channelAlreadyWorkingSql}`,
         unscheduledLeadSql,
       ),
     );
@@ -529,6 +532,8 @@ export async function scheduleUnscheduledLeads(opts: {
         // а не `not (...)`: NULL (неизвестный размер) = годен (см.
         // countUnscheduledLeads).
         sql`${channelRknBlockedSql} is not true`,
+        // «уже работает у нас» — тоже не планируем.
+        sql`not ${channelAlreadyWorkingSql}`,
         unscheduledLeadSql,
       ),
     )
