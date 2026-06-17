@@ -128,6 +128,23 @@ export type SchedulingLead = {
   properties: Record<string, unknown>;
 };
 
+// Размещение → лид для планировщика. Общий для всех точек планирования
+// (активация, доливка, возврат скипа, перенаправление): один shape, чтобы при
+// смене формы лида не править в N местах.
+function toSchedulingLead(item: {
+  id: string;
+  username: string | null;
+  tgUserId: string | null;
+  properties: unknown;
+}): SchedulingLead {
+  return {
+    id: item.id,
+    username: item.username,
+    tgUserId: item.tgUserId,
+    properties: (item.properties ?? {}) as Record<string, unknown>,
+  };
+}
+
 export type ScheduledRow = {
   workspaceId: string;
   projectId: string;
@@ -521,12 +538,7 @@ export async function scheduleUnscheduledLeads(opts: {
     wsId: project.workspaceId,
     project,
     accountIds,
-    leads: items.map((item) => ({
-      id: item.id,
-      username: item.username,
-      tgUserId: item.tgUserId,
-      properties: (item.properties ?? {}) as Record<string, unknown>,
-    })),
+    leads: items.map(toSchedulingLead),
     baseTime: new Date(),
     skipContacted: true,
   });
@@ -574,12 +586,65 @@ export async function scheduleDolivkaForChannel(
       wsId: project.workspaceId,
       project,
       accountIds,
-      leads: group.map(({ item }) => ({
-        id: item.id,
-        username: item.username,
-        tgUserId: item.tgUserId,
-        properties: (item.properties ?? {}) as Record<string, unknown>,
-      })),
+      leads: group.map((r) => toSchedulingLead(r.item)),
+      baseTime: new Date(),
+      skipContacted: true,
+    });
+    if (newRows.length > 0) {
+      await db.insert(scheduledMessages).values(newRows);
+    }
+  }
+}
+
+// Перенаправление контакта (явная смена админа канала, set-admin override):
+// контакт сменился на другого человека. Старый график был адресован прежнему
+// контакту — ОБНУЛЯЕМ его (delete, не cancel: item возвращается в
+// «незапланированное», как при возврате скипа; реальная переписка с прежним
+// контактом живёт в tg_chats и НЕ теряется) и планируем свежий опенер новому
+// тем же конвейером. В ОТЛИЧИЕ от доливки (scheduleDolivkaForChannel) — без
+// cold-гейта (hasPendingOpeners) и без NOT-EXISTS-guard'а: это явное точечное
+// действие оператора «писать теперь ему», а не пассивный добор новых. Стадию и
+// repliedAt НЕ трогаем — ось воронки ортогональна оси рассылки, карточка на
+// канбане остаётся где была. skipContacted=true: если новый контакт уже на
+// связи в проекте (опенер по другому каналу) — не дублируем, его тред покрывает.
+export async function repointPlacementSchedule(
+  channelId: string,
+): Promise<void> {
+  const rows = await db
+    .select({ item: projectItems, project: projects })
+    .from(projectItems)
+    .innerJoin(projects, eq(projects.id, projectItems.projectId))
+    .where(
+      and(
+        eq(projectItems.channelId, channelId),
+        inArray(projects.status, ["active", "paused"]),
+        isNull(projectItems.skippedAt),
+        // NB: НЕТ NOT-EXISTS-guard'а (в отличие от scheduleDolivkaForChannel) —
+        // берём и уже запланированные: старый график удаляем ниже явно.
+      ),
+    );
+  if (rows.length === 0) return;
+  const byProject = Map.groupBy(rows, (r) => r.project.id);
+  for (const group of byProject.values()) {
+    const project = group[0]!.project;
+    // Аккаунты резолвим ДО удаления: нет аккаунтов (нечем слать) → не трогаем
+    // старый график, иначе лид остался бы вовсе без рассылки (а не «перепланирован»).
+    const accountIds = await resolveProjectAccountIds(
+      project.workspaceId,
+      project,
+    );
+    if (accountIds.length === 0) continue;
+    const itemIds = group.map((r) => r.item.id);
+    // Обнуляем старый график (адресован прежнему контакту) → стандартный путь
+    // планирования увидит размещения «незапланированными».
+    await db
+      .delete(scheduledMessages)
+      .where(inArray(scheduledMessages.itemId, itemIds));
+    const newRows = await scheduleLeads({
+      wsId: project.workspaceId,
+      project,
+      accountIds,
+      leads: group.map((r) => toSchedulingLead(r.item)),
       baseTime: new Date(),
       skipContacted: true,
     });

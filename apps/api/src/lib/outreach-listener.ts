@@ -336,48 +336,76 @@ async function onNewMessage(
   const senderIdStr = String(senderUserId);
 
   try {
-    // Outreach-лид → отметка repliedAt + отмена pending sequence-сообщений.
-    // Заодно кладём карточку в первую стадию воронки проекта: канбан
-    // показывает только ответивших, и раньше она рождалась в «Без стадии» —
-    // менеджер растаскивал руками (тест 10.06.26). COALESCE — ручную
-    // расстановку автоматика никогда не двигает.
-    const updated = await db
-      .update(projectItems)
-      .set({
-        repliedAt: new Date(),
-        stageId: sql`COALESCE(${projectItems.stageId}, (
-          SELECT s->>'id'
-          FROM projects p, jsonb_array_elements(p.stages) s
-          WHERE p.id = ${projectItems.projectId}
-          ORDER BY (s->>'order')::numeric LIMIT 1
-        ))`,
-      })
+    // Входящий ответ ТЕКУЩЕГО контакта лида → две независимые вещи (разные
+    // оси состояния, раньше обе висели на одном условии isNull(repliedAt)):
+    //
+    //  • ось РАССЫЛКИ — стоп-капельница: гасим незавершённую холодную цепочку.
+    //    НЕЗАВИСИМО от repliedAt — после перенаправления контакта repliedAt
+    //    уже стоит (от прежнего человека), но капельницу НОВОГО надо погасить,
+    //    когда ответит он. Матчим item'ы текущего контакта по tgUserId.
+    //  • ось ВОРОНКИ — карточка на доску: на ПЕРВОМ ответе ставим repliedAt +
+    //    первую стадию (канбан показывает только ответивших). isNull(repliedAt)
+    //    идемпотентно; COALESCE — ручную расстановку не двигаем.
+    // Размещения текущего контакта (по tgUserId). Материализуем один раз и
+    // выходим, если отправитель — не лид (обычный DM): обе правки ниже всё
+    // равно ничего бы не задели, а так не трогаем scheduled_messages на каждом
+    // входящем от посторонних.
+    const currentItems = await db
+      .select({ id: projectItems.id })
+      .from(projectItems)
       .where(
         and(
           eq(projectItems.workspaceId, workspaceId),
           eq(projectItems.tgUserId, senderIdStr),
-          isNull(projectItems.repliedAt),
         ),
-      )
-      .returning();
-
-    if (updated.length > 0) {
-      const leadIds = updated.map((u) => u.id);
-      await db
+      );
+    if (currentItems.length > 0) {
+      const itemIds = currentItems.map((i) => i.id);
+      // ось РАССЫЛКИ — стоп-капельница: гасим незавершённую холодную цепочку.
+      // НЕЗАВИСИМО от repliedAt — после перенаправления контакта repliedAt уже
+      // стоит (от прежнего человека), но капельницу НОВОГО надо погасить, когда
+      // ответит он.
+      const cancelled = await db
         .update(scheduledMessages)
         .set({ status: "cancelled", error: "lead replied" })
         .where(
           and(
             eq(scheduledMessages.status, "pending"),
-            inArray(scheduledMessages.itemId, leadIds),
-            // только холодную цепочку — финальный оффер на ответ не гасим.
+            inArray(scheduledMessages.itemId, itemIds),
+            // финальный оффер на ответ не гасим — он адресован уже ответившим.
             lt(scheduledMessages.messageIdx, FINAL_OFFER_MSG_IDX),
           ),
-        );
-      // Эмитим по самим ответившим, а не по отменённым сообщениям: лид,
-      // ответивший после последнего касания (отменять нечего), тоже должен
-      // live появиться на канбане.
-      for (const projectId of new Set(updated.map((u) => u.projectId))) {
+        )
+        .returning({ projectId: scheduledMessages.projectId });
+
+      // ось ВОРОНКИ — карточка на доску: на ПЕРВОМ ответе ставим repliedAt +
+      // первую стадию (канбан показывает только ответивших). isNull(repliedAt)
+      // идемпотентно; COALESCE — ручную расстановку не двигаем.
+      const updated = await db
+        .update(projectItems)
+        .set({
+          repliedAt: new Date(),
+          stageId: sql`COALESCE(${projectItems.stageId}, (
+            SELECT s->>'id'
+            FROM projects p, jsonb_array_elements(p.stages) s
+            WHERE p.id = ${projectItems.projectId}
+            ORDER BY (s->>'order')::numeric LIMIT 1
+          ))`,
+        })
+        .where(
+          and(
+            eq(projectItems.workspaceId, workspaceId),
+            eq(projectItems.tgUserId, senderIdStr),
+            isNull(projectItems.repliedAt),
+          ),
+        )
+        .returning({ projectId: projectItems.projectId });
+
+      // Эмитим по объединению: где появилась карточка (первый ответ) И где
+      // погасла капельница (статусы рассылки в таблице изменились).
+      for (const projectId of new Set(
+        [...cancelled, ...updated].map((r) => r.projectId),
+      )) {
         emitProjectChanged(projectId);
       }
     }
