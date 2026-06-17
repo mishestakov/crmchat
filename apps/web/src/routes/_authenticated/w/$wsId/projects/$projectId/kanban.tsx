@@ -11,6 +11,7 @@ import { TruncationBanner } from "../../../../../../components/truncation-banner
 import { LeadChatDrawer } from "../../../../../../components/lead-chat-drawer";
 import { NextStepLine } from "../../../../../../components/next-step-line";
 import { UnreadBadge } from "../../../../../../components/unread-badge";
+import { SearchInput } from "../../../../../../components/search-input";
 import { useEventSourceEvent } from "../../../../../../lib/hooks";
 import {
   useOutreachAccounts,
@@ -39,6 +40,11 @@ function KanbanPage() {
   // Drawer переписки — открывается по клику на бэйдж непрочитанных (#11).
   // Альтернатива openLead → переход на /contacts/$id, который дальше.
   const [drawerLead, setDrawerLead] = useState<Lead | null>(null);
+  // Поиск по @username канала/админа + фильтр «ждут ответа» (непрочитанные).
+  // Канбан и так только из ответивших, потому «нам написали» = вся доска;
+  // полезный срез — у кого новое непрочитанное входящее.
+  const [search, setSearch] = useState("");
+  const [onlyWaiting, setOnlyWaiting] = useState(false);
   const accountsQ = useOutreachAccounts(wsId);
 
   // Клик по карточке = открыть контакт (где чат, заметки, напоминания).
@@ -172,8 +178,28 @@ function KanbanPage() {
   // Канбан показывает лидов после ответа peer'а (project_items.repliedAt).
   // Контакт заводится на входящем (см. outreach-listener), карточка на канбане
   // появляется тогда же; до ответа лид виден только в табличке /leads.
-  const leads = useMemo(
-    () => (leadsQ.data?.leads ?? []).filter((l) => !!l.repliedAt),
+  const leads = useMemo(() => {
+    let out = (leadsQ.data?.leads ?? []).filter((l) => !!l.repliedAt);
+    const q = search.trim().replace(/^@/, "").toLowerCase();
+    if (q) {
+      out = out.filter(
+        (l) =>
+          l.username?.toLowerCase().includes(q) ||
+          l.channel?.username?.toLowerCase().includes(q),
+      );
+    }
+    if (onlyWaiting) {
+      out = out.filter((l) => l.unreadCount > 0 || l.markedUnread);
+    }
+    return out;
+  }, [leadsQ.data?.leads, search, onlyWaiting]);
+
+  // Счётчик «ждут ответа» — по всей доске (до поиска/тоггла), стабильный сигнал.
+  const waitingCount = useMemo(
+    () =>
+      (leadsQ.data?.leads ?? []).filter(
+        (l) => !!l.repliedAt && (l.unreadCount > 0 || l.markedUnread),
+      ).length,
     [leadsQ.data?.leads],
   );
 
@@ -246,6 +272,27 @@ function KanbanPage() {
           />
         </div>
       )}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="w-64">
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              placeholder="Поиск по @каналу или @админу"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => setOnlyWaiting((v) => !v)}
+            className={
+              "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium " +
+              (onlyWaiting
+                ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                : "text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-50")
+            }
+          >
+            Ждут ответа ({waitingCount})
+          </button>
+        </div>
         <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto pb-3">
           {sortedStages.map((stage) => (
             <Column
