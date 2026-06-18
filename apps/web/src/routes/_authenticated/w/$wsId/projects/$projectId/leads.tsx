@@ -108,6 +108,13 @@ const ACTION_GROUPS: { state: OutreachState; title: string; hint: string }[] = [
   },
 ];
 
+// Менеджер чинит ПОЛУЧАТЕЛЯ (а не контент/цепочку): контакт не найден ИЛИ
+// найденный контакт оказался каналом/группой, нужен личный аккаунт админа.
+// Обе корзины ведут в один резолвер-инбокс (карточка канала + выбор контакта).
+// set-admin глобально перенаведёт график (repointPlacementSchedule).
+const isRecipientFix = (s: OutreachState) =>
+  s === "no_contact" || s === "not_private";
+
 function LeadsPage() {
   const { wsId, projectId } = Route.useParams();
   const { filter } = Route.useSearch();
@@ -211,27 +218,35 @@ function LeadsPage() {
       (l) => l.accountSource === null && l.account === null,
     ).length ?? 0;
   const isDraft = seq.data?.status === "draft";
-
-  const drawerLead = visibleLeads.find((l) => l.id === drawerLeadId);
-  const noContactTotal =
-    leadsQ.data?.leads.filter((l) => !l.contactReady).length ?? 0;
-
-  // Доливка в идущий проект: каналы без контакта обрабатываются тем же
-  // инбоксом, что и драфт — вход по баннеру над таблицей, выход автоматом,
-  // когда всё обработано (контакт найден → бэк сам планирует опенер,
-  // set-admin → scheduleDolivkaForChannel).
   const canPrep =
     seq.data?.status === "active" || seq.data?.status === "paused";
+
+  const drawerLead = visibleLeads.find((l) => l.id === drawerLeadId);
+
+  // Инбокс подготовки: в draft — все каналы проекта, в active/paused —
+  // «доливка», т.е. лиды, где менеджер чинит получателя (нет контакта или
+  // контакт оказался каналом/группой). От него зависят prepLead, курсор и
+  // условие выхода из prepMode — мемоизируем под общий паттерн страницы.
+  const inboxItems = useMemo(
+    () =>
+      isDraft
+        ? visibleLeads
+        : (leadsQ.data?.leads ?? []).filter((l) =>
+            isRecipientFix(l.outreachState),
+          ),
+    [isDraft, visibleLeads, leadsQ.data],
+  );
+
   const [prepMode, setPrepMode] = useState(false);
   useEffect(() => {
-    if (prepMode && (!canPrep || noContactTotal === 0)) setPrepMode(false);
-  }, [prepMode, canPrep, noContactTotal]);
+    // Чинить больше нечего (получателей разобрали) или проект уже не
+    // active/paused — выходим из инбокса. В draft canPrep=false → закрытие
+    // идёт по смене статуса, а не по опустевшему списку.
+    if (prepMode && (!canPrep || inboxItems.length === 0)) setPrepMode(false);
+  }, [prepMode, canPrep, inboxItems]);
   // Резолвер-инбокс: в draft всегда, в active/paused — когда менеджер вошёл в
   // него через «Найти контакт» (prepMode). Триаж-корзины — поверх таблицы.
   const showPrepInbox = isDraft || (canPrep && prepMode);
-  const inboxItems = isDraft
-    ? visibleLeads
-    : (leadsQ.data?.leads ?? []).filter((l) => !l.contactReady);
   // Позиционный курсор: обработал/удалил лида — он уходит из инбокса, и
   // активным становится тот, кто встал на его место (по запомненному индексу),
   // а не первый в списке. Очередь едет под фиксированным курсором, без прыжка.
@@ -303,8 +318,10 @@ function LeadsPage() {
     navigate({ search: { filter: key }, replace: true });
   // Резолвер контактов: в active/paused вход из группы «Нет контакта»
   // (prepMode). Корзину (filter) не сбрасываем — после резолва вернёмся в неё.
-  const openResolver = () => {
-    if (canPrep) setPrepMode(true);
+  const openResolver = (leadId?: string) => {
+    if (!canPrep) return;
+    if (leadId) setPrepLeadId(leadId);
+    setPrepMode(true);
   };
 
   return (
@@ -464,7 +481,7 @@ function LeadsPage() {
                     key={g.state}
                     className="overflow-hidden rounded-2xl bg-white shadow-sm"
                   >
-                    <div className="border-b border-zinc-100 px-4 py-2.5">
+                    <div className="border-b border-zinc-200 bg-zinc-50 px-4 py-2.5">
                       <div className="text-sm font-semibold text-zinc-800">
                         {g.title} · {groupLeads.length}
                       </div>
@@ -508,13 +525,16 @@ function LeadsPage() {
                             )}
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
-                            {g.state === "no_contact" ? (
+                            {g.state === "no_contact" ||
+                            g.state === "not_private" ? (
                               <button
                                 type="button"
-                                onClick={openResolver}
+                                onClick={() => openResolver(l.id)}
                                 className="rounded-lg px-2.5 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-50"
                               >
-                                Найти контакт
+                                {g.state === "no_contact"
+                                  ? "Найти контакт"
+                                  : "Заменить контакт"}
                               </button>
                             ) : g.state === "not_scheduled" ? null : (
                               <button
@@ -522,9 +542,7 @@ function LeadsPage() {
                                 onClick={() => setDrawerLeadId(l.id)}
                                 className="rounded-lg px-2.5 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-50"
                               >
-                                {g.state === "not_private"
-                                  ? "Заменить контакт"
-                                  : "Открыть чат"}
+                                Открыть чат
                               </button>
                             )}
                             {g.state === "needs_review" && (
@@ -581,7 +599,11 @@ function LeadsPage() {
                     )}
                   </div>
                   <div className="mt-0.5 truncate text-xs">
-                    {l.contactReady ? (
+                    {l.outreachState === "not_private" ? (
+                      <span className="font-medium text-amber-700">
+                        контакт — канал или группа
+                      </span>
+                    ) : l.contactReady ? (
                       <span className="text-zinc-500">
                         {l.username ? `админ @${l.username}` : "способ связи выбран"}
                       </span>
@@ -632,7 +654,15 @@ function LeadsPage() {
                 {visibleLeads.map((l) => (
                   <tr
                     key={l.id}
-                    onClick={() => setDrawerLeadId(l.id)}
+                    onClick={() =>
+                      // Лид без рабочего получателя (нет контакта / контакт —
+                      // канал/группа) → резолвер-инбокс (карточка канала +
+                      // выбор контакта), а не чат: чата с таким «контактом» нет,
+                      // дровер открылся бы в null. Остальные → переписка.
+                      isRecipientFix(l.outreachState) && canPrep
+                        ? openResolver(l.id)
+                        : setDrawerLeadId(l.id)
+                    }
                     className={
                       "group cursor-pointer border-t border-zinc-100 hover:bg-zinc-50 " +
                       (l.repliedAt ? "bg-emerald-50/40 " : "") +

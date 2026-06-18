@@ -416,7 +416,7 @@ function Column(props: {
         (over ? "bg-zinc-300 ring-2 ring-zinc-400" : "bg-zinc-200")
       }
     >
-      <div className="mb-2 flex items-baseline gap-2 px-1 text-sm">
+      <div className="mb-2 flex items-baseline gap-2 rounded-md bg-zinc-300/70 px-2.5 py-1.5 text-sm">
         <span className="font-medium">{props.title}</span>
         <span className="text-zinc-500">{props.leads.length}</span>
       </div>
