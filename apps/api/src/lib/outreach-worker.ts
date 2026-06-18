@@ -32,6 +32,7 @@ import {
   resolveWarmTgUserIds,
   FINAL_OFFER_MSG_IDX,
 } from "./project-scheduling.ts";
+import { failStepAndCancelFollowups } from "./outreach-chain.ts";
 import type { ProjectMessage } from "../db/schema.ts";
 import type { TdClient } from "./tdlib/index.ts";
 
@@ -483,10 +484,16 @@ async function processAccount(accountId: string, items: DueItem[]) {
         return;
       }
       if (isPermanentSendError(msg)) {
-        await db
-          .update(scheduledMessages)
-          .set({ status: "failed", error: msg })
-          .where(eq(scheduledMessages.id, item.id));
+        // Шаг провалился окончательно — помечаем failed И гасим догоны лида,
+        // как async-листенер (failStepAndCancelFollowups). Иначе следующие
+        // шаги вечно висят pending на sentinel «после предыдущего», которого
+        // уже не будет.
+        await failStepAndCancelFollowups({
+          id: item.id,
+          itemId: item.leadId,
+          messageIdx: item.messageIdx,
+          error: msg,
+        });
         emitProjectChanged(item.projectId);
         // continue, не return: permanent — ошибка уровня сообщения, не аккаунта
         // (flood/killed выше — уровня аккаунта, там return верен). При текущем

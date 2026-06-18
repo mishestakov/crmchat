@@ -25,6 +25,7 @@ import {
   PEER_FLOOD_COOLDOWN_REASON,
   peerFloodCooldownUntil,
 } from "./outreach-schedule.ts";
+import { failStepAndCancelFollowups } from "./outreach-chain.ts";
 import { errMsg, isUniqueViolation } from "./errors.ts";
 import type { TdClient } from "./tdlib/index.ts";
 import { extractActiveUsername, extractFullName } from "./tdlib/td-user.ts";
@@ -675,16 +676,13 @@ async function onSendFailed(
 
     // Прочий провал: помечаем failed и гасим цепочку догонов лида — первое
     // сообщение не дошло, гнаться за человеком бессмысленно (финальный оффер не
-    // трогаем, у него своя семантика «для ответивших»). Атомарно.
-    await db.transaction(async (tx) => {
-      await tx
-        .update(scheduledMessages)
-        .set({ status: "failed", error: errText, sentAt: null })
-        .where(eq(scheduledMessages.id, id));
-      await tx
-        .update(scheduledMessages)
-        .set({ status: "cancelled", error: "prior step failed" })
-        .where(laterFollowups);
+    // трогаем, у него своя семантика «для ответивших»). Общий инвариант с
+    // sync-путём воркера — один хелпер, чтобы пути не расходились.
+    await failStepAndCancelFollowups({
+      id,
+      itemId: row.itemId,
+      messageIdx: row.messageIdx,
+      error: errText,
     });
     emitProjectChanged(row.projectId);
   } catch (e) {
