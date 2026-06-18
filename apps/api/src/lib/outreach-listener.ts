@@ -435,6 +435,12 @@ async function onNewMessage(
         unreadCount: contacts.unreadCount,
       });
 
+    // freshlyResolved — контакт только что стал находимым по tg_user_id (через
+    // username-fallback ниже). На этом переходе восстанавливаем потерянный
+    // unread (applyChatUnread). Fast-path выше — контакт уже был находим, там
+    // unread держит onReadInbox, трогать не нужно (иначе лишний getChat-RPC).
+    let freshlyResolved = false;
+
     // Fallback: контакт может быть создан вручную с telegram_username, но без
     // tg_user_id. Резолвим через реплику и инжектим tg_user_id в properties —
     // следующий incoming сразу попадёт в быстрый путь.
@@ -464,6 +470,7 @@ async function onNewMessage(
             id: contacts.id,
             unreadCount: contacts.unreadCount,
           });
+        if (touched.length > 0) freshlyResolved = true;
       }
     }
 
@@ -471,8 +478,9 @@ async function onNewMessage(
     // от незнакомца (бизнес работает мимо CRM). Создаём contact и ставим
     // sticky на этот аккаунт (правило v2: входящее = «получил ответ»).
     if (touched.length === 0) {
+      let createdId: string | null = null;
       try {
-        await ensureContactFromTraffic({
+        createdId = await ensureContactFromTraffic({
           workspaceId,
           accountId,
           client,
@@ -486,12 +494,24 @@ async function onNewMessage(
           errMsg(e),
         );
       }
-      // emit на новый contact идёт изнутри ensureContactFromTraffic.
+      // Базовый emit на новый contact идёт изнутри ensureContactFromTraffic с
+      // unread=0. Если updateChatReadInbox пришёл до создания (touched=0 в
+      // onReadInbox) — восстанавливаем unread авторитетно из getChat.
+      if (createdId) {
+        void applyChatUnread(client, workspaceId, createdId, senderUserId);
+      }
       rxlog(`${accountId} onNewMessage resolved=new(ensure) sender=${senderIdStr}`);
       return;
     }
 
     rxlog(`${accountId} onNewMessage resolved=existing sender=${senderIdStr} contacts=${touched.length}`);
+    // Контакт только что дорезолвлен по username — onReadInbox раньше не мог его
+    // найти (touched=0), unread мог потеряться. Восстанавливаем из getChat.
+    if (freshlyResolved) {
+      for (const t of touched) {
+        void applyChatUnread(client, workspaceId, t.id, senderUserId);
+      }
+    }
     for (const t of touched) {
       emitContactChanged(workspaceId, {
         contactId: t.id,
@@ -820,6 +840,54 @@ type TdUserPayload = {
   usernames?: { active_usernames: string[]; editable_username: string };
 };
 
+// Авторитетный unread из TDLib в момент, когда контакт ВПЕРВЫЕ стал находимым
+// (создан из трафика / только что дорезолвлен tg_user_id). onReadInbox держит
+// unread по входящим, но если updateChatReadInbox пришёл РАНЬШЕ, чем контакт
+// стал находим (touched=0 — ещё не было контакта или tg_user_id), значение
+// терялось: в мессенджере бейдж есть, у нас 0. getChat.unread_count (td_api.tl:
+// Chat.unread_count) авторитетен — дочитываем один раз на этом переходе. Только
+// на переходе, не на каждом входящем → нет двойного счёта с onReadInbox.
+export async function applyChatUnread(
+  client: TdClient,
+  workspaceId: string,
+  contactId: string,
+  chatId: number,
+): Promise<void> {
+  try {
+    const chat = (await client.invoke({
+      _: "getChat",
+      chat_id: chatId,
+    } as never)) as { unread_count?: number };
+    const unread = chat.unread_count ?? 0;
+    if (unread <= 0) return; // нечего восстанавливать
+    const [row] = await db
+      .update(contacts)
+      .set({ unreadCount: unread })
+      .where(
+        and(
+          eq(contacts.id, contactId),
+          sql`${contacts.unreadCount} <> ${unread}`,
+        ),
+      )
+      .returning({
+        id: contacts.id,
+        unreadCount: contacts.unreadCount,
+        markedUnread: contacts.markedUnread,
+        lastMessageAt: contacts.lastMessageAt,
+      });
+    if (row) {
+      emitContactChanged(workspaceId, {
+        contactId: row.id,
+        unreadCount: row.unreadCount,
+        markedUnread: row.markedUnread,
+        lastMessageAt: row.lastMessageAt?.toISOString() ?? null,
+      });
+    }
+  } catch (e) {
+    console.error(`[outreach-listener] applyChatUnread ${chatId}:`, errMsg(e));
+  }
+}
+
 async function ensureContactFromTraffic(opts: {
   workspaceId: string;
   accountId: string;
@@ -827,13 +895,13 @@ async function ensureContactFromTraffic(opts: {
   peerUserId: string;
   ts: Date;
   isInbound: boolean;
-}): Promise<void> {
+}): Promise<string | null> {
   const { workspaceId, accountId, client, peerUserId, ts, isInbound } = opts;
 
   // Cheap-guard от лишнего getUser: большинство DM приходят от уже
   // импортированных контактов. ON CONFLICT ниже закрывает оставшийся race —
   // здесь только оптимизация.
-  if (await findContactByTgUserId(workspaceId, peerUserId)) return;
+  if (await findContactByTgUserId(workspaceId, peerUserId)) return null;
 
   const [tdUser, ownerRow] = await Promise.all([
     (
@@ -850,9 +918,9 @@ async function ensureContactFromTraffic(opts: {
       .then((rows) => rows[0]?.ownerUserId),
   ]);
 
-  if (!tdUser) return;
-  if (tdUser.type._ !== "userTypeRegular") return;
-  if (!ownerRow) return;
+  if (!tdUser) return null;
+  if (tdUser.type._ !== "userTypeRegular") return null;
+  if (!ownerRow) return null;
 
   const fullName = extractFullName(tdUser);
   const username = extractActiveUsername(tdUser);
@@ -885,8 +953,10 @@ async function ensureContactFromTraffic(opts: {
         unreadCount: 0,
         lastMessageAt: ts.toISOString(),
       });
+      return created.id;
     }
   } catch (e) {
     if (!isUniqueViolation(e)) throw e;
   }
+  return null;
 }
