@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { Send } from "lucide-react";
+import { User } from "lucide-react";
 import type { paths } from "@repo/api-client";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
@@ -12,6 +12,11 @@ import { LeadChatDrawer } from "../../../../../../components/lead-chat-drawer";
 import { NextStepLine } from "../../../../../../components/next-step-line";
 import { UnreadBadge } from "../../../../../../components/unread-badge";
 import { SearchInput } from "../../../../../../components/search-input";
+import {
+  PLATFORMS,
+  PlatformBadge,
+  type Platform,
+} from "../../../../../../lib/platforms";
 import { useEventSourceEvent } from "../../../../../../lib/hooks";
 import {
   useOutreachAccounts,
@@ -397,12 +402,26 @@ function LeadCard(props: {
   isReadOnly?: boolean;
 }) {
   const { lead } = props;
+  const ch = lead.channel;
   const fullName =
     typeof lead.properties.full_name === "string"
       ? lead.properties.full_name
       : null;
-  const display = fullName ?? lead.username ?? "—";
-  const tg = lead.username;
+  // Заголовок карточки — канал (с иконкой платформы), как в «Списке»: видно,
+  // что за площадка. Админ — отдельной строкой ниже (имя + @username). Без
+  // канала (DM-путь) заголовок откатывается на контакт, и строку админа тогда
+  // не дублируем — он уже в заголовке.
+  const channelLabel = ch
+    ? ch.title || (ch.username ? `@${ch.username}` : null)
+    : null;
+  const adminHandle = lead.username ? `@${lead.username}` : null;
+  const display =
+    channelLabel ?? fullName ?? adminHandle ?? "—";
+  const adminLine = channelLabel
+    ? [fullName, adminHandle].filter(Boolean).join(" · ") || null
+    : null;
+  const platform =
+    ch && ch.platform in PLATFORMS ? (ch.platform as Platform) : null;
   const unread = lead.unreadCount;
 
   return (
@@ -425,7 +444,12 @@ function LeadCard(props: {
       }
     >
       <div className="flex items-start gap-2">
-        <div className="min-w-0 flex-1 font-medium truncate">{display}</div>
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 font-medium">
+          {platform && (
+            <PlatformBadge platform={platform} size={13} className="shrink-0" />
+          )}
+          <span className="truncate">{display}</span>
+        </div>
         {(unread > 0 || lead.markedUnread) && (
           <button
             type="button"
@@ -444,9 +468,10 @@ function LeadCard(props: {
           </button>
         )}
       </div>
-      {tg && (
+      {adminLine && (
         <div className="mt-0.5 flex items-center gap-1 text-xs text-zinc-500">
-          <Send size={11} className="text-sky-500" />@{tg}
+          <User size={11} className="shrink-0 text-zinc-400" />
+          <span className="truncate">{adminLine}</span>
         </div>
       )}
       {lead.nextStep && (

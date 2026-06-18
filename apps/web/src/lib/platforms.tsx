@@ -47,11 +47,19 @@ export function MaxLogo({
   );
 }
 
-export function PlatformBadge({ platform }: { platform: Platform }) {
+export function PlatformBadge({
+  platform,
+  size = 14,
+  className = "",
+}: {
+  platform: Platform;
+  size?: number;
+  className?: string;
+}) {
   const { label, Icon, color } = PLATFORMS[platform];
   return (
-    <span title={label} className={`inline-flex ${color}`}>
-      <Icon size={14} />
+    <span title={label} className={`inline-flex ${color} ${className}`}>
+      <Icon size={size} />
     </span>
   );
 }
