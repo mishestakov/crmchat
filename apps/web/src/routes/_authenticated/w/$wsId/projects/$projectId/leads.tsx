@@ -20,6 +20,7 @@ import { LeadChatDrawer } from "../../../../../../components/lead-chat-drawer";
 import { LeadPrepPane } from "../../../../../../components/lead-prep-pane";
 import { TruncationBanner } from "../../../../../../components/truncation-banner";
 import { AddChannelsModal } from "../../../../../../components/add-channels-modal";
+import { Modal } from "../../../../../../components/modal";
 import {
   formatDateTime,
   formatPastRelative,
@@ -174,6 +175,10 @@ function LeadsPage() {
   const navigate = Route.useNavigate();
   const [showAddChannels, setShowAddChannels] = useState(false);
   const [drawerLeadId, setDrawerLeadId] = useState<string | null>(null);
+  // Инспект исключённого/терминального лида без контакта: открыть карточку
+  // канала + резолвер в модалке, чтобы проверить/найти контакт не возвращая
+  // лид в рассылку.
+  const [inspectLeadId, setInspectLeadId] = useState<string | null>(null);
   // Драфт — инбокс подготовки (слева список, справа канал + резолвер
   // контакта, как агентский лонглист): выбранный лид. null → derive ниже
   // подхватит первого «без контакта» — после удаления/резолва фокус сам
@@ -284,6 +289,7 @@ function LeadsPage() {
     seq.data?.status === "active" || seq.data?.status === "paused";
 
   const drawerLead = leadsQ.data?.leads.find((l) => l.id === drawerLeadId);
+  const inspectLead = leadsQ.data?.leads.find((l) => l.id === inspectLeadId);
 
   // Инбокс подготовки: в draft — все каналы проекта, в active/paused —
   // «доливка», т.е. лиды, где менеджер чинит получателя (нет контакта или
@@ -639,6 +645,7 @@ function LeadsPage() {
                   wsId={wsId}
                   projectId={projectId}
                   lead={prepLead}
+                  running={canPrep}
                   onRemoved={() => setPrepLeadId(null)}
                 />
               )}
@@ -674,12 +681,13 @@ function LeadsPage() {
                     key={grp.key}
                     onClick={() => {
                       // Нет рабочего получателя (нет контакта / контакт — канал/
-                      // группа) → резолвер-инбокс, а не чат. Чат открываем только
-                      // при наличии contactId: без него LeadChatDrawer отрендерил
-                      // бы null (пустой клик).
+                      // группа) → резолвер-инбокс, а не чат. Есть контакт → чат.
+                      // Иначе (исключённый/терминальный без контакта) → инспект-
+                      // модалка: проверить/найти контакт, не возвращая лид.
                       if (isRecipientFix(l.outreachState) && canPrep)
                         openResolver(l.id);
                       else if (l.contactId) setDrawerLeadId(l.id);
+                      else if (canPrep) setInspectLeadId(l.id);
                     }}
                     className={
                       "group cursor-pointer border-t border-zinc-100 hover:bg-zinc-50 " +
@@ -741,6 +749,24 @@ function LeadsPage() {
           accounts={accountsQ.data ?? []}
           onClose={() => setDrawerLeadId(null)}
         />
+      )}
+      {inspectLead && (
+        <Modal
+          onClose={() => setInspectLeadId(null)}
+          size="lg"
+          title="Проверить контакт"
+        >
+          <div className="h-[70vh] overflow-hidden">
+            <LeadPrepPane
+              wsId={wsId}
+              projectId={projectId}
+              lead={inspectLead}
+              running={canPrep}
+              showRemove={false}
+              onRemoved={() => setInspectLeadId(null)}
+            />
+          </div>
+        </Modal>
       )}
       {showAddChannels && (
         <AddChannelsModal

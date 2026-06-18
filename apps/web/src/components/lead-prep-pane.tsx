@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2 } from "lucide-react";
+import { Ban, Trash2 } from "lucide-react";
 import type { Contact } from "@repo/core";
 import { api } from "../lib/api";
 import { errorMessage } from "../lib/errors";
@@ -25,10 +25,17 @@ export function LeadPrepPane(props: {
   wsId: string;
   projectId: string;
   lead: PrepLead;
-  // После удаления канала из списка — родитель выбирает следующего.
+  // Идущая кампания (active/paused): «убрать» = skip («в Не отправляем»,
+  // обратимо), т.к. delete сервер разрешает только в draft. В draft — delete.
+  running: boolean;
+  // Инспект-режим (смотрим исключённый лид из «Не отправляем») — кнопку убрать
+  // не показываем: лид уже исключён, тут только проверить/найти контакт.
+  showRemove?: boolean;
+  // После удаления/исключения канала — родитель выбирает следующего.
   onRemoved: () => void;
 }) {
-  const { wsId, projectId, lead } = props;
+  const { wsId, projectId, lead, running } = props;
+  const showRemove = props.showRemove ?? true;
   const qc = useQueryClient();
   const [changing, setChanging] = useState(false);
   const channelId = lead.channel?.id ?? null;
@@ -68,6 +75,8 @@ export function LeadPrepPane(props: {
   const invalidateLeads = () =>
     invalidateProject(qc, wsId, projectId, { leads: true });
 
+  // draft — удалить из списка (список ещё строится). active/paused — delete
+  // запрещён сервером, поэтому «убрать» = skip («в Не отправляем», обратимо).
   const removeLead = useMutation({
     mutationFn: async () => {
       const { error } = await api.DELETE(
@@ -81,8 +90,31 @@ export function LeadPrepPane(props: {
       props.onRemoved();
     },
   });
+  const excludeLead = useMutation({
+    mutationFn: async () => {
+      const { error } = await api.POST(
+        "/v1/workspaces/{wsId}/projects/{projectId}/items/{itemId}/skip",
+        { params: { path: { wsId, projectId, itemId: lead.id } } },
+      );
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      invalidateLeads();
+      props.onRemoved();
+    },
+  });
 
-  const removeBtn = (
+  const removeBtn = !showRemove ? null : running ? (
+    <button
+      type="button"
+      onClick={() => excludeLead.mutate()}
+      disabled={excludeLead.isPending}
+      title="Убрать в «Не отправляем» (можно вернуть)"
+      className="shrink-0 rounded-lg border border-zinc-300 p-1.5 text-zinc-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+    >
+      <Ban size={15} />
+    </button>
+  ) : (
     <button
       type="button"
       onClick={() => {
@@ -159,9 +191,9 @@ export function LeadPrepPane(props: {
               headerAction={removeBtn}
             />
           )}
-          {removeLead.error && (
+          {(removeLead.error || excludeLead.error) && (
             <p className="px-4 pb-3 text-xs text-red-600">
-              {errorMessage(removeLead.error)}
+              {errorMessage(removeLead.error ?? excludeLead.error)}
             </p>
           )}
         </div>
