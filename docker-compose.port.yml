@@ -5,7 +5,9 @@
 # Отличия Яндекса от базового prod.yml:
 #  - сборка через network: host (egress билда),
 #  - VM IPv6-only с NAT64 → IPv4-форсинг из prod.yml (extra_hosts/sysctls/
-#    NODE_OPTIONS) тут СБРАСываем, сеть с IPv6,
+#    NODE_OPTIONS) тут сбрасываем, сеть с IPv6. Bot API пинним
+#    на прежний DC2 через Yandex NAT64: нативный IPv6-маршрут к
+#    api.telegram.org теряет TCP-connect, NAT64-маршрут стабилен,
 #  - gateway (nginx) на host-сети слушает 3102 (наружный вход),
 #  - MTU docker-сети занижен до 1280: путь хоста = 1400, и без этого крупные
 #    пакеты контейнера (тяжёлые TG-апдейты) чёрно-дырились бы из-за резаного
@@ -17,7 +19,11 @@ services:
     environment:
       NODE_ENV: production
       NODE_OPTIONS: ""
-    extra_hosts: !reset []
+    # 64:ff9b::959a:a7dc = DNS64(149.154.167.220), Telegram DC2.
+    # Pin затрагивает только HTTPS Bot API; TDLib продолжает ходить
+    # к MTProto DC по нативному IPv6.
+    extra_hosts: !override
+      - "api.telegram.org=64:ff9b::959a:a7dc"
     sysctls: !reset {}
   api-migrate:
     build:
