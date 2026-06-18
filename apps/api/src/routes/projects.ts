@@ -18,6 +18,7 @@ import {
   projectStatus,
   scheduledMessages,
   scheduledMessageStatus,
+  tgUsers,
   type ProjectMessage,
   type ProjectStage,
 } from "../db/schema.ts";
@@ -191,6 +192,62 @@ const LeadAccountSchema = z
   })
   .openapi("OutreachLeadAccount");
 
+// Состояние лида для триажа списка — единый источник правды, фронт только
+// группирует в корзины (нужно действие / в работе / не отправляем). Дефолт —
+// needs_review (нужно действие): всё, что не попало в явное «система работает»
+// (in_flight) или явный терминал (excluded/already_working/blocked_rkn),
+// поднимаем человеку, а не хороним в «не отправляем» и не прячем в «в работе».
+const OUTREACH_STATES = [
+  "replied", // ответил — живёт на канбане, не в триаже списка
+  "excluded", // менеджер исключил вручную (терминал) → не отправляем
+  "already_working", // уже работает у нас на платформе (авто-терминал) → не отправляем
+  "blocked_rkn", // >10k и не в реестре РКН (авто-терминал) → не отправляем
+  "no_contact", // нет годного контакта → нужно действие (резолвер)
+  "bot_manual", // админ-бот → нужно действие (открыть + Запустить бота)
+  "not_private", // контакт — канал/группа, не private user → нужно действие (заменить)
+  "not_scheduled", // годен, но scheduled-строк нет → нужно действие (Дослать)
+  "in_flight", // система работает: ушло/ждём, догон в очереди (без фейлов)
+  "needs_review", // всё прочее (фейл доставки/непредвиденное) → нужно действие (разобраться)
+] as const;
+type OutreachState = (typeof OUTREACH_STATES)[number];
+
+function deriveOutreachState(l: {
+  repliedAt: Date | null;
+  skippedAt: Date | null;
+  contactReady: boolean | null;
+  channelAlreadyWorking: boolean | null;
+  channelRknBlocked: boolean | null;
+  adminIsBot: boolean | null;
+  messages: { status: string; error: string | null }[];
+}): OutreachState {
+  if (l.repliedAt) return "replied";
+  if (l.skippedAt) return "excluded";
+  if (l.channelAlreadyWorking) return "already_working";
+  if (l.channelRknBlocked) return "blocked_rkn";
+  if (!l.contactReady) return "no_contact";
+
+  const failedErrors = l.messages
+    .filter((m) => m.status === "failed")
+    .map((m) => m.error ?? "");
+  const botFailed = failedErrors.some((e) => /BOT_SKIPPED/i.test(e));
+  const notPrivateFailed = failedErrors.some((e) => /NOT_PRIVATE/i.test(e));
+
+  if (l.adminIsBot || botFailed) return "bot_manual";
+  if (notPrivateFailed) return "not_private";
+  if (l.messages.length === 0) return "not_scheduled";
+
+  const hasFailed = failedErrors.length > 0;
+  const hasLive = l.messages.some(
+    (m) => m.status === "pending" || m.status === "sent",
+  );
+  // Чистый in-flight: система работает, фейлов в цепочке нет.
+  if (!hasFailed && hasLive) return "in_flight";
+
+  // Permanent-фейл доставки (privacy/blocked/deactivated), частично упавшая
+  // цепочка, непредвиденное на масштабе — человеку на разбор, не авто-терминал.
+  return "needs_review";
+}
+
 const LeadProgressSchema = z
   .object({
     id: z.string(),
@@ -241,6 +298,9 @@ const LeadProgressSchema = z
     contactReady: z.boolean(),
     // Исключён из авто-рассылки (POST /items/{id}/skip). Бейдж + «Вернуть».
     skippedAt: z.iso.datetime().nullable(),
+    // Состояние для триажа списка (см. deriveOutreachState). Фронт группирует
+    // в корзины: нужно действие / в работе / не отправляем.
+    outreachState: z.enum(OUTREACH_STATES),
     // Канал размещения — получатель аутрича резолвится от его админа. null
     // быть не должно (айтем = placement), но left-join → nullable.
     channel: z
@@ -1041,12 +1101,17 @@ app.openapi(
           channelMemberCount: channels.memberCount,
           channelIsRkn: channelIsRknSql,
           channelAlreadyWorking: channelAlreadyWorkingSql,
+          channelRknBlocked: channelRknBlockedSql,
           contactReady: contactReadySql,
+          // Админ-получатель — бот: авторитетный сигнал tg_users.is_bot
+          // (userTypeBot), для гейта «ручной способ» в триаже списка.
+          adminIsBot: sql<boolean>`coalesce(${tgUsers.isBot}, false)`,
           total: sql<number>`count(*) OVER ()::int`,
         })
         .from(projectItems)
         .leftJoin(contacts, eq(contacts.id, projectItems.contactId))
         .leftJoin(channels, eq(channels.id, projectItems.channelId))
+        .leftJoin(tgUsers, eq(tgUsers.userId, projectItems.tgUserId))
         .where(and(eq(projectItems.projectId, project.id), memberFilter))
         .orderBy(asc(projectItems.createdAt))
         .limit(limit)
@@ -1174,6 +1239,15 @@ app.openapi(
           stageId: l.stageId,
           contactReady: l.contactReady,
           skippedAt: l.skippedAt?.toISOString() ?? null,
+          outreachState: deriveOutreachState({
+            repliedAt: l.repliedAt,
+            skippedAt: l.skippedAt,
+            contactReady: l.contactReady,
+            channelAlreadyWorking: l.channelAlreadyWorking,
+            channelRknBlocked: l.channelRknBlocked,
+            adminIsBot: l.adminIsBot,
+            messages,
+          }),
           channel: l.channelId
             ? {
                 id: l.channelId,

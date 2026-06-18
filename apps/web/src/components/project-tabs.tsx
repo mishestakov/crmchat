@@ -195,7 +195,6 @@ function LaunchPanel(props: {
         <Link
           to="/w/$wsId/projects/$projectId/leads"
           params={{ wsId, projectId }}
-          search={{ filter: "rejected" }}
           className="inline-flex items-center gap-1 text-amber-700 hover:underline"
         >
           <CircleAlert size={13} className="text-amber-600" />

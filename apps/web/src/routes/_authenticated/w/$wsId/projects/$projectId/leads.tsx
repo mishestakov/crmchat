@@ -15,10 +15,7 @@ import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
 import { ProjectTabs } from "../../../../../../components/project-tabs";
 import { type AccountRow } from "../../../../../../components/chat-drawer";
-import {
-  ChannelBadges,
-  RKN_THRESHOLD,
-} from "../../../../../../components/channel-badges";
+import { ChannelBadges } from "../../../../../../components/channel-badges";
 import { UnreadBadge } from "../../../../../../components/unread-badge";
 import { LeadChatDrawer } from "../../../../../../components/lead-chat-drawer";
 import { LeadPrepPane } from "../../../../../../components/lead-prep-pane";
@@ -41,14 +38,16 @@ export const Route = createFileRoute(
   "/_authenticated/w/$wsId/projects/$projectId/leads",
 )({
   component: LeadsPage,
-  // ?filter — сегмент списка: unreplied (не ответившие) или rejected (вся
-  // отбраковка: без контакта + без РКН). Пусто = все. Из LaunchPanel приходит
-  // ?filter=rejected.
+  // ?filter — корзина триажа (active/paused): action (нужно действие) /
+  // flight (в работе) / wont (не отправляем). Пусто = все. Из LaunchPanel
+  // приходит ?filter=wont (отложенные = РКН/уже работает/исключены).
   validateSearch: (
     search: Record<string, unknown>,
-  ): { filter?: "unreplied" | "rejected" } => ({
+  ): { filter?: "action" | "flight" | "wont" } => ({
     filter:
-      search.filter === "unreplied" || search.filter === "rejected"
+      search.filter === "action" ||
+      search.filter === "flight" ||
+      search.filter === "wont"
         ? search.filter
         : undefined,
   }),
@@ -60,26 +59,59 @@ type LeadsResponse =
   paths["/v1/workspaces/{wsId}/projects/{projectId}/leads"]["get"]["responses"][200]["content"]["application/json"];
 type Lead = LeadsResponse["leads"][number];
 type LeadMessage = Lead["messages"][number];
+type OutreachState = Lead["outreachState"];
 
-// Причина отбраковки лида — зеркало бэк-гейта (prepareLeads / readiness).
-// Приоритет: контакт → уже работает у нас → РКН (>10к и не в реестре = красная
-// пилюля «Нет РКН»). null — лид годен к отправке.
-type RejectReason = "no-contact" | "working" | "no-rkn";
-function rejectReason(lead: Lead): RejectReason | null {
-  if (!lead.contactReady) return "no-contact";
-  const ch = lead.channel;
-  if (ch?.alreadyWorking) return "working";
-  if (ch && !ch.isRkn && ch.memberCount != null && ch.memberCount > RKN_THRESHOLD)
-    return "no-rkn";
-  return null;
-}
+// Триаж списка (active/paused): per-lead outreachState (бэк) → корзина «кто
+// делает следующий ход». action — менеджер, flight — система, wont — никто
+// (терминал). replied живёт на канбане, в триаж не попадает (null).
+type Bucket = "action" | "flight" | "wont";
+const STATE_BUCKET: Record<OutreachState, Bucket | null> = {
+  replied: null,
+  excluded: "wont",
+  already_working: "wont",
+  blocked_rkn: "wont",
+  no_contact: "action",
+  bot_manual: "action",
+  not_private: "action",
+  not_scheduled: "action",
+  in_flight: "flight",
+  needs_review: "action",
+};
+
+// Под-группы внутри «Нужно действие» — порядок = порядок показа. Каждая со
+// своим действием (рендер ниже определяет кнопку по state).
+const ACTION_GROUPS: { state: OutreachState; title: string; hint: string }[] = [
+  {
+    state: "no_contact",
+    title: "Нет контакта",
+    hint: "Найдите контакт — опенер уйдёт автоматически.",
+  },
+  {
+    state: "bot_manual",
+    title: "Админ — бот",
+    hint: "Откройте чат и запустите бота вручную.",
+  },
+  {
+    state: "not_private",
+    title: "Контакт — канал или группа",
+    hint: "Нужен личный аккаунт админа.",
+  },
+  {
+    state: "not_scheduled",
+    title: "Не запланировано",
+    hint: "Годен к рассылке — дошлите опенер кнопкой «Дослать новым».",
+  },
+  {
+    state: "needs_review",
+    title: "Разобраться",
+    hint: "Отправка не прошла — посмотрите причину.",
+  },
+];
 
 function LeadsPage() {
   const { wsId, projectId } = Route.useParams();
   const { filter } = Route.useSearch();
   const navigate = Route.useNavigate();
-  const onlyUnreplied = filter === "unreplied";
-  const onlyRejected = filter === "rejected";
   const [showAddChannels, setShowAddChannels] = useState(false);
   const [drawerLeadId, setDrawerLeadId] = useState<string | null>(null);
   // Драфт — инбокс подготовки (слева список, справа канал + резолвер
@@ -153,22 +185,22 @@ function LeadsPage() {
   const replied = leadsQ.data?.repliedCount ?? 0;
   const visibleLeads = useMemo(() => {
     if (!leadsQ.data) return [];
-    let out = leadsQ.data.leads;
-    if (onlyUnreplied) {
-      out = out.filter((l) => !l.repliedAt);
-    }
-    if (onlyRejected) {
-      out = out.filter((l) => rejectReason(l) !== null);
-    }
-    return out;
-  }, [leadsQ.data, onlyUnreplied, onlyRejected]);
+    if (!filter) return leadsQ.data.leads;
+    return leadsQ.data.leads.filter(
+      (l) => STATE_BUCKET[l.outreachState] === filter,
+    );
+  }, [leadsQ.data, filter]);
 
-  // Счётчик отбраковки на странице (для сегмента фильтра).
-  const rejectedTotal = useMemo(
-    () =>
-      leadsQ.data?.leads.filter((l) => rejectReason(l) !== null).length ?? 0,
-    [leadsQ.data],
-  );
+  // Счётчики корзин на странице (для сегмент-контрола). Page-scoped, как раньше
+  // rejectedTotal; при обрезке страницы есть TruncationBanner.
+  const counts = useMemo(() => {
+    const c = { action: 0, flight: 0, wont: 0 };
+    for (const l of leadsQ.data?.leads ?? []) {
+      const b = STATE_BUCKET[l.outreachState];
+      if (b) c[b] += 1;
+    }
+    return c;
+  }, [leadsQ.data]);
 
   // Сводка по выбранной странице (200 лидов); при больших задачах нужен
   // агрегат с бэка.
@@ -194,9 +226,9 @@ function LeadsPage() {
   useEffect(() => {
     if (prepMode && (!canPrep || noContactTotal === 0)) setPrepMode(false);
   }, [prepMode, canPrep, noContactTotal]);
-  // В режиме отбраковки показываем плоскую таблицу (с причиной у каждой
-  // строки), а не prep-инбокс — он только про поиск контакта.
-  const showPrepInbox = !onlyRejected && (isDraft || (canPrep && prepMode));
+  // Резолвер-инбокс: в draft всегда, в active/paused — когда менеджер вошёл в
+  // него через «Найти контакт» (prepMode). Триаж-корзины — поверх таблицы.
+  const showPrepInbox = isDraft || (canPrep && prepMode);
   const inboxItems = isDraft
     ? visibleLeads
     : (leadsQ.data?.leads ?? []).filter((l) => !l.contactReady);
@@ -255,26 +287,24 @@ function LeadsPage() {
     onSuccess: () => invalidateProject(qc, wsId, projectId, { leads: true }),
   });
 
-  // Один сегмент-контрол вместо россыпи чекбоксов/чипов: «Все · Не ответившие ·
-  // Отбракованные». «Не ответившие» — только когда уже что-то отправлено
-  // (не в draft); «Отбракованные» — только когда есть кого браковать.
-  const segments: { key: "unreplied" | "rejected" | undefined; label: string }[] =
-    [
-      { key: undefined, label: "Все" },
-      ...(!isDraft
-        ? [{ key: "unreplied" as const, label: "Не ответившие" }]
-        : []),
-      ...(rejectedTotal > 0 || onlyRejected
-        ? [{ key: "rejected" as const, label: `Отбракованные · ${rejectedTotal}` }]
-        : []),
-    ];
-  const setFilter = (key: "unreplied" | "rejected" | undefined) =>
+  // Триаж по корзинам «кто делает следующий ход» — только пост-запуск
+  // (active/paused). В draft рассылки ещё не было, там prep-инбокс, сегментов
+  // нет.
+  const segments: { key: "action" | "flight" | "wont" | undefined; label: string }[] =
+    isDraft
+      ? []
+      : [
+          { key: undefined, label: "Все" },
+          { key: "action" as const, label: `Нужно действие · ${counts.action}` },
+          { key: "flight" as const, label: `В работе · ${counts.flight}` },
+          { key: "wont" as const, label: `Не отправляем · ${counts.wont}` },
+        ];
+  const setFilter = (key: "action" | "flight" | "wont" | undefined) =>
     navigate({ search: { filter: key }, replace: true });
-  // Резолвер контактов: из draft открыт всегда (prep-инбокс), в активном —
-  // через «Найти контакты» из вкладки отбраковки.
+  // Резолвер контактов: в active/paused вход из группы «Нет контакта»
+  // (prepMode). Корзину (filter) не сбрасываем — после резолва вернёмся в неё.
   const openResolver = () => {
     if (canPrep) setPrepMode(true);
-    setFilter(undefined);
   };
 
   return (
@@ -348,16 +378,12 @@ function LeadsPage() {
         </div>
 
         <div className="text-xs text-zinc-500">
-          {onlyUnreplied ? (
-            <>
-              {visibleLeads.length} не ответили из {total}{" "}
-              {pluralize(total, "канала", "каналов", "каналов")}
-            </>
-          ) : onlyRejected ? (
-            <>
-              {visibleLeads.length} отбракованных из {total}{" "}
-              {pluralize(total, "канала", "каналов", "каналов")}
-            </>
+          {filter === "action" ? (
+            <>Нужно действие: {counts.action} из {total}</>
+          ) : filter === "flight" ? (
+            <>В работе: {counts.flight} из {total}</>
+          ) : filter === "wont" ? (
+            <>Не отправляем: {counts.wont} из {total}</>
           ) : (
             <>
               Всего {total} {pluralize(total, "канал", "канала", "каналов")}
@@ -397,11 +423,10 @@ function LeadsPage() {
         )}
         {leadsQ.data &&
           leadsQ.data.leads.length > 0 &&
+          !showPrepInbox &&
           visibleLeads.length === 0 && (
             <div className="rounded-2xl bg-white p-6 text-sm text-zinc-500 shadow-sm">
-              {onlyRejected
-                ? "Отбракованных нет — все каналы годны к отправке."
-                : "Все ответили — фильтр пуст."}
+              {filter ? "В этой корзине пусто." : "Список пуст."}
             </div>
           )}
         {leadsQ.data && leadsQ.data.leads.length === LEADS_PAGE_LIMIT && (
@@ -422,24 +447,109 @@ function LeadsPage() {
             {errorMessage(scheduleNew.error)}
           </p>
         )}
-        {onlyRejected && noContactTotal > 0 && (
-          // «Без контакта» — половина отбраковки, чинится резолвером. Вход в
-          // тот же prep-инбокс, что и из draft (no-РКН вернётся сам при синке).
-          <div className="flex items-center justify-between gap-3 rounded-xl bg-zinc-50 px-4 py-2 text-sm text-zinc-600">
-            <span>
-              {noContactTotal}{" "}
-              {pluralize(noContactTotal, "канал", "канала", "каналов")} без
-              контакта — найдите контакт, и опенер уйдёт автоматически.
-            </span>
-            <button
-              type="button"
-              onClick={openResolver}
-              className="shrink-0 font-medium text-emerald-700 hover:underline"
-            >
-              Найти контакты →
-            </button>
-          </div>
-        )}
+        {/* 🔴 Нужно действие — сгруппировано по под-состоянию, у каждой группы
+            своё действие. Резолвер (Нет контакта) уводит в prep-инбокс. */}
+        {leadsQ.data &&
+          !showPrepInbox &&
+          filter === "action" &&
+          visibleLeads.length > 0 && (
+            <div className="space-y-4">
+              {ACTION_GROUPS.map((g) => {
+                const groupLeads = visibleLeads.filter(
+                  (l) => l.outreachState === g.state,
+                );
+                if (groupLeads.length === 0) return null;
+                return (
+                  <div
+                    key={g.state}
+                    className="overflow-hidden rounded-2xl bg-white shadow-sm"
+                  >
+                    <div className="border-b border-zinc-100 px-4 py-2.5">
+                      <div className="text-sm font-semibold text-zinc-800">
+                        {g.title} · {groupLeads.length}
+                      </div>
+                      <div className="text-xs text-zinc-500">{g.hint}</div>
+                    </div>
+                    <ul className="divide-y divide-zinc-100">
+                      {groupLeads.map((l) => (
+                        <li
+                          key={l.id}
+                          className="flex items-center gap-3 px-4 py-2.5 hover:bg-zinc-50"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="truncate text-sm font-medium">
+                                {l.channel?.title ||
+                                  (l.channel?.username
+                                    ? `@${l.channel.username}`
+                                    : "—")}
+                              </span>
+                              {l.channel && (
+                                <ChannelBadges
+                                  username={l.channel.username}
+                                  link={l.channel.link}
+                                  isRkn={l.channel.isRkn}
+                                  memberCount={l.channel.memberCount}
+                                />
+                              )}
+                            </div>
+                            {l.username && (
+                              <div className="text-xs text-zinc-500">
+                                админ @{l.username}
+                              </div>
+                            )}
+                            {g.state === "needs_review" && (
+                              <div className="text-xs text-red-600">
+                                {humanizeSendError(
+                                  l.messages.find((m) => m.status === "failed")
+                                    ?.error ?? null,
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            {g.state === "no_contact" ? (
+                              <button
+                                type="button"
+                                onClick={openResolver}
+                                className="rounded-lg px-2.5 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-50"
+                              >
+                                Найти контакт
+                              </button>
+                            ) : g.state === "not_scheduled" ? null : (
+                              <button
+                                type="button"
+                                onClick={() => setDrawerLeadId(l.id)}
+                                className="rounded-lg px-2.5 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-50"
+                              >
+                                {g.state === "not_private"
+                                  ? "Заменить контакт"
+                                  : "Открыть чат"}
+                              </button>
+                            )}
+                            {g.state === "needs_review" && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  skipLead.mutate({
+                                    itemId: l.id,
+                                    skipped: !!l.skippedAt,
+                                  })
+                                }
+                                className="rounded-lg px-2.5 py-1 text-xs font-medium text-zinc-500 hover:text-red-600"
+                              >
+                                Исключить
+                              </button>
+                            )}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         {leadsQ.data && inboxItems.length > 0 && showPrepInbox && (
           // Инбокс подготовки (D1, как агентский лонглист): слева компактный
           // список, справа канал + резолвер выбранного. Поточная обработка —
@@ -497,7 +607,12 @@ function LeadsPage() {
             </div>
           </div>
         )}
-        {leadsQ.data && visibleLeads.length > 0 && !showPrepInbox && (
+        {/* Таблица-диагностика: Все / В работе / Не отправляем (action — выше
+            сгруппированным видом). */}
+        {leadsQ.data &&
+          visibleLeads.length > 0 &&
+          !showPrepInbox &&
+          filter !== "action" && (
           <div className="overflow-x-auto rounded-2xl bg-white shadow-sm">
             <table className="w-full text-sm">
               <thead className="bg-zinc-50 text-xs text-zinc-500">
