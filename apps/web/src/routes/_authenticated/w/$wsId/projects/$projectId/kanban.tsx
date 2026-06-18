@@ -50,6 +50,10 @@ function KanbanPage() {
   // полезный срез — у кого новое непрочитанное входящее.
   const [search, setSearch] = useState("");
   const [onlyWaiting, setOnlyWaiting] = useState(false);
+  // Фильтр по аккаунту, на котором висит диалог (lead.account — тот, что слал
+  // опенер и принимает ответ). Для проверки качества: выбрал аккаунт → доска
+  // показывает только его переписки, отсматриваешь подряд. null = все.
+  const [accountFilter, setAccountFilter] = useState<string | null>(null);
   const accountsQ = useOutreachAccounts(wsId);
 
   // Клик по карточке = открыть контакт (где чат, заметки, напоминания).
@@ -196,8 +200,32 @@ function KanbanPage() {
     if (onlyWaiting) {
       out = out.filter((l) => l.unreadCount > 0 || l.markedUnread);
     }
+    if (accountFilter) {
+      out = out.filter((l) => l.account?.id === accountFilter);
+    }
     return out;
-  }, [leadsQ.data?.leads, search, onlyWaiting]);
+  }, [leadsQ.data?.leads, search, onlyWaiting, accountFilter]);
+
+  // Аккаунты, реально присутствующие на доске (по ответившим лидам) — опции
+  // селектора. Берём из самих лидов (там account уже есть), а не из всего
+  // воркспейса: в дропдауне только те, у кого есть карточки.
+  const boardAccounts = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const l of leadsQ.data?.leads ?? []) {
+      if (!l.repliedAt || !l.account) continue;
+      const a = l.account;
+      if (!m.has(a.id)) {
+        const label =
+          [a.firstName, a.tgUsername ? `@${a.tgUsername}` : a.phoneNumber]
+            .filter(Boolean)
+            .join(" · ") || a.id;
+        m.set(a.id, label);
+      }
+    }
+    return [...m.entries()]
+      .map(([id, label]) => ({ id, label }))
+      .sort((x, y) => x.label.localeCompare(y.label));
+  }, [leadsQ.data?.leads]);
 
   // Счётчик «ждут ответа» — по всей доске (до поиска/тоггла), стабильный сигнал.
   const waitingCount = useMemo(
@@ -278,6 +306,21 @@ function KanbanPage() {
         </div>
       )}
         <div className="flex flex-wrap items-center gap-2">
+          {boardAccounts.length > 1 && (
+            <select
+              value={accountFilter ?? ""}
+              onChange={(e) => setAccountFilter(e.target.value || null)}
+              title="Показать диалоги одного аккаунта"
+              className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-sm text-zinc-700"
+            >
+              <option value="">Все аккаунты</option>
+              {boardAccounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.label}
+                </option>
+              ))}
+            </select>
+          )}
           <div className="w-64">
             <SearchInput
               value={search}
