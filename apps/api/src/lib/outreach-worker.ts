@@ -23,6 +23,7 @@ import { rememberPendingSend } from "./outreach-listener.ts";
 import { inputMessageText } from "./td-message.ts";
 import {
   isNowInWindow,
+  nextAllowedSendAt,
   PEER_FLOOD_COOLDOWN_REASON,
   peerFloodCooldownUntil,
   startOfDayInTz,
@@ -33,7 +34,7 @@ import {
   FINAL_OFFER_MSG_IDX,
 } from "./project-scheduling.ts";
 import { failStepAndCancelFollowups } from "./outreach-chain.ts";
-import type { ProjectMessage } from "../db/schema.ts";
+import type { OutreachSchedule, ProjectMessage } from "../db/schema.ts";
 import type { TdClient } from "./tdlib/index.ts";
 
 // Outbound worker для холодных рассылок. Каждый tick:
@@ -379,7 +380,7 @@ async function processAccount(accountId: string, items: DueItem[]) {
         console.warn(
           `[outreach-worker] sent into TG but row ${item.id} already not pending — race with cancel`,
         );
-        await scheduleNextFollowup(item);
+        await scheduleNextFollowup(item, outreachSchedule);
         continue;
       }
       rememberPendingSend(accountId, tgChatId, tgPlaceholderId, item.id);
@@ -419,7 +420,7 @@ async function processAccount(accountId: string, items: DueItem[]) {
       if (item.messageIdx === 0 && cold) newLeadsRemaining--;
       // Догон msg_idx+1 ждал с sentinel-датой — теперь у него есть точка
       // отсчёта (факт-отправка msg_idx), считаем sendAt = now + delay.
-      await scheduleNextFollowup(item);
+      await scheduleNextFollowup(item, outreachSchedule);
       // Sent уже зафиксирован — ошибки idle/closeChat не должны его
       // откатывать; глотаем тихо, темп этого аккаунта чуть собьётся в
       // редком кейсе и всё.
@@ -443,7 +444,12 @@ async function processAccount(accountId: string, items: DueItem[]) {
         );
         await db
           .update(scheduledMessages)
-          .set({ sendAt: new Date(Date.now() + waitMs) })
+          .set({
+            sendAt: nextAllowedSendAt(
+              outreachSchedule,
+              new Date(Date.now() + waitMs),
+            ),
+          })
           .where(eq(scheduledMessages.id, item.id));
         emitProjectChanged(item.projectId);
         console.warn(
@@ -473,9 +479,11 @@ async function processAccount(accountId: string, items: DueItem[]) {
         // async-пути в outreach-listener.onSendFailed).
         const until = peerFloodCooldownUntil(outreachSchedule.timezone);
         await setAccountCooldown(accountId, until.getTime(), PEER_FLOOD_COOLDOWN_REASON);
+        // cooldown аккаунта = until (00:00, семантику не трогаем); send_at
+        // сообщения — на ближайшее окно (не полночь), чтобы БД/UI = правда.
         await db
           .update(scheduledMessages)
-          .set({ sendAt: until })
+          .set({ sendAt: nextAllowedSendAt(outreachSchedule, until) })
           .where(eq(scheduledMessages.id, item.id));
         emitProjectChanged(item.projectId);
         console.warn(
@@ -510,7 +518,12 @@ async function processAccount(accountId: string, items: DueItem[]) {
       );
       await db
         .update(scheduledMessages)
-        .set({ sendAt: new Date(Date.now() + UNKNOWN_ERROR_BACKOFF_MS) })
+        .set({
+          sendAt: nextAllowedSendAt(
+            outreachSchedule,
+            new Date(Date.now() + UNKNOWN_ERROR_BACKOFF_MS),
+          ),
+        })
         .where(eq(scheduledMessages.id, item.id));
       emitProjectChanged(item.projectId);
     }
@@ -644,7 +657,10 @@ function randomMs(min: number, max: number): number {
 // видим. Сейчас у нас есть момент отсчёта — обновляем на now + delay из
 // шаблона. Если шага нет (последний msg) или pending уже не существует
 // (отменён ответом лида и т.п.) — ничего не делаем.
-async function scheduleNextFollowup(item: DueItem): Promise<void> {
+async function scheduleNextFollowup(
+  item: DueItem,
+  schedule: OutreachSchedule,
+): Promise<void> {
   const nextIdx = item.messageIdx + 1;
   const [proj] = await db
     .select({ messages: projects.messages })
@@ -653,7 +669,10 @@ async function scheduleNextFollowup(item: DueItem): Promise<void> {
     .limit(1);
   const nextMsg = (proj?.messages as ProjectMessage[] | undefined)?.[nextIdx];
   if (!nextMsg) return;
-  const nextAt = new Date(Date.now() + delayToMs(nextMsg.delay));
+  const nextAt = nextAllowedSendAt(
+    schedule,
+    new Date(Date.now() + delayToMs(nextMsg.delay)),
+  );
   await db
     .update(scheduledMessages)
     .set({ sendAt: nextAt })

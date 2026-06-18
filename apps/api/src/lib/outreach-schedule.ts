@@ -64,3 +64,45 @@ export const PEER_FLOOD_COOLDOWN_REASON =
 export function peerFloodCooldownUntil(tz: string): Date {
   return startOfDayInTz(new Date(Date.now() + 24 * 60 * 60 * 1000), tz);
 }
+
+// Ближайший момент >= candidate, попадающий в рабочее окно расписания. Если
+// candidate уже внутри окна — возвращаем как есть; иначе — начало следующего
+// разрешённого окна (позже сегодня либо в ближайший рабочий день). Назначение:
+// сделать send_at честным — чтобы в БД/UI лежало реальное время ближайшей
+// попытки, а не «сырое» время, которое воркер всё равно догейтит окном (классика
+// — PEER_FLOOD ставил send_at на 00:00, а реальная попытка — после 09:00).
+// DST-safe: начало окна доводим до настенного часа через tzParts (фикс-смещение
+// от полуночи промахнулось бы на час, если ночью был DST-переход). Москва без
+// DST → коррекция no-op, но функция остаётся верной для DST-tz.
+export function nextAllowedSendAt(
+  schedule: OutreachSchedule,
+  candidate: Date,
+): Date {
+  if (isNowInWindow(schedule, candidate)) return candidate;
+  // Идём по дням от дня candidate, ищем первое окно, открывающееся в момент
+  // >= candidate. До 8 шагов; расписание без рабочих дней → возвращаем как есть.
+  let probe = candidate;
+  for (let i = 0; i < 8; i++) {
+    const { weekday } = tzParts(probe, schedule.timezone);
+    const dayStart = startOfDayInTz(probe, schedule.timezone);
+    const day = schedule.dailySchedule[weekday];
+    if (day) {
+      // Фикс-смещение от 00:00 даёт ровно startHour только без DST-перехода
+      // между полночью и окном; иначе настенный час уедет на ±1 — доводим.
+      let start = new Date(dayStart.getTime() + day.startHour * 60 * 60 * 1000);
+      const startHour = tzParts(start, schedule.timezone).hour;
+      if (startHour !== day.startHour) {
+        start = new Date(
+          start.getTime() + (day.startHour - startHour) * 60 * 60 * 1000,
+        );
+      }
+      if (start.getTime() >= candidate.getTime()) return start;
+    }
+    // Следующий день: +36ч от начала суток (DST-safe буфер) → снап к 00:00.
+    probe = startOfDayInTz(
+      new Date(dayStart.getTime() + 36 * 60 * 60 * 1000),
+      schedule.timezone,
+    );
+  }
+  return candidate;
+}

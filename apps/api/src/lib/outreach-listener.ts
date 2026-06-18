@@ -2,6 +2,7 @@ import { and, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
   contacts,
+  DEFAULT_OUTREACH_SCHEDULE,
   outreachAccounts,
   projectItems,
   properties as propsTable,
@@ -22,6 +23,7 @@ import {
   FOLLOWUP_PENDING_SENTINEL,
 } from "./project-scheduling.ts";
 import {
+  nextAllowedSendAt,
   PEER_FLOOD_COOLDOWN_REASON,
   peerFloodCooldownUntil,
 } from "./outreach-schedule.ts";
@@ -605,8 +607,8 @@ async function onSendFailed(
         .from(workspaces)
         .where(eq(workspaces.id, row.workspaceId))
         .limit(1);
-      const tz = ws?.schedule?.timezone ?? "Europe/Moscow";
-      const until = peerFloodCooldownUntil(tz);
+      const schedule = ws?.schedule ?? DEFAULT_OUTREACH_SCHEDULE;
+      const until = peerFloodCooldownUntil(schedule.timezone);
       // Пауза + повтор + сброс догонов — один логический шаг, атомарно: частичный
       // сбой иначе вернёт баг с осиротевшим догоном.
       await db.transaction(async (tx) => {
@@ -620,7 +622,12 @@ async function onSendFailed(
           .where(eq(outreachAccounts.id, accountId));
         await tx
           .update(scheduledMessages)
-          .set({ status: "pending", sendAt: until, error: null, sentAt: null })
+          .set({
+            status: "pending",
+            sendAt: nextAllowedSendAt(schedule, until),
+            error: null,
+            sentAt: null,
+          })
           .where(eq(scheduledMessages.id, id));
         await tx
           .update(scheduledMessages)
