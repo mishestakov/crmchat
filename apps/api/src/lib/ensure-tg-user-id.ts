@@ -2,6 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import { contacts } from "../db/schema.ts";
 import { errMsg } from "./errors.ts";
+import { syncTgUserNow } from "./tg-replicator.ts";
 import type { TdClient } from "./tdlib/index.ts";
 
 // Lazy-резолв tg_user_id для контакта: заведён по @ без последующих
@@ -49,6 +50,16 @@ export async function ensureContactTgUserId(args: {
       updatedAt: new Date(),
     })
     .where(eq(contacts.id, args.contactId));
+
+  // Раз уж познакомились с юзером — сразу записываем его тип (бот/человек) в
+  // tg_users синхронно. Иначе эту строку дописывает асинхронный репликатор
+  // (updateUser → flush), и читатели tg_users.is_bot сразу после резолва
+  // (chat-history peerIsBot, bot-start, фильтр ботов в рассылке) видят пустоту.
+  // Не критично для самого резолва: ошибка getUser не должна ронять выдачу
+  // tg_user_id — логируем и идём дальше.
+  await syncTgUserNow(args.client, tgUserId).catch((e) => {
+    console.error(`[ensure-tg-user-id] syncTgUserNow ${tgUserId}:`, errMsg(e));
+  });
 
   return tgUserId;
 }

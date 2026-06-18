@@ -38,6 +38,19 @@ function sha1(s: string): string {
   return createHash("sha1").update(s).digest("hex");
 }
 
+// onConflict-set для tg_users — общий для батч-flush репликатора и
+// синхронного syncTgUserNow (ниже). Один и тот же full upsert по userId.
+const TG_USER_UPSERT_SET = {
+  username: sql`excluded.username`,
+  fullName: sql`excluded.full_name`,
+  isDeleted: sql`excluded.is_deleted`,
+  isBot: sql`excluded.is_bot`,
+  isOnline: sql`excluded.is_online`,
+  // GREATEST — не откатываем last_seen_at если новый payload без статуса.
+  lastSeenAt: sql`greatest(${tgUsers.lastSeenAt}, excluded.last_seen_at)`,
+  updatedAt: sql`now()`,
+};
+
 type Update = { _: string; [k: string]: unknown };
 
 // TDLib chat (td_api.tl): id, type:ChatType, title, last_message?:message,
@@ -188,17 +201,7 @@ export function attachReplicator(
         .values(rows)
         .onConflictDoUpdate({
           target: tgUsers.userId,
-          set: {
-            username: sql`excluded.username`,
-            fullName: sql`excluded.full_name`,
-            isDeleted: sql`excluded.is_deleted`,
-            isBot: sql`excluded.is_bot`,
-            isOnline: sql`excluded.is_online`,
-            // GREATEST — see flush() для userStatusBuf, не откатываем
-            // last_seen_at если новый payload без статуса.
-            lastSeenAt: sql`greatest(${tgUsers.lastSeenAt}, excluded.last_seen_at)`,
-            updatedAt: sql`now()`,
-          },
+          set: TG_USER_UPSERT_SET,
         });
     }
     if (partialChat.size > 0) {
@@ -507,5 +510,40 @@ function mapUser(user: UserPayload): UserRow | null {
     ...(status
       ? { isOnline: status.isOnline, lastSeenAt: status.lastSeenAt }
       : {}),
+  };
+}
+
+// Синхронный резолв одного пользователя: getUser → upsert tg_users → вернуть
+// статус/тип. Зовётся из ensureContactTgUserId сразу после searchPublicChat,
+// чтобы тип (бот?) попал в tg_users в момент знакомства, а не дописывался
+// асинхронным репликатором (updateUser → flush через FLUSH_MS). Без этого
+// читатели tg_users.is_bot сразу после резолва (chat-history peerIsBot,
+// bot-start, фильтр ботов в рассылке) видят пустоту, и, напр., кнопка
+// «Запустить бота» не появляется до переоткрытия drawer'а. Источник истины по
+// типу — TDLib userTypeBot, не суффикс @username. Возвращает null для
+// deleted/unknown (mapUser их режет) — тогда is_bot не пишем, как и было.
+export async function syncTgUserNow(
+  client: TdClient,
+  userId: string,
+): Promise<{
+  isOnline: boolean;
+  lastSeenAt: Date | null;
+  isBot: boolean;
+} | null> {
+  const user = (await client.invoke({
+    _: "getUser",
+    user_id: Number(userId),
+  } as never)) as UserPayload;
+  const row = mapUser(user);
+  if (!row) return null;
+  await db
+    .insert(tgUsers)
+    .values(row)
+    .onConflictDoUpdate({ target: tgUsers.userId, set: TG_USER_UPSERT_SET });
+  // isOnline по умолчанию false (как и колонка): статус мог не прийти в getUser.
+  return {
+    isOnline: row.isOnline ?? false,
+    lastSeenAt: row.lastSeenAt ?? null,
+    isBot: row.isBot ?? false,
   };
 }

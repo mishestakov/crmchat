@@ -841,6 +841,9 @@ app.openapi(
       });
     }
 
+    // tg_users.is_bot (для peerIsBot) наполняется в ensureContactTgUserId в
+    // момент резолва — на первом открытии строка уже есть (без гонки с
+    // асинхронным репликатором).
     const [[chatRow], [peerStatusRow]] = await Promise.all([
       db
         .select({
