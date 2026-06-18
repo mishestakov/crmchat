@@ -437,26 +437,6 @@ export async function scheduleLeads(opts: {
 }
 
 
-// «Рассылка по списку ещё идёт» = в проекте есть неотправленные опенеры.
-// Разделяет доливку на горячую и холодную: пока опенеры стоят в очереди,
-// новые лиды просто встают в хвост (ожидаемо); когда список отыгран,
-// немедленная отправка для юзера — сюрприз, новых запускает явная кнопка
-// («Запустить рассылку по новым», schedule-new-leads).
-export async function hasPendingOpeners(projectId: string): Promise<boolean> {
-  const [row] = await db
-    .select({ id: scheduledMessages.id })
-    .from(scheduledMessages)
-    .where(
-      and(
-        eq(scheduledMessages.projectId, projectId),
-        eq(scheduledMessages.status, "pending"),
-        eq(scheduledMessages.messageIdx, 0),
-      ),
-    )
-    .limit(1);
-  return !!row;
-}
-
 // Размещения лонглиста, до которых авто-рассылка ещё не добиралась: нет ни
 // pending (в очереди), ни sent (цепочка начата), ни failed (постоянная ошибка
 // — переотправка упадёт так же). Cancelled не блокирует: после скипа лида его
@@ -466,36 +446,6 @@ const unscheduledLeadSql = sql`not exists (
   where sm.item_id = ${projectItems.id}
     and sm.status in ('pending', 'sent', 'failed')
 )`;
-
-// Сколько лидов лонглиста ждут явного запуска («Дослать новым» на странице
-// лидов). Считаем только реально отправляемых: есть username (без-контактные
-// — отбраковка, не сюда) И не отбракован по РКН (иначе кнопка обещала бы
-// отправку, которой prepareLeads всё равно не сделает). Должен совпадать с
-// выборкой scheduleUnscheduledLeads — иначе счётчик врёт.
-export async function countUnscheduledLeads(projectId: string): Promise<number> {
-  const [row] = await db
-    .select({ n: sql<number>`count(*)::int` })
-    .from(projectItems)
-    .leftJoin(channels, eq(channels.id, projectItems.channelId))
-    .where(
-      and(
-        eq(projectItems.projectId, projectId),
-        isNotNull(projectItems.username),
-        isNull(projectItems.shortlistedAt),
-        isNull(projectItems.skippedAt),
-        sql`${projectItems.available} is distinct from false`,
-        // «не отбракован» = `is not true`, а НЕ `not (...)`: при NULL
-        // (неизвестный размер, не в реестре) `not NULL`=NULL → WHERE молча
-        // выкинул бы свежий импорт. `is not true` трактует NULL как годен —
-        // зеркалит `!r.rknBlocked` (=!null=true) в prepareLeads.
-        sql`${channelRknBlockedSql} is not true`,
-        // «уже работает у нас» — тоже не планируем (EXISTS, NULL не бывает).
-        sql`not ${channelAlreadyWorkingSql}`,
-        unscheduledLeadSql,
-      ),
-    );
-  return row?.n ?? 0;
-}
 
 // Допланировать опенеры незапланированным лидам проекта (холодная доливка по
 // явной кнопке, возврат скипнутого лида). Возвращает число админов, вставших
@@ -558,8 +508,8 @@ export async function scheduleUnscheduledLeads(opts: {
 // scheduleDolivka на bulk-импорте такие размещения отбрасывает (нет
 // получателя) — без этого вызова опенер им не запланирует никто и канал
 // молча выпадает из рассылки. paused тоже планируем: worker на паузе не
-// шлёт, после resume уйдёт. Холодный проект (опенеры отыграны) НЕ планируем
-// — там новых запускает явная кнопка (см. hasPendingOpeners).
+// шлёт, после resume уйдёт. Холодного гейта больше нет (model A): резолв
+// контакта в любом идущем проекте сразу планирует опенер, без явной кнопки.
 export async function scheduleDolivkaForChannel(
   channelId: string,
 ): Promise<void> {
@@ -581,7 +531,6 @@ export async function scheduleDolivkaForChannel(
   const byProject = Map.groupBy(rows, (r) => r.project.id);
   for (const group of byProject.values()) {
     const project = group[0]!.project;
-    if (!(await hasPendingOpeners(project.id))) continue;
     const accountIds = await resolveProjectAccountIds(
       project.workspaceId,
       project,

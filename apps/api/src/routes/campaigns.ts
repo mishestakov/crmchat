@@ -21,7 +21,6 @@ import {
 import { assertProjectAccess } from "../lib/projects-access.ts";
 import { channelIsRknSql } from "../lib/rkn-registry.ts";
 import {
-  hasPendingOpeners,
   resolveStickyByTgUserIds,
   resolveProjectAccountIds,
   scheduleLeads,
@@ -431,11 +430,10 @@ async function scheduleDolivka(opts: {
   accountIds: string[];
   inserted: InsertedPlacement[];
 }) {
-  // Горячая доливка (опенеры по списку ещё в очереди) — новые встают в хвост.
-  // Холодная (список отыгран) — НЕ планируем: немедленная отправка тут для
-  // юзера сюрприз, новых запускает явная кнопка «Запустить» на странице лидов
-  // (schedule-new-leads).
-  if (!(await hasPendingOpeners(opts.project.id))) return;
+  // Добавил канал в идущий проект (active/paused) → опенер новым уходит сразу,
+  // без отдельной кнопки-подтверждения (model A: «active = шлёт», не хочешь —
+  // пауза). Прежний холодный гейт (hasPendingOpeners) убран: он порождал
+  // кнопку «Дослать новым» с врущим счётчиком.
   // Общий конвейер с активацией (scheduleLeads): дедуп по админу + синтез
   // канало-vars + sticky/warm. skipContacted=true — повторный опенер уже
   // начатым тредам не шлём; prepareLeads внутри отбрасывает размещения без

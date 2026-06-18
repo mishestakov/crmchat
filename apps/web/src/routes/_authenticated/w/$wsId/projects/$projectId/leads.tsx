@@ -7,7 +7,6 @@ import {
   CheckCheck,
   MessageCircleReply,
   Plus,
-  Send,
   Sparkles,
 } from "lucide-react";
 import type { paths } from "@repo/api-client";
@@ -73,7 +72,10 @@ const STATE_BUCKET: Record<OutreachState, Bucket | null> = {
   no_contact: "action",
   bot_manual: "action",
   not_private: "action",
-  not_scheduled: "action",
+  // not_scheduled — НЕ «нужно действие» (model A: добавил → опенер планируется
+  // сам). Это либо охваченный сиблинг (его поглощает in_flight-канал при
+  // группировке по админу), либо лид без аккаунтов на старте — оба «в работе».
+  not_scheduled: "flight",
   in_flight: "flight",
   needs_review: "action",
 };
@@ -97,11 +99,6 @@ const ACTION_GROUPS: { state: OutreachState; title: string; hint: string }[] = [
     hint: "Нужен личный аккаунт админа.",
   },
   {
-    state: "not_scheduled",
-    title: "Не запланировано",
-    hint: "Годен к рассылке — дошлите опенер кнопкой «Дослать новым».",
-  },
-  {
     state: "needs_review",
     title: "Разобраться",
     hint: "Отправка не прошла — посмотрите причину.",
@@ -114,6 +111,62 @@ const ACTION_GROUPS: { state: OutreachState; title: string; hint: string }[] = [
 // set-admin глобально перенаведёт график (repointPlacementSchedule).
 const isRecipientFix = (s: OutreachState) =>
   s === "no_contact" || s === "not_private";
+
+// Группировка списка по АДМИНУ: BD-аутрич = разговор на человека, не на канал.
+// У каналов одного админа общий contactId/username → одна строка «канал +
+// ещё N каналов этого админа», один чат, один опенер (он и так перечисляет
+// все каналы). Каналы без резолвнутого админа (нет контакта) не группируются —
+// у каждого свой резолв.
+// Подпись канала: заголовок → @username → «—». Повторяется в строках триажа,
+// сиблингах, таблице и инбоксе.
+function channelLabel(channel: Lead["channel"]): string {
+  return channel?.title || (channel?.username ? `@${channel.username}` : "—");
+}
+
+type LeadGroup = { key: string; primary: Lead; channels: Lead[] };
+
+// Состояние строки = самый продвинутый канал админа. not_scheduled — ниже всех
+// «живых»: охваченный сиблинг поглощается in_flight-каналом. Терминалы каналов
+// (РКН/уже-работает) — ниже, чтобы не перебивать живой разговор; они всплывут,
+// только если ВСЕ каналы админа терминальны.
+const STATE_PRIORITY: Record<OutreachState, number> = {
+  replied: 100,
+  needs_review: 90,
+  bot_manual: 80,
+  not_private: 70,
+  no_contact: 60,
+  in_flight: 50,
+  not_scheduled: 40,
+  excluded: 30,
+  already_working: 20,
+  blocked_rkn: 10,
+};
+
+function groupLeadsByAdmin(leads: Lead[]): LeadGroup[] {
+  const map = new Map<string, Lead[]>();
+  for (const l of leads) {
+    // username — первичный ключ: он стабилен и есть у всех каналов админа,
+    // тогда как contactId проставляется позже (резолв/heal). Иначе админ, у
+    // которого часть каналов уже резолвлена (contactId), а часть нет, распался
+    // бы на две карточки (c:… и u:…). @username в TG уникален → ложного склея
+    // двух людей не будет.
+    const key = l.username
+      ? `u:${l.username.toLowerCase()}`
+      : l.contactId
+        ? `c:${l.contactId}`
+        : `solo:${l.id}`;
+    const arr = map.get(key);
+    if (arr) arr.push(l);
+    else map.set(key, [l]);
+  }
+  return [...map.entries()].map(([key, channels]) => ({
+    key,
+    primary: channels.reduce((a, b) =>
+      STATE_PRIORITY[b.outreachState] > STATE_PRIORITY[a.outreachState] ? b : a,
+    ),
+    channels,
+  }));
+}
 
 function LeadsPage() {
   const { wsId, projectId } = Route.useParams();
@@ -190,24 +243,33 @@ function LeadsPage() {
   const totalMsgCount = seq.data?.messages.length ?? 0;
   const total = leadsQ.data?.total ?? 0;
   const replied = leadsQ.data?.repliedCount ?? 0;
-  const visibleLeads = useMemo(() => {
-    if (!leadsQ.data) return [];
-    if (!filter) return leadsQ.data.leads;
-    return leadsQ.data.leads.filter(
-      (l) => STATE_BUCKET[l.outreachState] === filter,
-    );
-  }, [leadsQ.data, filter]);
 
-  // Счётчики корзин на странице (для сегмент-контрола). Page-scoped, как раньше
-  // rejectedTotal; при обрезке страницы есть TruncationBanner.
+  // Группы по админу (одна карточка = один человек). Триаж-вид, таблица и
+  // счётчики работают по группам, не по строкам-каналам.
+  const allGroups = useMemo(
+    () => groupLeadsByAdmin(leadsQ.data?.leads ?? []),
+    [leadsQ.data],
+  );
+  const visibleGroups = useMemo(
+    () =>
+      filter
+        ? allGroups.filter(
+            (g) => STATE_BUCKET[g.primary.outreachState] === filter,
+          )
+        : allGroups,
+    [allGroups, filter],
+  );
+
+  // Счётчики корзин (для сегмент-контрола) — по группам. Page-scoped; при
+  // обрезке страницы есть TruncationBanner.
   const counts = useMemo(() => {
     const c = { action: 0, flight: 0, wont: 0 };
-    for (const l of leadsQ.data?.leads ?? []) {
-      const b = STATE_BUCKET[l.outreachState];
+    for (const g of allGroups) {
+      const b = STATE_BUCKET[g.primary.outreachState];
       if (b) c[b] += 1;
     }
     return c;
-  }, [leadsQ.data]);
+  }, [allGroups]);
 
   // Сводка по выбранной странице (200 лидов); при больших задачах нужен
   // агрегат с бэка.
@@ -221,7 +283,7 @@ function LeadsPage() {
   const canPrep =
     seq.data?.status === "active" || seq.data?.status === "paused";
 
-  const drawerLead = visibleLeads.find((l) => l.id === drawerLeadId);
+  const drawerLead = leadsQ.data?.leads.find((l) => l.id === drawerLeadId);
 
   // Инбокс подготовки: в draft — все каналы проекта, в active/paused —
   // «доливка», т.е. лиды, где менеджер чинит получателя (нет контакта или
@@ -230,11 +292,11 @@ function LeadsPage() {
   const inboxItems = useMemo(
     () =>
       isDraft
-        ? visibleLeads
+        ? (leadsQ.data?.leads ?? [])
         : (leadsQ.data?.leads ?? []).filter((l) =>
             isRecipientFix(l.outreachState),
           ),
-    [isDraft, visibleLeads, leadsQ.data],
+    [isDraft, leadsQ.data],
   );
 
   const [prepMode, setPrepMode] = useState(false);
@@ -268,21 +330,6 @@ function LeadsPage() {
     const idx = inboxItems.findIndex((l) => l.id === prepLead.id);
     if (idx >= 0) prepCursorRef.current = idx;
   }, [prepLead, inboxItems]);
-
-  // Холодная доливка: список отыгран → новые лиды не планируются сами,
-  // запускает явная кнопка. Счёт с бэка (страница может быть обрезана).
-  const unscheduledCount = leadsQ.data?.unscheduledCount ?? 0;
-  const scheduleNew = useMutation({
-    mutationFn: async () => {
-      const { data, error } = await api.POST(
-        "/v1/workspaces/{wsId}/projects/{projectId}/schedule-new-leads",
-        { params: { path: { wsId, projectId } } },
-      );
-      if (error) throw error;
-      return data!;
-    },
-    onSuccess: () => invalidateProject(qc, wsId, projectId, { leads: true }),
-  });
 
   // Точечный стоп-кран: исключить лида из авто-рассылки / вернуть обратно.
   const skipLead = useMutation({
@@ -372,35 +419,15 @@ function LeadsPage() {
               </div>
             )
           )}
-          {canPrep && !prepMode && unscheduledCount > 0 && (
-            // Холодная доливка: годные лиды без запланированного опенера
-            // (счётчик уже исключает отбракованных по РКН — кнопка не no-op).
-            <button
-              type="button"
-              disabled={scheduleNew.isPending}
-              onClick={() => scheduleNew.mutate()}
-              title={
-                seq.data?.status === "paused"
-                  ? "Проект на паузе — уйдут после возобновления"
-                  : "Запланировать опенер новым лидам"
-              }
-              className="ml-auto inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-sky-700 ring-1 ring-sky-200 hover:bg-sky-50 disabled:opacity-50"
-            >
-              <Send size={14} />
-              {scheduleNew.isPending
-                ? "Планируем…"
-                : `Дослать новым (${unscheduledCount})`}
-            </button>
-          )}
         </div>
 
         <div className="text-xs text-zinc-500">
           {filter === "action" ? (
-            <>Нужно действие: {counts.action} из {total}</>
+            <>Нужно действие: {counts.action} из {allGroups.length}</>
           ) : filter === "flight" ? (
-            <>В работе: {counts.flight} из {total}</>
+            <>В работе: {counts.flight} из {allGroups.length}</>
           ) : filter === "wont" ? (
-            <>Не отправляем: {counts.wont} из {total}</>
+            <>Не отправляем: {counts.wont} из {allGroups.length}</>
           ) : (
             <>
               Всего {total} {pluralize(total, "канал", "канала", "каналов")}
@@ -441,7 +468,7 @@ function LeadsPage() {
         {leadsQ.data &&
           leadsQ.data.leads.length > 0 &&
           !showPrepInbox &&
-          visibleLeads.length === 0 && (
+          visibleGroups.length === 0 && (
             <div className="rounded-2xl bg-white p-6 text-sm text-zinc-500 shadow-sm">
               {filter ? "В этой корзине пусто." : "Список пуст."}
             </div>
@@ -453,27 +480,16 @@ function LeadsPage() {
             entity="каналов"
           />
         )}
-        {scheduleNew.data?.scheduled === 0 && (
-          <p className="text-xs text-zinc-500">
-            Новых отправок не получилось: эти админы уже контактированы или
-            опенер им не адресуется (бот/ручной способ связи).
-          </p>
-        )}
-        {scheduleNew.error && (
-          <p className="text-xs text-red-600">
-            {errorMessage(scheduleNew.error)}
-          </p>
-        )}
         {/* 🔴 Нужно действие — сгруппировано по под-состоянию, у каждой группы
             своё действие. Резолвер (Нет контакта) уводит в prep-инбокс. */}
         {leadsQ.data &&
           !showPrepInbox &&
           filter === "action" &&
-          visibleLeads.length > 0 && (
+          visibleGroups.length > 0 && (
             <div className="space-y-4">
               {ACTION_GROUPS.map((g) => {
-                const groupLeads = visibleLeads.filter(
-                  (l) => l.outreachState === g.state,
+                const groupLeads = visibleGroups.filter(
+                  (grp) => grp.primary.outreachState === g.state,
                 );
                 if (groupLeads.length === 0) return null;
                 return (
@@ -488,18 +504,17 @@ function LeadsPage() {
                       <div className="text-xs text-zinc-500">{g.hint}</div>
                     </div>
                     <ul className="divide-y divide-zinc-100">
-                      {groupLeads.map((l) => (
+                      {groupLeads.map((grp) => {
+                        const l = grp.primary;
+                        return (
                         <li
-                          key={l.id}
+                          key={grp.key}
                           className="flex items-center gap-3 px-4 py-2.5 hover:bg-zinc-50"
                         >
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
                               <span className="truncate text-sm font-medium">
-                                {l.channel?.title ||
-                                  (l.channel?.username
-                                    ? `@${l.channel.username}`
-                                    : "—")}
+                                {channelLabel(l.channel)}
                               </span>
                               {l.channel && (
                                 <ChannelBadges
@@ -515,6 +530,7 @@ function LeadsPage() {
                                 админ @{l.username}
                               </div>
                             )}
+                            <SiblingChannels group={grp} />
                             {g.state === "needs_review" && (
                               <div className="text-xs text-red-600">
                                 {humanizeSendError(
@@ -561,7 +577,8 @@ function LeadsPage() {
                             )}
                           </div>
                         </li>
-                      ))}
+                        );
+                      })}
                     </ul>
                   </div>
                 );
@@ -586,8 +603,7 @@ function LeadsPage() {
                 >
                   <div className="flex items-center gap-2 text-sm font-medium text-zinc-900">
                     <span className="truncate">
-                      {l.channel?.title ||
-                        (l.channel?.username ? `@${l.channel.username}` : "—")}
+                      {channelLabel(l.channel)}
                     </span>
                     {l.channel && (
                       <ChannelBadges
@@ -632,7 +648,7 @@ function LeadsPage() {
         {/* Таблица-диагностика: Все / В работе / Не отправляем (action — выше
             сгруппированным видом). */}
         {leadsQ.data &&
-          visibleLeads.length > 0 &&
+          visibleGroups.length > 0 &&
           !showPrepInbox &&
           filter !== "action" && (
           <div className="overflow-x-auto rounded-2xl bg-white shadow-sm">
@@ -651,18 +667,20 @@ function LeadsPage() {
                 </tr>
               </thead>
               <tbody>
-                {visibleLeads.map((l) => (
+                {visibleGroups.map((grp) => {
+                  const l = grp.primary;
+                  return (
                   <tr
-                    key={l.id}
-                    onClick={() =>
-                      // Лид без рабочего получателя (нет контакта / контакт —
-                      // канал/группа) → резолвер-инбокс (карточка канала +
-                      // выбор контакта), а не чат: чата с таким «контактом» нет,
-                      // дровер открылся бы в null. Остальные → переписка.
-                      isRecipientFix(l.outreachState) && canPrep
-                        ? openResolver(l.id)
-                        : setDrawerLeadId(l.id)
-                    }
+                    key={grp.key}
+                    onClick={() => {
+                      // Нет рабочего получателя (нет контакта / контакт — канал/
+                      // группа) → резолвер-инбокс, а не чат. Чат открываем только
+                      // при наличии contactId: без него LeadChatDrawer отрендерил
+                      // бы null (пустой клик).
+                      if (isRecipientFix(l.outreachState) && canPrep)
+                        openResolver(l.id);
+                      else if (l.contactId) setDrawerLeadId(l.id);
+                    }}
                     className={
                       "group cursor-pointer border-t border-zinc-100 hover:bg-zinc-50 " +
                       (l.repliedAt ? "bg-emerald-50/40 " : "") +
@@ -675,6 +693,7 @@ function LeadsPage() {
                     >
                       <LeadCell
                         lead={l}
+                        group={grp}
                         wsId={wsId}
                         canSkip={canPrep}
                         onToggleSkip={() =>
@@ -703,7 +722,8 @@ function LeadsPage() {
                       );
                     })}
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
             {leadsQ.data.total > leadsQ.data.leads.length && (
@@ -730,10 +750,7 @@ function LeadsPage() {
           onAdded={() => invalidateProject(qc, wsId, projectId, { leads: true })}
           outreach={
             canPrep && seq.data
-              ? {
-                  status: seq.data.status as "active" | "paused",
-                  hot: leadsQ.data?.outreachHot ?? false,
-                }
+              ? { status: seq.data.status as "active" | "paused" }
               : undefined
           }
         />
@@ -743,21 +760,44 @@ function LeadsPage() {
 }
 
 
+// Прочие каналы того же админа (склейка по человеку): «ещё N: Канал, Канал».
+// Один разговор/опенер уже покрывает их все — показываем, чтобы менеджер видел,
+// что контакт по ним учтён, и не искал «потерянные» строки.
+function SiblingChannels({ group }: { group: LeadGroup }) {
+  const others = group.channels.filter((c) => c.id !== group.primary.id);
+  if (others.length === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-zinc-500">
+      <span className="text-zinc-400">ещё {others.length} канал(а) админа:</span>
+      {others.map((c) => (
+        <span key={c.id} className="inline-flex items-center gap-1">
+          {channelLabel(c.channel)}
+          {c.channel?.isRkn && (
+            <span title="В реестре РКН / заблокирован" className="text-red-600">
+              🚫
+            </span>
+          )}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function LeadCell({
   lead,
+  group,
   wsId,
   canSkip,
   onToggleSkip,
 }: {
   lead: Lead;
+  group: LeadGroup;
   wsId: string;
   // Исключение из рассылки доступно в active/paused (в draft лида удаляют).
   canSkip: boolean;
   onToggleSkip: () => void;
 }) {
   const ch = lead.channel;
-  const channelLabel =
-    ch?.title || (ch?.username ? `@${ch.username}` : "—");
   const admin = lead.username ? `@${lead.username}` : null;
   const toggleSkip = (e: React.MouseEvent) => {
     e.stopPropagation(); // клик по строке открывает drawer
@@ -766,7 +806,7 @@ function LeadCell({
   return (
     <div className="space-y-0.5">
       <div className="flex items-center gap-2">
-        <span className="font-medium">{channelLabel}</span>
+        <span className="font-medium">{channelLabel(ch)}</span>
         {ch && (
           <ChannelBadges
             username={ch.username}
@@ -794,6 +834,7 @@ function LeadCell({
           админ {admin}
         </div>
       )}
+      <SiblingChannels group={group} />
       {!lead.contactReady && (
         // Отбраковка «без контакта» — опенер не уйдёт, пока не найден контакт
         // (no-rkn виден красной пилюлей РКН рядом с названием — не дублируем).
