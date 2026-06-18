@@ -184,7 +184,7 @@ export function attachListener(
         }
         case "updateChatReadInbox": {
           const x = update as { chat_id: number; unread_count: number };
-          void onReadInbox(workspaceId, x.chat_id, x.unread_count);
+          void onReadInbox(workspaceId, x.chat_id, x.unread_count, client);
           return;
         }
         case "updateChatIsMarkedAsUnread": {
@@ -195,7 +195,7 @@ export function attachListener(
             chat_id: number;
             is_marked_as_unread: boolean;
           };
-          void onMarkedUnread(workspaceId, x.chat_id, x.is_marked_as_unread);
+          void onMarkedUnread(workspaceId, x.chat_id, x.is_marked_as_unread, client);
           return;
         }
         case "updateChatReadOutbox": {
@@ -411,73 +411,16 @@ async function onNewMessage(
       }
     }
 
-    // unread_count поверх contacts держит onReadInbox: TG на каждое incoming
-    // шлёт парный updateChatReadInbox с новым unread_count, это authoritative
-    // (см. td_api.tl: «Incoming messages were read OR the number of unread
-    // messages has been changed»). Если делать +1 здесь — гонимся с onReadInbox
-    // и получаем +2 на первое сообщение в чат. Тут только bump lastMessageAt
-    // + first-write-wins sticky (COALESCE).
+    // unread держит onReadInbox (TG на каждое incoming шлёт парный
+    // updateChatReadInbox с authoritative unread_count, см. td_api.tl). Тут
+    // только bump lastMessageAt + first-write-wins sticky (COALESCE): +1 здесь
+    // гонился бы с onReadInbox и давал +2 на первое сообщение.
     const now = new Date();
-    let touched = await db
-      .update(contacts)
-      .set({
-        lastMessageAt: now,
-        primaryAccountId: sql`COALESCE(${contacts.primaryAccountId}, ${accountId})`,
-      })
-      .where(
-        and(
-          eq(contacts.workspaceId, workspaceId),
-          sql`${contactTgUserIdSql} = ${senderIdStr}`,
-        ),
-      )
-      .returning({
-        id: contacts.id,
-        unreadCount: contacts.unreadCount,
-      });
+    // Сводим отправителя к контакту общим резолвером (он же дозапишет tg_user_id
+    // контакту, заведённому только по username). Не нашли — незнакомец, создаём.
+    const contactId = await resolveContactByChat(workspaceId, senderIdStr, client);
 
-    // freshlyResolved — контакт только что стал находимым по tg_user_id (через
-    // username-fallback ниже). На этом переходе восстанавливаем потерянный
-    // unread (applyChatUnread). Fast-path выше — контакт уже был находим, там
-    // unread держит onReadInbox, трогать не нужно (иначе лишний getChat-RPC).
-    let freshlyResolved = false;
-
-    // Fallback: контакт может быть создан вручную с telegram_username, но без
-    // tg_user_id. Резолвим через реплику и инжектим tg_user_id в properties —
-    // следующий incoming сразу попадёт в быстрый путь.
-    if (touched.length === 0) {
-      const [u] = await db
-        .select({ username: tgUsers.username })
-        .from(tgUsers)
-        .where(eq(tgUsers.userId, senderIdStr))
-        .limit(1);
-      const username = u?.username ?? null;
-      if (username) {
-        touched = await db
-          .update(contacts)
-          .set({
-            lastMessageAt: now,
-            primaryAccountId: sql`COALESCE(${contacts.primaryAccountId}, ${accountId})`,
-            properties: sql`${contacts.properties} || jsonb_build_object('tg_user_id', ${senderIdStr}::text)`,
-          })
-          .where(
-            and(
-              eq(contacts.workspaceId, workspaceId),
-              sql`${contactUsernameSql} = ${username}`,
-              sql`${contactTgUserIdSql} IS NULL`,
-            ),
-          )
-          .returning({
-            id: contacts.id,
-            unreadCount: contacts.unreadCount,
-          });
-        if (touched.length > 0) freshlyResolved = true;
-      }
-    }
-
-    // Ни fast-path, ни username-fallback не нашли контакт — первое входящее
-    // от незнакомца (бизнес работает мимо CRM). Создаём contact и ставим
-    // sticky на этот аккаунт (правило v2: входящее = «получил ответ»).
-    if (touched.length === 0) {
+    if (!contactId) {
       let createdId: string | null = null;
       try {
         createdId = await ensureContactFromTraffic({
@@ -494,9 +437,10 @@ async function onNewMessage(
           errMsg(e),
         );
       }
-      // Базовый emit на новый contact идёт изнутри ensureContactFromTraffic с
-      // unread=0. Если updateChatReadInbox пришёл до создания (touched=0 в
-      // onReadInbox) — восстанавливаем unread авторитетно из getChat.
+      // Единственная оставшаяся точка восстановления unread: контакт ТОЛЬКО ЧТО
+      // создан, парный updateChatReadInbox мог прийти до создания (onReadInbox
+      // никого не нашёл). Авторитетно дочитываем unread из getChat. На уже
+      // существующих контактах onReadInbox держит unread сам — тут не нужно.
       if (createdId) {
         void applyChatUnread(client, workspaceId, createdId, senderUserId);
       }
@@ -504,18 +448,22 @@ async function onNewMessage(
       return;
     }
 
-    rxlog(`${accountId} onNewMessage resolved=existing sender=${senderIdStr} contacts=${touched.length}`);
-    // Контакт только что дорезолвлен по username — onReadInbox раньше не мог его
-    // найти (touched=0), unread мог потеряться. Восстанавливаем из getChat.
-    if (freshlyResolved) {
-      for (const t of touched) {
-        void applyChatUnread(client, workspaceId, t.id, senderUserId);
-      }
-    }
-    for (const t of touched) {
+    const [row] = await db
+      .update(contacts)
+      .set({
+        lastMessageAt: now,
+        primaryAccountId: sql`COALESCE(${contacts.primaryAccountId}, ${accountId})`,
+      })
+      .where(eq(contacts.id, contactId))
+      .returning({
+        id: contacts.id,
+        unreadCount: contacts.unreadCount,
+      });
+    rxlog(`${accountId} onNewMessage resolved=existing sender=${senderIdStr}`);
+    if (row) {
       emitContactChanged(workspaceId, {
-        contactId: t.id,
-        unreadCount: t.unreadCount,
+        contactId: row.id,
+        unreadCount: row.unreadCount,
         lastMessageAt: now.toISOString(),
       });
     }
@@ -531,17 +479,23 @@ export async function onReadInbox(
   workspaceId: string,
   chatId: number,
   unreadCount: number,
+  client: TdClient,
 ): Promise<void> {
   if (chatId <= 0) return; // только private DM
-  const tgUserIdStr = String(chatId);
   try {
+    // Резолвер находит контакт даже если он был заведён только по username
+    // (дозапишет tg_user_id) — иначе bootstrap-unread терялся до открытия чата.
+    const contactId = await resolveContactByChat(workspaceId, String(chatId), client);
+    if (!contactId) {
+      rxlog(`onReadInbox chat=${chatId} unread=${unreadCount} no-contact`);
+      return;
+    }
     const touched = await db
       .update(contacts)
       .set({ unreadCount })
       .where(
         and(
-          eq(contacts.workspaceId, workspaceId),
-          sql`${contactTgUserIdSql} = ${tgUserIdStr}`,
+          eq(contacts.id, contactId),
           sql`${contacts.unreadCount} <> ${unreadCount}`,
         ),
       )
@@ -552,21 +506,6 @@ export async function onReadInbox(
         lastMessageAt: contacts.lastMessageAt,
       });
     rxlog(`onReadInbox chat=${chatId} unread=${unreadCount} touched=${touched.length}`);
-    // 0 строк — либо нет контакта с таким tg_user_id (мэппинг сломан → счётчик
-    // никогда не обновится), либо счётчик уже равен. Различаем под флагом.
-    if (RX_DEBUG && touched.length === 0) {
-      const [c] = await db
-        .select({ id: contacts.id })
-        .from(contacts)
-        .where(
-          and(
-            eq(contacts.workspaceId, workspaceId),
-            sql`${contactTgUserIdSql} = ${tgUserIdStr}`,
-          ),
-        )
-        .limit(1);
-      rxlog(`onReadInbox chat=${chatId} touched=0 contactExists=${!!c}`);
-    }
     for (const t of touched) {
       emitContactChanged(workspaceId, {
         contactId: t.id,
@@ -584,17 +523,18 @@ export async function onMarkedUnread(
   workspaceId: string,
   chatId: number,
   markedUnread: boolean,
+  client: TdClient,
 ): Promise<void> {
   if (chatId <= 0) return; // только private DM
-  const tgUserIdStr = String(chatId);
   try {
+    const contactId = await resolveContactByChat(workspaceId, String(chatId), client);
+    if (!contactId) return;
     const touched = await db
       .update(contacts)
       .set({ markedUnread })
       .where(
         and(
-          eq(contacts.workspaceId, workspaceId),
-          sql`${contactTgUserIdSql} = ${tgUserIdStr}`,
+          eq(contacts.id, contactId),
           sql`${contacts.markedUnread} <> ${markedUnread}`,
         ),
       )
@@ -823,6 +763,85 @@ async function findContactByTgUserId(
     )
     .limit(1);
   return row?.id ?? null;
+}
+
+// Единственный мост chat_id (= tg user id в личке) → contactId для событий
+// лички. Сводит входящий сигнал к контакту, идемпотентно дозаписывая tg_user_id
+// контакту, заведённому только по telegram_username (вручную / bulk-стабом по @
+// без резолва). После него «контакт не найден» перестаёт быть состоянием,
+// которое чинят постфактум: onReadInbox/onMarkedUnread ставят пришедшее значение
+// сразу. НЕ создаёт контакт — материализация незнакомца из трафика отдельно
+// (ensureContactFromTraffic, только на входящем сообщении).
+//
+// userId → username: реплика tg_users (тёплая после flush репликатора), при
+// промахе — offline getUser (TDLib-кэш, без рейт-лимита; закрывает холодную
+// реплику на bootstrap — ровно баг «username-only контакт + read раньше flush»).
+// getUser сам собой ограничен окном «реплика ещё не залита»: как только
+// репликатор запишет юзера, идём по реплике без RPC. Негативный кэш НЕ держим —
+// он давал утечку, устаревание (контакт, заведённый позже, выпадал бы) и потерю
+// гонки; гейт ниже пересчитывается каждый вызов и этого достаточно.
+async function resolveContactByChat(
+  workspaceId: string,
+  userIdStr: string,
+  client: TdClient,
+): Promise<string | null> {
+  const direct = await findContactByTgUserId(workspaceId, userIdStr);
+  if (direct) return direct;
+
+  // Гейт: есть ли вообще кого дорезолвливать (username без tg_user_id). Нет —
+  // незачем дёргать getUser. Пересчитывается каждый вызов: контакт, заведённый
+  // позже, подхватится со следующего же сигнала.
+  const [pending] = await db
+    .select({ id: contacts.id })
+    .from(contacts)
+    .where(
+      and(
+        eq(contacts.workspaceId, workspaceId),
+        sql`${contactTgUserIdSql} IS NULL`,
+        sql`${contactUsernameSql} IS NOT NULL`,
+      ),
+    )
+    .limit(1);
+  if (!pending) return null;
+
+  // userId → username: сперва реплика, при промахе offline getUser.
+  const [u] = await db
+    .select({ username: tgUsers.username })
+    .from(tgUsers)
+    .where(eq(tgUsers.userId, userIdStr))
+    .limit(1);
+  let username = u?.username ?? null;
+  if (!username) {
+    const tdUser = await (
+      client.invoke({
+        _: "getUser",
+        user_id: Number(userIdStr),
+      } as never) as Promise<TdUserPayload>
+    ).catch(() => null);
+    username = tdUser ? extractActiveUsername(tdUser) : null;
+  }
+  if (!username) return null;
+
+  const [row] = await db
+    .update(contacts)
+    .set({
+      properties: sql`${contacts.properties} || jsonb_build_object('tg_user_id', ${userIdStr}::text)`,
+    })
+    .where(
+      and(
+        eq(contacts.workspaceId, workspaceId),
+        sql`${contactUsernameSql} = ${username}`,
+        sql`${contactTgUserIdSql} IS NULL`,
+      ),
+    )
+    .returning({ id: contacts.id });
+  if (row) return row.id;
+
+  // 0 строк: либо username не наш контакт (незнакомец → null, наверх к
+  // ensureContactFromTraffic), либо параллельный обработчик уже дозаписал
+  // tg_user_id этому юзеру. Перечитываем прямой матч, чтобы не потерять гонку:
+  // иначе проигравший backfill вернул бы null и onReadInbox уронил бы unread.
+  return await findContactByTgUserId(workspaceId, userIdStr);
 }
 
 // Автосоздание контакта из живого DM-трафика. peerUserId — собеседник

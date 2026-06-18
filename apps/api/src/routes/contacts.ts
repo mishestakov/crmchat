@@ -1102,7 +1102,7 @@ app.openapi(
     } catch (e) {
       throw new HTTPException(400, { message: errMsg(e) });
     }
-    await onMarkedUnread(wsId, Number(chatId), value);
+    await onMarkedUnread(wsId, Number(chatId), value, client);
     return c.json({ markedUnread: value });
   },
 );
@@ -1153,8 +1153,8 @@ app.openapi(
     } catch (e) {
       throw new HTTPException(400, { message: errMsg(e) });
     }
-    await onReadInbox(wsId, Number(chatId), 0);
-    await onMarkedUnread(wsId, Number(chatId), false);
+    await onReadInbox(wsId, Number(chatId), 0, client);
+    await onMarkedUnread(wsId, Number(chatId), false, client);
     return c.json({ ok: true });
   },
 );

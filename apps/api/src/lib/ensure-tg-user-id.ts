@@ -3,7 +3,6 @@ import { db } from "../db/client.ts";
 import { contacts } from "../db/schema.ts";
 import { errMsg } from "./errors.ts";
 import { syncTgUserNow } from "./tg-replicator.ts";
-import { applyChatUnread } from "./outreach-listener.ts";
 import type { TdClient } from "./tdlib/index.ts";
 
 // Lazy-резолв tg_user_id для контакта: заведён по @ без последующих
@@ -62,11 +61,10 @@ export async function ensureContactTgUserId(args: {
     console.error(`[ensure-tg-user-id] syncTgUserNow ${tgUserId}:`, errMsg(e));
   });
 
-  // Тот же момент «контакт впервые стал находимым» — восстанавливаем unread из
-  // getChat. Если updateChatReadInbox пришёл до этого резолва (listener лежал,
-  // потом поймал только read-сигнал), onReadInbox его уронил (touched=0). Только
-  // на свежем резолве (мы здесь после searchPublicChat), не на cached-пути выше.
-  await applyChatUnread(args.client, args.workspaceId, args.contactId, Number(tgUserId));
+  // unread больше не восстанавливаем здесь: onReadInbox/onMarkedUnread теперь
+  // сами резолвят username-only контакт (resolveContactByChat дозаписывает
+  // tg_user_id), поэтому к моменту открытия чата счётчик уже актуален — лишний
+  // getChat-RPC на каждом резолве убран.
 
   return tgUserId;
 }
