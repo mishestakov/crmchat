@@ -218,14 +218,14 @@ app.openapi(
       });
     }
 
-    if (acc.cooldownUntil && acc.cooldownUntil.getTime() > Date.now()) {
-      const wait = Math.ceil(
-        (acc.cooldownUntil.getTime() - Date.now()) / 1000,
-      );
-      throw new HTTPException(429, {
-        message: `Аккаунт в cooldown (${acc.cooldownReason ?? "FloodWait"}) ещё ${wait} сек`,
-      });
-    }
+    // Кулдаун (FloodWait/PEER_FLOOD) НЕ гейтим на ручной отправке: это решение
+    // менеджера. PEER_FLOOD — антиспам TG только на письма НОВЫМ, в существующей
+    // переписке TG не ограничивает (проверено: через офиц. мессенджер старым
+    // уходит), поэтому наш внутренний 429 блокировал то, что TG разрешает.
+    // Менеджер видит состояние аккаунта в UI и сам решает, писать или нет; если
+    // TG всё же отобьёт — увидит ошибку. Кулдаун соблюдает только авто-воркер
+    // (там нет человека «подумать»). banned/unauthorized — мёртвый аккаунт,
+    // жёсткий стоп выше остаётся.
 
     const tgUserId = await resolveTargetTgUserId(wsId, body);
     if (!tgUserId) {
