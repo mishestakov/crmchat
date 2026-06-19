@@ -61,6 +61,12 @@ export type AccountRow = {
   firstName: string | null;
   tgUsername: string | null;
   phoneNumber: string | null;
+  // Здоровье аккаунта (ручка outreach/accounts уже отдаёт). Опциональны: не все
+  // источники строят полный объект. Кулдаун НЕ блокирует ручную отправку —
+  // только показываем менеджеру, чтобы решал сам (см. quick-send.ts).
+  status?: string | null;
+  cooldownUntil?: string | null;
+  cooldownReason?: string | null;
 };
 
 export function formatAccount(a: AccountRow): string {
@@ -70,6 +76,30 @@ export function formatAccount(a: AccountRow): string {
   if (a.firstName) return a.firstName;
   if (a.phoneNumber) return a.phoneNumber;
   return a.id;
+}
+
+export type AccountHealth = {
+  kind: "ok" | "cooldown" | "banned";
+  // detail — строка для баннера у поля ввода (причина PEER_FLOOD/FloodWait и т.п.).
+  detail: string | null;
+};
+
+// Единое правило «состояния отправителя» для всех мест, где аккаунт виден.
+// banned/unauthorized — мёртвый аккаунт (красный), cooldown — временная отлёжка
+// (amber), причём писать всё равно можно (TG не ограничивает существующую
+// переписку) — это информация, не гейт.
+export function accountHealth(a: AccountRow | undefined): AccountHealth {
+  if (!a) return { kind: "ok", detail: null };
+  if (a.status === "banned")
+    return { kind: "banned", detail: "Аккаунт забанен Telegram" };
+  if (a.status === "unauthorized")
+    return { kind: "banned", detail: "Аккаунт разлогинен — нужна переавторизация" };
+  if (a.cooldownUntil && new Date(a.cooldownUntil).getTime() > Date.now())
+    return {
+      kind: "cooldown",
+      detail: a.cooldownReason ?? "Аккаунт во временном кулдауне Telegram",
+    };
+  return { kind: "ok", detail: null };
 }
 
 function contactFullName(contact: Contact): string {
@@ -902,18 +932,30 @@ export function ChatPanel(props: {
             {chatAccounts.map((ca) => {
               const acc = accountById.get(ca.accountId);
               const active = ca.accountId === props.accountId;
+              const health = accountHealth(acc);
               return (
                 <button
                   type="button"
                   key={ca.accountId}
                   onClick={() => props.onSelectAccount(ca.accountId)}
+                  title={health.detail ?? undefined}
                   className={
-                    "rounded-md px-2 py-1 text-xs font-medium " +
+                    "inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium " +
                     (active
                       ? "bg-emerald-600 text-white"
                       : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200")
                   }
                 >
+                  {health.kind !== "ok" && (
+                    <span
+                      className={
+                        "h-1.5 w-1.5 rounded-full " +
+                        (health.kind === "banned"
+                          ? "bg-red-500"
+                          : "bg-amber-500")
+                      }
+                    />
+                  )}
                   {acc ? formatAccount(acc) : ca.accountId}
                 </button>
               );
@@ -1219,6 +1261,7 @@ export function ChatPanel(props: {
               ? formatAccount(accountById.get(props.accountId)!)
               : props.accountId
           }
+          health={accountHealth(accountById.get(props.accountId))}
           text={composeText}
           onTextChange={setComposeText}
           onSend={() => {
@@ -1613,6 +1656,8 @@ function ComposeFooter(props: {
   accountId: string;
   activeProjects: { id: string; name: string }[];
   accountLabel: string;
+  // Состояние аккаунта-отправителя: показываем баннер над полем (не блокируем).
+  health: AccountHealth;
   text: string;
   onTextChange: (v: string) => void;
   onSend: () => void;
@@ -1746,6 +1791,20 @@ function ComposeFooter(props: {
             }}
             onCustomEmoji={props.onPickCustomEmoji}
           />
+        )}
+        {props.health.kind !== "ok" && (
+          <div
+            className={
+              "mb-2 rounded-md px-2.5 py-1.5 text-xs " +
+              (props.health.kind === "banned"
+                ? "bg-red-50 text-red-700"
+                : "bg-amber-50 text-amber-800")
+            }
+          >
+            {props.health.detail}
+            {props.health.kind === "cooldown" &&
+              " · отправить можно — TG ограничивает только письма новым контактам"}
+          </div>
         )}
         <ChatComposer
           value={props.text}
