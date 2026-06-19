@@ -1202,11 +1202,11 @@ function serializePlacement(
     // Есть кого адресовать аутричем/оффером (worker резолвит username→tgUserId
     // лениво) — UI считает получателей по этому флагу, как и backend.
     hasRecipient: row.username !== null || row.tgUserId !== null,
-    // Готовность для гейта: привязан админ ИЛИ бесплатная личка канала.
-    contactReady:
-      row.channelHasAdmin ||
-      row.channelMethodSet ||
-      (row.channelHasDm && row.channelDmStarCost === 0),
+    // Готовность для гейта: привязан админ ИЛИ явно выбранный способ связи
+    // (contact_method.kind). НЕ засчитываем «у канала просто есть бесплатная
+    // личка» — это авто-определение молча выдёргивало лид из «нет контактов»;
+    // зеркалит contactReadySql (contact-sql.ts). Личку оператор выбирает явно.
+    contactReady: row.channelHasAdmin || row.channelMethodSet,
     unread: row.unread ?? 0,
     teamKnowsAdmin: row.teamKnowsAdmin,
     adminIsBot: row.adminIsBot,

@@ -42,6 +42,7 @@ import {
   accountHealthDotClass,
   type AccountHealth,
 } from "../lib/account-health";
+import { formatAccount } from "../lib/account-label";
 import { Drawer } from "./drawer";
 import { MaxChatBody } from "./max-chat-body";
 import { NoteStrip } from "./note-strip";
@@ -74,15 +75,8 @@ export type AccountRow = {
   cooldownReason?: string | null;
 };
 
-export function formatAccount(a: AccountRow): string {
-  // @username первым: firstName у всех аккаунтов часто одинаковый («Mike»), а
-  // username уникален — иначе непонятно, с какого аккаунта пишем.
-  if (a.tgUsername) return `@${a.tgUsername}`;
-  if (a.firstName) return a.firstName;
-  if (a.phoneNumber) return a.phoneNumber;
-  return a.id;
-}
-
+// Ре-экспорт для существующих импортов из этого модуля; правило — в lib.
+export { formatAccount };
 
 function contactFullName(contact: Contact): string {
   const v = contact.properties as Record<string, unknown>;
@@ -178,6 +172,7 @@ export function ChatPanel(props: {
 }) {
   const qc = useQueryClient();
   const accountById = new Map(props.accounts.map((a) => [a.id, a]));
+  const sendingAccount = accountById.get(props.accountId);
 
   const displayName = contactFullName(props.contact) || "—";
   const peerKey = props.contact.id;
@@ -1237,11 +1232,9 @@ export function ChatPanel(props: {
           }}
           activeProjects={previewQ.data ?? []}
           accountLabel={
-            accountById.get(props.accountId)
-              ? formatAccount(accountById.get(props.accountId)!)
-              : props.accountId
+            sendingAccount ? formatAccount(sendingAccount) : props.accountId
           }
-          health={accountHealth(accountById.get(props.accountId))}
+          health={accountHealth(sendingAccount)}
           text={composeText}
           onTextChange={setComposeText}
           onSend={() => {

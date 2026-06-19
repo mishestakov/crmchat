@@ -14,6 +14,7 @@ import { TruncationBanner } from "../../../../components/truncation-banner";
 import { parseCsv, type ParsedCsv } from "../../../../lib/csv";
 import { formatRelative } from "../../../../lib/date-utils";
 import { channelDm } from "../../../../lib/channel-dm";
+import { formatAccount } from "../../../../lib/account-label";
 import { errorMessage } from "../../../../lib/errors";
 import { useOutreachAccounts } from "../../../../lib/outreach-queries";
 
@@ -521,16 +522,6 @@ function AdminCell({
       )}
     </span>
   );
-}
-
-function formatAccount(a: {
-  firstName: string | null;
-  tgUsername: string | null;
-  phoneNumber: string | null;
-  id: string;
-}): string {
-  // @username первым: firstName часто одинаковый у всех аккаунтов, username уникален.
-  return a.tgUsername ? `@${a.tgUsername}` : a.firstName || (a.phoneNumber ?? a.id);
 }
 
 // Кружочки аккаунтов команды, у кого есть личный диалог с админом канала

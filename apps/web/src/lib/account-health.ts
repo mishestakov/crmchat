@@ -12,29 +12,22 @@ export type AccountHealthInput = {
 
 export type AccountHealth = {
   kind: "ok" | "cooldown" | "banned";
-  // Короткая метка («отлёжка», «забанен») для чипа/строки в списке.
-  short: string | null;
-  // Подробность для баннера (причина PEER_FLOOD/FloodWait и т.п.).
+  // Подробность для баннера/тултипа (причина PEER_FLOOD/FloodWait и т.п.).
   detail: string | null;
 };
 
 export function accountHealth(a: AccountHealthInput | undefined): AccountHealth {
-  if (!a) return { kind: "ok", short: null, detail: null };
+  if (!a) return { kind: "ok", detail: null };
   if (a.status === "banned")
-    return { kind: "banned", short: "забанен", detail: "Аккаунт забанен Telegram" };
+    return { kind: "banned", detail: "Аккаунт забанен Telegram" };
   if (a.status === "unauthorized")
-    return {
-      kind: "banned",
-      short: "не авторизован",
-      detail: "Аккаунт разлогинен — нужна переавторизация",
-    };
+    return { kind: "banned", detail: "Аккаунт разлогинен — нужна переавторизация" };
   if (a.cooldownUntil && new Date(a.cooldownUntil).getTime() > Date.now())
     return {
       kind: "cooldown",
-      short: "отлёжка",
       detail: a.cooldownReason ?? "Аккаунт во временном кулдауне Telegram",
     };
-  return { kind: "ok", short: null, detail: null };
+  return { kind: "ok", detail: null };
 }
 
 // Цвет точки-индикатора по состоянию — единый для всех мест.
