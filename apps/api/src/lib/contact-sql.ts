@@ -13,18 +13,18 @@ export const contactUsernameLowerSql: SQL<string | null> = sql<string | null>`lo
 
 export const contactUsernameSql: SQL<string | null> = sql<string | null>`${contacts.properties}->>'telegram_username'`;
 
-// «Контакт готов» — каналу есть куда слать опенер: @username админа, либо
-// заданный contact_method, либо бесплатная личка. Общий для гейта квалификации
-// (prepareLeads/activate) и списка лидов (бейдж «без контакта»).
-// «готовый» → канал активен, опенер не ушёл. Сверяемся с username.
-// Личка: по direct_messages_chat_id (кладёт sync), не по has_dm (его пишет
-// репликатор асинхронно). coalesce star-поля к 0: отсутствие поля трактуем
-// как бесплатную личку, иначе null ложно блокировал бы активацию.
+// «Контакт готов» — оператор задал, кому/куда слать: @username админа ЛИБО
+// явно выбранный способ связи (contact_method.kind: человек/бот/группа/личка
+// канала — set-admin). Общий для гейта квалификации (prepareLeads/activate) и
+// списка лидов (бейдж «без контакта»).
+//
+// НЕ засчитываем «у канала просто есть бесплатная личка» (direct_messages_chat_id
+// из sync) как готовность: это авто-определение молча выдёргивало лид из инбокса
+// «нет контактов» при простом открытии карточки (sync на open находил личку →
+// contactReady=true → лид уходил в «в работе» без отправки и без действия
+// оператора, список «прыгал»). Личку оператор выбирает явно кнопкой «Использовать
+// личку канала» → set-admin пишет contact_method.kind='channel_dm' → ветка ниже.
 export const contactReadySql = sql<boolean>`(
   ${projectItems.username} is not null
   or (${channels.meta} -> 'contact_method' ->> 'kind') is not null
-  or (
-    coalesce(${channels.meta} ->> 'direct_messages_chat_id', '0') <> '0'
-    and coalesce((${channels.meta} ->> 'outgoing_paid_message_star_count')::int, 0) = 0
-  )
 )`;

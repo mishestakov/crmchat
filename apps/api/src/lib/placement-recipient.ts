@@ -60,8 +60,9 @@ export async function healPlacementRecipients(
 }
 
 // Снять персону-получателя со всех размещений канала (этап 16.8): способ связи
-// сменили на «личку канала» — авто-цепочка адресуется человеку, поэтому
-// контакт обнуляем (готовность держится на бесплатном DM канала).
+// сменили на «личку канала»/группу — авто-цепочка адресуется человеку, поэтому
+// контакт обнуляем. Готовность дальше держится на contact_method.kind, который
+// set-admin пишет в channels.meta (channel_dm/group), а не на самом факте лички.
 export async function clearPlacementRecipients(channelId: string): Promise<void> {
   await db
     .update(projectItems)
