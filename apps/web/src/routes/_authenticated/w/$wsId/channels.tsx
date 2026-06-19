@@ -529,7 +529,8 @@ function formatAccount(a: {
   phoneNumber: string | null;
   id: string;
 }): string {
-  return a.firstName || (a.tgUsername ? `@${a.tgUsername}` : a.phoneNumber ?? a.id);
+  // @username первым: firstName часто одинаковый у всех аккаунтов, username уникален.
+  return a.tgUsername ? `@${a.tgUsername}` : a.firstName || (a.phoneNumber ?? a.id);
 }
 
 // Кружочки аккаунтов команды, у кого есть личный диалог с админом канала

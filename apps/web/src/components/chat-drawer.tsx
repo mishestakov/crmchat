@@ -64,8 +64,10 @@ export type AccountRow = {
 };
 
 export function formatAccount(a: AccountRow): string {
-  if (a.firstName) return a.firstName;
+  // @username первым: firstName у всех аккаунтов часто одинаковый («Mike»), а
+  // username уникален — иначе непонятно, с какого аккаунта пишем.
   if (a.tgUsername) return `@${a.tgUsername}`;
+  if (a.firstName) return a.firstName;
   if (a.phoneNumber) return a.phoneNumber;
   return a.id;
 }
