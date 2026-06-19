@@ -37,6 +37,11 @@ import { formatFileSize } from "../lib/format";
 import { useEscapeKey, useEventSourceEvent } from "../lib/hooks";
 import { ChannelDrawer } from "./channel-drawer";
 import { ChatComposer } from "./chat-composer";
+import {
+  accountHealth,
+  accountHealthDotClass,
+  type AccountHealth,
+} from "../lib/account-health";
 import { Drawer } from "./drawer";
 import { MaxChatBody } from "./max-chat-body";
 import { NoteStrip } from "./note-strip";
@@ -78,29 +83,6 @@ export function formatAccount(a: AccountRow): string {
   return a.id;
 }
 
-export type AccountHealth = {
-  kind: "ok" | "cooldown" | "banned";
-  // detail — строка для баннера у поля ввода (причина PEER_FLOOD/FloodWait и т.п.).
-  detail: string | null;
-};
-
-// Единое правило «состояния отправителя» для всех мест, где аккаунт виден.
-// banned/unauthorized — мёртвый аккаунт (красный), cooldown — временная отлёжка
-// (amber), причём писать всё равно можно (TG не ограничивает существующую
-// переписку) — это информация, не гейт.
-export function accountHealth(a: AccountRow | undefined): AccountHealth {
-  if (!a) return { kind: "ok", detail: null };
-  if (a.status === "banned")
-    return { kind: "banned", detail: "Аккаунт забанен Telegram" };
-  if (a.status === "unauthorized")
-    return { kind: "banned", detail: "Аккаунт разлогинен — нужна переавторизация" };
-  if (a.cooldownUntil && new Date(a.cooldownUntil).getTime() > Date.now())
-    return {
-      kind: "cooldown",
-      detail: a.cooldownReason ?? "Аккаунт во временном кулдауне Telegram",
-    };
-  return { kind: "ok", detail: null };
-}
 
 function contactFullName(contact: Contact): string {
   const v = contact.properties as Record<string, unknown>;
@@ -950,9 +932,7 @@ export function ChatPanel(props: {
                     <span
                       className={
                         "h-1.5 w-1.5 rounded-full " +
-                        (health.kind === "banned"
-                          ? "bg-red-500"
-                          : "bg-amber-500")
+                        accountHealthDotClass(health.kind)
                       }
                     />
                   )}

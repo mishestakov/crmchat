@@ -15,6 +15,10 @@ import {
   useOutreachAccounts,
   useProject,
 } from "../../../../../../lib/outreach-queries";
+import {
+  accountHealth,
+  accountHealthDotClass,
+} from "../../../../../../lib/account-health";
 import { OUTREACH_QK } from "../../../../../../lib/query-keys";
 
 export const Route = createFileRoute(
@@ -166,6 +170,7 @@ function AccountsPage() {
           )}
           {activeAccounts.map((a) => {
             const checked = mode === "all" || selected.includes(a.id);
+            const health = accountHealth(a);
             return (
               <SectionItem
                 key={a.id}
@@ -206,14 +211,16 @@ function AccountsPage() {
                     {a.tgUsername && a.phoneNumber ? " · " : ""}
                     {a.phoneNumber ?? ""}
                   </div>
+                  {health.kind === "cooldown" && (
+                    <div className="text-xs text-amber-700">{health.detail}</div>
+                  )}
                 </SectionItemTitle>
                 <SectionItemValue>
                   <span
+                    title={health.detail ?? undefined}
                     className={
                       "inline-block h-2 w-2 rounded-full " +
-                      (a.status === "active"
-                        ? "bg-emerald-500"
-                        : "bg-zinc-300")
+                      accountHealthDotClass(health.kind)
                     }
                   />
                 </SectionItemValue>
