@@ -84,7 +84,6 @@ export function AddChannelsModal(props: {
         <div className="mt-3">
           <p className="text-sm text-zinc-700">
             Добавлено: <b>{res.added}</b>
-            {res.channelsCreated > 0 && ` · создано каналов: ${res.channelsCreated}`}
             {res.skippedDuplicate > 0 && ` · уже были: ${res.skippedDuplicate}`}
             {res.skippedInvalid > 0 && ` · не распознано: ${res.skippedInvalid}`}
           </p>
