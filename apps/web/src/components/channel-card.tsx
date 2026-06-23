@@ -35,6 +35,7 @@ import {
   renderMessageEntities,
 } from "../lib/tg-message";
 import { ContactPicker } from "./contact-picker";
+import { ContactResolver } from "./contact-resolver";
 import { MethodChatPanel } from "./method-chat-panel";
 import { NoteStrip } from "./note-strip";
 import { channelDm } from "../lib/channel-dm";
@@ -806,6 +807,10 @@ function Badge(props: {
 function AdminsSection(props: { wsId: string; channel: Channel }) {
   const qc = useQueryClient();
   const [adding, setAdding] = useState(false);
+  // Режим «Сменить контакт» (админ сказал «пишите вот туда»): переводит весь
+  // выбор способа связи на ContactResolver — set-admin перенаведёт размещения
+  // на новый контакт, не трогая стадию/ответы лида.
+  const [changing, setChanging] = useState(false);
 
   // Привязка/отвязка админа меняет канал + контакты — инвалидируем общий набор.
   const invalidateAdmins = () => {
@@ -869,6 +874,22 @@ function AdminsSection(props: { wsId: string; channel: Channel }) {
 
   const admins = props.channel.admins;
 
+  // Смена контакта по запросу админа — отдельный режим: рисуем ContactResolver
+  // (← назад возвращает к списку). onResolved обновит и канал, и список админов.
+  if (changing) {
+    return (
+      <section className="border-b border-zinc-100">
+        <ContactResolver
+          wsId={props.wsId}
+          channelId={props.channel.id}
+          channel={props.channel}
+          onResolved={invalidateAdmins}
+          onClose={() => setChanging(false)}
+        />
+      </section>
+    );
+  }
+
   return (
     <section className="border-b border-zinc-100 px-6 py-3">
       <div className="mb-2 flex items-center justify-between">
@@ -876,14 +897,23 @@ function AdminsSection(props: { wsId: string; channel: Channel }) {
           Админы {admins.length > 0 && `· ${admins.length}`}
         </h3>
         {!adding && (
-          <button
-            type="button"
-            onClick={() => setAdding(true)}
-            className="inline-flex items-center gap-1 rounded text-xs font-medium text-emerald-700 hover:text-emerald-800"
-          >
-            <Plus size={12} />
-            Добавить
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setChanging(true)}
+              className="text-xs font-medium text-emerald-700 hover:text-emerald-800"
+            >
+              Сменить контакт
+            </button>
+            <button
+              type="button"
+              onClick={() => setAdding(true)}
+              className="inline-flex items-center gap-1 rounded text-xs font-medium text-emerald-700 hover:text-emerald-800"
+            >
+              <Plus size={12} />
+              Добавить
+            </button>
+          </div>
         )}
       </div>
       {admins.length === 0 && !adding && (

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
+  ArrowLeftRight,
   Check,
   CheckCheck,
   Copy,
@@ -179,7 +180,13 @@ export function ChatPanel(props: {
   // Карточка канала рядом с перепиской (T3.1): чипы каналов админа в шапке,
   // клик открывает ChannelDrawer поверх чата — менеджер смотрит канал и
   // диалог, не уходя из переписки.
-  const [openChannelId, setOpenChannelId] = useState<string | null>(null);
+  // Один дравер канала поверх чата в двух режимах: просмотр карточки (клик по
+  // чипу) и «Сменить контакт» — шорткат из шапки, когда админ сказал «пишите
+  // туда» (open сразу в режиме смены, минуя карточку).
+  const [channelView, setChannelView] = useState<{
+    id: string;
+    change: boolean;
+  } | null>(null);
 
   // MAX-контакт (привязан по max.ru/u): своя переписка через MAX-сессию, TG-
   // запросы (preview/chat-history) гасим и рендерим MaxChatBody ниже. Двойная
@@ -877,16 +884,28 @@ export function ChatPanel(props: {
         {props.contact.channels.length > 0 && (
           <div className="flex gap-1 overflow-x-auto border-b border-zinc-200 px-3 py-1.5">
             {props.contact.channels.map((ch) => (
-              <button
+              <span
                 key={ch.id}
-                type="button"
-                onClick={() => setOpenChannelId(ch.id)}
-                title="Открыть карточку канала"
-                className="inline-flex shrink-0 items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-medium text-zinc-700 hover:bg-zinc-200"
+                className="inline-flex shrink-0 items-center rounded-full bg-zinc-100 text-[11px] font-medium text-zinc-700"
               >
-                <Hash size={11} className="text-zinc-400" />
-                {ch.title}
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setChannelView({ id: ch.id, change: false })}
+                  title="Открыть карточку канала"
+                  className="inline-flex items-center gap-1 rounded-l-full py-0.5 pl-2 pr-1.5 hover:bg-zinc-200"
+                >
+                  <Hash size={11} className="text-zinc-400" />
+                  {ch.title}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setChannelView({ id: ch.id, change: true })}
+                  title="Сменить контакт по этому каналу"
+                  className="rounded-r-full py-0.5 pl-1 pr-2 text-zinc-400 hover:bg-zinc-200 hover:text-emerald-700"
+                >
+                  <ArrowLeftRight size={11} />
+                </button>
+              </span>
             ))}
           </div>
         )}
@@ -1304,11 +1323,23 @@ export function ChatPanel(props: {
           }
           onCancelReply={() => setReplyTo(null)}
         />
-        {openChannelId && (
+        {channelView && (
           <ChannelDrawer
             wsId={props.wsId}
-            channelId={openChannelId}
-            onClose={() => setOpenChannelId(null)}
+            channelId={channelView.id}
+            contactChange={channelView.change}
+            onResolved={
+              channelView.change
+                ? () => {
+                    // Контакт канала сменился — освежаем чипы каналов контакта.
+                    qc.invalidateQueries({
+                      queryKey: ["contact", props.wsId, props.contact.id],
+                    });
+                    qc.invalidateQueries({ queryKey: ["contacts"] });
+                  }
+                : undefined
+            }
+            onClose={() => setChannelView(null)}
           />
         )}
         {msgMenu && (
