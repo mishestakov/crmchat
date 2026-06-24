@@ -42,8 +42,8 @@ function KanbanPage() {
   const { wsId, projectId } = Route.useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
-  // Drawer переписки — открывается по клику на бэйдж непрочитанных (#11).
-  // Альтернатива openLead → переход на /contacts/$id, который дальше.
+  // Drawer переписки — открывается кликом по карточке (любой, не только по
+  // бэйджу непрочитанных). Полная карточка контакта — ссылкой из шапки чата.
   const [drawerLead, setDrawerLead] = useState<Lead | null>(null);
   // Поиск по @username канала/админа + фильтр «ждут ответа» (непрочитанные).
   // Канбан и так только из ответивших, потому «нам написали» = вся доска;
@@ -56,10 +56,11 @@ function KanbanPage() {
   const [accountFilter, setAccountFilter] = useState<string | null>(null);
   const accountsQ = useOutreachAccounts(wsId);
 
-  // Клик по карточке = открыть контакт (где чат, заметки, напоминания).
-  // У лида до ответа contactId = null — некуда переходить, в этом случае
-  // клик игнорируется (карточка остаётся только draggable).
-  const openLead = (lead: Lead) => {
+  // Полная карточка контакта (заметки, активность, привязка каналов) — уже не
+  // в горячем пути: клик по карточке открывает чат, а сюда ведёт ссылка
+  // «Открыть карточку» из шапки чата. У лида всегда есть contactId (на доске
+  // только ответившие), guard — на всякий.
+  const openFullCard = (lead: Lead) => {
     if (lead.contactId) {
       navigate({
         to: "/w/$wsId/contacts/$id",
@@ -350,7 +351,6 @@ function KanbanPage() {
               onDrop={(itemId) =>
                 move.mutate({ itemId, stageId: stage.id })
               }
-              onOpen={openLead}
               onOpenChat={setDrawerLead}
               isReadOnly={isDone}
             />
@@ -361,7 +361,6 @@ function KanbanPage() {
               title="Без стадии"
               leads={noStageLeads}
               onDrop={(itemId) => move.mutate({ itemId, stageId: null })}
-              onOpen={openLead}
               onOpenChat={setDrawerLead}
               isReadOnly={isDone}
             />
@@ -374,6 +373,18 @@ function KanbanPage() {
           lead={drawerLead}
           accounts={accountsQ.data ?? []}
           onClose={() => setDrawerLead(null)}
+          stageControl={{
+            stages: sortedStages,
+            // Стадию берём из живого кэша, а не из снапшота drawerLead — иначе
+            // после смены статуса выпадашка показывала бы старое значение.
+            currentStageId:
+              leadsQ.data?.leads.find((l) => l.id === drawerLead.id)?.stageId ??
+              null,
+            onSetStage: (stageId) =>
+              move.mutate({ itemId: drawerLead.id, stageId }),
+            onOpenFullCard: () => openFullCard(drawerLead),
+            disabled: isDone,
+          }}
         />
       )}
     </div>
@@ -384,7 +395,6 @@ function Column(props: {
   title: string;
   leads: Lead[];
   onDrop: (itemId: string) => void;
-  onOpen: (lead: Lead) => void;
   onOpenChat: (lead: Lead) => void;
   isReadOnly?: boolean;
 }) {
@@ -427,7 +437,6 @@ function Column(props: {
           <LeadCard
             key={l.id}
             lead={l}
-            onOpen={() => props.onOpen(l)}
             onOpenChat={() => props.onOpenChat(l)}
             isReadOnly={isReadOnly}
           />
@@ -440,7 +449,6 @@ function Column(props: {
 
 function LeadCard(props: {
   lead: Lead;
-  onOpen: () => void;
   onOpenChat: () => void;
   isReadOnly?: boolean;
 }) {
@@ -478,7 +486,7 @@ function LeadCard(props: {
               e.dataTransfer.effectAllowed = "move";
             }
       }
-      onClick={props.onOpen}
+      onClick={props.onOpenChat}
       className={
         "rounded-md border border-zinc-200 bg-white p-2.5 text-sm shadow-sm hover:border-emerald-300 hover:bg-zinc-50 " +
         (props.isReadOnly
@@ -494,21 +502,7 @@ function LeadCard(props: {
           <span className="truncate">{display}</span>
         </div>
         {(unread > 0 || lead.markedUnread) && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              props.onOpenChat();
-            }}
-            title={
-              unread > 0
-                ? `${unread} непрочитанных — открыть чат`
-                : "Помечен непрочитанным — открыть чат"
-            }
-            className="hover:opacity-80"
-          >
-            <UnreadBadge count={unread} dot={lead.markedUnread} />
-          </button>
+          <UnreadBadge count={unread} dot={lead.markedUnread} />
         )}
       </div>
       {adminLine && (

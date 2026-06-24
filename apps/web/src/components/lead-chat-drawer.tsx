@@ -60,9 +60,23 @@ export function LeadChatDrawer(props: {
   lead: LeadShape;
   accounts: AccountRow[];
   onClose: () => void;
+  // Канбан-режим: смена стадии прямо из чата + ссылка на полную карточку.
+  // Стадия — свойство лида (project_item), не контакта, поэтому управление
+  // живёт тут, а ChatDrawer лишь рисует переданный стрип в шапке. Нет объекта
+  // (контакт/таблица вне канбана) → стрипа нет.
+  stageControl?: {
+    stages: { id: string; name: string }[];
+    currentStageId: string | null;
+    onSetStage: (stageId: string | null) => void;
+    onOpenFullCard: () => void;
+    disabled?: boolean;
+  };
 }) {
   const chat = useLeadChat(props);
   if (!chat) return null;
+  const headerExtra = props.stageControl ? (
+    <StageStrip {...props.stageControl} />
+  ) : undefined;
   return (
     <ChatDrawer
       wsId={props.wsId}
@@ -71,7 +85,46 @@ export function LeadChatDrawer(props: {
       accounts={props.accounts}
       onSelectAccount={chat.setAccountId}
       onClose={props.onClose}
+      headerExtra={headerExtra}
     />
+  );
+}
+
+// Полоска под шапкой чата: статус лида (выпадашка стадий проекта) + ссылка на
+// полную карточку контакта. "" = «Без стадии». disabled при завершённом проекте.
+function StageStrip(props: {
+  stages: { id: string; name: string }[];
+  currentStageId: string | null;
+  onSetStage: (stageId: string | null) => void;
+  onOpenFullCard: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2 border-b border-zinc-200 px-4 py-2">
+      <label className="flex min-w-0 items-center gap-2 text-xs text-zinc-500">
+        Статус
+        <select
+          value={props.currentStageId ?? ""}
+          disabled={props.disabled}
+          onChange={(e) => props.onSetStage(e.target.value || null)}
+          className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm text-zinc-700 disabled:opacity-50"
+        >
+          <option value="">Без стадии</option>
+          {props.stages.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button
+        type="button"
+        onClick={props.onOpenFullCard}
+        className="shrink-0 text-xs font-medium text-emerald-700 hover:underline"
+      >
+        Открыть карточку
+      </button>
+    </div>
   );
 }
 

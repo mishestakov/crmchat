@@ -1,5 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import {
+  Fragment,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   AlertTriangle,
   ArrowLeftRight,
@@ -144,6 +151,9 @@ export function ChatDrawer(props: {
   accounts: AccountRow[];
   onSelectAccount: (accountId: string) => void;
   onClose: () => void;
+  // Лид-специфичная полоска под шапкой (статус + ссылка на карточку). Чат
+  // контакто-скоупный, поэтому стадию рисует вызывающий (LeadChatDrawer).
+  headerExtra?: ReactNode;
 }) {
   return (
     <Drawer width={480} onClose={props.onClose}>
@@ -170,6 +180,8 @@ export function ChatPanel(props: {
   // Прыжок к сообщению (фаза «Запуск»: клик «открыть в чате» из карточки). nonce
   // меняется при каждом клике, чтобы повторный прыжок к тому же id сработал.
   jumpTo?: { messageId: string; nonce: number } | null;
+  // Полоска под шапкой (статус лида + ссылка на карточку); пусто вне канбана.
+  headerExtra?: ReactNode;
 }) {
   const qc = useQueryClient();
   const accountById = new Map(props.accounts.map((a) => [a.id, a]));
@@ -881,6 +893,7 @@ export function ChatPanel(props: {
             )}
           </div>
         </div>
+        {props.headerExtra}
         {props.contact.channels.length > 0 && (
           <div className="flex gap-1 overflow-x-auto border-b border-zinc-200 px-3 py-1.5">
             {props.contact.channels.map((ch) => (
