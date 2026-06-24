@@ -17,6 +17,7 @@ import {
   parseFloodWaitSeconds,
   setAccountCooldown,
 } from "../lib/outreach-account-client.ts";
+import { recordAccountEvent } from "../lib/account-events.ts";
 import { emitProjectChanged } from "../lib/events.ts";
 import { FINAL_OFFER_MSG_IDX } from "../lib/project-scheduling.ts";
 import { readOnTelegram } from "./contacts.ts";
@@ -344,6 +345,7 @@ app.openapi(
           Date.now() + waitMs,
           `FloodWait ${flood}s`,
         );
+        await recordAccountEvent(acc.id, "flood_wait", `FloodWait ${flood}s`);
         throw new HTTPException(429, {
           message: `Telegram FloodWait — аккаунт замолчал на ${flood} сек`,
         });

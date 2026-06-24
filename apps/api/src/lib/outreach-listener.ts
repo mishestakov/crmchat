@@ -28,6 +28,7 @@ import {
   peerFloodCooldownUntil,
 } from "./outreach-schedule.ts";
 import { failStepAndCancelFollowups } from "./outreach-chain.ts";
+import { recordAccountEvent } from "./account-events.ts";
 import { errMsg, isUniqueViolation } from "./errors.ts";
 import type { TdClient } from "./tdlib/index.ts";
 import { extractActiveUsername, extractFullName } from "./tdlib/td-user.ts";
@@ -634,6 +635,7 @@ async function onSendFailed(
           .set({ sendAt: FOLLOWUP_PENDING_SENTINEL })
           .where(laterFollowups);
       });
+      await recordAccountEvent(accountId, "peer_flood");
       emitProjectChanged(row.projectId);
       console.warn(
         `[outreach-listener] PEER_FLOOD on account ${accountId}: пауза до ${until.toISOString()}, msg ${id} на повтор завтра`,

@@ -388,6 +388,48 @@ export const outreachAccounts = pgTable(
   ],
 );
 
+// Журнал событий здоровья аккаунта — фундамент под счётчик отправок и график
+// страйков. Одна строка на отправку/страйк/смену состояния; читается дешёвым
+// индексным COUNT/GROUP BY (никакого warm-резолва на чтении). Запись —
+// в точках смены состояния: cold_send (worker, факт холодной отправки),
+// peer_flood/flood_wait (через setAccountCooldown), banned/unauthorized (смена
+// status), manual_rest/resume (ручные действия менеджера). НЕ хранит адресата:
+// «кому писали» живёт в leads/scheduled_messages, журналу нужны только числа
+// по дням. detail — опциональная причина/заметка (FloodWait Ns, срок отдыха).
+export const outreachAccountEventType = pgEnum("outreach_account_event_type", [
+  "cold_send",
+  "peer_flood",
+  "flood_wait",
+  "banned",
+  "unauthorized",
+  "manual_rest",
+  "resume",
+]);
+
+export const outreachAccountEvents = pgTable(
+  "outreach_account_events",
+  {
+    id: text("id").primaryKey().$defaultFn(shortId),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => outreachAccounts.id, { onDelete: "cascade" }),
+    type: outreachAccountEventType("type").notNull(),
+    detail: text("detail"),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // Счётчик «сегодня/30 дней» и per-account график: COUNT/GROUP BY по типу+дате.
+    index("outreach_account_events_account_type_at_idx").on(
+      t.accountId,
+      t.type,
+      t.at,
+    ),
+  ],
+);
+
 // Временная передача доступа к аккаунту без смены владельца — отпуск,
 // больничный. Owner остаётся прежним; delegate видит аккаунт и его чаты
 // пока now() ∈ [starts_at, ends_at). Окончание — автоматическое по дате,

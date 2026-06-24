@@ -1,9 +1,11 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
   contacts,
+  DEFAULT_OUTREACH_SCHEDULE,
+  outreachAccountEventType,
   outreachAccounts,
   outreachAccountPlatform,
   outreachAccountStatus,
@@ -11,15 +13,20 @@ import {
   tgChats,
   tgUsers,
   workspaceMembers,
+  workspaces,
 } from "../db/schema.ts";
+import { startOfDayInTz } from "../lib/outreach-schedule.ts";
 import { errMsg } from "../lib/errors.ts";
 import {
+  clearAccountCooldown,
   clearPendingOutreachClient,
   deleteOutreachAccount,
   getOrCreatePendingOutreachClient,
   peekPendingOutreachClient,
   persistOutreachAccount,
+  setAccountCooldown,
 } from "../lib/outreach-account-client.ts";
+import { recordAccountEvent } from "../lib/account-events.ts";
 import {
   maxSendCode,
   maxSignInCode,
@@ -72,6 +79,33 @@ const AccountSchema = z
   })
   .openapi("OutreachAccount");
 
+// Строка списка аккаунтов = базовый аккаунт + счётчик отправок из журнала.
+// Одиночные ответы (transfer/patch/connect) возвращают базовую AccountSchema
+// без статистики. Историю страйков в списке НЕ показываем — она на странице
+// аккаунта (ручка /events ниже); в списке достаточно счётчика и бейджа cooldown.
+const AccountListItemSchema = AccountSchema.extend({
+  // Холодные первые касания: сегодня (в tz воркспейса) и за 30 дней. Сигнал
+  // близости к дневному лимиту.
+  coldSentToday: z.number().int(),
+  coldSent30d: z.number().int(),
+}).openapi("OutreachAccountListItem");
+
+// Активность аккаунта по дням (в tz воркспейса) для сворачиваемой «Истории» на
+// странице аккаунта: сколько холодных отправок и какие страйки/паузы были в
+// каждый день. Дешёвый GROUP BY на один аккаунт.
+const AccountActivityDaySchema = z
+  .object({
+    date: z.string(), // YYYY-MM-DD в tz воркспейса
+    coldSends: z.number().int(),
+    events: z.array(
+      z.object({
+        type: z.enum(outreachAccountEventType.enumValues),
+        count: z.number().int(),
+      }),
+    ),
+  })
+  .openapi("OutreachAccountActivityDay");
+
 const TransferAccountBody = z
   .object({
     newOwnerUserId: z.string().min(1).max(64),
@@ -83,6 +117,15 @@ const PatchAccountBody = z
     newLeadsDailyLimit: z.number().int().min(0).max(1000).optional(),
   })
   .openapi("PatchOutreachAccount");
+
+const CooldownBody = z
+  .object({
+    // Пауза аккаунта на N дней (профилактика, поверх cooldownUntil, авто-возврат
+    // по таймеру). days = 0 — вернуть в строй сейчас. Одна ручка на оба действия:
+    // одно состояние «в строю / на паузе до N» (как в UX-модели пульта).
+    days: z.number().int().min(0).max(365),
+  })
+  .openapi("SetAccountCooldown");
 
 const ImportContactsRespSchema = z
   .object({
@@ -128,6 +171,17 @@ const SignInPasswordRespSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("password_invalid") }),
 ]);
 
+// tz воркспейса для границы «сегодня» в счётчике/активности — как в гейте
+// лимита воркера. Дублировался в двух хендлерах, свёл в локальный хелпер.
+async function loadWorkspaceTz(wsId: string): Promise<string> {
+  const [ws] = await db
+    .select({ schedule: workspaces.outreachSchedule })
+    .from(workspaces)
+    .where(eq(workspaces.id, wsId))
+    .limit(1);
+  return (ws?.schedule ?? DEFAULT_OUTREACH_SCHEDULE).timezone;
+}
+
 const app = new OpenAPIHono<{ Variables: WorkspaceVars }>();
 
 app.openapi(
@@ -138,7 +192,9 @@ app.openapi(
     request: { params: WsParam },
     responses: {
       200: {
-        content: { "application/json": { schema: z.array(AccountSchema) } },
+        content: {
+          "application/json": { schema: z.array(AccountListItemSchema) },
+        },
         description: "Outreach accounts",
       },
     },
@@ -147,12 +203,41 @@ app.openapi(
     const wsId = c.get("workspaceId");
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
+
+    // Границу «сегодня» считаем в tz воркспейса — как воркер в гейте лимита,
+    // чтобы счётчик не сбрасывался по UTC-полуночи.
+    const tz = await loadWorkspaceTz(wsId);
+    const startToday = startOfDayInTz(new Date(), tz).toISOString();
+    const start30d = new Date(Date.now() - 30 * 86_400_000).toISOString();
+
+    // Имена таблиц/колонок пишем явно: drizzle в sql-шаблоне рендерит
+    // ${table.col} без квалификации таблицы, а у events есть своя колонка id —
+    // неквалифицированный id внутри подзапроса резолвится в events.id, не в
+    // outreach_accounts.id (коррелированный фильтр ломается → 0).
+    const coldCountSql = (sinceIso: string) => sql<number>`COALESCE((
+      SELECT COUNT(*)::int FROM outreach_account_events e
+      WHERE e.account_id = outreach_accounts.id
+        AND e.type = 'cold_send'
+        AND e.at >= ${sinceIso}::timestamptz
+    ), 0)`;
+
     const rows = await db
-      .select()
+      .select({
+        row: outreachAccounts,
+        coldSentToday: coldCountSql(startToday).as("cold_today"),
+        coldSent30d: coldCountSql(start30d).as("cold_30d"),
+      })
       .from(outreachAccounts)
       .where(accountAccessClause(wsId, userId, role))
       .orderBy(outreachAccounts.createdAt);
-    return c.json(rows.map(serializeAccount));
+
+    return c.json(
+      rows.map((r) => ({
+        ...serializeAccount(r.row),
+        coldSentToday: r.coldSentToday,
+        coldSent30d: r.coldSent30d,
+      })),
+    );
   },
 );
 
@@ -215,6 +300,120 @@ app.openapi(
       .returning();
     if (!row) throw new HTTPException(404, { message: "account not found" });
     return c.json(serializeAccount(row));
+  },
+);
+
+// Ручная пауза/возврат аккаунта — одна ручка на оба действия (одно состояние
+// «в строю / на паузе до N»). days > 0: отдых на N дней профилактически, поверх
+// cooldownUntil (если уже висит TG-кулдаун дольше — берём max, продление, а не
+// сокращение). days = 0: вернуть в строй сейчас (сбрасываем cooldown, в т.ч.
+// TG-кулдаун — менеджер главнее антиспама, как и в неблокируемой ручной
+// отправке). Авто-возврат по таймеру — воркер сам сбросит, как обычный кулдаун.
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/outreach/accounts/{accountId}/cooldown",
+    tags: ["outreach"],
+    request: {
+      params: WsAccountParam,
+      body: {
+        content: { "application/json": { schema: CooldownBody } },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: { "application/json": { schema: AccountSchema } },
+        description: "Cooldown set or cleared",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const { accountId } = c.req.valid("param");
+    const { days } = c.req.valid("json");
+    await assertAccountAccess(accountId, wsId, userId, role);
+
+    let row: typeof outreachAccounts.$inferSelect | undefined;
+    if (days === 0) {
+      row = await clearAccountCooldown(accountId);
+      await recordAccountEvent(accountId, "resume");
+    } else {
+      const [cur] = await db
+        .select({ cooldownUntil: outreachAccounts.cooldownUntil })
+        .from(outreachAccounts)
+        .where(eq(outreachAccounts.id, accountId))
+        .limit(1);
+      if (!cur) throw new HTTPException(404, { message: "account not found" });
+      const until = Math.max(
+        Date.now() + days * 86_400_000,
+        cur.cooldownUntil?.getTime() ?? 0,
+      );
+      row = await setAccountCooldown(accountId, until, `Отдых ${days} дн (вручную)`);
+      await recordAccountEvent(accountId, "manual_rest", `${days}d`);
+    }
+    if (!row) throw new HTTPException(404, { message: "account not found" });
+    return c.json(serializeAccount(row));
+  },
+);
+
+// Активность аккаунта по дням за 30 дней (страйки, баны, паузы + счётчик
+// холодных отправок) для сворачиваемой «Истории». Группировка по дню — в tz
+// воркспейса, чтобы день совпадал с тем, по которому считается дневной лимит.
+app.openapi(
+  createRoute({
+    method: "get",
+    path: "/v1/workspaces/{wsId}/outreach/accounts/{accountId}/activity",
+    tags: ["outreach"],
+    request: { params: WsAccountParam },
+    responses: {
+      200: {
+        content: {
+          "application/json": { schema: z.array(AccountActivityDaySchema) },
+        },
+        description: "Account daily activity",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const { accountId } = c.req.valid("param");
+    await assertAccountAccess(accountId, wsId, userId, role);
+
+    const tz = await loadWorkspaceTz(wsId);
+    const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+
+    const grouped = (await db.execute(sql`
+      SELECT (at AT TIME ZONE ${tz})::date::text AS d,
+             type::text AS t,
+             count(*)::int AS n
+      FROM outreach_account_events
+      WHERE account_id = ${accountId} AND at >= ${since}::timestamptz
+      GROUP BY 1, 2
+      ORDER BY 1 DESC
+    `)) as unknown as Array<{ d: string; t: string; n: number }>;
+
+    type EventType = (typeof outreachAccountEventType.enumValues)[number];
+    const byDay = new Map<
+      string,
+      {
+        date: string;
+        coldSends: number;
+        events: { type: EventType; count: number }[];
+      }
+    >();
+    for (const r of grouped) {
+      const day =
+        byDay.get(r.d) ?? { date: r.d, coldSends: 0, events: [] };
+      if (r.t === "cold_send") day.coldSends = r.n;
+      else day.events.push({ type: r.t as EventType, count: r.n });
+      byDay.set(r.d, day);
+    }
+    return c.json([...byDay.values()]);
   },
 );
 

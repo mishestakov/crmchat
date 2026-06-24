@@ -125,6 +125,10 @@ function OutreachAccountsList() {
                     {acc.phoneNumber && acc.tgUsername ? " · " : null}
                     {acc.tgUsername ? `@${acc.tgUsername}` : null}
                   </div>
+                  <div className="mt-1 text-xs text-zinc-600">
+                    Сегодня новым: {acc.coldSentToday} / {acc.newLeadsDailyLimit}
+                    <span className="text-zinc-400"> · 30д: {acc.coldSent30d}</span>
+                  </div>
                 </div>
                 <ChevronRight size={16} className="shrink-0 text-zinc-400" />
               </li>

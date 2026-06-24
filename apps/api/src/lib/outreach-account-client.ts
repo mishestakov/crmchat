@@ -2,6 +2,7 @@ import { and, eq, isNull, lte, ne, or } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import { channelSubscriptions, outreachAccounts } from "../db/schema.ts";
 import { shortId } from "../db/short-id.ts";
+import { recordAccountEvent } from "./account-events.ts";
 import { errMsg } from "./errors.ts";
 import { attachListener, detachListener } from "./outreach-listener.ts";
 import { attachReplicator, type ReplicatorHandle } from "./tg-replicator.ts";
@@ -45,26 +46,34 @@ const pendingStores = new Map<string, PendingStore>();
 // чтобы переживать рестарт API и показываться менеджеру в UI. Helper'ы
 // ниже инкапсулируют UPDATE'ы. Чтение — в местах где аккаунт грузится
 // SELECT'ом (worker.processAccount, quick-send preview).
+// Возвращают обновлённую строку (RETURNING), чтобы вызывающий не делал лишний
+// SELECT следом (rest/resume-ручки сериализуют ответ прямо из неё).
 export async function setAccountCooldown(
   accountId: string,
   untilMs: number,
   reason: string,
-): Promise<void> {
-  await db
+): Promise<typeof outreachAccounts.$inferSelect | undefined> {
+  const [row] = await db
     .update(outreachAccounts)
     .set({
       cooldownUntil: new Date(untilMs),
       cooldownReason: reason,
       updatedAt: new Date(),
     })
-    .where(eq(outreachAccounts.id, accountId));
+    .where(eq(outreachAccounts.id, accountId))
+    .returning();
+  return row;
 }
 
-export async function clearAccountCooldown(accountId: string): Promise<void> {
-  await db
+export async function clearAccountCooldown(
+  accountId: string,
+): Promise<typeof outreachAccounts.$inferSelect | undefined> {
+  const [row] = await db
     .update(outreachAccounts)
     .set({ cooldownUntil: null, cooldownReason: null, updatedAt: new Date() })
-    .where(eq(outreachAccounts.id, accountId));
+    .where(eq(outreachAccounts.id, accountId))
+    .returning();
+  return row;
 }
 
 // Парсер FLOOD_WAIT/SLOWMODE из текста ошибки TDLib. Общий для всех, кто
@@ -259,8 +268,9 @@ async function spawnWorker(
 
 async function markUnauthorized(accountId: string): Promise<void> {
   // ne(status, 'unauthorized') защищает от шторма updates — TDLib эмитит
-  // logging_out → closed подряд, оба триггерят этот хелпер.
-  await db
+  // logging_out → closed подряд, оба триггерят этот хелпер. returning →
+  // событие пишем только при реальной смене статуса (не на каждом шторм-update).
+  const changed = await db
     .update(outreachAccounts)
     .set({ status: "unauthorized", updatedAt: new Date() })
     .where(
@@ -269,7 +279,12 @@ async function markUnauthorized(accountId: string): Promise<void> {
         ne(outreachAccounts.status, "unauthorized"),
       ),
     )
-    .catch((e) => console.error("[markUnauthorized] failed:", errMsg(e)));
+    .returning({ id: outreachAccounts.id })
+    .catch((e) => {
+      console.error("[markUnauthorized] failed:", errMsg(e));
+      return [];
+    });
+  if (changed.length > 0) await recordAccountEvent(accountId, "unauthorized");
   await evictWorkerClient(accountId);
 }
 

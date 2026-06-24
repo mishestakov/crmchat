@@ -1,13 +1,13 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { Star } from "lucide-react";
+import { ChevronDown, Star } from "lucide-react";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
 import { BackButton } from "../../../../../../components/back-button";
 import { OUTREACH_QK, WS_QK } from "../../../../../../lib/query-keys";
 import { useMyRole } from "../../../../../../lib/hooks";
-import { formatDateTime } from "../../../../../../lib/date-utils";
+import { formatDateTime, pluralize } from "../../../../../../lib/date-utils";
 import { PlatformBadge } from "../../../../../../lib/platforms";
 
 export const Route = createFileRoute(
@@ -88,6 +88,24 @@ function AccountDetailPage() {
     },
   });
 
+  const invalidateAccount = () => {
+    qc.invalidateQueries({ queryKey: ["outreach-account", wsId, accountId] });
+    qc.invalidateQueries({ queryKey: OUTREACH_QK.accounts(wsId) });
+  };
+
+  // Пауза/возврат — одна мутация: days > 0 ставит отдых, 0 возвращает в строй.
+  const cooldown = useMutation({
+    mutationFn: async (days: number) => {
+      const { data, error } = await api.POST(
+        "/v1/workspaces/{wsId}/outreach/accounts/{accountId}/cooldown",
+        { params: { path: { wsId, accountId } }, body: { days } },
+      );
+      if (error) throw error;
+      return data!;
+    },
+    onSuccess: invalidateAccount,
+  });
+
   if (account.isLoading) {
     return (
       <div className="space-y-3 p-6">
@@ -161,52 +179,57 @@ function AccountDetailPage() {
           )}
         </div>
 
-        <div className="rounded-2xl bg-white p-5 shadow-sm space-y-3">
+        <HistoryCard wsId={wsId} accountId={accountId} />
+
+        <div className="rounded-2xl bg-white p-5 shadow-sm space-y-4">
           <label className="block">
             <span className="mb-1 block text-sm font-medium">
               Дневной лимит лидов
             </span>
             <span className="mb-2 block text-xs text-zinc-500">
               Сколько новых сообщений в сутки максимум уйдёт с этого аккаунта.
-              Сбрасывается в полночь по часовому поясу workspace.
-              {acc.platform === "telegram"
-                ? " Безопасный дефолт для не-Premium без warmup'а — 30. С Premium можно крутить выше."
-                : ""}
+              Сбрасывается в полночь по часовому поясу workspace. Консервативно
+              10–15; с Premium/прогревом можно крутить выше.
             </span>
-            <input
-              type="number"
-              min={0}
-              max={1000}
-              value={dailyLimit}
-              onChange={(e) => setDailyLimit(Math.max(0, Number(e.target.value) || 0))}
-              className="w-32 rounded-md border border-zinc-300 px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
-            />
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={0}
+                max={1000}
+                value={dailyLimit}
+                onChange={(e) =>
+                  setDailyLimit(Math.max(0, Number(e.target.value) || 0))
+                }
+                className="w-32 rounded-md border border-zinc-300 px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+              />
+              {dirty && (
+                <button
+                  type="button"
+                  onClick={() => save.mutate()}
+                  disabled={save.isPending}
+                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {save.isPending ? "Сохраняем…" : "Сохранить"}
+                </button>
+              )}
+            </div>
+            {save.error && (
+              <p className="mt-2 text-sm text-red-600">
+                {errorMessage(save.error)}
+              </p>
+            )}
           </label>
-          {save.error && (
-            <p className="text-sm text-red-600">{errorMessage(save.error)}</p>
-          )}
-          {dirty && (
-            <button
-              type="button"
-              onClick={() => save.mutate()}
-              disabled={save.isPending}
-              className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-            >
-              {save.isPending ? "Сохраняем…" : "Сохранить"}
-            </button>
-          )}
+
+          <PauseSection
+            resting={cooldownMs !== null && cooldownMs > Date.now()}
+            untilMs={cooldownMs}
+            onSetCooldown={(days) => cooldown.mutate(days)}
+            pending={cooldown.isPending}
+            error={cooldown.error}
+          />
         </div>
 
         <DelegationsSection wsId={wsId} accountId={accountId} ownerUserId={acc.ownerUserId} />
-
-        <div className="rounded-2xl bg-zinc-50 p-5 text-sm text-zinc-500 space-y-2">
-          <div className="font-medium text-zinc-700">Скоро</div>
-          <ul className="list-disc pl-5 space-y-1 text-xs">
-            <li>Прогрев аккаунта (warmup)</li>
-            <li>Прокси</li>
-            <li>Автосоздание лидов из входящих сообщений</li>
-          </ul>
-        </div>
 
         {remove.error && (
           <p className="text-sm text-red-600">{errorMessage(remove.error)}</p>
@@ -230,6 +253,189 @@ function AccountDetailPage() {
           Выйти из аккаунта
         </button>
       </div>
+    </div>
+  );
+}
+
+// Ручной «отдых» аккаунта: профилактически положить на N дней (поверх
+// cooldownUntil, авто-возврат по таймеру) либо вернуть в строй раньше срока.
+// Пауза аккаунта — подблок карточки «Отправка». Одна модель: в строю / на
+// паузе до DD.MM. Один контрол (поле дней + кнопка); «продлить» = ввести новое
+// число и применить (бэк берёт max). «Вернуть» появляется только когда есть
+// что возвращать.
+function PauseSection(props: {
+  resting: boolean;
+  untilMs: number | null;
+  onSetCooldown: (days: number) => void; // days > 0 = пауза, 0 = вернуть в строй
+  pending: boolean;
+  error: unknown;
+}) {
+  const [days, setDays] = useState(3);
+  const until =
+    props.untilMs != null
+      ? new Date(props.untilMs).toLocaleDateString("ru-RU", {
+          day: "2-digit",
+          month: "2-digit",
+        })
+      : null;
+  return (
+    <div className="space-y-2 border-t border-zinc-100 pt-4">
+      <span className="block text-sm font-medium">Пауза</span>
+      <span className="block text-xs text-zinc-500">
+        Положить аккаунт на отдых на несколько дней — профилактика, чтобы не
+        ловить антиспам. Вернётся в строй сам по таймеру.
+      </span>
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        {props.resting ? (
+          <>
+            <span className="text-amber-700">На паузе до {until}.</span>
+            <button
+              type="button"
+              onClick={() => props.onSetCooldown(0)}
+              disabled={props.pending}
+              className="font-medium text-emerald-700 hover:underline disabled:opacity-50"
+            >
+              Вернуть в строй
+            </button>
+          </>
+        ) : (
+          <span className="text-zinc-600">В строю.</span>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="text-sm text-zinc-500">
+          {props.resting ? "Изменить срок:" : "Отдохнуть на"}
+        </span>
+        <input
+          type="number"
+          min={1}
+          max={365}
+          value={days}
+          onChange={(e) =>
+            setDays(Math.min(365, Math.max(1, Number(e.target.value) || 1)))
+          }
+          className="w-16 rounded-md border border-zinc-300 px-2 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+        />
+        <span className="text-sm text-zinc-500">дн.</span>
+        <button
+          type="button"
+          onClick={() => props.onSetCooldown(days)}
+          disabled={props.pending}
+          className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+        >
+          {props.resting ? "Применить" : "Отдохнуть"}
+        </button>
+      </div>
+      {props.error != null && (
+        <p className="text-sm text-red-600">{errorMessage(props.error)}</p>
+      )}
+    </div>
+  );
+}
+
+const EVENT_LABEL: Record<string, string> = {
+  peer_flood: "антиспам",
+  banned: "бан",
+  unauthorized: "разлогин",
+  flood_wait: "FloodWait",
+  manual_rest: "отдых",
+  resume: "возврат",
+};
+const STRIKE_TYPES = new Set(["peer_flood", "banned", "unauthorized"]);
+
+function dayMonth(date: string): string {
+  const [, m, d] = date.split("-");
+  return `${d}.${m}`;
+}
+
+// История по дням (30 дней): сворачиваемая, в заголовке — счётчик страйков,
+// чтобы они были видны и в свёрнутом виде. Внутри по дням: сколько холодных
+// отправок + какие страйки/паузы. Источник — /activity (GROUP BY на 1 аккаунт).
+function HistoryCard(props: { wsId: string; accountId: string }) {
+  const [open, setOpen] = useState(false);
+  const q = useQuery({
+    queryKey: ["account-activity", props.wsId, props.accountId],
+    queryFn: async () => {
+      const { data, error } = await api.GET(
+        "/v1/workspaces/{wsId}/outreach/accounts/{accountId}/activity",
+        { params: { path: { wsId: props.wsId, accountId: props.accountId } } },
+      );
+      if (error) throw error;
+      return data;
+    },
+  });
+  const days = q.data ?? [];
+  const strikeCount = days.reduce(
+    (n, d) =>
+      n +
+      d.events.reduce(
+        (a, e) => a + (STRIKE_TYPES.has(e.type) ? e.count : 0),
+        0,
+      ),
+    0,
+  );
+  return (
+    <div className="rounded-2xl bg-white shadow-sm">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between gap-2 px-5 py-3 text-left"
+      >
+        <span className="text-sm font-medium">История · 30 дней</span>
+        <span className="flex items-center gap-2 text-xs">
+          {strikeCount > 0 && (
+            <span className="rounded bg-red-100 px-1.5 py-0.5 font-medium text-red-700">
+              {strikeCount}{" "}
+              {pluralize(strikeCount, "страйк", "страйка", "страйков")}
+            </span>
+          )}
+          <ChevronDown
+            size={16}
+            className={
+              "text-zinc-400 transition-transform " + (open ? "rotate-180" : "")
+            }
+          />
+        </span>
+      </button>
+      {open && (
+        <div className="border-t border-zinc-100 px-5 py-3">
+          {q.isLoading && <p className="text-xs text-zinc-500">Загрузка…</p>}
+          {!q.isLoading && days.length === 0 && (
+            <p className="text-xs text-zinc-500">Активности пока нет.</p>
+          )}
+          <ul className="space-y-1.5">
+            {days.map((d) => (
+              <li
+                key={d.date}
+                className="flex items-center justify-between gap-3 text-xs"
+              >
+                <span className="shrink-0 text-zinc-500">
+                  {dayMonth(d.date)}
+                </span>
+                <span className="flex flex-1 flex-wrap items-center justify-end gap-1.5">
+                  {d.coldSends > 0 && (
+                    <span className="text-zinc-600">{d.coldSends} новым</span>
+                  )}
+                  {d.events.map((e) => (
+                    <span
+                      key={e.type}
+                      className={
+                        "rounded px-1.5 py-0.5 font-medium " +
+                        (STRIKE_TYPES.has(e.type)
+                          ? "bg-red-100 text-red-700"
+                          : "bg-zinc-100 text-zinc-600")
+                      }
+                    >
+                      {EVENT_LABEL[e.type] ?? e.type}
+                      {e.count > 1 ? ` ×${e.count}` : ""}
+                    </span>
+                  ))}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
@@ -682,8 +888,8 @@ function CooldownBanner(props: {
       </div>
       <div className="mt-0.5 text-amber-700">
         Причина: {props.reason ?? "Telegram FloodWait"}. Авто-цепочки
-        приостановлены; ручной quick send тоже будет отклонён до окончания
-        cooldown'а.
+        приостановлены. Ручная отправка тёплым (кто уже отвечал) работает —
+        кулдаун её не блокирует.
       </div>
     </div>
   );

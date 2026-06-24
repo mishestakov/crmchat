@@ -18,6 +18,7 @@ import {
   parseFloodWaitSeconds,
   setAccountCooldown,
 } from "./outreach-account-client.ts";
+import { recordAccountEvent } from "./account-events.ts";
 import { emitProjectChanged } from "./events.ts";
 import { rememberPendingSend } from "./outreach-listener.ts";
 import { inputMessageText } from "./td-message.ts";
@@ -417,7 +418,13 @@ async function processAccount(accountId: string, items: DueItem[]) {
           );
       }
       emitProjectChanged(item.projectId);
-      if (item.messageIdx === 0 && cold) newLeadsRemaining--;
+      if (item.messageIdx === 0 && cold) {
+        newLeadsRemaining--;
+        // Журнал: холодное первое касание — источник счётчика «новым сегодня»
+        // и графика. Пишем по факту отправки (cold-статус заморожен на этот
+        // момент — правильнее для истории, чем пересчёт задним числом).
+        await recordAccountEvent(accountId, "cold_send");
+      }
       // Догон msg_idx+1 ждал с sentinel-датой — теперь у него есть точка
       // отсчёта (факт-отправка msg_idx), считаем sendAt = now + delay.
       await scheduleNextFollowup(item, outreachSchedule);
@@ -442,6 +449,7 @@ async function processAccount(accountId: string, items: DueItem[]) {
           Date.now() + waitMs,
           `FloodWait ${flood}s`,
         );
+        await recordAccountEvent(accountId, "flood_wait", `FloodWait ${flood}s`);
         await db
           .update(scheduledMessages)
           .set({
@@ -463,6 +471,7 @@ async function processAccount(accountId: string, items: DueItem[]) {
           .update(outreachAccounts)
           .set({ status: killed, updatedAt: new Date() })
           .where(eq(outreachAccounts.id, accountId));
+        await recordAccountEvent(accountId, killed, msg);
         await evictWorkerClient(accountId);
         return;
       }
@@ -479,6 +488,7 @@ async function processAccount(accountId: string, items: DueItem[]) {
         // async-пути в outreach-listener.onSendFailed).
         const until = peerFloodCooldownUntil(outreachSchedule.timezone);
         await setAccountCooldown(accountId, until.getTime(), PEER_FLOOD_COOLDOWN_REASON);
+        await recordAccountEvent(accountId, "peer_flood");
         // cooldown аккаунта = until (00:00, семантику не трогаем); send_at
         // сообщения — на ближайшее окно (не полночь), чтобы БД/UI = правда.
         await db
