@@ -334,22 +334,18 @@ app.openapi(
     const role = c.get("workspaceRole");
     const { accountId } = c.req.valid("param");
     const { days } = c.req.valid("json");
-    await assertAccountAccess(accountId, wsId, userId, role);
+    // assertAccountAccess уже грузит полную строку (и кидает 404) — берём
+    // cooldownUntil из неё, не делаем отдельный SELECT.
+    const acc = await assertAccountAccess(accountId, wsId, userId, role);
 
     let row: typeof outreachAccounts.$inferSelect | undefined;
     if (days === 0) {
       row = await clearAccountCooldown(accountId);
       await recordAccountEvent(accountId, "resume");
     } else {
-      const [cur] = await db
-        .select({ cooldownUntil: outreachAccounts.cooldownUntil })
-        .from(outreachAccounts)
-        .where(eq(outreachAccounts.id, accountId))
-        .limit(1);
-      if (!cur) throw new HTTPException(404, { message: "account not found" });
       const until = Math.max(
         Date.now() + days * 86_400_000,
-        cur.cooldownUntil?.getTime() ?? 0,
+        acc.cooldownUntil?.getTime() ?? 0,
       );
       row = await setAccountCooldown(accountId, until, `Отдых ${days} дн (вручную)`);
       await recordAccountEvent(accountId, "manual_rest", `${days}d`);
