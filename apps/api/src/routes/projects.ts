@@ -40,6 +40,7 @@ import {
   scheduleUnscheduledLeads,
 } from "../lib/project-scheduling.ts";
 import { messagesToOpenerDunning } from "../lib/opener-dunning.ts";
+import { canFillDunning } from "@repo/core";
 import { type WorkspaceVars } from "../middleware/assert-member.ts";
 import { nextStepSql } from "./contacts.ts";
 
@@ -83,10 +84,24 @@ const OpenerSchema = z.object({
   text: z.string().min(1).max(4000),
   warmText: z.string().max(4000).nullable().optional(),
 });
-const DunningSchema = z.object({
-  pings: z.array(VariantSchema),
-  intervals: z.array(DelaySchema),
-});
+// Экспортируется для workspaces.ts — пиналка живёт на воркспейсе (одна на все
+// проекты). В проекте остаётся только опенер.
+export const DunningSchema = z
+  .object({
+    pings: z.array(VariantSchema),
+    intervals: z.array(DelaySchema),
+  })
+  // Пул должен покрывать каданс с чередованием текст/котик (раздельно, с
+  // graceful-добором) — иначе серия выйдет короче. Пустой каданс валиден.
+  .refine(
+    (d) =>
+      canFillDunning(
+        d.pings.filter((p) => p.kind === "text").length,
+        d.pings.filter((p) => p.kind === "sticker").length,
+        d.intervals.length,
+      ),
+    { error: "Не хватает текстов/котиков на каданс пиналки", path: ["pings"] },
+  );
 
 const ProjectStatusSchema = z.enum(projectStatus.enumValues);
 const PhaseSchema = z.enum(projectPhase.enumValues);
@@ -118,10 +133,8 @@ const ProjectSchema = z
     accountsMode: AccountsModeSchema,
     accountsSelected: z.array(z.string()),
     messages: z.array(MessageSchema),
-    // Целевая форма (§8). Nullable на переходный период — заполняется мостом из
-    // messages при записи; редактор B2 будет читать/писать их напрямую.
+    // Опенер — проектный (пиналка на воркспейсе). Nullable на переходный период.
     opener: OpenerSchema.nullable(),
-    dunning: DunningSchema.nullable(),
     activatedAt: z.iso.datetime().nullable(),
     completedAt: z.iso.datetime().nullable(),
     // Клиент финализировал медиаплан (фаза «Согласование»): решения заморожены.
@@ -170,6 +183,9 @@ const UpdateProjectBody = z
     accountsMode: AccountsModeSchema.optional(),
     accountsSelected: z.array(z.string()).optional(),
     messages: z.array(MessageSchema).optional(),
+    // Опенер пишется редактором проекта напрямую (B2). messages — legacy/шаблоны
+    // (мост пересчитывает опенер). Пиналка правится на воркспейсе, не здесь.
+    opener: OpenerSchema.optional(),
     // agency: фаза и бриф правятся в любом статусе (не snapshot-поля).
     // phase — свободная навигация по визарду, brief-* — данные кампании.
     phase: PhaseSchema.optional(),
@@ -497,9 +513,9 @@ app.openapi(
         name: body.name,
         stages: initialStages,
         messages: initialMessages,
-        // Мост: целевая форма opener/dunning пересчитывается из messages, пока
-        // редактор пишет messages (этап B2 переведёт на прямую запись).
-        ...messagesToOpenerDunning(initialMessages),
+        // Мост: опенер пересчитывается из первого сообщения (пиналка — на
+        // воркспейсе, в проект не пишется).
+        opener: messagesToOpenerDunning(initialMessages).opener,
         // agency brief-поля (для bd остаются null/default). numeric → string,
         // ISO-даты → Date.
         brief: body.brief ?? null,
@@ -573,7 +589,8 @@ app.openapi(
       body.name !== undefined ||
       body.accountsMode !== undefined ||
       body.accountsSelected !== undefined ||
-      body.messages !== undefined;
+      body.messages !== undefined ||
+      body.opener !== undefined;
     if (touchedSnapshot && existing.status !== "draft") {
       throw new HTTPException(400, {
         message:
@@ -592,6 +609,8 @@ app.openapi(
           "accountsMode",
           "accountsSelected",
           "messages",
+          // Редактор проекта пишет опенер напрямую.
+          "opener",
           // agency text/enum-поля — прямое копирование (null валиден).
           "phase",
           "brief",
@@ -599,10 +618,12 @@ app.openapi(
           "constraints",
           "advertiserData",
         ]),
-        // Мост: правка цепочки messages пересчитывает opener/dunning (этап B2
-        // переведёт редактор на прямую запись opener/dunning, мост уберём).
+        // Мост для legacy/шаблонов: messages БЕЗ прямого opener → пересчитываем
+        // опенер из первого сообщения (пиналка живёт на воркспейсе, не здесь).
         ...(body.messages !== undefined &&
-          messagesToOpenerDunning(body.messages)),
+          body.opener === undefined && {
+            opener: messagesToOpenerDunning(body.messages).opener,
+          }),
         // numeric/timestamp требуют конверсии — pickDefined не годится.
         ...(body.budgetAmount !== undefined && {
           budgetAmount:
@@ -777,8 +798,11 @@ app.openapi(
         message: "Only draft projects can be activated",
       });
     }
-    if (project.messages.length === 0) {
-      throw new HTTPException(400, { message: "Add at least one message" });
+    // Готовность к старту — по опенеру (B2 пишет его напрямую). messages.length
+    // тоже считаем валидным на переходный период (legacy/шаблоны, мост держит
+    // opener синхронным).
+    if (!project.opener?.text.trim() && project.messages.length === 0) {
+      throw new HTTPException(400, { message: "Add an opener message" });
     }
 
     const accountIds = await resolveProjectAccountIds(wsId, project);
@@ -1872,7 +1896,6 @@ function serializeProject(
     accountsSelected: row.accountsSelected,
     messages: row.messages,
     opener: row.opener,
-    dunning: row.dunning,
     activatedAt: row.activatedAt?.toISOString() ?? null,
     completedAt: row.completedAt?.toISOString() ?? null,
     clientFinalizedAt: row.clientFinalizedAt?.toISOString() ?? null,

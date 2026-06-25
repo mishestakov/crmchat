@@ -1079,16 +1079,42 @@ if (workingSeed.length > 0) {
     { kind: "sticker" as const, setName: "Cutecatsmeme", uniqueId: "AgAD8AYAAkVRkw4" },
     { kind: "sticker" as const, setName: "Cutecatsmeme", uniqueId: "AgADIAgAAkVRkw4" },
   ];
-  const rows = await db
+  // Опенер — проектный (из первого сообщения цепочки).
+  const projRows = await db
     .select({ id: projects.id, messages: projects.messages })
     .from(projects);
-  for (const p of rows) {
-    const { opener, dunning } = messagesToOpenerDunning(p.messages);
-    dunning.pings.push(...KOTIKI);
-    await db.update(projects).set({ opener, dunning }).where(eq(projects.id, p.id));
+  for (const p of projRows) {
+    await db
+      .update(projects)
+      .set({ opener: messagesToOpenerDunning(p.messages).opener })
+      .where(eq(projects.id, p.id));
+  }
+  // Пиналка — одна на воркспейс (§1.3): дефолтные фразы + котики + каданс из 5
+  // шагов (2д→4-5д→7д→2-3д→4-5д). В проде менеджер правит в настройках воркспейса.
+  const DEFAULT_DUNNING = {
+    pings: [
+      { kind: "text" as const, text: "ну как, вы тут? :)" },
+      { kind: "text" as const, text: "не пропадайте — оффер ещё в силе" },
+      { kind: "text" as const, text: "если интересно, обсудим условия?" },
+      ...KOTIKI,
+    ],
+    intervals: [
+      { period: "days" as const, value: 2 },
+      { period: "days" as const, value: 4 },
+      { period: "days" as const, value: 7 },
+      { period: "days" as const, value: 3 },
+      { period: "days" as const, value: 5 },
+    ],
+  };
+  const wsRows = await db.select({ id: workspaces.id }).from(workspaces);
+  for (const w of wsRows) {
+    await db
+      .update(workspaces)
+      .set({ dunning: DEFAULT_DUNNING })
+      .where(eq(workspaces.id, w.id));
   }
   console.log(
-    `[backfill] opener/dunning (+${KOTIKI.length} котиков) на ${rows.length} проектах`,
+    `[backfill] opener на ${projRows.length} проектах, пиналка (+${KOTIKI.length} котиков) на ${wsRows.length} воркспейсах`,
   );
 }
 

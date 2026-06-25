@@ -742,14 +742,16 @@ async function scheduleNextFollowup(
   const nextIdx = item.messageIdx + 1;
   const [proj] = await db
     .select({
-      dunning: projects.dunning,
+      // Пиналка — одна на воркспейс (workspaces.dunning).
+      dunning: workspaces.dunning,
       messages: projects.messages,
     })
     .from(projects)
+    .innerJoin(workspaces, eq(workspaces.id, projects.workspaceId))
     .where(eq(projects.id, item.projectId))
     .limit(1);
   if (!proj) return;
-  // Переходный мост: каданс из dunning.intervals; для незабэкфилленных проектов
+  // Переходный мост: каданс из dunning.intervals; для незабэкфилленного воркспейса
   // конвертируем из messages на лету. Пинг с messageIdx=k берёт интервал k-1
   // (intervals 0-based по пингам). Серия кончилась → интервала нет → return.
   const dunning =

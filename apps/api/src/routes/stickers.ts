@@ -5,6 +5,7 @@ import { db } from "../db/client.ts";
 import { outreachAccounts } from "../db/schema.ts";
 import { getOutreachWorkerClient } from "../lib/outreach-account-client.ts";
 import { stickerThumbFileId, type TdStickerRaw } from "../lib/td-message.ts";
+import { downloadToBytes } from "../lib/td-files.ts";
 import type { TdClient } from "../lib/tdlib/index.ts";
 import { errMsg } from "../lib/errors.ts";
 import type { WorkspaceVars } from "../middleware/assert-member.ts";
@@ -31,6 +32,9 @@ const PickerStickerSchema = z
   .object({
     // remote file id — им же отправляем (inputFileRemote в quick-send).
     remoteId: z.string(),
+    // unique_id стикера — переносим в пул пиналки (вместе с setName набора).
+    // Одинаков для всех аккаунтов (td_api.tl:259), в отличие от remoteId.
+    uniqueId: z.string().nullable(),
     // null = у анимированного стикера нет статичного превью; пикер рисует emoji.
     thumbFileId: z.number().int().nullable(),
     emoji: z.string(),
@@ -79,6 +83,7 @@ function mapPickerStickers(raw: TdStickerRaw[]) {
       if (!remoteId) return null;
       return {
         remoteId,
+        uniqueId: s.sticker?.remote?.unique_id ?? null,
         thumbFileId: stickerThumbFileId(s),
         emoji: s.emoji ?? "",
         customEmojiId:
@@ -237,5 +242,74 @@ app.openapi(
     }
   },
 );
+
+// Резолв стикерпака по имени (то, что после t.me/addstickers/ или /s/) —
+// searchStickerSet. Для пиналки: менеджер вставляет ссылку пака, видит стикеры,
+// галочками отмечает котиков. setName из ответа + uniqueId стикера → пул.
+app.openapi(
+  createRoute({
+    method: "get",
+    path: "/v1/workspaces/{wsId}/sticker-pack",
+    tags: ["stickers"],
+    request: {
+      params: WsParam,
+      query: AccountQuery.extend({ name: z.string().min(1).max(64) }),
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({
+              setName: z.string(),
+              title: z.string(),
+              stickers: z.array(PickerStickerSchema),
+            }),
+          },
+        },
+        description: "Stickers of the pack resolved by name",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const { accountId, name } = c.req.valid("query");
+    const { client } = await resolveAccountClient(wsId, accountId);
+    try {
+      const set = (await client.invoke({
+        _: "searchStickerSet",
+        name,
+        ignore_cache: false,
+      } as never)) as { name: string; title: string; stickers: TdStickerRaw[] };
+      return c.json({
+        setName: set.name,
+        title: set.title,
+        stickers: mapPickerStickers(set.stickers),
+      });
+    } catch (e) {
+      throw new HTTPException(400, { message: errMsg(e) });
+    }
+  },
+);
+
+// Превью стикера байтами по fileId — без привязки к чату (в отличие от
+// contacts/chat-file). Plain-роут (бинарь). Для пикера котиков в настройках.
+app.get("/v1/workspaces/:wsId/sticker-file", async (c) => {
+  const wsId = c.get("workspaceId");
+  const accountId = c.req.query("accountId");
+  const fileId = Number(c.req.query("fileId"));
+  if (typeof accountId !== "string" || !Number.isFinite(fileId)) {
+    throw new HTTPException(400, { message: "accountId & fileId required" });
+  }
+  const { client } = await resolveAccountClient(wsId, accountId);
+  const bytes = await downloadToBytes(client, fileId);
+  if (!bytes) throw new HTTPException(404, { message: "file unavailable" });
+  return new Response(bytes, {
+    status: 200,
+    headers: {
+      "Content-Type": "image/webp",
+      "Cache-Control": "private, max-age=3600",
+    },
+  });
+});
 
 export default app;

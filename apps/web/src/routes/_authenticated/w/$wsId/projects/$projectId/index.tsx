@@ -8,7 +8,6 @@ import {
   MessageSquare,
   Pause,
   Play,
-  RefreshCw,
   X,
 } from "lucide-react";
 import type { paths } from "@repo/api-client";
@@ -17,9 +16,9 @@ import { errorMessage } from "../../../../../../lib/errors";
 import { BackButton } from "../../../../../../components/back-button";
 import { ProjectTabs } from "../../../../../../components/project-tabs";
 import {
-  MessagesEditor,
-  type Message,
-} from "../../../../../../components/messages-editor";
+  OpenerEditor,
+  type Opener,
+} from "../../../../../../components/opener-editor";
 import { Modal } from "../../../../../../components/modal";
 import {
   Section,
@@ -28,14 +27,12 @@ import {
   SectionItemValue,
 } from "../../../../../../components/section";
 import { StagesEditModal } from "../../../../../../components/stages-edit-modal";
-import { pluralize } from "../../../../../../lib/date-utils";
 import { useEventSourceEvent } from "../../../../../../lib/hooks";
 import {
   useOutreachAccounts,
   useProject,
 } from "../../../../../../lib/outreach-queries";
 import { OUTREACH_QK, invalidateProject } from "../../../../../../lib/query-keys";
-import { substituteVariables } from "../../../../../../lib/substitute-variables";
 import { TEMPLATE_VARIABLES } from "../../../../../../lib/template-variables";
 
 export const Route = createFileRoute(
@@ -104,24 +101,20 @@ function SequenceDetailPage() {
     },
   );
 
-  // Local editor state — только messages (правится здесь же через
-  // MessagesEditor). Name редактирования из настроек нет — название
-  // отображается в шапке проекта (ProjectTabs). Accounts/CRM-settings
-  // правятся на отдельных sub-routes.
-  const [messages, setMessages] = useState<Message[]>([]);
+  // Local editor state — опенер проекта (пиналка — на воркспейсе, отдельная
+  // страница). Name — в шапке проекта; accounts/CRM-settings — на sub-routes.
+  const [opener, setOpener] = useState<Opener>({ text: "", warmText: null });
 
   // Переменные autocomplete — canonical username + канало-переменные из базы
   // (синтезируются на активации, см. prepareLeads). Статический список.
   const templateVariables = TEMPLATE_VARIABLES;
-  const [previewMsg, setPreviewMsg] = useState<Message | null>(null);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [editingStages, setEditingStages] = useState(false);
-  const [showSaveAsTemplate, setShowSaveAsTemplate] = useState(false);
 
   useEffect(() => {
     if (!seq.data) return;
-    setMessages(seq.data.messages);
+    setOpener(seq.data.opener ?? { text: "", warmText: null });
   }, [seq.data]);
 
   const isDraft = seq.data?.status === "draft";
@@ -134,14 +127,12 @@ function SequenceDetailPage() {
     // «Запустить» задизейблен — иначе activate мог бы зашить в
     // scheduled_messages старый текст цепочки.
     mutationKey: ["project-save", projectId],
-    mutationFn: async (overrides?: { messages?: Message[] }) => {
+    mutationFn: async () => {
       const { data, error } = await api.PATCH(
         "/v1/workspaces/{wsId}/projects/{projectId}",
         {
           params: { path: { wsId, projectId } },
-          body: {
-            messages: overrides?.messages ?? messages,
-          },
+          body: { opener },
         },
       );
       if (error) throw error;
@@ -233,7 +224,11 @@ function SequenceDetailPage() {
   const data = seq.data;
   const sortedStages = [...data.stages].sort((a, b) => a.order - b.order);
   const accountsSummary = buildAccountsSummary(data, accountsQ.data ?? []);
-  const messagesSummary = buildMessagesSummary(messages);
+
+  // Кнопка «Сохранить» — только при unsaved-изменениях опенера (CLAUDE.md #6).
+  const dirty =
+    JSON.stringify(opener) !==
+    JSON.stringify(data.opener ?? { text: "", warmText: null });
 
   const confirmComplete = () => {
     if (
@@ -407,48 +402,52 @@ function SequenceDetailPage() {
           </Section>
         )}
 
-        {/* === 4. Цепочка сообщений === */}
-        <Section header="Цепочка сообщений">
-          <div className="px-5 py-4 space-y-3">
-            <p className="text-xs text-zinc-500">{messagesSummary}</p>
-            <MessagesEditor
-              value={messages}
+        {/* === 4. Первое касание (опенер). Пиналка — на воркспейсе === */}
+        <Section header="Первое касание">
+          <div className="px-5 py-4">
+            <OpenerEditor
+              value={opener}
               variables={templateVariables}
-              validate
               disabled={!isDraft && !isPaused}
-              onChange={(next) => {
-                setMessages(next);
-                save.mutate({ messages: next });
-              }}
-              onPreview={(m) => setPreviewMsg(m)}
+              onChange={setOpener}
             />
-            {!isDraft && !isPaused && messages.length > 0 && (
+            {!isDraft && !isPaused && (
               <p className="mt-3 text-xs text-zinc-400">
-                Редактирование сообщений доступно в статусе «Черновик» или «Пауза».
+                Редактирование доступно в статусе «Черновик» или «Пауза».
               </p>
             )}
-            {messages.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setShowSaveAsTemplate(true)}
-                className="mt-4 inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-emerald-700"
-              >
-                <MessageSquare size={12} /> Сохранить цепочку как шаблон
-              </button>
+            {(isDraft || isPaused) && dirty && (
+              <div className="mt-4 flex items-center gap-3 border-t border-zinc-100 pt-3">
+                <button
+                  type="button"
+                  onClick={() => save.mutate()}
+                  disabled={save.isPending || opener.text.trim() === ""}
+                  className="rounded-md bg-emerald-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {save.isPending ? "Сохранение…" : "Сохранить"}
+                </button>
+                {opener.text.trim() === "" && (
+                  <span className="text-xs text-amber-600">
+                    Заполни первое касание
+                  </span>
+                )}
+              </div>
             )}
+            <p className="mt-4 border-t border-zinc-100 pt-3 text-xs text-zinc-400">
+              Пиналка (догон, если молчит) — общая на воркспейс:{" "}
+              <Link
+                to="/w/$wsId/outreach/dunning"
+                params={{ wsId }}
+                className="text-emerald-700 hover:underline"
+              >
+                настроить котиков и ритм
+              </Link>
+              .
+            </p>
           </div>
         </Section>
 
       </div>
-
-      {previewMsg && (
-        <PreviewDialog
-          wsId={wsId}
-          projectId={projectId}
-          message={previewMsg}
-          onClose={() => setPreviewMsg(null)}
-        />
-      )}
 
       {showAnalytics && analyticsQ.data && (
         <AnalyticsDialog
@@ -467,14 +466,6 @@ function SequenceDetailPage() {
         />
       )}
 
-      {showSaveAsTemplate && (
-        <SaveAsMessageTemplateDialog
-          wsId={wsId}
-          defaultName={data.name}
-          messages={messages}
-          onClose={() => setShowSaveAsTemplate(false)}
-        />
-      )}
 
       {editingStages && (
         <StagesEditModal
@@ -513,13 +504,6 @@ const GROUPING_LABELS: Record<"day" | "week" | "month", string> = {
   month: "По месяцам",
 };
 
-function shortDelay(period: string): string {
-  if (period === "minutes") return "мин";
-  if (period === "hours") return "ч";
-  if (period === "days") return "дн";
-  return period;
-}
-
 // Сводка аккаунтов: либо «Все активные», либо до 3-х имён через запятую
 // плюс «+ N ещё». Сразу показываем имена вместо «Выбрано: N» — менеджеру
 // полезнее видеть с каких аккаунтов реально пишет проект.
@@ -536,17 +520,6 @@ function buildAccountsSummary(
   return `${chosen.slice(0, 3).join(", ")} + ${chosen.length - 3}`;
 }
 
-// Сводка цепочки: «N шагов: первое сразу → через 1 ч → через 1 день».
-// Сразу видно расписание касаний без клика «открыть редактор».
-function buildMessagesSummary(messages: Message[]): string {
-  if (messages.length === 0) return "Цепочка пуста";
-  const delays = messages.map((m, i) =>
-    i === 0
-      ? "первое сразу"
-      : `через ${m.delay.value} ${shortDelay(m.delay.period)}`,
-  );
-  return `${messages.length} ${pluralize(messages.length, "шаг", "шага", "шагов")}: ${delays.join(" → ")}`;
-}
 
 function pctOf(num: number, denom: number): number | null {
   if (denom === 0) return null;
@@ -579,119 +552,6 @@ function StatPill(props: {
   );
 }
 
-// ─────────────────────── Preview Dialog ───────────────────────
-
-function PreviewDialog(props: {
-  wsId: string;
-  projectId: string;
-  message: Message;
-  onClose: () => void;
-}) {
-  const { wsId, projectId, message } = props;
-  const [seed, setSeed] = useState(0);
-  const sampleQ = useQuery({
-    queryKey: OUTREACH_QK.sampleLead(wsId, projectId, seed),
-    queryFn: async () => {
-      const { data, error } = await api.GET(
-        "/v1/workspaces/{wsId}/projects/{projectId}/sample-lead",
-        { params: { path: { wsId, projectId } } },
-      );
-      if (error) throw error;
-      return data;
-    },
-    refetchOnWindowFocus: false,
-    // Без placeholderData каждый «Другой лид» сбрасывает data → блок схлопывается
-    // в "Загрузка лида…" и мигает. С placeholderData старый лид остаётся виден
-    // пока не приедет новый. isLoading становится isFetching.
-    placeholderData: (prev) => prev,
-  });
-
-  const lead = sampleQ.data;
-  const rendered = lead
-    ? substituteVariables(message.text, {
-        username: lead.username,
-        properties: lead.properties,
-      })
-    : null;
-
-  return (
-    <Modal onClose={props.onClose} variant="sheet">
-        <div className="mb-3 flex items-center justify-between">
-          <div className="text-base font-semibold">Превью сообщения</div>
-          <button
-            type="button"
-            onClick={props.onClose}
-            aria-label="Закрыть"
-            className="text-zinc-400 hover:text-zinc-700"
-          >
-            <X size={18} />
-          </button>
-        </div>
-        {sampleQ.isLoading && (
-          <p className="text-sm text-zinc-500">Загрузка лида…</p>
-        )}
-        {sampleQ.error && (
-          <p className="text-sm text-red-600">{errorMessage(sampleQ.error)}</p>
-        )}
-        {sampleQ.data === null && (
-          <p className="text-sm text-amber-700">
-            В листе нет лидов — превью со значениями недоступно.
-          </p>
-        )}
-        {!sampleQ.isLoading && (
-          <>
-            {lead && (
-              <div className="mb-2 text-xs text-zinc-500">
-                Лид:{" "}
-                <span className="text-zinc-700">
-                  {lead.username ? `@${lead.username}` : "без identifier"}
-                </span>
-              </div>
-            )}
-            <div className="rounded-lg bg-zinc-50 p-3 text-sm whitespace-pre-wrap">
-              {rendered ?? message.text}
-            </div>
-            {lead && Object.keys(lead.properties).length > 0 && (
-              <details className="mt-3 text-xs text-zinc-500">
-                <summary className="cursor-pointer">
-                  Доступные переменные ({Object.keys(lead.properties).length})
-                </summary>
-                <ul className="mt-2 space-y-0.5">
-                  {Object.entries(lead.properties).map(([k, v]) => (
-                    <li key={k} className="font-mono">
-                      <span className="text-emerald-700">{`{{${k}}}`}</span>{" "}
-                      <span className="text-zinc-700">→ {v}</span>
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            )}
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setSeed((s) => s + 1)}
-                disabled={sampleQ.data === null || sampleQ.isFetching}
-                className="inline-flex items-center gap-1 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-50 disabled:opacity-50"
-              >
-                <RefreshCw
-                  size={14}
-                  className={sampleQ.isFetching ? "animate-spin" : ""}
-                />{" "}
-                Другой лид
-              </button>
-              <button
-                type="button"
-                onClick={props.onClose}
-                className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm text-white hover:bg-zinc-800"
-              >
-                Закрыть
-              </button>
-            </div>
-          </>
-        )}
-    </Modal>
-  );
-}
 
 // ─────────────────────── Analytics Dialog ───────────────────────
 
@@ -916,80 +776,3 @@ function DeleteConfirm(props: {
   );
 }
 
-// ─────────────────────── Save as message-template ───────────────────────
-
-function SaveAsMessageTemplateDialog(props: {
-  wsId: string;
-  defaultName: string;
-  messages: Message[];
-  onClose: () => void;
-}) {
-  const [name, setName] = useState(props.defaultName);
-  const save = useMutation({
-    mutationFn: async () => {
-      const trimmed = name.trim();
-      if (!trimmed) throw new Error("Введите имя шаблона");
-      const { error } = await api.POST(
-        "/v1/workspaces/{wsId}/message-templates",
-        {
-          params: { path: { wsId: props.wsId } },
-          body: { name: trimmed, messages: props.messages },
-        },
-      );
-      if (error) throw error;
-    },
-    onSuccess: () => props.onClose(),
-  });
-
-  return (
-    <Modal onClose={props.onClose} variant="sheet">
-      <div className="mb-3 flex items-center justify-between">
-        <div className="text-base font-semibold">
-          Сохранить цепочку как шаблон
-        </div>
-        <button
-          type="button"
-          onClick={props.onClose}
-          aria-label="Закрыть"
-          className="text-zinc-400 hover:text-zinc-700"
-        >
-          <X size={18} />
-        </button>
-      </div>
-      <p className="mb-3 text-xs text-zinc-500">
-        Шаблон попадёт в библиотеку и будет доступен при создании новых
-        проектов. Этот проект и шаблон дальше живут независимо.
-      </p>
-      <label className="block">
-        <span className="mb-1 block text-sm text-zinc-600">Имя шаблона</span>
-        <input
-          type="text"
-          value={name}
-          autoFocus
-          onChange={(e) => setName(e.target.value)}
-          className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
-        />
-      </label>
-      {save.error && (
-        <p className="mt-2 text-sm text-red-600">{errorMessage(save.error)}</p>
-      )}
-      <div className="mt-4 flex justify-end gap-2">
-        <button
-          type="button"
-          onClick={props.onClose}
-          className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-50"
-        >
-          Отмена
-        </button>
-        <button
-          type="button"
-          onClick={() => save.mutate()}
-          disabled={save.isPending || !name.trim()}
-          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-        >
-          {save.isPending ? "Сохраняем…" : "Сохранить шаблон"}
-        </button>
-      </div>
-    </Modal>
-  );
-}

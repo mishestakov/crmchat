@@ -117,7 +117,7 @@ export type TdStickerRaw = {
   format?: { _: string };
   full_type?: { _: string; custom_emoji_id?: number | string };
   thumbnail?: { file?: { id?: number } };
-  sticker?: { id?: number; remote?: { id?: string } };
+  sticker?: { id?: number; remote?: { id?: string; unique_id?: string } };
 };
 export type TdContent = {
   _: string;

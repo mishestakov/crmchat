@@ -98,6 +98,9 @@ export const workspaces = pgTable("workspaces", {
     .$type<OutreachSchedule>()
     .notNull()
     .default(DEFAULT_OUTREACH_SCHEDULE),
+  // Пиналка — одна на воркспейс (§1.3 bd-autodogon): фразы + котики + каданс
+  // одинаковы во всех проектах. Опенер остаётся проектным (свой питч у кампании).
+  dunning: jsonb("dunning").$type<ProjectDunning>(),
   // Метадата «кто создал». В access-проверках НЕ участвует — для этого
   // workspace_members. Оставлено как audit-поле, чтобы в логах было видно
   // первого админа.
@@ -751,11 +754,10 @@ export const projects = pgTable(
       .$type<ProjectMessage[]>()
       .notNull()
       .default([]),
-    // Целевая форма (мигрирует из messages, §8 bd-autodogon). Nullable в
-    // переходный период бэкфилла; messages дропнем после переключения всех
-    // потребителей на opener/dunning.
+    // Опенер — проектный (свой питч у кампании). Пиналка — на воркспейсе
+    // (workspaces.dunning, §1.3). Nullable на переходный период бэкфилла из
+    // messages; messages дропнем после переключения всех потребителей.
     opener: jsonb("opener").$type<ProjectOpener>(),
-    dunning: jsonb("dunning").$type<ProjectDunning>(),
     activatedAt: timestamp("activated_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
 

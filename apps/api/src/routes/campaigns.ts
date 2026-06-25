@@ -402,9 +402,9 @@ async function dolivkaAccountsOrThrow(
     });
   }
   if (project.status !== "active" && project.status !== "paused") return null;
-  if (project.messages.length === 0) {
+  if (!project.opener?.text.trim() && project.messages.length === 0) {
     throw new HTTPException(400, {
-      message: "У кампании нет цепочки сообщений — нечего слать новым блогерам",
+      message: "У кампании нет опенера — нечего слать новым блогерам",
     });
   }
   const accountIds = await resolveProjectAccountIds(wsId, project);

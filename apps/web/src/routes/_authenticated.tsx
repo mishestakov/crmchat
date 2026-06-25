@@ -119,6 +119,9 @@ function AuthLayout() {
                 <SidebarLink to="/w/$wsId/outreach/schedule" wsId={wsId}>
                   Расписание
                 </SidebarLink>
+                <SidebarLink to="/w/$wsId/outreach/dunning" wsId={wsId}>
+                  Пиналка
+                </SidebarLink>
               </SidebarGroup>
               <SidebarGroup title="Конфигурация">
                 <SidebarLink to="/w/$wsId/settings" wsId={wsId}>
@@ -207,7 +210,8 @@ function SidebarLink(props: {
     | "/w/$wsId/outreach/accounts"
     | "/w/$wsId/projects"
     | "/w/$wsId/campaigns"
-    | "/w/$wsId/outreach/schedule";
+    | "/w/$wsId/outreach/schedule"
+    | "/w/$wsId/outreach/dunning";
   wsId: string;
   children: ReactNode;
 }) {

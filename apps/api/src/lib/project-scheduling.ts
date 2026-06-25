@@ -7,10 +7,12 @@ import {
   projectItems,
   scheduledMessages,
   projects,
+  workspaces,
   tgChats,
   tgUsers,
   type ProjectMessage,
   type MessageVariant,
+  type ProjectDunning,
 } from "../db/schema.ts";
 import { contactTgUserIdSql } from "./contact-sql.ts";
 import { channelRknBlockedSql } from "./rkn-registry.ts";
@@ -212,18 +214,19 @@ function pickPings(pings: MessageVariant[], n: number): MessageVariant[] {
 function buildScheduledRows(opts: {
   wsId: string;
   project: typeof projects.$inferSelect;
+  // Пиналка — одна на воркспейс (workspaces.dunning), резолвится снаружи.
+  dunning: ProjectDunning;
   accountIds: string[];
   leads: SchedulingLead[];
   baseTime: Date;
   priorByTgUserId: Map<string, string>;
   warmTgUserIds: Set<string>;
 }): ScheduledRow[] {
-  // Переходный период миграции: читаем opener/dunning, для ещё не
-  // забэкфилленных проектов конвертируем из messages на лету (тот же хелпер).
-  const form =
-    opts.project.opener && opts.project.dunning
-      ? { opener: opts.project.opener, dunning: opts.project.dunning }
-      : messagesToOpenerDunning(opts.project.messages);
+  // Опенер — проектный (fallback из messages для незабэкфилленных проектов).
+  // Пиналка — workspace-уровень (opts.dunning).
+  const opener =
+    opts.project.opener ?? messagesToOpenerDunning(opts.project.messages).opener;
+  const dunning = opts.dunning;
 
   let rrIdx = 0;
   return opts.leads.flatMap((lead) => {
@@ -253,8 +256,8 @@ function buildScheduledRows(opts: {
 
     const rows: ScheduledRow[] = [];
     // Опенер — idx 0, уходит сразу. warmText только для «тёплых».
-    const openerWarm = form.opener.warmText?.trim();
-    const openerText = isWarm && openerWarm ? openerWarm : form.opener.text;
+    const openerWarm = opener.warmText?.trim();
+    const openerText = isWarm && openerWarm ? openerWarm : opener.text;
     rows.push({
       ...base,
       messageIdx: 0,
@@ -264,7 +267,7 @@ function buildScheduledRows(opts: {
       sendAt: opts.baseTime,
     });
     // Пинги пиналки — по одному на интервал, выбор из пула без повтора.
-    const chosen = pickPings(form.dunning.pings, form.dunning.intervals.length);
+    const chosen = pickPings(dunning.pings, dunning.intervals.length);
     chosen.forEach((v, i) => {
       rows.push({
         ...base,
@@ -476,6 +479,20 @@ export async function resolveProjectAccountIds(
     .filter((id) => project.accountsSelected.includes(id));
 }
 
+// Пиналка — одна на воркспейс (workspaces.dunning). Fallback из project.messages
+// на переходный период (незабэкфилленный воркспейс).
+async function resolveWorkspaceDunning(
+  wsId: string,
+  project: typeof projects.$inferSelect,
+): Promise<ProjectDunning> {
+  const [ws] = await db
+    .select({ dunning: workspaces.dunning })
+    .from(workspaces)
+    .where(eq(workspaces.id, wsId))
+    .limit(1);
+  return ws?.dunning ?? messagesToOpenerDunning(project.messages).dunning;
+}
+
 // Конвейер «лиды проекта → scheduled-строки» — общий путь активации и доливки:
 // prepareLeads (дедуп по админу + синтез канало-vars) → sticky + warm →
 // buildScheduledRows. Вставку строк делает вызывающий (в своей транзакции).
@@ -497,13 +514,15 @@ export async function scheduleLeads(opts: {
     .map((l) => l.tgUserId)
     .filter((x): x is string => x !== null);
   // sticky и warm независимы (общий вход tgUserIds) — параллелим.
-  const [priorByTgUserId, warmTgUserIds] = await Promise.all([
+  const [priorByTgUserId, warmTgUserIds, dunning] = await Promise.all([
     resolveStickyByTgUserIds(opts.wsId, tgUserIds),
     resolveWarmTgUserIds(opts.wsId, tgUserIds),
+    resolveWorkspaceDunning(opts.wsId, opts.project),
   ]);
   return buildScheduledRows({
     wsId: opts.wsId,
     project: opts.project,
+    dunning,
     accountIds: opts.accountIds,
     leads: prepared,
     baseTime: opts.baseTime,
