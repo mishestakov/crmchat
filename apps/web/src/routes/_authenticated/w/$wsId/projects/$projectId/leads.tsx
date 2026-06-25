@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
+  Bell,
   Check,
   CheckCheck,
   MessageCircleReply,
@@ -12,6 +13,7 @@ import {
 import type { paths } from "@repo/api-client";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
+import { getLeadHealth } from "../../../../../../lib/lead-health";
 import { ProjectTabs } from "../../../../../../components/project-tabs";
 import { type AccountRow } from "../../../../../../components/chat-drawer";
 import { ChannelBadges } from "../../../../../../components/channel-badges";
@@ -676,6 +678,9 @@ function LeadsPage() {
               <tbody>
                 {visibleGroups.map((grp) => {
                   const l = grp.primary;
+                  // Подсветка застоя (§1.4): красный/жёлтый — левым бордером
+                  // строки, чтобы не спорить с зелёным фоном «ответил».
+                  const health = getLeadHealth(l);
                   return (
                   <tr
                     key={grp.key}
@@ -691,6 +696,11 @@ function LeadsPage() {
                     }}
                     className={
                       "group cursor-pointer border-t border-zinc-100 hover:bg-zinc-50 " +
+                      (health.color === "red"
+                        ? "border-l-2 border-l-red-400 "
+                        : health.color === "yellow"
+                          ? "border-l-2 border-l-amber-400 "
+                          : "") +
                       (l.repliedAt ? "bg-emerald-50/40 " : "") +
                       (l.skippedAt ? "opacity-60" : "")
                     }
@@ -825,6 +835,7 @@ function LeadCell({
 }) {
   const ch = lead.channel;
   const admin = lead.username ? `@${lead.username}` : null;
+  const health = getLeadHealth(lead);
   const toggleSkip = (e: React.MouseEvent) => {
     e.stopPropagation(); // клик по строке открывает drawer
     onToggleSkip();
@@ -861,6 +872,23 @@ function LeadCell({
         </div>
       )}
       <SiblingChannels group={group} />
+      {health.dunning && (
+        <div className="flex items-center gap-1 text-xs">
+          <Bell
+            size={11}
+            className={
+              "shrink-0 " +
+              (health.dunning.active ? "text-zinc-400" : "text-red-400")
+            }
+          />
+          <span
+            className={health.dunning.active ? "text-zinc-500" : "text-red-500"}
+          >
+            пиналка {health.dunning.sent}/{health.dunning.total}
+            {health.dunning.active ? "" : " · ответа нет"}
+          </span>
+        </div>
+      )}
       {!lead.contactReady && (
         // Отбраковка «без контакта» — опенер не уйдёт, пока не найден контакт
         // (no-rkn виден красной пилюлей РКН рядом с названием — не дублируем).

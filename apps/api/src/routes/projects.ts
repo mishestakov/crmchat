@@ -269,6 +269,12 @@ const LeadProgressSchema = z
     // Прогресс по каждому сообщению цепочки. Длина = project.messages.length.
     messages: z.array(LeadMessageProgressSchema),
     repliedAt: z.iso.datetime().nullable(),
+    // Последнее сообщение в диалоге (любой стороны) — с привязанного контакта.
+    // Для подсветки «жёлтый» (§1.4 bd-autodogon): застой считается от последней
+    // активности в треде, чтобы ловить и «он молчит нам», и «он написал, а мы
+    // сутки не отвечаем». null для лидов без contactId — там застой считается по
+    // нашим sentAt из messages[].
+    lastMessageAt: z.iso.datetime().nullable(),
     contactId: z.string().nullable(),
     // Непрочитанные входящие — счётчик с прицепленного контакта (если есть).
     // Для лидов без contactId всегда 0. Бэйдж на канбане; синхронизация через
@@ -1076,6 +1082,7 @@ app.openapi(
           contactId: projectItems.contactId,
           unreadCount: sql<number>`coalesce(${contacts.unreadCount}, 0)::int`,
           markedUnread: sql<boolean>`coalesce(${contacts.markedUnread}, false)`,
+          lastMessageAt: contacts.lastMessageAt,
           nextStep: nextStepSql,
           stageId: projectItems.stageId,
           skippedAt: projectItems.skippedAt,
@@ -1214,6 +1221,7 @@ app.openapi(
           accountSource,
           messages,
           repliedAt: l.repliedAt?.toISOString() ?? null,
+          lastMessageAt: l.lastMessageAt?.toISOString() ?? null,
           contactId: l.contactId,
           unreadCount: l.unreadCount,
           markedUnread: l.markedUnread,

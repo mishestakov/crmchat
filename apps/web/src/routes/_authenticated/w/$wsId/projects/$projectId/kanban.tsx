@@ -1,9 +1,10 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { User } from "lucide-react";
+import { Bell, User } from "lucide-react";
 import type { paths } from "@repo/api-client";
 import { api } from "../../../../../../lib/api";
+import { getLeadHealth } from "../../../../../../lib/lead-health";
 import { errorMessage } from "../../../../../../lib/errors";
 import { BackButton } from "../../../../../../components/back-button";
 import { ProjectTabs } from "../../../../../../components/project-tabs";
@@ -156,12 +157,22 @@ function KanbanPage() {
           const markedUnread = ev.markedUnread ?? l.markedUnread;
           if (
             l.unreadCount === ev.unreadCount &&
-            l.markedUnread === markedUnread
+            l.markedUnread === markedUnread &&
+            l.lastMessageAt === ev.lastMessageAt
           ) {
             return l;
           }
           changed = true;
-          return { ...l, unreadCount: ev.unreadCount, markedUnread };
+          // lastMessageAt тоже патчим: от него зависит подсветка застоя
+          // (getLeadHealth) — иначе жёлтый/нейтраль отстаёт до рефетча, когда
+          // уже-ответивший лид пишет снова (repliedAt/стадия не меняются →
+          // project-stream «changed» не приходит, только этот contact-event).
+          return {
+            ...l,
+            unreadCount: ev.unreadCount,
+            markedUnread,
+            lastMessageAt: ev.lastMessageAt,
+          };
         });
         return changed ? { ...prev, leads: nextLeads } : prev;
       },
@@ -474,6 +485,15 @@ function LeadCard(props: {
   const platform =
     ch && ch.platform in PLATFORMS ? (ch.platform as Platform) : null;
   const unread = lead.unreadCount;
+  const health = getLeadHealth(lead);
+  // Подсветка застоя (§1.4): красный — пиналка отстрелялась без ответа,
+  // жёлтый — завис > суток и пиналка выкл. Нейтральная карточка — белая.
+  const toneClass =
+    health.color === "red"
+      ? "border-red-300 bg-red-50 hover:border-red-400 hover:bg-red-100"
+      : health.color === "yellow"
+        ? "border-amber-300 bg-amber-50 hover:border-amber-400 hover:bg-amber-100"
+        : "border-zinc-200 bg-white hover:border-emerald-300 hover:bg-zinc-50";
 
   return (
     <div
@@ -488,7 +508,9 @@ function LeadCard(props: {
       }
       onClick={props.onOpenChat}
       className={
-        "rounded-md border border-zinc-200 bg-white p-2.5 text-sm shadow-sm hover:border-emerald-300 hover:bg-zinc-50 " +
+        "rounded-md border p-2.5 text-sm shadow-sm " +
+        toneClass +
+        " " +
         (props.isReadOnly
           ? "cursor-pointer"
           : "cursor-pointer active:cursor-grabbing")
@@ -514,6 +536,25 @@ function LeadCard(props: {
       {lead.nextStep && (
         <div className="mt-1">
           <NextStepLine next={lead.nextStep} />
+        </div>
+      )}
+      {health.dunning && (
+        <div className="mt-1 flex items-center gap-1 text-xs">
+          <Bell
+            size={11}
+            className={
+              "shrink-0 " +
+              (health.dunning.active ? "text-zinc-400" : "text-red-400")
+            }
+          />
+          <span
+            className={
+              health.dunning.active ? "text-zinc-500" : "text-red-500"
+            }
+          >
+            пиналка {health.dunning.sent}/{health.dunning.total}
+            {health.dunning.active ? "" : " · ответа нет"}
+          </span>
         </div>
       )}
     </div>
