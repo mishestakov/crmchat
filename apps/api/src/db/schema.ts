@@ -636,6 +636,43 @@ export type ProjectMessage = {
   delay: ProjectMessageDelay;
 };
 
+// === Целевая форма рассылки (мигрирует из ProjectMessage[], §8 bd-autodogon) ===
+// Опенер (одно касание) + пиналка (пул пингов + каданс) заменяют плоскую ленту
+// messages[]. Заводятся аддитивно; messages дропнем после переключения всех
+// потребителей.
+
+// Вариант контента пинга пиналки. Машина выбирает один из пула, случайно и БЕЗ
+// повтора на блогера (антиспам — N блогеров не получат дословно одинаковый пуш).
+// Снимок выбора уходит в scheduled_messages при планировании.
+export type MessageVariant =
+  | { kind: "text"; text: string }
+  // Стикер хранится как (имя публичного стикерсета + unique_id стикера), НЕ
+  // file_id: remote file_id непереносим между аккаунтами (td_api.tl:275), а
+  // unique_id одинаков для всех (td_api.tl:255). Отправка резолвит на лету через
+  // searchStickerSet(setName) — пак ставить не нужно.
+  | { kind: "sticker"; setName: string; uniqueId: string };
+
+// Опенер — первое касание: ОДНО сообщение, массовая холодная рассылка при старте
+// кампании. Несёт {{переменные}} (подставляет машина при снимке) + warm-
+// альтернативу. Уходит сразу при активации, поэтому без delay. Отправка опенера
+// один раз авто-взводит пиналку на лиде (§1.2 bd-autodogon).
+export type ProjectOpener = {
+  text: string;
+  // Альтернатива для «тёплых» — кто уже отвечал нам через любой аккаунт
+  // воркспейса (tg_chats.has_inbound=true). null/"" → тёплый получает text.
+  warmText?: string | null;
+};
+
+// Пиналка — ПУЛ нейтральных пингов (тексты + котики) + каданс интервалов. Машина
+// шлёт по одному из пула, случайно и без повтора на блогера. intervals — каданс
+// (длина = сколько пингов уйдёт за серию; валидация: pings.length >=
+// intervals.length). Когда серия отстреляла без ответа — карточка краснеет
+// (вычисляемо, §1.4); авто-перевода в «Отказ» нет, статус двигает человек.
+export type ProjectDunning = {
+  pings: MessageVariant[];
+  intervals: ProjectMessageDelay[];
+};
+
 // Стадия канбана проекта. У каждого проекта свой набор stages — JSON-массив
 // на projects.stages, без отдельной таблицы. project_items.stage_id (text)
 // ссылается на id из json'а без FK; удаление стадии «сиротит» карточки.
@@ -714,6 +751,11 @@ export const projects = pgTable(
       .$type<ProjectMessage[]>()
       .notNull()
       .default([]),
+    // Целевая форма (мигрирует из messages, §8 bd-autodogon). Nullable в
+    // переходный период бэкфилла; messages дропнем после переключения всех
+    // потребителей на opener/dunning.
+    opener: jsonb("opener").$type<ProjectOpener>(),
+    dunning: jsonb("dunning").$type<ProjectDunning>(),
     activatedAt: timestamp("activated_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
 
@@ -916,7 +958,16 @@ export const scheduledMessages = pgTable(
       .notNull()
       .references(() => outreachAccounts.id, { onDelete: "cascade" }),
     messageIdx: integer("message_idx").notNull(),
+    // Какой по счёту заход пиналки на лиде (шов под этап C — ручной перевзвод).
+    // 0 = холодный авто-догон после опенера; C начнёт писать 1,2… Бейдж N/total
+    // и «серия отстреляла» считаются по последнему раунду.
+    dunningRound: integer("dunning_round").notNull().default(0),
     text: text("text").notNull(),
+    // Снимок стикер-пинга (пиналка с котиками). Если заданы — отправляем стикер
+    // через searchStickerSet + inputMessageSticker, иначе шлём text. uniqueId
+    // также служит ключом дедупа «без повтора» в рамках лида.
+    stickerSetName: text("sticker_set_name"),
+    stickerUniqueId: text("sticker_unique_id"),
     sendAt: timestamp("send_at", { withTimezone: true }).notNull(),
     status: scheduledMessageStatus("status").notNull().default("pending"),
     sentAt: timestamp("sent_at", { withTimezone: true }),

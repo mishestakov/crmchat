@@ -22,6 +22,11 @@ dist/
 # TDLib per-account binlog/files — persistent FS state, в проде volume
 apps/api/.td-database/
 
+# временный одноразовый дамп стикеров (bd-autodogon) — не код
+apps/api/dump-today-stickers.ts
+apps/api/.sticker-dump-session/
+apps/api/sticker-dump/
+
 # TDLib API schema (downloaded artifact, не наш код)
 /td_api.tl
 

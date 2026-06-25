@@ -34,8 +34,9 @@ import {
   resolveWarmTgUserIds,
   FINAL_OFFER_MSG_IDX,
 } from "./project-scheduling.ts";
+import { messagesToOpenerDunning } from "./opener-dunning.ts";
 import { failStepAndCancelFollowups } from "./outreach-chain.ts";
-import type { OutreachSchedule, ProjectMessage } from "../db/schema.ts";
+import type { OutreachSchedule } from "../db/schema.ts";
 import type { TdClient } from "./tdlib/index.ts";
 
 // Outbound worker для холодных рассылок. Каждый tick:
@@ -167,6 +168,8 @@ async function runTick() {
       accountId: scheduledMessages.accountId,
       messageIdx: scheduledMessages.messageIdx,
       text: scheduledMessages.text,
+      stickerSetName: scheduledMessages.stickerSetName,
+      stickerUniqueId: scheduledMessages.stickerUniqueId,
       workspaceId: scheduledMessages.workspaceId,
     })
     .from(scheduledMessages)
@@ -216,6 +219,9 @@ type DueItem = {
   accountId: string;
   messageIdx: number;
   text: string;
+  // Снимок стикер-пинга (котик): если заданы — шлём стикер вместо text.
+  stickerSetName: string | null;
+  stickerUniqueId: string | null;
   workspaceId: string;
 };
 
@@ -501,6 +507,18 @@ async function processAccount(accountId: string, items: DueItem[]) {
         );
         return;
       }
+      if (msg.startsWith("STICKER_UNAVAILABLE")) {
+        // Котик пропал (пак удалён владельцем): НЕ зацикливаем retry (стикер не
+        // появится) и НЕ рвём всю серию — гасим только этот пинг и довзводим
+        // следующий, догон идёт дальше своим кадансом.
+        await db
+          .update(scheduledMessages)
+          .set({ status: "cancelled", error: msg })
+          .where(eq(scheduledMessages.id, item.id));
+        await scheduleNextFollowup(item, outreachSchedule);
+        emitProjectChanged(item.projectId);
+        continue;
+      }
       if (isPermanentSendError(msg)) {
         // Шаг провалился окончательно — помечаем failed И гасим догоны лида,
         // как async-листенер (failStepAndCancelFollowups). Иначе следующие
@@ -541,6 +559,44 @@ async function processAccount(accountId: string, items: DueItem[]) {
 }
 
 type LeadRow = typeof projectItems.$inferSelect;
+
+// Резолв стикер-пинга (котик) в input_message_content. Ищем стикерсет по имени,
+// находим стикер по unique_id (одинаков для всех аккаунтов, td_api.tl:259) и
+// шлём по remote file id текущего аккаунта. Пак ставить не надо —
+// searchStickerSet работает без установки (is_installed — про клавиатуру).
+async function resolveStickerContent(
+  client: TdClient,
+  setName: string,
+  uniqueId: string,
+): Promise<unknown> {
+  const set = (await client.invoke({
+    _: "searchStickerSet",
+    name: setName,
+    ignore_cache: false,
+  } as never)) as {
+    stickers?: Array<{
+      width: number;
+      height: number;
+      emoji: string;
+      sticker?: { remote?: { id: string; unique_id: string } };
+    }>;
+  };
+  const st = set.stickers?.find((s) => s.sticker?.remote?.unique_id === uniqueId);
+  if (!st?.sticker?.remote) {
+    // Маркер STICKER_UNAVAILABLE — processAccount гасит этот пинг и идёт дальше,
+    // а не зацикливает retry (пак удалён → стикер не вернётся).
+    throw new Error(
+      `STICKER_UNAVAILABLE: sticker ${uniqueId} not found in set "${setName}"`,
+    );
+  }
+  return {
+    _: "inputMessageSticker",
+    sticker: { _: "inputFileRemote", id: st.sticker.remote.id },
+    width: st.width,
+    height: st.height,
+    emoji: st.emoji ?? "",
+  };
+}
 
 // Human-flow «фаза 1»: открыть чат, показать «печатает...», подождать
 // случайное typing-окно, отправить сообщение. Возврат — сразу после того
@@ -637,10 +693,22 @@ async function sendMessagePhase(
     return null;
   }
 
+  // Стикер-пинг (котик) или текст. Стикер резолвим на лету через
+  // searchStickerSet (см. resolveStickerContent) — file_id непереносим между
+  // аккаунтами, поэтому храним (setName, uniqueId), а не сам file.
+  const inputContent =
+    item.stickerSetName && item.stickerUniqueId
+      ? await resolveStickerContent(
+          client,
+          item.stickerSetName,
+          item.stickerUniqueId,
+        )
+      : inputMessageText(item.text);
+
   const sentMsg = (await client.invoke({
     _: "sendMessage",
     chat_id: userId,
-    input_message_content: inputMessageText(item.text),
+    input_message_content: inputContent,
   } as never)) as { id: number | string; chat_id: number | string };
 
   return {
@@ -673,15 +741,24 @@ async function scheduleNextFollowup(
 ): Promise<void> {
   const nextIdx = item.messageIdx + 1;
   const [proj] = await db
-    .select({ messages: projects.messages })
+    .select({
+      dunning: projects.dunning,
+      messages: projects.messages,
+    })
     .from(projects)
     .where(eq(projects.id, item.projectId))
     .limit(1);
-  const nextMsg = (proj?.messages as ProjectMessage[] | undefined)?.[nextIdx];
-  if (!nextMsg) return;
+  if (!proj) return;
+  // Переходный мост: каданс из dunning.intervals; для незабэкфилленных проектов
+  // конвертируем из messages на лету. Пинг с messageIdx=k берёт интервал k-1
+  // (intervals 0-based по пингам). Серия кончилась → интервала нет → return.
+  const dunning =
+    proj.dunning ?? messagesToOpenerDunning(proj.messages).dunning;
+  const nextDelay = dunning.intervals[nextIdx - 1];
+  if (!nextDelay) return;
   const nextAt = nextAllowedSendAt(
     schedule,
-    new Date(Date.now() + delayToMs(nextMsg.delay)),
+    new Date(Date.now() + delayToMs(nextDelay)),
   );
   await db
     .update(scheduledMessages)

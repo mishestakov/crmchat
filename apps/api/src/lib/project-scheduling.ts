@@ -10,12 +10,14 @@ import {
   tgChats,
   tgUsers,
   type ProjectMessage,
+  type MessageVariant,
 } from "../db/schema.ts";
 import { contactTgUserIdSql } from "./contact-sql.ts";
 import { channelRknBlockedSql } from "./rkn-registry.ts";
 import { channelAlreadyWorkingSql } from "./platform-active.ts";
 import { resolveStickyByPeerIds } from "./sticky.ts";
 import { substituteVariables } from "./substitute-variables.ts";
+import { messagesToOpenerDunning } from "./opener-dunning.ts";
 
 // Helpers для активации проекта (/activate) и доливки размещений в активный
 // проект (placements/bulk при status=active|paused). Общая логика:
@@ -152,12 +154,61 @@ export type ScheduledRow = {
   itemId: string;
   accountId: string;
   messageIdx: number;
+  // Заход пиналки: 0 — холодный авто-догон после опенера; этап C пишет 1,2…
+  dunningRound: number;
   text: string;
+  // Снимок стикер-пинга (котик) — если выбран стикер вместо текста; иначе null.
+  stickerSetName: string | null;
+  stickerUniqueId: string | null;
   sendAt: Date;
 };
 
+function shuffle<T>(items: T[]): T[] {
+  const arr = [...items];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j]!, arr[i]!];
+  }
+  return arr;
+}
+
+// Выбор n пингов с чередованием текст/котик (договорённость с Юлей): нечётные
+// пинги — текст, чётные — котик (первый всегда текстовый, котики разбавляют).
+// Внутри каждого под-пула — без повтора (перетасовка). Graceful: если котиков
+// или текстов не хватает на свою позицию, добираем из другого под-пула — серия
+// не падает (напр. legacy-проект без котиков идёт целиком текстом). Если пул
+// меньше n — вернём меньше пингов (серия короче); валидацию пула добавим в B2.
+function pickPings(pings: MessageVariant[], n: number): MessageVariant[] {
+  const texts = shuffle(pings.filter((p) => p.kind === "text"));
+  const stickers = shuffle(pings.filter((p) => p.kind === "sticker"));
+  const result: MessageVariant[] = [];
+  let ti = 0;
+  let si = 0;
+  for (let pos = 1; pos <= n; pos++) {
+    const wantSticker = pos % 2 === 0; // чётные позиции — котики
+    let v = wantSticker ? stickers[si] : texts[ti];
+    if (v) {
+      if (wantSticker) si++;
+      else ti++;
+    } else {
+      // graceful-добор из другого под-пула
+      v = wantSticker ? texts[ti] : stickers[si];
+      if (!v) break; // оба пула исчерпаны
+      if (wantSticker) ti++;
+      else si++;
+    }
+    result.push(v);
+  }
+  return result;
+}
+
 // Построить scheduled_messages row'ы для набора лидов. Sticky + warm
 // резолвятся снаружи. Внутренний шаг scheduleLeads (не экспортируется).
+//
+// Раскладка холодного захода (dunning_round=0): опенер (idx 0, уходит сразу) +
+// по одному пингу пиналки на каждый интервал каданса (idx 1..N, выбор из пула
+// без повтора). Реальный sendAt пингов довзводится после факт-отправки
+// предыдущего шага (scheduleNextFollowup в outreach-worker).
 function buildScheduledRows(opts: {
   wsId: string;
   project: typeof projects.$inferSelect;
@@ -167,6 +218,13 @@ function buildScheduledRows(opts: {
   priorByTgUserId: Map<string, string>;
   warmTgUserIds: Set<string>;
 }): ScheduledRow[] {
+  // Переходный период миграции: читаем opener/dunning, для ещё не
+  // забэкфилленных проектов конвертируем из messages на лету (тот же хелпер).
+  const form =
+    opts.project.opener && opts.project.dunning
+      ? { opener: opts.project.opener, dunning: opts.project.dunning }
+      : messagesToOpenerDunning(opts.project.messages);
+
   let rrIdx = 0;
   return opts.leads.flatMap((lead) => {
     const priorRaw = lead.tgUserId
@@ -180,26 +238,44 @@ function buildScheduledRows(opts: {
     const accountId = prior ?? opts.accountIds[rrIdx % opts.accountIds.length]!;
     if (!prior) rrIdx++;
     const isWarm = lead.tgUserId ? opts.warmTgUserIds.has(lead.tgUserId) : false;
-    return opts.project.messages.map((msg, msgIdx) => {
-      const warmText = msg.warmText?.trim();
-      const template =
-        msgIdx === 0 && isWarm && warmText ? warmText : msg.text;
-      return {
-        workspaceId: opts.wsId,
-        projectId: opts.project.id,
-        itemId: lead.id,
-        accountId,
-        messageIdx: msgIdx,
-        text: substituteVariables(template, {
-          username: lead.username,
-          properties: lead.properties as Record<string, string>,
-        }),
-        // msg_idx=0 уходит «сразу как worker дойдёт»; догоны висят с
-        // sentinel'ом, реальный sendAt получают после факт-отправки
-        // предыдущего шага (см. scheduleNextFollowup в outreach-worker).
-        sendAt: msgIdx === 0 ? opts.baseTime : FOLLOWUP_PENDING_SENTINEL,
-      };
+    const subst = (t: string) =>
+      substituteVariables(t, {
+        username: lead.username,
+        properties: lead.properties as Record<string, string>,
+      });
+    const base = {
+      workspaceId: opts.wsId,
+      projectId: opts.project.id,
+      itemId: lead.id,
+      accountId,
+      dunningRound: 0,
+    };
+
+    const rows: ScheduledRow[] = [];
+    // Опенер — idx 0, уходит сразу. warmText только для «тёплых».
+    const openerWarm = form.opener.warmText?.trim();
+    const openerText = isWarm && openerWarm ? openerWarm : form.opener.text;
+    rows.push({
+      ...base,
+      messageIdx: 0,
+      text: subst(openerText),
+      stickerSetName: null,
+      stickerUniqueId: null,
+      sendAt: opts.baseTime,
     });
+    // Пинги пиналки — по одному на интервал, выбор из пула без повтора.
+    const chosen = pickPings(form.dunning.pings, form.dunning.intervals.length);
+    chosen.forEach((v, i) => {
+      rows.push({
+        ...base,
+        messageIdx: i + 1,
+        text: v.kind === "text" ? subst(v.text) : "",
+        stickerSetName: v.kind === "sticker" ? v.setName : null,
+        stickerUniqueId: v.kind === "sticker" ? v.uniqueId : null,
+        sendAt: FOLLOWUP_PENDING_SENTINEL,
+      });
+    });
+    return rows;
   });
 }
 

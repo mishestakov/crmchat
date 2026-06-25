@@ -17,6 +17,11 @@
 
 const STALE_MS = 24 * 60 * 60 * 1000;
 
+// Финальный оффер («вы выбраны») живёт на этом idx — отдельный bulk-механизм, не
+// пиналка. Исключаем его из прогресса пиналки (совпадает с FINAL_OFFER_MSG_IDX
+// на бэке).
+const FINAL_OFFER_IDX = 1000;
+
 // Максимальный timestamp из набора ISO-строк (null/пустые/невалидные
 // игнорируются); 0 — если дат нет. Удобно для «последней активности» из разных
 // источников. NaN от битой даты отбрасываем, чтобы он не «съел» Math.max.
@@ -47,8 +52,10 @@ export function getLeadHealth(
   lead: LeadHealthInput,
   now: number = Date.now(),
 ): LeadHealth {
-  // Опенер — idx 0; пиналка — follow-up'ы idx > 0.
-  const followups = lead.messages.filter((m) => m.messageIdx > 0);
+  // Опенер — idx 0; пиналка — пинги idx 1..N (финальный оффер idx 1000 — не пинг).
+  const followups = lead.messages.filter(
+    (m) => m.messageIdx > 0 && m.messageIdx < FINAL_OFFER_IDX,
+  );
   const total = followups.length;
   const sent = followups.filter((m) => m.status === "sent").length;
   // «Пиналка идёт» — есть запланированный, ещё не отправленный пинг.

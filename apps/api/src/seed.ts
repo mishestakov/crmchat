@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { eq, inArray, isNotNull } from "drizzle-orm";
 import { db, sql } from "./db/client.ts";
+import { messagesToOpenerDunning } from "./lib/opener-dunning.ts";
 import {
   channelAdmins,
   channels,
@@ -1052,6 +1053,43 @@ if (workingSeed.length > 0) {
     )
     .onConflictDoNothing({ target: platformActiveChannels.tgChatId });
   console.log(`[platform_active] seeded ${workingSeed.length} working channels`);
+}
+
+// Бэкфилл opener/dunning для всех засеянных проектов — переходный период
+// миграции messages → opener/dunning (§8 bd-autodogon). Та же конверсия, что и
+// прод-бэкфилл; messages пока остаётся рядом.
+{
+  // Демо-котики для пиналки — стартовый набор из публичных паков (14 шт). В проде
+  // котиков заводит менеджер в редакторе (этап B2); здесь подмешиваем в пул,
+  // чтобы чередование текст/котик было видно из коробки. Вшиты константой (не
+  // читаем из sticker-dump — тот в гит не идёт).
+  const KOTIKI = [
+    { kind: "sticker" as const, setName: "kotikoviy", uniqueId: "AgADnRsAAt9ygUs" },
+    { kind: "sticker" as const, setName: "AnimalS1ick3r", uniqueId: "AgADUQsAAjdr6Fc" },
+    { kind: "sticker" as const, setName: "spbc6fe9ff8c5f6d1583c442e8ad4baed1_by_stckrRobot", uniqueId: "AgAD3wADxSPMBw" },
+    { kind: "sticker" as const, setName: "kitties2bynorufx_by_fStikBot", uniqueId: "AgAD6RUAApiqmEg" },
+    { kind: "sticker" as const, setName: "kitties2bynorufx_by_fStikBot", uniqueId: "AgADVhMAAjA8iUg" },
+    { kind: "sticker" as const, setName: "kitties2bynorufx_by_fStikBot", uniqueId: "AgADHxcAAiOjqUo" },
+    { kind: "sticker" as const, setName: "Ritasgif_by_fStikBot", uniqueId: "AgADohUAAqJJ0Es" },
+    { kind: "sticker" as const, setName: "Webp_18", uniqueId: "AgADzwwAAiOOkVI" },
+    { kind: "sticker" as const, setName: "CuteCatsRSY_by_MoiStikiBot", uniqueId: "AgADl5QAAooIwEo" },
+    { kind: "sticker" as const, setName: "CuteCatsRSY_by_MoiStikiBot", uniqueId: "AgADqqYAAqeVwEo" },
+    { kind: "sticker" as const, setName: "lapki_myak", uniqueId: "AgADPBcAAlPC4Ug" },
+    { kind: "sticker" as const, setName: "catsunicmass", uniqueId: "AgAD0icAAgT5uUo" },
+    { kind: "sticker" as const, setName: "Cutecatsmeme", uniqueId: "AgAD8AYAAkVRkw4" },
+    { kind: "sticker" as const, setName: "Cutecatsmeme", uniqueId: "AgADIAgAAkVRkw4" },
+  ];
+  const rows = await db
+    .select({ id: projects.id, messages: projects.messages })
+    .from(projects);
+  for (const p of rows) {
+    const { opener, dunning } = messagesToOpenerDunning(p.messages);
+    dunning.pings.push(...KOTIKI);
+    await db.update(projects).set({ opener, dunning }).where(eq(projects.id, p.id));
+  }
+  console.log(
+    `[backfill] opener/dunning (+${KOTIKI.length} котиков) на ${rows.length} проектах`,
+  );
 }
 
 console.log("done — full demo seed complete");
