@@ -33,7 +33,9 @@ import {
   projectAccessClause,
 } from "../lib/projects-access.ts";
 import {
+  armLeadDunning,
   channelIdentifier,
+  disarmLeadDunning,
   resolveProjectAccountIds,
   resolveStickyByTgUserIds,
   scheduleLeads,
@@ -212,6 +214,9 @@ const MoveItemBody = z
 const LeadMessageProgressSchema = z
   .object({
     messageIdx: z.number().int(),
+    // Заход пиналки (0 — холодный авто-догон; ручной взвод пишет 1,2…). Бейдж и
+    // «серия отстреляла» считаются по последнему раунду (§1.2 bd-autodogon).
+    dunningRound: z.number().int(),
     status: z.enum(scheduledMessageStatus.enumValues),
     sentAt: z.iso.datetime().nullable(),
     readAt: z.iso.datetime().nullable(),
@@ -1184,6 +1189,7 @@ app.openapi(
         itemId: scheduledMessages.itemId,
         accountId: scheduledMessages.accountId,
         messageIdx: scheduledMessages.messageIdx,
+        dunningRound: scheduledMessages.dunningRound,
         status: scheduledMessages.status,
         sendAt: scheduledMessages.sendAt,
         sentAt: scheduledMessages.sentAt,
@@ -1261,6 +1267,7 @@ app.openapi(
           .toSorted((a, b) => a.messageIdx - b.messageIdx)
           .map((s) => ({
             messageIdx: s.messageIdx,
+            dunningRound: s.dunningRound,
             status: s.status,
             sentAt: s.sentAt?.toISOString() ?? null,
             readAt: s.readAt?.toISOString() ?? null,
@@ -1487,6 +1494,66 @@ app.openapi(
       // model A: вернул лида в рассылку → опенер планируется сразу, без
       // холодного гейта (раньше требовался hasPendingOpeners).
       await scheduleUnscheduledLeads({ project, itemId });
+    }
+    emitProjectChanged(projectId);
+    return c.body(null, 204);
+  },
+);
+
+// Ручной вкл/выкл пиналки на лиде (этап C, кнопка в чате). Пиналка — режим
+// on/off: «вкл» планирует новый заход серии пингов (round=max+1, первый пинг от
+// последней активности), «выкл» гасит pending текущего захода. Доступно как раз
+// для ответивших-и-замолчавших — менеджер видит переписку и решает допинать.
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/items/{itemId}/dunning",
+    tags: ["outreach"],
+    request: {
+      params: WsProjectParam.extend({ itemId: z.string().min(1).max(64) }),
+      body: {
+        content: {
+          "application/json": {
+            schema: z.object({ enabled: z.boolean() }).openapi("ToggleDunning"),
+          },
+        },
+      },
+    },
+    responses: { 204: { description: "Toggled" } },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const { projectId, itemId } = c.req.valid("param");
+    const { enabled } = c.req.valid("json");
+    const project = await assertProjectAccess(projectId, wsId, userId, role);
+    if (project.status !== "active" && project.status !== "paused") {
+      throw new HTTPException(400, {
+        message: "Пиналку можно вкл/выкл только в запущенном проекте",
+      });
+    }
+    // Скоуп: item должен принадлежать ЭТОМУ проекту. assertProjectAccess
+    // проверяет только projectId из URL — без этой проверки по доступу к своему
+    // проекту можно было бы взвести/погасить пиналку на чужом лиде (IDOR).
+    const [item] = await db
+      .select({ id: projectItems.id })
+      .from(projectItems)
+      .where(
+        and(eq(projectItems.id, itemId), eq(projectItems.projectId, projectId)),
+      )
+      .limit(1);
+    if (!item) throw new HTTPException(404, { message: "item not found" });
+
+    if (enabled) {
+      const result = await armLeadDunning(itemId);
+      if (result === "empty") {
+        throw new HTTPException(400, {
+          message: "Пиналка не настроена или нет истории отправок по лиду",
+        });
+      }
+    } else {
+      await disarmLeadDunning(itemId);
     }
     emitProjectChanged(projectId);
     return c.body(null, 204);

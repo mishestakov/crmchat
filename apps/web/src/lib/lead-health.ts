@@ -3,17 +3,10 @@
 // полей-цветов в БД. Держим логику здесь, а не в компонентах: карточка лишь
 // читает результат (canбан + список используют одну функцию).
 //
-// MVP-оговорки (закрываются в B/C):
-//  • Пока проект хранит плоскую ленту messages[], «пинги» — это все follow-up'ы
-//    (idx > 0), включая финальный оффер. После разделения на opener + dunning
-//    (этап B) «пинги» станут ровно пулом пиналки. Сейчас N/total может прихватить
-//    финальный оффер — терпимо.
-//  • Бейдж N/total считает по ВСЕЙ истории scheduled_messages лида. Когда в этапе
-//    C появится ручной перевзвод (несколько серий на одного лида), N/total начнёт
-//    накапливать серии. Понятие «текущая серия» для бейджа определим в C вместе с
-//    механикой того, как повторный взвод пишет строки. КРАСНЫЙ при этом уже
-//    корректен — он сравнивает времена (последний пинг vs последнее входящее), а
-//    не считает серии, поэтому переигрывается на каждом новом взводе.
+// Бейдж N/total — по ТЕКУЩЕМУ заходу (последний dunning_round): холодный
+// авто-догон — это round 0, ручной взвод (этап C) пишет 1,2…. Так бейдж не
+// накапливает прошлые серии. КРАСНЫЙ ортогонален счёту серий — сравнивает
+// времена (последний пинг vs последнее входящее), переигрывается на новом взводе.
 
 const STALE_MS = 24 * 60 * 60 * 1000;
 
@@ -32,7 +25,12 @@ const latestTs = (dates: (string | null | undefined)[]): number =>
   }, 0);
 
 export type LeadHealthInput = {
-  messages: { messageIdx: number; status: string; sentAt: string | null }[];
+  messages: {
+    messageIdx: number;
+    dunningRound: number;
+    status: string;
+    sentAt: string | null;
+  }[];
   // Время последнего ВХОДЯЩЕГО от блогера (contacts.last_message_at — его двигает
   // только listener на входящем; наши отправки его НЕ трогают). null — блогер не
   // писал (или контакта ещё нет). Сравнение с временем последнего пинга и даёт
@@ -56,10 +54,14 @@ export function getLeadHealth(
   const followups = lead.messages.filter(
     (m) => m.messageIdx > 0 && m.messageIdx < FINAL_OFFER_IDX,
   );
-  const total = followups.length;
-  const sent = followups.filter((m) => m.status === "sent").length;
-  // «Пиналка идёт» — есть запланированный, ещё не отправленный пинг.
+  // «Пиналка идёт» — есть запланированный, ещё не отправленный пинг (только один
+  // заход может быть взведён одновременно).
   const active = followups.some((m) => m.status === "pending");
+  // Бейдж — по текущему заходу (последний dunning_round), без накопления серий.
+  const latestRound = followups.reduce((m, f) => Math.max(m, f.dunningRound), 0);
+  const series = followups.filter((m) => m.dunningRound === latestRound);
+  const total = series.length;
+  const sent = series.filter((m) => m.status === "sent").length;
   const dunning = total > 0 ? { sent, total, active } : null;
 
   // Время последнего входящего от блогера и время последнего отправленного пинга.

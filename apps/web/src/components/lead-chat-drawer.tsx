@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Bell, BellOff } from "lucide-react";
 import type { Contact } from "@repo/core";
 import { api } from "../lib/api";
 import {
@@ -71,11 +72,23 @@ export function LeadChatDrawer(props: {
     onOpenFullCard: () => void;
     disabled?: boolean;
   };
+  // Ручная пиналка (этап C): вкл/выкл серию догона прямо из переписки. active —
+  // идёт ли заход сейчас (кнопка показывает «выключить»). Логика POST — на
+  // родителе (мутация в kanban). Нет управления → кнопки нет.
+  dunningControl?: {
+    active: boolean;
+    onToggle: (enabled: boolean) => void;
+    pending?: boolean;
+    disabled?: boolean;
+  };
 }) {
   const chat = useLeadChat(props);
   if (!chat) return null;
   const headerExtra = props.stageControl ? (
-    <StageStrip {...props.stageControl} />
+    <StageStrip
+      {...props.stageControl}
+      dunningControl={props.dunningControl}
+    />
   ) : undefined;
   return (
     <ChatDrawer
@@ -98,7 +111,14 @@ function StageStrip(props: {
   onSetStage: (stageId: string | null) => void;
   onOpenFullCard: () => void;
   disabled?: boolean;
+  dunningControl?: {
+    active: boolean;
+    onToggle: (enabled: boolean) => void;
+    pending?: boolean;
+    disabled?: boolean;
+  };
 }) {
+  const dc = props.dunningControl;
   return (
     <div className="flex items-center justify-between gap-2 border-b border-zinc-200 px-4 py-2">
       <label className="flex min-w-0 items-center gap-2 text-xs text-zinc-500">
@@ -117,13 +137,29 @@ function StageStrip(props: {
           ))}
         </select>
       </label>
-      <button
-        type="button"
-        onClick={props.onOpenFullCard}
-        className="shrink-0 text-xs font-medium text-emerald-700 hover:underline"
-      >
-        Открыть карточку
-      </button>
+      <div className="flex shrink-0 items-center gap-3">
+        {dc && (
+          <button
+            type="button"
+            onClick={() => dc.onToggle(!dc.active)}
+            disabled={dc.pending || dc.disabled}
+            className={
+              "flex items-center gap-1 text-xs font-medium hover:underline disabled:opacity-50 " +
+              (dc.active ? "text-amber-600" : "text-emerald-700")
+            }
+          >
+            {dc.active ? <BellOff size={13} /> : <Bell size={13} />}
+            {dc.active ? "Выключить пиналку" : "Включить пиналку"}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={props.onOpenFullCard}
+          className="text-xs font-medium text-emerald-700 hover:underline"
+        >
+          Открыть карточку
+        </button>
+      </div>
     </div>
   );
 }

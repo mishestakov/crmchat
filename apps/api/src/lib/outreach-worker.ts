@@ -167,6 +167,7 @@ async function runTick() {
       leadId: scheduledMessages.itemId,
       accountId: scheduledMessages.accountId,
       messageIdx: scheduledMessages.messageIdx,
+      dunningRound: scheduledMessages.dunningRound,
       text: scheduledMessages.text,
       stickerSetName: scheduledMessages.stickerSetName,
       stickerUniqueId: scheduledMessages.stickerUniqueId,
@@ -218,6 +219,8 @@ type DueItem = {
   leadId: string;
   accountId: string;
   messageIdx: number;
+  // Заход пиналки: 0 — холодный авто-догон, 1,2… — ручной взвод (этап C).
+  dunningRound: number;
   text: string;
   // Снимок стикер-пинга (котик): если заданы — шлём стикер вместо text.
   stickerSetName: string | null;
@@ -327,11 +330,18 @@ async function processAccount(accountId: string, items: DueItem[]) {
       continue;
     }
 
-    // Ответ блогера гасит ХОЛОДНУЮ цепочку (0,1,2…), но НЕ финальный оффер
-    // (msg_idx=FINAL_OFFER_MSG_IDX): он адресован как раз ответившим/одобренным,
-    // его шлём всегда. Поэтому: финальный оффер — пропускаем гард и отправляем;
-    // холодное сообщение при repliedAt — отменяем (только холодную цепочку).
-    if (lead.repliedAt && item.messageIdx !== FINAL_OFFER_MSG_IDX) {
+    // Ответ блогера гасит ХОЛОДНУЮ цепочку (round 0), но НЕ финальный оффер
+    // (msg_idx=FINAL_OFFER_MSG_IDX, адресован ответившим) и НЕ ручной догон
+    // (dunning_round≥1, этап C). Ручную пиналку менеджер взводит ОСОЗНАННО как
+    // раз на ответившего-и-замолчавшего — у такого лида repliedAt всегда стоит
+    // (от прежнего ответа), этот булев-гард его бы убил на первой же отправке.
+    // Стоп ручной серии — по РЕАЛЬНОМУ новому входящему (outreach-listener гасит
+    // pending) или ручным выключением пиналки, а не по «когда-либо отвечал».
+    if (
+      lead.repliedAt &&
+      item.messageIdx !== FINAL_OFFER_MSG_IDX &&
+      item.dunningRound === 0
+    ) {
       const cancelled = await db
         .update(scheduledMessages)
         .set({ status: "cancelled", error: "lead replied" })
@@ -769,6 +779,9 @@ async function scheduleNextFollowup(
       and(
         eq(scheduledMessages.itemId, item.leadId),
         eq(scheduledMessages.messageIdx, nextIdx),
+        // Тот же заход, что у только что отправленного пинга: довзвод не должен
+        // цеплять соседний round (cold idx переиспользуется ручными заходами).
+        eq(scheduledMessages.dunningRound, item.dunningRound),
         eq(scheduledMessages.status, "pending"),
       ),
     );

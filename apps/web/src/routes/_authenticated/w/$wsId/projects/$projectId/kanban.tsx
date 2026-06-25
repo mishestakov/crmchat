@@ -136,6 +136,27 @@ function KanbanPage() {
     },
   });
 
+  // Ручная пиналка (этап C): вкл/выкл серию догона на лиде из переписки. Бэкенд
+  // планирует новый заход (вкл) / гасит pending (выкл) — рефетч подтянет статус,
+  // от него зависит и подсветка карточки (getLeadHealth).
+  const dunning = useMutation({
+    mutationFn: async (args: { itemId: string; enabled: boolean }) => {
+      const { error } = await api.POST(
+        "/v1/workspaces/{wsId}/projects/{projectId}/items/{itemId}/dunning",
+        {
+          params: { path: { wsId, projectId, itemId: args.itemId } },
+          body: { enabled: args.enabled },
+        },
+      );
+      if (error) throw error;
+    },
+    onSettled: () => {
+      qc.invalidateQueries({
+        queryKey: OUTREACH_QK.projectLeads(wsId, projectId),
+      });
+    },
+  });
+
   // Живой счётчик непрочитанных: contact-stream шлёт `contact` event при каждом
   // изменении unreadCount/lastMessageAt у любого контакта в воркспейсе. Один
   // контакт может быть прицеплен к нескольким лидам (в разных проектах) —
@@ -394,6 +415,18 @@ function KanbanPage() {
             onSetStage: (stageId) =>
               move.mutate({ itemId: drawerLead.id, stageId }),
             onOpenFullCard: () => openFullCard(drawerLead),
+            disabled: isDone,
+          }}
+          dunningControl={{
+            // active — из живого кэша (после toggle рефетч обновит подсветку и
+            // кнопку), а не из снапшота drawerLead.
+            active: !!getLeadHealth(
+              leadsQ.data?.leads.find((l) => l.id === drawerLead.id) ??
+                drawerLead,
+            ).dunning?.active,
+            onToggle: (enabled) =>
+              dunning.mutate({ itemId: drawerLead.id, enabled }),
+            pending: dunning.isPending,
             disabled: isDone,
           }}
         />

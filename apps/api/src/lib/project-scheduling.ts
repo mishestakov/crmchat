@@ -20,6 +20,7 @@ import { channelAlreadyWorkingSql } from "./platform-active.ts";
 import { resolveStickyByPeerIds } from "./sticky.ts";
 import { substituteVariables } from "./substitute-variables.ts";
 import { messagesToOpenerDunning } from "./opener-dunning.ts";
+import { nextAllowedSendAt } from "./outreach-schedule.ts";
 
 // Helpers для активации проекта (/activate) и доливки размещений в активный
 // проект (placements/bulk при status=active|paused). Общая логика:
@@ -701,4 +702,140 @@ export async function repointPlacementSchedule(
       await db.insert(scheduledMessages).values(newRows);
     }
   }
+}
+
+// ─── Этап C: ручной взвод/гашение пиналки на одном лиде ──────────────────────
+// Пиналка — режим on/off на лиде (нельзя запустить две серии параллельно).
+// Холодный авто-догон после опенера — это round 0; ручной взвод пишет 1,2…
+
+// Ручное ВКЛючение пиналки на лиде (кнопка в чате). Планирует новый заход серии
+// (dunning_round = max+1). Первый пинг отсчитывается от ПОСЛЕДНЕЙ активности в
+// треде (наш последний sent / последнее входящее блогера) + первый интервал:
+// блогер молчит дольше интервала → пинг уйдёт сразу (ближайшее рабочее окно).
+// Остальные пинги довзводятся от факта отправки предыдущего (sentinel +
+// scheduleNextFollowup), как холодная серия.
+//
+//  • "armed"   — серия запланирована;
+//  • "already" — серия уже идёт (no-op, кнопка покажет «выключить»);
+//  • "empty"   — планировать нечего: пиналка не настроена / нет истории отправок
+//                (нет канала, с которого допинать).
+export async function armLeadDunning(
+  itemId: string,
+): Promise<"armed" | "already" | "empty"> {
+  const [item] = await db
+    .select()
+    .from(projectItems)
+    .where(eq(projectItems.id, itemId))
+    .limit(1);
+  if (!item) return "empty";
+  const [project] = await db
+    .select()
+    .from(projects)
+    .where(eq(projects.id, item.projectId))
+    .limit(1);
+  if (!project) return "empty";
+  const wsId = project.workspaceId;
+
+  const dunning = await resolveWorkspaceDunning(wsId, project);
+  if (dunning.intervals.length === 0 || dunning.pings.length === 0)
+    return "empty";
+
+  const [ws] = await db
+    .select({ schedule: workspaces.outreachSchedule })
+    .from(workspaces)
+    .where(eq(workspaces.id, wsId))
+    .limit(1);
+  if (!ws) return "empty";
+
+  // История scheduled по лиду: идёт ли серия, max round, с какого аккаунта
+  // общались и когда последний раз слали.
+  const sched = await db
+    .select({
+      status: scheduledMessages.status,
+      messageIdx: scheduledMessages.messageIdx,
+      dunningRound: scheduledMessages.dunningRound,
+      accountId: scheduledMessages.accountId,
+      sentAt: scheduledMessages.sentAt,
+    })
+    .from(scheduledMessages)
+    .where(eq(scheduledMessages.itemId, itemId));
+  // Одна серия за раз: есть pending-пинг (не финальный оффер) → уже идёт.
+  const armed = sched.some(
+    (r) => r.status === "pending" && r.messageIdx < FINAL_OFFER_MSG_IDX,
+  );
+  if (armed) return "already";
+
+  // Аккаунт — sticky-канал треда (с которого реально слали). Без истории
+  // отправок допинать нечем: нет открытого канала с лидом.
+  const lastSentRow = sched
+    .filter((r) => r.accountId && r.sentAt)
+    .sort((a, b) => b.sentAt!.getTime() - a.sentAt!.getTime())[0];
+  const accountId = lastSentRow?.accountId;
+  if (!accountId) return "empty";
+
+  const round = sched.reduce((m, r) => Math.max(m, r.dunningRound), 0) + 1;
+
+  // Последняя активность в треде = max(наш последний sent, последнее входящее
+  // блогера) — та же ось, что подсветка молчунов (getLeadHealth.lastMessageAt).
+  const lastSent = lastSentRow?.sentAt?.getTime() ?? 0;
+  let lastInbound = 0;
+  if (item.contactId) {
+    const [c] = await db
+      .select({ lastMessageAt: contacts.lastMessageAt })
+      .from(contacts)
+      .where(eq(contacts.id, item.contactId))
+      .limit(1);
+    lastInbound = c?.lastMessageAt?.getTime() ?? 0;
+  }
+  // 0 (нет истории) → от now; но история отправок тут всегда есть (accountId
+  // взят из sent-строки выше), так что fallback скорее формальность.
+  const activityTime = Math.max(lastSent, lastInbound) || Date.now();
+
+  const lead = toSchedulingLead(item);
+  const subst = (t: string) =>
+    substituteVariables(t, {
+      username: lead.username,
+      properties: lead.properties as Record<string, string>,
+    });
+  const chosen = pickPings(dunning.pings, dunning.intervals.length);
+  if (chosen.length === 0) return "empty";
+
+  const firstSendAt = nextAllowedSendAt(
+    ws.schedule,
+    new Date(activityTime + delayToMs(dunning.intervals[0]!)),
+  );
+  const rows: ScheduledRow[] = chosen.map((v, i) => ({
+    workspaceId: wsId,
+    projectId: project.id,
+    itemId,
+    accountId,
+    messageIdx: i + 1,
+    dunningRound: round,
+    text: v.kind === "text" ? subst(v.text) : "",
+    stickerSetName: v.kind === "sticker" ? v.setName : null,
+    stickerUniqueId: v.kind === "sticker" ? v.uniqueId : null,
+    // Первый пинг — от последней активности (интервал истёк → сразу). Остальные
+    // довзводятся от факта отправки предыдущего (scheduleNextFollowup).
+    sendAt: i === 0 ? firstSendAt : FOLLOWUP_PENDING_SENTINEL,
+  }));
+  await db.insert(scheduledMessages).values(rows);
+  return "armed";
+}
+
+// Ручное ВЫКЛючение пиналки: гасим pending-пинги текущего захода (как ручной
+// перехват в quick-send). Финальный оффер (idx 1000) не трогаем — он вне серии.
+// Возвращает число погашенных пингов (0 — серия и так не шла).
+export async function disarmLeadDunning(itemId: string): Promise<number> {
+  const cancelled = await db
+    .update(scheduledMessages)
+    .set({ status: "cancelled", error: "manual dunning off" })
+    .where(
+      and(
+        eq(scheduledMessages.itemId, itemId),
+        eq(scheduledMessages.status, "pending"),
+        sql`${scheduledMessages.messageIdx} < ${FINAL_OFFER_MSG_IDX}`,
+      ),
+    )
+    .returning({ id: scheduledMessages.id });
+  return cancelled.length;
 }
