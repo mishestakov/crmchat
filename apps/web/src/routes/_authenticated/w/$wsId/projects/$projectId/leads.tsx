@@ -6,6 +6,7 @@ import {
   Bell,
   Check,
   CheckCheck,
+  Clock,
   MessageCircleReply,
   Plus,
   Sparkles,
@@ -678,8 +679,8 @@ function LeadsPage() {
               <tbody>
                 {visibleGroups.map((grp) => {
                   const l = grp.primary;
-                  // Подсветка застоя (§1.4): красный/жёлтый — левым бордером
-                  // строки, чтобы не спорить с зелёным фоном «ответил».
+                  // Подсветка застоя (§1.4): красный — левым бордером строки,
+                  // чтобы не спорить с зелёным фоном «ответил».
                   const health = getLeadHealth(l);
                   return (
                   <tr
@@ -698,9 +699,7 @@ function LeadsPage() {
                       "group cursor-pointer border-t border-zinc-100 hover:bg-zinc-50 " +
                       (health.color === "red"
                         ? "border-l-2 border-l-red-400 "
-                        : health.color === "yellow"
-                          ? "border-l-2 border-l-amber-400 "
-                          : "") +
+                        : "") +
                       (l.repliedAt ? "bg-emerald-50/40 " : "") +
                       (l.skippedAt ? "opacity-60" : "")
                     }
@@ -872,20 +871,31 @@ function LeadCell({
         </div>
       )}
       <SiblingChannels group={group} />
-      {health.dunning && (
-        <div className="flex items-center gap-1 text-xs">
-          <Bell
+      {health.badge?.kind === "dunning" && (
+        <div className="flex items-center gap-1 text-xs text-zinc-500">
+          <Bell size={11} className="shrink-0 text-zinc-400" />
+          <span>
+            пиналка {health.badge.sent}/{health.badge.total}
+          </span>
+        </div>
+      )}
+      {health.badge?.kind === "stale" && (
+        <div
+          className={
+            "flex items-center gap-1 text-xs " +
+            (health.color === "red" ? "text-red-500" : "text-zinc-500")
+          }
+        >
+          <Clock
             size={11}
             className={
               "shrink-0 " +
-              (health.dunning.active ? "text-zinc-400" : "text-red-400")
+              (health.color === "red" ? "text-red-400" : "text-zinc-400")
             }
           />
-          <span
-            className={health.dunning.active ? "text-zinc-500" : "text-red-500"}
-          >
-            пиналка {health.dunning.sent}/{health.dunning.total}
-            {health.dunning.active ? "" : " · ответа нет"}
+          <span>
+            затихло {health.badge.days}{" "}
+            {pluralize(health.badge.days, "день", "дня", "дней")} назад
           </span>
         </div>
       )}

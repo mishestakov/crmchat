@@ -1,14 +1,21 @@
 // Вычисляемая «здоровье»-подсветка лида (§1.4 specs/bd-autodogon.md).
 // Чистая функция поверх данных, которые уже отдаёт /leads — без отдельных
-// полей-цветов в БД. Держим логику здесь, а не в компонентах: карточка лишь
-// читает результат (canбан + список используют одну функцию).
+// полей-цветов в БД. Держим логику здесь, а не в компонентах: канбан и список
+// читают один результат.
 //
-// Бейдж N/total — по ТЕКУЩЕМУ заходу (последний dunning_round): холодный
-// авто-догон — это round 0, ручной взвод (этап C) пишет 1,2…. Так бейдж не
-// накапливает прошлые серии. КРАСНЫЙ ортогонален счёту серий — сравнивает
-// времена (последний пинг vs последнее входящее), переигрывается на новом взводе.
+// Бейдж карточки — ровно одно из двух, по тому, ВЗВЕДЕНА ли пиналка:
+//   • пиналка идёт  → «пиналка sent/total» (прогресс текущего захода);
+//   • пиналка выкл  → «затихло N дней» (дней с последнего сообщения в треде),
+//     чтобы менеджер видел протухающие карточки и решал — включить пиналку или
+//     написать. 3+ дней застоя → красный, до 3 — обычный.
+// Прогресс N/total — по ТЕКУЩЕМУ заходу (последний dunning_round): холодный
+// авто-догон — round 0, ручной взвод (этап C) пишет 1,2…. Так бейдж не
+// накапливает прошлые серии.
 
-const STALE_MS = 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Порог застоя: затих STALE_DAYS+ дней назад → красный.
+const STALE_DAYS = 3;
 
 // Финальный оффер («вы выбраны») живёт на этом idx — отдельный bulk-механизм, не
 // пиналка. Исключаем его из прогресса пиналки (совпадает с FINAL_OFFER_MSG_IDX
@@ -33,17 +40,21 @@ export type LeadHealthInput = {
   }[];
   // Время последнего ВХОДЯЩЕГО от блогера (contacts.last_message_at — его двигает
   // только listener на входящем; наши отправки его НЕ трогают). null — блогер не
-  // писал (или контакта ещё нет). Сравнение с временем последнего пинга и даёт
-  // «ответил ли он на серию» — устойчиво к повторным сериям, без вечного флага
-  // repliedAt (тот = «когда-либо ответил», для этого негоден).
+  // писал (или контакта ещё нет).
   lastMessageAt: string | null;
 };
 
 export type LeadHealth = {
-  // null — нейтральная карточка (машина в работе либо свежий контакт).
-  color: "yellow" | "red" | null;
-  // Прогресс пиналки для бейджа `N/total`; null — пингов в цепочке нет.
-  dunning: { sent: number; total: number; active: boolean } | null;
+  // Подсветка карточки: красный — застой 3+ дней при выключенной пиналке; null —
+  // нейтраль (пиналка идёт, либо коммуникация свежая).
+  color: "red" | null;
+  // Взведена ли пиналка (есть pending-пинг) — для кнопки вкл/выкл в чате.
+  active: boolean;
+  // Что рисуем в строке-бейдже карточки; null — показывать нечего.
+  badge:
+    | { kind: "dunning"; sent: number; total: number }
+    | { kind: "stale"; days: number }
+    | null;
 };
 
 export function getLeadHealth(
@@ -55,42 +66,37 @@ export function getLeadHealth(
     (m) => m.messageIdx > 0 && m.messageIdx < FINAL_OFFER_IDX,
   );
   // «Пиналка идёт» — есть запланированный, ещё не отправленный пинг (только один
-  // заход может быть взведён одновременно).
+  // заход взведён одновременно).
   const active = followups.some((m) => m.status === "pending");
-  // Бейдж — по текущему заходу (последний dunning_round), без накопления серий.
-  const latestRound = followups.reduce((m, f) => Math.max(m, f.dunningRound), 0);
-  const series = followups.filter((m) => m.dunningRound === latestRound);
-  const total = series.length;
-  const sent = series.filter((m) => m.status === "sent").length;
-  const dunning = total > 0 ? { sent, total, active } : null;
 
-  // Время последнего входящего от блогера и время последнего отправленного пинга.
-  const lastInbound = latestTs([lead.lastMessageAt]);
-  const lastSentPing = latestTs(
-    followups.filter((m) => m.status === "sent").map((m) => m.sentAt),
+  // Пиналка взведена → бейдж прогресса серии по текущему заходу. Карточка
+  // нейтральная: ей занимается машина, привлекать внимание менеджера не нужно.
+  if (active) {
+    const latestRound = followups.reduce(
+      (m, f) => Math.max(m, f.dunningRound),
+      0,
+    );
+    const series = followups.filter((m) => m.dunningRound === latestRound);
+    const sent = series.filter((m) => m.status === "sent").length;
+    return {
+      color: null,
+      active: true,
+      badge: { kind: "dunning", sent, total: series.length },
+    };
+  }
+
+  // Пиналка выключена → считаем застой. Активность = max(наши отправки, последнее
+  // входящее): «последнее сообщение в треде» в любую сторону. Ловит и «он молчит
+  // нам», и «он написал, а мы не отвечаем».
+  const lastActivity = Math.max(
+    latestTs(lead.messages.map((m) => m.sentAt)),
+    latestTs([lead.lastMessageAt]),
   );
+  if (lastActivity === 0) return { color: null, active: false, badge: null };
 
-  // Порядок проверки (§1.4): красный → пиналка идёт → < суток → жёлтый.
-
-  // Красный: серия выкл (нет pending), пинг был отправлен, и блогер НЕ написал
-  // ПОСЛЕ последнего пинга. Сравниваем времена, а не булев «когда-либо ответил»
-  // (repliedAt) — поэтому корректно переигрывается на повторных сериях: новый
-  // взвод даёт новый lastSentPing, и если на него снова не ответили — снова
-  // красный, даже если блогер отвечал в прошлой серии.
-  if (!active && lastSentPing > 0 && lastInbound < lastSentPing) {
-    return { color: "red", dunning };
-  }
-
-  // Жёлтый: пиналка выкл и > суток с последней активности в треде. Активность —
-  // max(наши отправки, последнее входящее): ловит и «он молчит нам», и «он
-  // написал, а мы сутки не отвечаем».
-  if (!active) {
-    const lastOutbound = latestTs(lead.messages.map((m) => m.sentAt));
-    const lastActivity = Math.max(lastOutbound, lastInbound);
-    if (lastActivity > 0 && now - lastActivity > STALE_MS) {
-      return { color: "yellow", dunning };
-    }
-  }
-
-  return { color: null, dunning };
+  const days = Math.floor((now - lastActivity) / DAY_MS);
+  const color = days >= STALE_DAYS ? "red" : null;
+  // До суток молчания не флагуем — карточка свежая, бейдж только зашумит.
+  const badge = days >= 1 ? { kind: "stale" as const, days } : null;
+  return { color, active: false, badge };
 }

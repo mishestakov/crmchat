@@ -1,10 +1,11 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { Bell, User } from "lucide-react";
+import { Bell, Clock, User } from "lucide-react";
 import type { paths } from "@repo/api-client";
 import { api } from "../../../../../../lib/api";
 import { getLeadHealth } from "../../../../../../lib/lead-health";
+import { pluralize } from "../../../../../../lib/date-utils";
 import { errorMessage } from "../../../../../../lib/errors";
 import { BackButton } from "../../../../../../components/back-button";
 import { ProjectTabs } from "../../../../../../components/project-tabs";
@@ -420,10 +421,10 @@ function KanbanPage() {
           dunningControl={{
             // active — из живого кэша (после toggle рефетч обновит подсветку и
             // кнопку), а не из снапшота drawerLead.
-            active: !!getLeadHealth(
+            active: getLeadHealth(
               leadsQ.data?.leads.find((l) => l.id === drawerLead.id) ??
                 drawerLead,
-            ).dunning?.active,
+            ).active,
             onToggle: (enabled) =>
               dunning.mutate({ itemId: drawerLead.id, enabled }),
             pending: dunning.isPending,
@@ -519,14 +520,12 @@ function LeadCard(props: {
     ch && ch.platform in PLATFORMS ? (ch.platform as Platform) : null;
   const unread = lead.unreadCount;
   const health = getLeadHealth(lead);
-  // Подсветка застоя (§1.4): красный — пиналка отстрелялась без ответа,
-  // жёлтый — завис > суток и пиналка выкл. Нейтральная карточка — белая.
+  // Подсветка застоя (§1.4): красный — пиналка выкл и затих 3+ дней назад.
+  // Нейтральная карточка — белая (пиналка идёт либо коммуникация свежая).
   const toneClass =
     health.color === "red"
       ? "border-red-300 bg-red-50 hover:border-red-400 hover:bg-red-100"
-      : health.color === "yellow"
-        ? "border-amber-300 bg-amber-50 hover:border-amber-400 hover:bg-amber-100"
-        : "border-zinc-200 bg-white hover:border-emerald-300 hover:bg-zinc-50";
+      : "border-zinc-200 bg-white hover:border-emerald-300 hover:bg-zinc-50";
 
   return (
     <div
@@ -571,22 +570,31 @@ function LeadCard(props: {
           <NextStepLine next={lead.nextStep} />
         </div>
       )}
-      {health.dunning && (
-        <div className="mt-1 flex items-center gap-1 text-xs">
-          <Bell
+      {health.badge?.kind === "dunning" && (
+        <div className="mt-1 flex items-center gap-1 text-xs text-zinc-500">
+          <Bell size={11} className="shrink-0 text-zinc-400" />
+          <span>
+            пиналка {health.badge.sent}/{health.badge.total}
+          </span>
+        </div>
+      )}
+      {health.badge?.kind === "stale" && (
+        <div
+          className={
+            "mt-1 flex items-center gap-1 text-xs " +
+            (health.color === "red" ? "text-red-500" : "text-zinc-500")
+          }
+        >
+          <Clock
             size={11}
             className={
               "shrink-0 " +
-              (health.dunning.active ? "text-zinc-400" : "text-red-400")
+              (health.color === "red" ? "text-red-400" : "text-zinc-400")
             }
           />
-          <span
-            className={
-              health.dunning.active ? "text-zinc-500" : "text-red-500"
-            }
-          >
-            пиналка {health.dunning.sent}/{health.dunning.total}
-            {health.dunning.active ? "" : " · ответа нет"}
+          <span>
+            затихло {health.badge.days}{" "}
+            {pluralize(health.badge.days, "день", "дня", "дней")} назад
           </span>
         </div>
       )}
