@@ -349,6 +349,10 @@ export const outreachAccounts = pgTable(
     externalUsername: text("external_username"),
     phoneNumber: text("phone_number"),
     firstName: text("first_name"),
+    // Имя отправителя для подстановки {{отправитель}} в опенер — override над
+    // firstName (TG-профиль часто пустой/одинаковый, см. account-label.ts).
+    // null → эффективное имя берём из firstName.
+    outreachName: text("outreach_name"),
     // TG-only: Premium-флаг (null/false для MAX).
     hasPremium: boolean("has_premium").notNull().default(false),
     // MAX: loginToken для реконнекта живого сокета. У TG null — сессия в FS

@@ -22,6 +22,10 @@ export const CHANNEL_VARIABLES: VariableOption[] = [
 
 export const TEMPLATE_VARIABLES: VariableOption[] = [
   CANONICAL,
+  // Имя ОТПРАВИТЕЛЯ (аккаунта, с которого уйдёт сообщение): outreach_name ??
+  // firstName. Резолвится на сервере при активации по выбранному аккаунту — в
+  // preview значения нет (зависит от аккаунта), placeholder остаётся.
+  { key: "отправитель", label: "имя отправителя (из аккаунта)" },
   ...CHANNEL_VARIABLES,
 ];
 

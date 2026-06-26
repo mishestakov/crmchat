@@ -23,6 +23,7 @@ import { channelIsRknSql } from "../lib/rkn-registry.ts";
 import {
   resolveStickyByTgUserIds,
   resolveProjectAccountIds,
+  resolveSenderNames,
   scheduleLeads,
   FINAL_OFFER_MSG_IDX,
 } from "../lib/project-scheduling.ts";
@@ -886,6 +887,9 @@ app.openapi(
       .map((r) => r.tgUserId)
       .filter((x): x is string => x !== null);
     const sticky = await resolveStickyByTgUserIds(wsId, tgUserIds);
+    // Имена отправителей пула — чтобы {{отправитель}} в оффере резолвился, а не
+    // уезжал литералом (тот же резолвер, что и в опенере/пиналке).
+    const senderNames = await resolveSenderNames(accountIds);
 
     let rr = 0;
     const now = new Date();
@@ -905,6 +909,7 @@ app.openapi(
         text: substituteVariables(text, {
           username: pl.username,
           properties: pl.properties as Record<string, string>,
+          senderName: senderNames.get(accountId) ?? null,
         }),
         sendAt: now,
       };

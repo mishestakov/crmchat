@@ -50,10 +50,14 @@ function AccountDetailPage() {
   });
 
   const [dailyLimit, setDailyLimit] = useState<number>(0);
+  const [outreachName, setOutreachName] = useState<string>("");
 
   // Hydrate local input из server-data при загрузке/refetch.
   useEffect(() => {
-    if (account.data) setDailyLimit(account.data.newLeadsDailyLimit);
+    if (account.data) {
+      setDailyLimit(account.data.newLeadsDailyLimit);
+      setOutreachName(account.data.outreachName ?? "");
+    }
   }, [account.data]);
 
   const save = useMutation({
@@ -62,7 +66,10 @@ function AccountDetailPage() {
         "/v1/workspaces/{wsId}/outreach/accounts/{accountId}",
         {
           params: { path: { wsId, accountId } },
-          body: { newLeadsDailyLimit: dailyLimit },
+          body: {
+            newLeadsDailyLimit: dailyLimit,
+            outreachName: outreachName.trim() || null,
+          },
         },
       );
       if (error) throw error;
@@ -127,7 +134,9 @@ function AccountDetailPage() {
 
   const acc = account.data;
   const isUnauthorized = acc.status === "unauthorized";
-  const dirty = dailyLimit !== acc.newLeadsDailyLimit;
+  const dirty =
+    dailyLimit !== acc.newLeadsDailyLimit ||
+    outreachName.trim() !== (acc.outreachName ?? "");
   const cooldownMs = acc.cooldownUntil
     ? new Date(acc.cooldownUntil).getTime()
     : null;
@@ -182,6 +191,25 @@ function AccountDetailPage() {
         <HistoryCard wsId={wsId} accountId={accountId} />
 
         <div className="rounded-2xl bg-white p-5 shadow-sm space-y-4">
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium">
+              Имя отправителя
+            </span>
+            <span className="mb-2 block text-xs text-zinc-500">
+              Подставляется в опенер через переменную {"{{отправитель}}"} — чтобы
+              Серёжа не подписался Юлей. Пусто — берём имя из TG-профиля
+              {acc.firstName ? ` (${acc.firstName})` : ""}.
+            </span>
+            <input
+              type="text"
+              maxLength={64}
+              value={outreachName}
+              placeholder={acc.firstName ?? "Имя"}
+              onChange={(e) => setOutreachName(e.target.value)}
+              className="w-64 rounded-md border border-zinc-300 px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+            />
+          </label>
+
           <label className="block">
             <span className="mb-1 block text-sm font-medium">
               Дневной лимит лидов

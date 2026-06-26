@@ -246,6 +246,8 @@ function buildScheduledRows(opts: {
   baseTime: Date;
   priorByTgUserId: Map<string, string>;
   warmTgUserIds: Set<string>;
+  // accountId → имя отправителя (outreach_name ?? first_name) для {{отправитель}}.
+  senderNameByAccountId: Map<string, string>;
 }): ScheduledRow[] {
   // Опенер — проектный (fallback из messages для незабэкфилленных проектов).
   // Пиналка — workspace-уровень (opts.dunning).
@@ -289,6 +291,7 @@ function buildScheduledRows(opts: {
       substituteVariables(t, {
         username: lead.username,
         properties: lead.properties as Record<string, string>,
+        senderName: opts.senderNameByAccountId.get(accountId) ?? null,
       });
     const base = {
       workspaceId: opts.wsId,
@@ -649,6 +652,12 @@ export async function scheduleLeads(opts: {
       resolveWorkspaceDunning(opts.wsId, opts.project),
       resolveProjectMaxAccountIds(opts.wsId, opts.project),
     ]);
+  // Имена отправителей по всем аккаунтам в игре (TG ∪ MAX) — для {{отправитель}}.
+  // Дубли id безвредны: SQL IN и Map-ключ их схлопывают.
+  const senderNameByAccountId = await resolveSenderNames([
+    ...opts.accountIds,
+    ...maxAccountIds,
+  ]);
   return buildScheduledRows({
     wsId: opts.wsId,
     project: opts.project,
@@ -659,7 +668,35 @@ export async function scheduleLeads(opts: {
     baseTime: opts.baseTime,
     priorByTgUserId,
     warmTgUserIds,
+    senderNameByAccountId,
   });
+}
+
+// accountId → имя отправителя для {{отправитель}}: outreach_name (override
+// менеджера) ?? first_name (TG-профиль). Пустые/null имена в карту не кладём —
+// тогда {{отправитель}} останется placeholder'ом (виден в preview/тексте).
+// Экспортируется: тот же резолвер нужен всем account-aware путям подстановки
+// (холодная серия, ручной взвод, финальный оффер), чтобы переменная не уехала
+// литералом в части из них.
+export async function resolveSenderNames(
+  accountIds: string[],
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (accountIds.length === 0) return map;
+  const rows = await db
+    .select({
+      id: outreachAccounts.id,
+      name: sql<
+        string | null
+      >`coalesce(${outreachAccounts.outreachName}, ${outreachAccounts.firstName})`,
+    })
+    .from(outreachAccounts)
+    .where(inArray(outreachAccounts.id, accountIds));
+  for (const r of rows) {
+    const n = r.name?.trim();
+    if (n) map.set(r.id, n);
+  }
+  return map;
 }
 
 
@@ -958,10 +995,14 @@ export async function armLeadDunning(
   const activityTime = Math.max(lastSent, lastInbound) || Date.now();
 
   const lead = toSchedulingLead(item);
+  // Имя отправителя для {{отправитель}} — по sticky-аккаунту допина (тот же, что
+  // и в холодной серии: иначе переменная в ручном пинге уехала бы литералом).
+  const senderName = (await resolveSenderNames([accountId])).get(accountId) ?? null;
   const subst = (t: string) =>
     substituteVariables(t, {
       username: lead.username,
       properties: lead.properties as Record<string, string>,
+      senderName,
     });
   // Котики off, если допинываем через MAX-аккаунт (в MAX стикеров пиналки нет).
   // Платформу взяли тем же sched-запросом (lastSentRow) — без отдельного SELECT.

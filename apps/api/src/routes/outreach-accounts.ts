@@ -68,6 +68,8 @@ const AccountSchema = z
     tgUsername: z.string().nullable(),
     phoneNumber: z.string().nullable(),
     firstName: z.string().nullable(),
+    // Имя отправителя для {{отправитель}} — override над firstName; null = берём firstName.
+    outreachName: z.string().nullable(),
     hasPremium: z.boolean(),
     newLeadsDailyLimit: z.number().int(),
     // FloodWait cooldown — если set, аккаунт молчит до этой даты. Worker и
@@ -115,6 +117,9 @@ const TransferAccountBody = z
 const PatchAccountBody = z
   .object({
     newLeadsDailyLimit: z.number().int().min(0).max(1000).optional(),
+    // Имя отправителя для {{отправитель}}. null/"" → очистить override (вернуться
+    // к firstName). undefined → не трогать.
+    outreachName: z.string().max(64).nullable().optional(),
   })
   .openapi("PatchOutreachAccount");
 
@@ -146,6 +151,7 @@ function serializeAccount(r: typeof outreachAccounts.$inferSelect) {
     tgUsername: r.externalUsername,
     phoneNumber: r.phoneNumber,
     firstName: r.firstName,
+    outreachName: r.outreachName,
     hasPremium: r.hasPremium,
     newLeadsDailyLimit: r.newLeadsDailyLimit,
     cooldownUntil: r.cooldownUntil?.toISOString() ?? null,
@@ -294,6 +300,11 @@ app.openapi(
       .update(outreachAccounts)
       .set({
         newLeadsDailyLimit: body.newLeadsDailyLimit,
+        // undefined → drizzle пропускает поле; "" после трима → null (очистка override).
+        outreachName:
+          body.outreachName === undefined
+            ? undefined
+            : body.outreachName?.trim() || null,
         updatedAt: new Date(),
       })
       .where(eq(outreachAccounts.id, accountId))
