@@ -79,6 +79,14 @@ export function ContactPicker(props: {
             (() => {
               const uname = debounced.replace(/^@/, "").trim();
               if (!uname) return null;
+              // MAX-ссылка max.ru/u/<token> — сырой URL «стрёмный»: имя достанется
+              // только при создании (резолв на сервере), поэтому показываем чистый
+              // лейбл. Уже привязанный контакт находится поиском по max_link (выше)
+              // и показывается по имени в results.
+              const isMaxLink = /max\.ru\/u\//i.test(uname);
+              const label = isMaxLink
+                ? "Создать MAX-контакт по ссылке"
+                : `Создать контакт ${uname.includes("/") ? uname : `@${uname}`}`;
               return (
                 <button
                   type="button"
@@ -86,7 +94,7 @@ export function ContactPicker(props: {
                   disabled={props.loading}
                   className="w-full rounded-md bg-emerald-600 px-2 py-1.5 text-left text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
                 >
-                  + Создать контакт {uname.includes("/") ? uname : `@${uname}`}
+                  + {label}
                 </button>
               );
             })()}

@@ -24,7 +24,17 @@ export const contactUsernameSql: SQL<string | null> = sql<string | null>`${conta
 // contactReady=true → лид уходил в «в работе» без отправки и без действия
 // оператора, список «прыгал»). Личку оператор выбирает явно кнопкой «Использовать
 // личку канала» → set-admin пишет contact_method.kind='channel_dm' → ветка ниже.
+// MAX-получатель: контакт привязан (project_items.contact_id), но @username у
+// него нет и contact_method не задан — TG-условия выше его не ловят. Признаём
+// готовым, если у привязанного контакта есть max-пир (max_user_id | max_link),
+// как maxPeerRef. Коррелированный подзапрос — не требует join contacts у
+// вызывающих (предикат используется в нескольких запросах).
 export const contactReadySql = sql<boolean>`(
   ${projectItems.username} is not null
   or (${channels.meta} -> 'contact_method' ->> 'kind') is not null
+  or exists (
+    select 1 from contacts cr
+    where cr.id = ${projectItems.contactId}
+      and (cr.properties ->> 'max_user_id' <> '' or cr.properties ->> 'max_link' <> '')
+  )
 )`;

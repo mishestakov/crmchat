@@ -156,9 +156,11 @@ const UpdateContactSchema = BaseUpdate.openapi("UpdateContact");
 const WsParam = z.object({ wsId: z.string().min(1).max(64) });
 const WsIdParam = z.object({ wsId: z.string().min(1).max(64), id: z.string().min(1).max(64) });
 
-// Поиск через `q` — только по имени и telegram. У нас TG-CRM, остальные identity
-// поля (email/phone/url) опциональны и редко заполнены — мусор в результатах.
-const SEARCHABLE_KEYS = ["full_name", "telegram_username"];
+// Поиск через `q` — по имени, telegram и MAX-ссылке. max_link добавлен, чтобы
+// вставка max.ru/u-ссылки находила уже привязанный MAX-контакт (показать его по
+// имени, а не плодить дубль с сырым URL). Прочие identity (email/phone) не ищем —
+// редко заполнены, мусор в результатах.
+const SEARCHABLE_KEYS = ["full_name", "telegram_username", "max_link"];
 
 const app = new OpenAPIHono<{ Variables: WorkspaceVars }>();
 
