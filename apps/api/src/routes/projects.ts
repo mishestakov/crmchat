@@ -1154,13 +1154,17 @@ app.openapi(
           // single-owner — это одно и то же. Когда появятся роли/мемберы, админ,
           // смотрящий лид мембера, не увидит исходящее мембера → ложное «затихло».
           // Тогда скоупить субквери на аккаунты ВОРКСПЕЙСА, а не смотрящего.
+          // .mapWith(contacts.lastMessageAt): drizzle применяет timestamp-декодер
+          // (строка драйвера → Date) только к КОЛОНКАМ, к сырому sql-выражению —
+          // нет. Без этого greatest(...) приходит строкой и .toISOString() ниже
+          // падает 500. Переиспользуем декодер самой колонки.
           lastMessageAt: sql<Date | null>`greatest(
             ${contacts.lastMessageAt},
             (select max(greatest(${tgChats.lastMessageAt}, ${tgChats.lastOutboundAt}))
              from ${tgChats}
              where ${tgChats.peerUserId} = ${projectItems.tgUserId}
                and ${tgChats.accountId} in ${myAccountIdsSql(wsId, userId)})
-          )`,
+          )`.mapWith(contacts.lastMessageAt),
           nextStep: nextStepSql,
           stageId: projectItems.stageId,
           skippedAt: projectItems.skippedAt,
