@@ -704,6 +704,37 @@ export async function repointPlacementSchedule(
   }
 }
 
+// Смена админа канала на ДРУГОГО человека (set-admin при уже привязанном
+// контакте): прежний график адресован прежнему контакту — обнуляем (delete, не
+// cancel: переписка с прежним живёт в tg_chats и не теряется; item → «незапла-
+// нированное»). Новую серию НЕ планируем — рассылку новому админу запускает
+// менеджер вручную (больше контроля; иначе на уже-продвинутых карточках
+// само-взводилась пиналка). Стадию и repliedAt не трогаем — ось воронки
+// ортогональна оси рассылки. В ОТЛИЧИЕ от repointPlacementSchedule (первое
+// назначение) — без планирования свежего опенера.
+export async function clearScheduleOnAdminChange(
+  channelId: string,
+): Promise<void> {
+  const items = await db
+    .select({ id: projectItems.id })
+    .from(projectItems)
+    .innerJoin(projects, eq(projects.id, projectItems.projectId))
+    .where(
+      and(
+        eq(projectItems.channelId, channelId),
+        inArray(projects.status, ["active", "paused"]),
+        isNull(projectItems.skippedAt),
+      ),
+    );
+  if (items.length === 0) return;
+  await db.delete(scheduledMessages).where(
+    inArray(
+      scheduledMessages.itemId,
+      items.map((r) => r.id),
+    ),
+  );
+}
+
 // ─── Этап C: ручной взвод/гашение пиналки на одном лиде ──────────────────────
 // Пиналка — режим on/off на лиде (нельзя запустить две серии параллельно).
 // Холодный авто-догон после опенера — это round 0; ручной взвод пишет 1,2…

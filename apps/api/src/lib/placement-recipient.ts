@@ -1,6 +1,7 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
+  clearScheduleOnAdminChange,
   repointPlacementSchedule,
   scheduleDolivkaForChannel,
 } from "./project-scheduling.ts";
@@ -32,7 +33,7 @@ export async function resolveAdminRecipient(channelId: string) {
 // размещения канала на текущего админа. Первый админ выигрывает.
 export async function healPlacementRecipients(
   channelId: string,
-  opts: { override?: boolean } = {},
+  opts: { override?: boolean; clearScheduleOnly?: boolean } = {},
 ): Promise<void> {
   const admin = await resolveAdminRecipient(channelId);
   if (!admin.contactId) return;
@@ -48,9 +49,15 @@ export async function healPlacementRecipients(
   // Планирование внутри heal, а не у вызывающих: любой вызов лечения сам
   // добирает рассылку, асимметрии не бывает.
   if (opts.override) {
-    // Явная смена контакта (set-admin) = перенаправление: обнулить старый
-    // график и поставить свежий опенер новому контакту, без cold-гейта.
-    await repointPlacementSchedule(channelId);
+    if (opts.clearScheduleOnly) {
+      // Смена админа на ДРУГОГО (был контакт → стал другой): обнуляем график
+      // прежнего, новую серию НЕ планируем — запуск рассылки новому вручную.
+      await clearScheduleOnAdminChange(channelId);
+    } else {
+      // Первое назначение контакта (прежнего админа не было) = перенаправление:
+      // обнулить старый график и поставить свежий опенер новому, без cold-гейта.
+      await repointPlacementSchedule(channelId);
+    }
   } else {
     // Пассивное лечение осиротевших размещений (привязали первый контакт) —
     // поздняя доливка с cold-гейтом (новых на холодном проекте запускает

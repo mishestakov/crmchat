@@ -37,6 +37,7 @@ export function ContactResolver({
     mutationFn: async (body: {
       contactId?: string;
       username?: string;
+      maxLink?: string;
       dm?: boolean;
       group?: { chatId: string; accountId: string };
     }) => {
@@ -49,6 +50,11 @@ export function ContactResolver({
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["channel", wsId, channelId] });
       qc.invalidateQueries({ queryKey: ["channels", wsId] });
+      // set-admin всегда перенаводит project_items (healPlacementRecipients) →
+      // карточки лидов/канбан устаревают. Префикс без projectId: рефетчатся
+      // только смонтированные запросы (текущий проект). Раньше карточного пути
+      // (chat-drawer) этой инвалидации не было → требовался F5.
+      qc.invalidateQueries({ queryKey: ["project-leads", wsId] });
       onResolved?.();
       onClose?.();
     },
@@ -183,7 +189,13 @@ export function ContactResolver({
             wsId={wsId}
             excludeIds={new Set()}
             onPick={(contactId) => setAdmin.mutate({ contactId })}
-            onCreateByUsername={(username) => setAdmin.mutate({ username })}
+            // MAX-ссылка max.ru/u/<token> длиннее 64 → поле maxLink (модель
+            // получателя для ЛС в MAX), как в списке админов channel-card.
+            onCreateByUsername={(input) =>
+              /max\.ru\/u\//i.test(input)
+                ? setAdmin.mutate({ maxLink: input })
+                : setAdmin.mutate({ username: input })
+            }
             loading={setAdmin.isPending}
           />
         </div>

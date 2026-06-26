@@ -785,6 +785,20 @@ app.openapi(
       });
     }
 
+    // Был ли у канала уже привязан админ — тогда это «смена/переназначение», а
+    // не первое назначение. На любой смене график прежнего обнуляем и новую
+    // серию НЕ планируем (clearScheduleOnly) — рассылку новому менеджер запускает
+    // вручную, без само-взвода пиналки на уже-продвинутых карточках. У канала
+    // может быть НЕСКОЛЬКО админ-строк (составной PK) → проверяем сам факт
+    // наличия, а не сравниваем с конкретным контактом (это было бы недетермини-
+    // ровано на limit(1) без order by).
+    const [prior] = await db
+      .select({ contactId: channelAdmins.contactId })
+      .from(channelAdmins)
+      .where(eq(channelAdmins.channelId, id))
+      .limit(1);
+    const isAdminChange = !!prior;
+
     // Глобально по каналу: один админ-получатель (заменяем) + перенаводим все
     // размещения канала (override).
     await db.delete(channelAdmins).where(eq(channelAdmins.channelId, id));
@@ -792,7 +806,10 @@ app.openapi(
       .insert(channelAdmins)
       .values({ channelId: id, contactId })
       .onConflictDoNothing();
-    await healPlacementRecipients(id, { override: true });
+    await healPlacementRecipients(id, {
+      override: true,
+      clearScheduleOnly: isAdminChange,
+    });
     // Сбрасываем contact_method (теперь способ связи — человек/бот, не группа).
     await db
       .update(channels)
