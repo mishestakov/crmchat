@@ -36,8 +36,10 @@ import {
 import {
   armLeadDunning,
   channelIdentifier,
+  countMaxLeadsAmong,
   disarmLeadDunning,
   resolveProjectAccountIds,
+  resolveProjectMaxAccountIds,
   resolveStickyByTgUserIds,
   scheduleLeads,
   scheduleUnscheduledLeads,
@@ -844,6 +846,8 @@ app.openapi(
         id: l.id,
         username: l.username,
         tgUserId: l.tgUserId,
+        // contactId нужен MAX-пути: из контакта резолвится пир получателя.
+        contactId: l.contactId,
         properties: (l.properties ?? {}) as Record<string, unknown>,
       }));
     const activatedAt = new Date();
@@ -856,6 +860,18 @@ app.openapi(
       skipContacted: false,
     });
     if (rows.length === 0) {
+      // Частый edge-кейс: лиды есть, но это MAX-получатели, а активного
+      // MAX-аккаунта в воркспейсе нет — каданс им не уходит. Сообщаем явно
+      // (иначе менеджер видит «нет годных каналов» и не понимает причину).
+      const maxAccounts = await resolveProjectMaxAccountIds(wsId, project);
+      if (maxAccounts.length === 0) {
+        const maxLeads = await countMaxLeadsAmong(longlist.map((l) => l.id));
+        if (maxLeads > 0) {
+          throw new HTTPException(400, {
+            message: `Не запущено: ${maxLeads} получатель(ей) в MAX, но нет активного MAX-аккаунта. Подключите MAX-аккаунт и запустите снова.`,
+          });
+        }
+      }
       throw new HTTPException(400, {
         message:
           "Нет годных каналов для запуска: все отбракованы (нет контакта или нет регистрации в РКН).",

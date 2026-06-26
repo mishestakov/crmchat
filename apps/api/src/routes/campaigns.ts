@@ -421,6 +421,8 @@ type InsertedPlacement = {
   channelId: string | null;
   username: string | null;
   tgUserId: string | null;
+  // Нужен MAX-пути: из контакта резолвится пир получателя (см. scheduleLeads).
+  contactId: string | null;
   properties: unknown;
 };
 
@@ -446,6 +448,7 @@ async function scheduleDolivka(opts: {
       id: p.id,
       username: p.username,
       tgUserId: p.tgUserId,
+      contactId: p.contactId,
       properties: (p.properties ?? {}) as Record<string, unknown>,
     })),
     baseTime: new Date(),

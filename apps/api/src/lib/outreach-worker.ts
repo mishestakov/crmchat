@@ -19,6 +19,12 @@ import {
   setAccountCooldown,
 } from "./outreach-account-client.ts";
 import { recordAccountEvent } from "./account-events.ts";
+import {
+  getMaxWorkerClient,
+  maxDialogChatId,
+  maxPeerFromProps,
+  resolveMaxPeerUserId,
+} from "./max-account-client.ts";
 import { emitProjectChanged } from "./events.ts";
 import { rememberPendingSend } from "./outreach-listener.ts";
 import { inputMessageText } from "./td-message.ts";
@@ -245,10 +251,18 @@ async function processAccount(accountId: string, items: DueItem[]) {
   const { account, outreachSchedule, mode } = row;
 
   // FloodWait cooldown в БД. Если время не вышло — пропускаем тик. Если
-  // вышло — чистим (одной операцией снимаем плашку из UI).
+  // вышло — чистим (одной операцией снимаем плашку из UI). До platform-ветвления:
+  // cooldown/ручная пауза должны действовать и на MAX-аккаунт.
   if (account.cooldownUntil) {
     if (account.cooldownUntil.getTime() > Date.now()) return;
     await clearAccountCooldown(accountId);
+  }
+
+  // MAX-аккаунт — отдельный движок отправки (MAX-клиент, без TDLib-антиспама и
+  // котиков). Тот же каданс scheduled_messages, та же human-flow пауза.
+  if (account.platform === "max") {
+    await processMaxAccount(account, items, outreachSchedule);
+    return;
   }
 
   if (!isNowInWindow(outreachSchedule, new Date())) return;
@@ -559,6 +573,192 @@ async function processAccount(accountId: string, items: DueItem[]) {
         .set({
           sendAt: nextAllowedSendAt(
             outreachSchedule,
+            new Date(Date.now() + UNKNOWN_ERROR_BACKOFF_MS),
+          ),
+        })
+        .where(eq(scheduledMessages.id, item.id));
+      emitProjectChanged(item.projectId);
+    }
+  }
+}
+
+// MAX-ветка воркера: тот же каданс (scheduled_messages — опенер idx 0 + пинги),
+// но отправка через MAX-клиент. Сознательно НЕ переносим TG-антиспам (warm-set,
+// суточный лимит на холодных, PEER_FLOOD/FloodWait) и котиков (в MAX пинги
+// только текстовые — scheduler не кладёт стикер-снимок). Human-flow паузы те же,
+// что у TG. Пир получателя берём из контакта лида (max_user_id / max_link).
+async function processMaxAccount(
+  account: typeof outreachAccounts.$inferSelect,
+  items: DueItem[],
+  schedule: OutreachSchedule,
+): Promise<void> {
+  if (!isNowInWindow(schedule, new Date())) return;
+  if (!account.externalUserId) return; // без self-id адресовать XOR-диалог нечем
+
+  // Лид + пир получателя из его контакта одним JOIN. Пир — max_user_id (шлём без
+  // сети) предпочтительнее max_link (резолвим LINK_INFO); fromUserId=false →
+  // после резолва допишем max_user_id контакту (handleMaxInbound матчит входящие
+  // по нему, без него «стоп-на-ответ» не сработает). См. maxPeerFromProps.
+  const leadRows = await db
+    .select({ lead: projectItems, contactProps: contacts.properties })
+    .from(projectItems)
+    .leftJoin(contacts, eq(contacts.id, projectItems.contactId))
+    .where(
+      inArray(
+        projectItems.id,
+        items.map((it) => it.leadId),
+      ),
+    );
+  const leadById = new Map(leadRows.map((r) => [r.lead.id, r.lead]));
+  const peerByContact = new Map<
+    string,
+    { ref: string; fromUserId: boolean }
+  >();
+  for (const r of leadRows) {
+    const peer = maxPeerFromProps(r.contactProps);
+    if (r.lead.contactId && peer) peerByContact.set(r.lead.contactId, peer);
+  }
+
+  const client = await getMaxWorkerClient({
+    id: account.id,
+    sessionToken: account.sessionToken,
+    meta: account.meta,
+  }).catch((e) => {
+    // Мёртвая сессия → getMaxWorkerClient уже пометил unauthorized (следующий
+    // tick отсечётся по status). Сетевой сбой — ретрай на следующем тике.
+    console.warn(
+      `[outreach-worker] MAX client unavailable for ${account.id}: ${errMsg(e)}`,
+    );
+    return null;
+  });
+  if (!client) return;
+
+  for (const item of items) {
+    const lead = leadById.get(item.leadId);
+    if (!lead) {
+      await db
+        .update(scheduledMessages)
+        .set({ status: "cancelled", error: "lead deleted" })
+        .where(eq(scheduledMessages.id, item.id));
+      emitProjectChanged(item.projectId);
+      continue;
+    }
+
+    // Стоп холодной цепочки на ответ (зеркало TG-ветки): repliedAt + round 0.
+    // Ручной догон (round≥1) и финальный оффер не гасим.
+    if (
+      lead.repliedAt &&
+      item.messageIdx !== FINAL_OFFER_MSG_IDX &&
+      item.dunningRound === 0
+    ) {
+      const cancelled = await db
+        .update(scheduledMessages)
+        .set({ status: "cancelled", error: "lead replied" })
+        .where(
+          and(
+            eq(scheduledMessages.itemId, item.leadId),
+            eq(scheduledMessages.status, "pending"),
+            lt(scheduledMessages.messageIdx, FINAL_OFFER_MSG_IDX),
+          ),
+        )
+        .returning({ projectId: scheduledMessages.projectId });
+      for (const pid of new Set(cancelled.map((r) => r.projectId))) {
+        emitProjectChanged(pid);
+      }
+      continue;
+    }
+
+    const peer = lead.contactId
+      ? peerByContact.get(lead.contactId)
+      : undefined;
+    if (!peer) {
+      // Контакт без max-пира — слать некуда. Гасим шаг и цепочку догонов лида
+      // (как permanent в TG-ветке), чтобы pending не висел вечно.
+      await failStepAndCancelFollowups({
+        id: item.id,
+        itemId: item.leadId,
+        messageIdx: item.messageIdx,
+        error: "no MAX peer (контакт без max_user_id/max_link)",
+      });
+      emitProjectChanged(item.projectId);
+      continue;
+    }
+
+    try {
+      const peerUserId = await resolveMaxPeerUserId(client, peer.ref);
+      if (!peer.fromUserId && lead.contactId) {
+        await db
+          .update(contacts)
+          .set({
+            properties: sql`${contacts.properties} || jsonb_build_object('max_user_id', ${peerUserId}::text)`,
+          })
+          .where(eq(contacts.id, lead.contactId));
+      }
+      const chatId = maxDialogChatId(account.externalUserId, peerUserId);
+      await client.msgTyping(chatId).catch(() => {});
+      await sleep(randomMs(TYPING_MIN_MS, TYPING_MAX_MS));
+
+      // Перечитываем статус после typing-окна: проект мог встать на паузу / лид
+      // ответить — слать уже нельзя (row остаётся pending, уйдёт после resume).
+      const [fresh] = await db
+        .select({
+          msgStatus: scheduledMessages.status,
+          projectStatus: projects.status,
+        })
+        .from(scheduledMessages)
+        .innerJoin(projects, eq(projects.id, scheduledMessages.projectId))
+        .where(eq(scheduledMessages.id, item.id))
+        .limit(1);
+      if (
+        !fresh ||
+        fresh.msgStatus !== "pending" ||
+        fresh.projectStatus !== "active"
+      ) {
+        continue;
+      }
+
+      await client.msgSend(chatId, item.text);
+      // WHERE status='pending' защищает от race с cancel (lead replied / пауза).
+      await db
+        .update(scheduledMessages)
+        .set({ status: "sent", sentAt: new Date() })
+        .where(
+          and(
+            eq(scheduledMessages.id, item.id),
+            eq(scheduledMessages.status, "pending"),
+          ),
+        );
+      emitProjectChanged(item.projectId);
+      // Догон msg_idx+1 ждал с sentinel — теперь есть точка отсчёта.
+      await scheduleNextFollowup(item, schedule);
+      // Human-flow «фаза 2»: пауза формирует темп между лидами.
+      await sleep(randomMs(POST_SEND_MIN_MS, POST_SEND_MAX_MS));
+    } catch (e) {
+      const msg = errMsg(e);
+      // Перманентная ошибка резолва получателя (мёртвая max.ru/u-ссылка: LINK_INFO
+      // не вернул contact.id / не распознали — resolveMaxContactRef кидает «MAX: …»)
+      // — ретраить бессмысленно: гасим шаг и догоны лида, как permanent в TG-ветке.
+      // Иначе опенер на мёртвую ссылку висел бы pending и ретраился вечно.
+      if (/^MAX: /.test(msg)) {
+        await failStepAndCancelFollowups({
+          id: item.id,
+          itemId: item.leadId,
+          messageIdx: item.messageIdx,
+          error: msg,
+        });
+        emitProjectChanged(item.projectId);
+        continue;
+      }
+      console.error(
+        `[outreach-worker] MAX send error, account ${account.id}, msg ${item.id}: ${msg}`,
+      );
+      // Прочие (сеть/msgSend) — сдвигаем send_at в хвост и ретраим. Мёртвая
+      // сессия отсечётся статусом аккаунта на след. тике.
+      await db
+        .update(scheduledMessages)
+        .set({
+          sendAt: nextAllowedSendAt(
+            schedule,
             new Date(Date.now() + UNKNOWN_ERROR_BACKOFF_MS),
           ),
         })

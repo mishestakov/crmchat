@@ -1,6 +1,12 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
-import { contacts, outreachAccounts, projectItems } from "../db/schema.ts";
+import {
+  contacts,
+  outreachAccounts,
+  projectItems,
+  scheduledMessages,
+} from "../db/schema.ts";
+import { FINAL_OFFER_MSG_IDX } from "./project-scheduling.ts";
 import { errMsg } from "./errors.ts";
 import { emitContactChanged, emitProjectChanged } from "./events.ts";
 import {
@@ -172,8 +178,35 @@ async function handleMaxInbound(
     );
   if (cs.length === 0) return;
   const contactIds = cs.map((c) => c.id);
-  // Зеркало TG-listener'а: ответ гасит холодную цепочку (repliedAt) у размещений
-  // этих контактов; project-changed двигает канбан/инвалидирует SSE.
+  // Зеркало TG-listener'а — две независимые оси на входящий ответ:
+  //  • ось РАССЫЛКИ: гасим незавершённую холодную цепочку (НЕЗАВИСИМО от
+  //    repliedAt — после смены контакта repliedAt уже стоит от прежнего, но
+  //    капельницу нового надо погасить). Финальный оффер не трогаем.
+  //  • ось ВОРОНКИ: на первом ответе ставим repliedAt (isNull-идемпотентно).
+  const itemRows = await db
+    .select({ id: projectItems.id })
+    .from(projectItems)
+    .where(
+      and(
+        eq(projectItems.workspaceId, account.workspaceId),
+        inArray(projectItems.contactId, contactIds),
+      ),
+    );
+  const itemIds = itemRows.map((r) => r.id);
+  const cancelled =
+    itemIds.length > 0
+      ? await db
+          .update(scheduledMessages)
+          .set({ status: "cancelled", error: "lead replied" })
+          .where(
+            and(
+              eq(scheduledMessages.status, "pending"),
+              inArray(scheduledMessages.itemId, itemIds),
+              lt(scheduledMessages.messageIdx, FINAL_OFFER_MSG_IDX),
+            ),
+          )
+          .returning({ projectId: scheduledMessages.projectId })
+      : [];
   const updated = await db
     .update(projectItems)
     .set({ repliedAt: new Date() })
@@ -185,7 +218,9 @@ async function handleMaxInbound(
       ),
     )
     .returning({ projectId: projectItems.projectId });
-  for (const pid of new Set(updated.map((u) => u.projectId))) {
+  for (const pid of new Set(
+    [...cancelled, ...updated].map((u) => u.projectId),
+  )) {
     emitProjectChanged(pid);
   }
   // Push в открытую переписку (SSE) — drawer инвалидирует max-history мгновенно,

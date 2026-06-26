@@ -45,7 +45,7 @@ import {
 import { ensureContactTgUserId } from "../lib/ensure-tg-user-id.ts";
 import { errMsg } from "../lib/errors.ts";
 import { getOutreachWorkerClient } from "../lib/outreach-account-client.ts";
-import { sendMaxMessage } from "../lib/max-account-client.ts";
+import { maxPeerRef, sendMaxMessage } from "../lib/max-account-client.ts";
 import { fetchMaxDialog, pickMaxAccount } from "../lib/max-conversation.ts";
 import { sendMedia, downloadToBytes } from "../lib/td-files.ts";
 import type { OutgoingFile } from "../lib/td-files.ts";
@@ -388,17 +388,7 @@ app.openapi(
 );
 
 // --- MAX-переписка контакта (#5): история + отправка через MAX-аккаунт ws'а ---
-
-// Адрес контакта в MAX: кешированный max_user_id (быстро, без LINK_INFO) или
-// max_link-ссылка (резолвится на месте). null — контакт не MAX.
-function maxPeerRef(props: unknown): string | null {
-  const p = props as Record<string, unknown> | null;
-  const uid = p?.max_user_id;
-  if (typeof uid === "string" && uid) return uid;
-  const link = p?.max_link;
-  if (typeof link === "string" && link) return link;
-  return null;
-}
+// Адрес контакта в MAX (max_user_id | max_link) — общий хелпер maxPeerRef.
 
 const MaxDialogMessageSchema = z
   .object({

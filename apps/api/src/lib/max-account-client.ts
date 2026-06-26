@@ -359,6 +359,25 @@ export async function resolveMaxPeerUserId(
   return (await resolveMaxContactRef(client, ref)).userId;
 }
 
+// Пир получателя из properties контакта: max_user_id (числовой id, шлём без сети)
+// предпочтительнее max_link (резолвим LINK_INFO). fromUserId важен воркеру —
+// решает, дописывать ли max_user_id контакту после резолва ссылки. Единый
+// источник правды для аутрич-воркера, планировщика и contact-ручек.
+export function maxPeerFromProps(
+  props: unknown,
+): { ref: string; fromUserId: boolean } | null {
+  const p = props as Record<string, unknown> | null;
+  const uid = typeof p?.max_user_id === "string" ? p.max_user_id : "";
+  if (uid) return { ref: uid, fromUserId: true };
+  const link = typeof p?.max_link === "string" ? p.max_link : "";
+  if (link) return { ref: link, fromUserId: false };
+  return null;
+}
+
+export function maxPeerRef(props: unknown): string | null {
+  return maxPeerFromProps(props)?.ref ?? null;
+}
+
 type MaxSendAccount = {
   id: string;
   externalUserId: string;

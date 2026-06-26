@@ -15,6 +15,7 @@ import {
   type ProjectDunning,
 } from "../db/schema.ts";
 import { contactTgUserIdSql } from "./contact-sql.ts";
+import { maxPeerRef } from "./max-account-client.ts";
 import { channelRknBlockedSql } from "./rkn-registry.ts";
 import { channelAlreadyWorkingSql } from "./platform-active.ts";
 import { resolveStickyByPeerIds } from "./sticky.ts";
@@ -132,6 +133,13 @@ export type SchedulingLead = {
   username: string | null;
   tgUserId: string | null;
   properties: Record<string, unknown>;
+  // Контакт лида. Для MAX-пути из него берётся пир получателя (max_user_id /
+  // max_link). Опционально — инлайн-конструкции (bulk-доливка свежих TG-плейсментов
+  // без контакта) его не передают.
+  contactId?: string | null;
+  // MAX-пир получателя — резолвится attachMaxPeer для лидов без @username по их
+  // контакту. Присутствие = «это MAX-лид»: ведём MAX-аккаунтом, котики выключены.
+  maxPeer?: string | null;
 };
 
 // Размещение → лид для планировщика. Общий для всех точек планирования
@@ -142,13 +150,27 @@ function toSchedulingLead(item: {
   username: string | null;
   tgUserId: string | null;
   properties: unknown;
+  contactId?: string | null;
 }): SchedulingLead {
   return {
     id: item.id,
     username: item.username,
     tgUserId: item.tgUserId,
+    contactId: item.contactId ?? null,
     properties: (item.properties ?? {}) as Record<string, unknown>,
   };
+}
+
+// Ключ «админа» для дедупа и синтеза канало-vars: TG → lower(@username),
+// MAX-лид без @ → "c:"+contactId. null = неадресуемый (личка/телефон без
+// контакта) — prepareLeads такой пропускает.
+function adminKey(
+  username: string | null,
+  contactId: string | null | undefined,
+): string | null {
+  if (username) return username.toLowerCase();
+  if (contactId) return "c:" + contactId;
+  return null;
 }
 
 export type ScheduledRow = {
@@ -218,6 +240,8 @@ function buildScheduledRows(opts: {
   // Пиналка — одна на воркспейс (workspaces.dunning), резолвится снаружи.
   dunning: ProjectDunning;
   accountIds: string[];
+  // MAX-пул проекта (отдельно от TG): MAX-лид ведётся только MAX-аккаунтом.
+  maxAccountIds: string[];
   leads: SchedulingLead[];
   baseTime: Date;
   priorByTgUserId: Map<string, string>;
@@ -228,20 +252,39 @@ function buildScheduledRows(opts: {
   const opener =
     opts.project.opener ?? messagesToOpenerDunning(opts.project.messages).opener;
   const dunning = opts.dunning;
+  // Котики — только TG: в MAX пинги текстовые (scheduler не кладёт стикер-снимок).
+  const textOnlyPings = dunning.pings.filter((p) => p.kind === "text");
 
-  let rrIdx = 0;
+  let rrIdx = 0; // round-robin TG-пула
+  let rrMaxIdx = 0; // round-robin MAX-пула
   return opts.leads.flatMap((lead) => {
-    const priorRaw = lead.tgUserId
-      ? opts.priorByTgUserId.get(lead.tgUserId)
-      : undefined;
-    // Sticky-аккаунт валиден только если он в наборе проекта (active ∩
-    // accountsSelected). Иначе (peer общался с paused/не-выбранным аккаунтом)
-    // — round-robin, а не отправка с аккаунта, которого в кампании нет.
-    const prior =
-      priorRaw && opts.accountIds.includes(priorRaw) ? priorRaw : undefined;
-    const accountId = prior ?? opts.accountIds[rrIdx % opts.accountIds.length]!;
-    if (!prior) rrIdx++;
-    const isWarm = lead.tgUserId ? opts.warmTgUserIds.has(lead.tgUserId) : false;
+    // Платформа лида = из контакта (maxPeer присутствует → MAX). MAX-лид тянет
+    // аккаунт из MAX-пула, TG-лид — из TG-пула. Пул нужной платформы пуст
+    // (напр. MAX-лид, а MAX-аккаунта в воркспейсе нет) → лид пропускаем: нечем
+    // слать. «Доливка» подхватит его, когда аккаунт появится.
+    const isMax = !!lead.maxPeer;
+    const pool = isMax ? opts.maxAccountIds : opts.accountIds;
+    if (pool.length === 0) return [];
+
+    let accountId: string;
+    if (isMax) {
+      // MAX-стики для холодного опенера не делаем (MVP) — round-robin. Ручной
+      // догон (armLeadDunning) берёт sticky-аккаунт из истории отправок.
+      accountId = pool[rrMaxIdx % pool.length]!;
+      rrMaxIdx++;
+    } else {
+      const priorRaw = lead.tgUserId
+        ? opts.priorByTgUserId.get(lead.tgUserId)
+        : undefined;
+      // Sticky-аккаунт валиден только если он в наборе проекта (active ∩
+      // accountsSelected). Иначе (peer общался с paused/не-выбранным аккаунтом)
+      // — round-robin, а не отправка с аккаунта, которого в кампании нет.
+      const prior = priorRaw && pool.includes(priorRaw) ? priorRaw : undefined;
+      accountId = prior ?? pool[rrIdx % pool.length]!;
+      if (!prior) rrIdx++;
+    }
+    const isWarm =
+      !isMax && !!lead.tgUserId && opts.warmTgUserIds.has(lead.tgUserId);
     const subst = (t: string) =>
       substituteVariables(t, {
         username: lead.username,
@@ -268,7 +311,11 @@ function buildScheduledRows(opts: {
       sendAt: opts.baseTime,
     });
     // Пинги пиналки — по одному на интервал, выбор из пула без повтора.
-    const chosen = pickPings(dunning.pings, dunning.intervals.length);
+    // MAX → только текстовые пинги (котиков нет).
+    const chosen = pickPings(
+      isMax ? textOnlyPings : dunning.pings,
+      dunning.intervals.length,
+    );
     chosen.forEach((v, i) => {
       rows.push({
         ...base,
@@ -324,6 +371,7 @@ async function prepareLeads(opts: {
   const channelRows = await db
     .select({
       adminUsername: projectItems.username,
+      adminContactId: projectItems.contactId,
       platform: channels.platform,
       channelUsername: channels.username,
       link: channels.link,
@@ -360,8 +408,10 @@ async function prepareLeads(opts: {
   // Тоже lenient-OR и тоже исключение из sendable.
   const sendableKeys = new Set<string>();
   for (const r of channelRows) {
-    if (!r.adminUsername) continue;
-    const key = r.adminUsername.toLowerCase();
+    // MAX-админ без @username ключуется по contactId (adminKey) — иначе выпал бы
+    // из синтеза {{каналы}}/{{ссылка}}, как раньше любой no-@username.
+    const key = adminKey(r.adminUsername, r.adminContactId);
+    if (!key) continue;
     if (!r.rknBlocked && !r.alreadyWorking) sendableKeys.add(key);
     const entry = canals.get(key) ?? { idents: [], title: null, link: null };
     const { ident, link } = channelIdentifier({
@@ -430,10 +480,17 @@ async function prepareLeads(opts: {
   const seen = new Set<string>();
   const out: SchedulingLead[] = [];
   for (const l of opts.leads) {
-    if (!l.username) continue;
-    const key = l.username.toLowerCase();
-    if (botUsernames.has(l.username.replace(/^@/, "").toLowerCase())) continue;
-    if (l.tgUserId && botTgIds.has(l.tgUserId)) continue;
+    // TG → lower(@username); MAX-лид (без @, но с резолвленным пиром) → "c:"+contactId.
+    // Ни того, ни другого (личка/телефон без max-пира) → неадресуем, пропуск.
+    const key = l.username
+      ? l.username.toLowerCase()
+      : adminKey(null, l.maxPeer ? l.contactId : null);
+    if (!key) continue;
+    // Бот-гейт — только для TG-лидов (у MAX нет ботов как способа связи).
+    if (l.username) {
+      if (botUsernames.has(l.username.replace(/^@/, "").toLowerCase())) continue;
+      if (l.tgUserId && botTgIds.has(l.tgUserId)) continue;
+    }
     // РКН-отбраковка: каналу, обязанному регистрироваться и не в реестре,
     // опенер не шлём (гейт квалификации).
     if (!sendableKeys.has(key)) continue;
@@ -458,11 +515,12 @@ async function prepareLeads(opts: {
   return out;
 }
 
-// Список аккаунтов, которые видит проект на момент активации/доливки:
-// (active) ∩ (project.accountsMode/accountsSelected).
-export async function resolveProjectAccountIds(
+// Аккаунты платформы, которые видит проект на момент активации/доливки:
+// (active ∩ platform) ∩ (project.accountsMode/accountsSelected).
+async function resolveProjectAccountIdsForPlatform(
   wsId: string,
   project: typeof projects.$inferSelect,
+  platform: "telegram" | "max",
 ): Promise<string[]> {
   const accountRows = await db
     .select({ id: outreachAccounts.id })
@@ -470,7 +528,7 @@ export async function resolveProjectAccountIds(
     .where(
       and(
         eq(outreachAccounts.workspaceId, wsId),
-        eq(outreachAccounts.platform, "telegram"),
+        eq(outreachAccounts.platform, platform),
         eq(outreachAccounts.status, "active"),
       ),
     );
@@ -478,6 +536,70 @@ export async function resolveProjectAccountIds(
   return accountRows
     .map((a) => a.id)
     .filter((id) => project.accountsSelected.includes(id));
+}
+
+// TG-пул проекта. Telegram-only намеренно: финальный оффер/readiness не должны
+// мешать MAX и TG в одном round-robin.
+export function resolveProjectAccountIds(
+  wsId: string,
+  project: typeof projects.$inferSelect,
+): Promise<string[]> {
+  return resolveProjectAccountIdsForPlatform(wsId, project, "telegram");
+}
+
+// MAX-пул проекта — отдельный пул под MAX-каданс.
+export function resolveProjectMaxAccountIds(
+  wsId: string,
+  project: typeof projects.$inferSelect,
+): Promise<string[]> {
+  return resolveProjectAccountIdsForPlatform(wsId, project, "max");
+}
+
+// Сколько из размещений — MAX-лиды (контакт с max_user_id/max_link, без
+// @username). Для предупреждения при активации, когда активного MAX-аккаунта нет
+// и такие лиды тихо выпали бы из каданса.
+export async function countMaxLeadsAmong(itemIds: string[]): Promise<number> {
+  if (itemIds.length === 0) return 0;
+  const rows = await db
+    .select({ id: projectItems.id })
+    .from(projectItems)
+    .innerJoin(contacts, eq(contacts.id, projectItems.contactId))
+    .where(
+      and(
+        inArray(projectItems.id, itemIds),
+        isNull(projectItems.username),
+        // Непустые значения (как maxPeerRef: пустая строка ≠ пир) — счётчик не
+        // должен расходиться с тем, что реально планируется.
+        sql`(${contacts.properties} ->> 'max_user_id' <> '' or ${contacts.properties} ->> 'max_link' <> '')`,
+      ),
+    );
+  return rows.length;
+}
+
+// Дозаполняет maxPeer лидам без @username по их контакту (max_user_id
+// предпочтительно, иначе max_link). Лиды с @username — телеграмные, не трогаем.
+// Лид без username и без max-пира остаётся неадресуемым (prepareLeads отбросит).
+async function attachMaxPeer(
+  leads: SchedulingLead[],
+): Promise<SchedulingLead[]> {
+  const need = leads.filter((l) => !l.username && l.contactId);
+  if (need.length === 0) return leads;
+  const contactIds = [...new Set(need.map((l) => l.contactId!))];
+  const rows = await db
+    .select({ id: contacts.id, properties: contacts.properties })
+    .from(contacts)
+    .where(inArray(contacts.id, contactIds));
+  const peerByContact = new Map<string, string>();
+  for (const c of rows) {
+    const ref = maxPeerRef(c.properties);
+    if (ref) peerByContact.set(c.id, ref);
+  }
+  if (peerByContact.size === 0) return leads;
+  return leads.map((l) =>
+    !l.username && l.contactId && peerByContact.has(l.contactId)
+      ? { ...l, maxPeer: peerByContact.get(l.contactId)! }
+      : l,
+  );
 }
 
 // Пиналка — одна на воркспейс (workspaces.dunning). Fallback из project.messages
@@ -505,9 +627,14 @@ export async function scheduleLeads(opts: {
   baseTime: Date;
   skipContacted: boolean;
 }): Promise<ScheduledRow[]> {
+  // MAX-пир резолвим ДО prepareLeads: иначе MAX-лид (без @username) отвалится в
+  // username-гейте. accountIds (TG) приходит снаружи; MAX-пул резолвим тут сами —
+  // не тащим через всех вызывающих (компромисс: MAX-каданс требует ≥1 TG-аккаунта
+  // в воркспейсе, чтобы пройти верхний accountIds-гард; для TG-first это всегда так).
+  const withMax = await attachMaxPeer(opts.leads);
   const prepared = await prepareLeads({
     projectId: opts.project.id,
-    leads: opts.leads,
+    leads: withMax,
     skipContacted: opts.skipContacted,
   });
   if (prepared.length === 0) return [];
@@ -515,16 +642,19 @@ export async function scheduleLeads(opts: {
     .map((l) => l.tgUserId)
     .filter((x): x is string => x !== null);
   // sticky и warm независимы (общий вход tgUserIds) — параллелим.
-  const [priorByTgUserId, warmTgUserIds, dunning] = await Promise.all([
-    resolveStickyByTgUserIds(opts.wsId, tgUserIds),
-    resolveWarmTgUserIds(opts.wsId, tgUserIds),
-    resolveWorkspaceDunning(opts.wsId, opts.project),
-  ]);
+  const [priorByTgUserId, warmTgUserIds, dunning, maxAccountIds] =
+    await Promise.all([
+      resolveStickyByTgUserIds(opts.wsId, tgUserIds),
+      resolveWarmTgUserIds(opts.wsId, tgUserIds),
+      resolveWorkspaceDunning(opts.wsId, opts.project),
+      resolveProjectMaxAccountIds(opts.wsId, opts.project),
+    ]);
   return buildScheduledRows({
     wsId: opts.wsId,
     project: opts.project,
     dunning,
     accountIds: opts.accountIds,
+    maxAccountIds,
     leads: prepared,
     baseTime: opts.baseTime,
     priorByTgUserId,
@@ -779,16 +909,21 @@ export async function armLeadDunning(
   if (!ws) return "empty";
 
   // История scheduled по лиду: идёт ли серия, max round, с какого аккаунта
-  // общались и когда последний раз слали.
+  // общались (+ его платформа — для котиков off на MAX) и когда последний раз слали.
   const sched = await db
     .select({
       status: scheduledMessages.status,
       messageIdx: scheduledMessages.messageIdx,
       dunningRound: scheduledMessages.dunningRound,
       accountId: scheduledMessages.accountId,
+      platform: outreachAccounts.platform,
       sentAt: scheduledMessages.sentAt,
     })
     .from(scheduledMessages)
+    .leftJoin(
+      outreachAccounts,
+      eq(outreachAccounts.id, scheduledMessages.accountId),
+    )
     .where(eq(scheduledMessages.itemId, itemId));
   // Одна серия за раз: есть pending-пинг (не финальный оффер) → уже идёт.
   const armed = sched.some(
@@ -828,7 +963,13 @@ export async function armLeadDunning(
       username: lead.username,
       properties: lead.properties as Record<string, string>,
     });
-  const chosen = pickPings(dunning.pings, dunning.intervals.length);
+  // Котики off, если допинываем через MAX-аккаунт (в MAX стикеров пиналки нет).
+  // Платформу взяли тем же sched-запросом (lastSentRow) — без отдельного SELECT.
+  const pingPool =
+    lastSentRow?.platform === "max"
+      ? dunning.pings.filter((p) => p.kind === "text")
+      : dunning.pings;
+  const chosen = pickPings(pingPool, dunning.intervals.length);
   if (chosen.length === 0) return "empty";
 
   const firstSendAt = nextAllowedSendAt(
