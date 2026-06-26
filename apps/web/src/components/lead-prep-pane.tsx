@@ -133,11 +133,22 @@ export function LeadPrepPane(props: {
   const meta = (channelQ.data?.meta ?? {}) as Record<string, unknown>;
   const methodKind =
     ((meta.contact_method as { kind?: string } | null)?.kind ?? null);
+  // MAX-контакт (max_user_id/max_link) — это персона, не личка канала: показываем
+  // его имя. У него нет @username и contact_method, иначе ветки ниже подписали бы
+  // его «личкой канала».
+  const cProps = (contactQ.data?.properties ?? {}) as Record<string, unknown>;
+  const isMaxContact =
+    typeof cProps.max_user_id === "string" ||
+    typeof cProps.max_link === "string";
+  const maxName =
+    typeof cProps.full_name === "string" ? cProps.full_name : "контакт MAX";
   const contactLabel = lead.username
     ? `админ @${lead.username}`
-    : methodKind === "group"
-      ? "группа обсуждения"
-      : "личка канала";
+    : isMaxContact
+      ? `${maxName} (MAX)`
+      : methodKind === "group"
+        ? "группа обсуждения"
+        : "личка канала";
 
   return (
     <div className="flex h-full min-h-0">
