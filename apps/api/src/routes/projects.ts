@@ -18,6 +18,7 @@ import {
   projectStatus,
   scheduledMessages,
   scheduledMessageStatus,
+  tgChats,
   tgUsers,
   type ProjectMessage,
   type ProjectStage,
@@ -1142,7 +1143,24 @@ app.openapi(
           contactId: projectItems.contactId,
           unreadCount: sql<number>`coalesce(${contacts.unreadCount}, 0)::int`,
           markedUnread: sql<boolean>`coalesce(${contacts.markedUnread}, false)`,
-          lastMessageAt: contacts.lastMessageAt,
+          // «Последнее сообщение в треде» в ЛЮБУЮ сторону — для подсветки застоя
+          // («затихло N дней»). contacts.last_message_at двигается только на
+          // входящем (его семантику менять нельзя — scheduling берёт его как
+          // «последний ответ»), поэтому наше исходящее (включая РУЧНОЕ из чата)
+          // подмешиваем из tg_chats: max(last_message_at, last_outbound_at) по
+          // всем нашим аккаунтам, общавшимся с этим пиром. greatest игнорит NULL.
+          // TODO(multi-member): входящее тут воркспейс-глобальное, а исходящее
+          // скоупится к аккаунтам смотрящего (myAccountIdsSql). Пока tenancy
+          // single-owner — это одно и то же. Когда появятся роли/мемберы, админ,
+          // смотрящий лид мембера, не увидит исходящее мембера → ложное «затихло».
+          // Тогда скоупить субквери на аккаунты ВОРКСПЕЙСА, а не смотрящего.
+          lastMessageAt: sql<Date | null>`greatest(
+            ${contacts.lastMessageAt},
+            (select max(greatest(${tgChats.lastMessageAt}, ${tgChats.lastOutboundAt}))
+             from ${tgChats}
+             where ${tgChats.peerUserId} = ${projectItems.tgUserId}
+               and ${tgChats.accountId} in ${myAccountIdsSql(wsId, userId)})
+          )`,
           nextStep: nextStepSql,
           stageId: projectItems.stageId,
           skippedAt: projectItems.skippedAt,

@@ -322,7 +322,8 @@ async function onNewMessage(
     // Открытый drawer должен увидеть исходящее из другой сессии (телефон /
     // офиц. клиент / worker). Без события лента обновлялась только когда
     // получатель прочитает (read-outbox) или при переоткрытии чата (T3.8).
-    void emitChatChangedForContact(workspaceId, msg.chat_id);
+    // outgoingAt=now — чтобы подсветка застоя в списках лидов сбросилась сразу.
+    void emitChatChangedForContact(workspaceId, msg.chat_id, new Date());
     return;
   }
   // Только private DM от user'а — sender = messageSenderUser, и в TDLib
@@ -666,6 +667,12 @@ async function onSendFailed(
 async function emitChatChangedForContact(
   workspaceId: string,
   chatId: number,
+  // Override «последней активности» для НАШЕГО исходящего (в т.ч. ручного из
+  // чата): contacts.last_message_at двигается только на входящем, поэтому в БД
+  // лежит старое (входящее) время. Без override подсветка застоя в списках
+  // («затихло N дней») не сбросилась бы до рефетча. На рефетче /leads даёт ту же
+  // величину из tg_chats. unreadCount/markedUnread исходящее не меняет — берём из БД.
+  outgoingAt?: Date,
 ): Promise<void> {
   if (chatId <= 0) return;
   const tgUserIdStr = String(chatId);
@@ -686,11 +693,17 @@ async function emitChatChangedForContact(
       )
       .limit(1);
     if (!contactRow) return;
+    // outgoingAt (наше исходящее, now) всегда новее, чем contacts.last_message_at
+    // (он двигается только на входящем — прошлое серверное время), так что при
+    // наличии override просто берём его.
+    const lastMessageAt = outgoingAt
+      ? outgoingAt.toISOString()
+      : (contactRow.lastMessageAt?.toISOString() ?? null);
     emitContactChanged(workspaceId, {
       contactId: contactRow.id,
       unreadCount: contactRow.unreadCount,
       markedUnread: contactRow.markedUnread,
-      lastMessageAt: contactRow.lastMessageAt?.toISOString() ?? null,
+      lastMessageAt,
     });
   } catch (e) {
     console.error("[outreach-listener] emitChatChangedForContact:", errMsg(e));
