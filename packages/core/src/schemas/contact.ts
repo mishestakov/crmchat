@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { EntityNoteSchema } from "./channel.ts";
+import {
+  EntityNoteSchema,
+  ChannelRelationStatusSchema,
+  ChannelRelationEntrySchema,
+} from "./channel.ts";
 
 // Ближайший открытый reminder контакта — рендерится в карточке kanban-а.
 // Бэкенд считает через subquery; null если у контакта нет открытых напоминаний.
@@ -57,6 +61,10 @@ export const ContactSchema = z.object({
       unavailableSince: z.iso.datetime().nullable(),
       // Есть в реестре РКН (live-матчинг со словарём rkn_records).
       isRkn: z.boolean(),
+      // Глобальный статус взаимодействия по каналу + лог решений — ось
+      // «работает ли канал с нами», следует за каналом по всем проектам.
+      relationStatus: ChannelRelationStatusSchema,
+      relationHistory: z.array(ChannelRelationEntrySchema),
     }),
   ),
   createdBy: z.string().min(1).max(64),

@@ -13,7 +13,7 @@ import {
   unique,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
-import type { EntityNote } from "@repo/core";
+import type { EntityNote, ChannelRelationEntry } from "@repo/core";
 import { shortId } from "./short-id.ts";
 import type { PostSnapshot, CreativeSnapshot } from "../lib/td-message.ts";
 
@@ -244,7 +244,7 @@ export const contacts = pgTable(
       .notNull()
       .default({}),
     // Памятка об админе («в отпуске до 15-го», «жёсткий негатив») — следует
-    // за человеком по всем его каналам. Симметрична channels.note.
+    // за человеком по всем его каналам.
     note: jsonb("note").$type<EntityNote>(),
     // Счётчик непрочитанных сообщений в TG-чате с этим контактом. Инкрементит
     // outreach-listener (входящее DM от tg_user_id, который у нас в contacts);
@@ -1044,6 +1044,18 @@ export const channelPlatform = pgEnum("channel_platform", [
   "max",
 ]);
 
+// Глобальный статус взаимодействия по каналу (см. ChannelRelationStatusSchema
+// в @repo/core). Ось «работает ли канал с нами», следует за каналом по всем
+// проектам; per-campaign решение клиента — отдельно (project_items.clientStatus).
+export const channelRelationStatus = pgEnum("channel_relation_status", [
+  "none",
+  "pending",
+  "working",
+  "paused",
+  "unsuitable",
+  "declined",
+]);
+
 export const channels = pgTable(
   "channels",
   {
@@ -1057,11 +1069,17 @@ export const channels = pgTable(
     externalId: text("external_id"),
     title: text("title").notNull(),
     description: text("description"),
-    // Памятка о канале от менеджера («канал не отработал», «маленький CPM»).
-    // НЕ description: тот синкается из соцсети и перезаписывается. Свободный
-    // текст-предупреждение коллегам + кто/когда оставил; структурные данные
-    // (ставки, постоплата, продукт) — в properties через каталог полей.
-    note: jsonb("note").$type<EntityNote>(),
+    // Глобальный статус взаимодействия по каналу (снимок последней записи
+    // relationHistory — для быстрого чтения/фильтра). Источник правды — лог.
+    relationStatus: channelRelationStatus("relation_status")
+      .notNull()
+      .default("none"),
+    // Append-only лог смен статуса: {status, note, byUserId, byName, at}.
+    // Нелинейность (работал → перестал → отказ) сохраняется целиком.
+    relationHistory: jsonb("relation_history")
+      .$type<ChannelRelationEntry[]>()
+      .notNull()
+      .default([]),
     // Публичный @handle без `@`, в исходном регистре. uniq делается по
     // lower() для case-insensitive дедупа.
     username: text("username"),

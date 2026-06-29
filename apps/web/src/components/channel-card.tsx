@@ -37,7 +37,6 @@ import {
 import { ContactPicker } from "./contact-picker";
 import { ContactResolver } from "./contact-resolver";
 import { MethodChatPanel } from "./method-chat-panel";
-import { NoteStrip } from "./note-strip";
 import { channelDm } from "../lib/channel-dm";
 
 // Карточка канала: sticky-hero (avatar/title/key stats/description/meta-grid/
@@ -219,7 +218,6 @@ export function ChannelCard(props: {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-white">
-      <ChannelNote wsId={wsId} channel={channel} />
       {persistedReason && (
         <UnavailableStatus
           reason={persistedReason}
@@ -297,36 +295,6 @@ export function ChannelCard(props: {
   );
 }
 
-// Памятка о канале (T0.2): channels.note — ручное поле, НЕ описание из
-// соцсети (то синкается и перезаписывается). Видна везде, где открыта
-// карточка — инбокс подготовки, чат (через чип), каталог. Ручка /note
-// доступна member'у (общий PATCH канала — admin-only).
-function ChannelNote(props: { wsId: string; channel: Channel }) {
-  const qc = useQueryClient();
-  return (
-    <NoteStrip
-      note={props.channel.note}
-      addLabel="пометка о канале"
-      placeholder="Например: канал не отработал, маленький CPM"
-      title="Пометка о канале — видна коллегам. Нажмите, чтобы изменить."
-      px="px-5"
-      onSave={async (text) => {
-        const { error } = await api.PATCH(
-          "/v1/workspaces/{wsId}/channels/{id}/note",
-          {
-            params: { path: { wsId: props.wsId, id: props.channel.id } },
-            body: { note: text || null },
-          },
-        );
-        if (error) throw error;
-        qc.invalidateQueries({
-          queryKey: ["channel", props.wsId, props.channel.id],
-        });
-        qc.invalidateQueries({ queryKey: ["channels", props.wsId] });
-      }}
-    />
-  );
-}
 
 function UnavailableStatus(props: {
   reason: string;

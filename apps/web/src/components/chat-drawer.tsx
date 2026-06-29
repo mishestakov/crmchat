@@ -12,6 +12,8 @@ import {
   ArrowLeftRight,
   Check,
   CheckCheck,
+  ChevronDown,
+  ChevronRight,
   Copy,
   Download,
   FileText,
@@ -29,8 +31,13 @@ import {
   Users,
   X,
 } from "lucide-react";
-import type { Contact } from "@repo/core";
+import type { Contact, ChannelRelationStatus } from "@repo/core";
 import { api, sendContactMedia } from "../lib/api";
+import {
+  RELATION_META,
+  RELATION_CHOICES,
+  RelationBadge,
+} from "../lib/channel-relation";
 import { copyText } from "../lib/clipboard";
 import {
   dayKey,
@@ -894,34 +901,11 @@ export function ChatPanel(props: {
           </div>
         </div>
         {props.headerExtra}
-        {props.contact.channels.length > 0 && (
-          <div className="flex gap-1 overflow-x-auto border-b border-zinc-200 px-3 py-1.5">
-            {props.contact.channels.map((ch) => (
-              <span
-                key={ch.id}
-                className="inline-flex shrink-0 items-center rounded-full bg-zinc-100 text-[11px] font-medium text-zinc-700"
-              >
-                <button
-                  type="button"
-                  onClick={() => setChannelView({ id: ch.id, change: false })}
-                  title="Открыть карточку канала"
-                  className="inline-flex items-center gap-1 rounded-l-full py-0.5 pl-2 pr-1.5 hover:bg-zinc-200"
-                >
-                  <Hash size={11} className="text-zinc-400" />
-                  {ch.title}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setChannelView({ id: ch.id, change: true })}
-                  title="Сменить контакт по этому каналу"
-                  className="rounded-r-full py-0.5 pl-1 pr-2 text-zinc-400 hover:bg-zinc-200 hover:text-emerald-700"
-                >
-                  <ArrowLeftRight size={11} />
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
+        <ChannelRelationList
+          wsId={props.wsId}
+          contact={props.contact}
+          onOpenCard={(id, change) => setChannelView({ id, change })}
+        />
         {fresherColleague && (
           <button
             type="button"
@@ -1602,6 +1586,206 @@ function ReplyMarkupButtons(props: {
 // контакта и в инбоксе подготовки (LeadPrepPane). Менеджеру в переписке важно
 // видеть заметки коллег («не беспокоить до января») не уходя из чата; пометка
 // о канале — в один клик через чип канала в шапке (карточка канала).
+// Одна строка вертикального списка каналов админа в сайдбаре: канал + текущий
+// статус взаимодействия + правка статуса (дропдаун + причина) + лента истории
+// решений. Статус append-only: сохранение добавляет запись в relationHistory.
+function ChannelRelationRow(props: {
+  wsId: string;
+  contactId: string;
+  channel: Contact["channels"][number];
+  onOpenCard: (id: string, change: boolean) => void;
+}) {
+  const ch = props.channel;
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  // Для канала без статуса предлагаем "working" как дефолт черновика, но
+  // baseStatus отдельно от ch.relationStatus: dirty считаем относительно
+  // фактического снимка, чтобы у «none»-канала кнопка сразу была доступна.
+  const baseStatus: ChannelRelationStatus =
+    ch.relationStatus === "none" ? "working" : ch.relationStatus;
+  const [status, setStatus] = useState<ChannelRelationStatus>(baseStatus);
+  const [note, setNote] = useState("");
+  // Запись append-only: «есть что сохранить» = сменили статус относительно
+  // текущего снимка ИЛИ ввели комментарий. Иначе кнопку «Сохранить» прячем
+  // (CLAUDE.md: показывать только при наличии unsaved-изменений).
+  const dirty = status !== ch.relationStatus || note.trim() !== "";
+  const openEditor = () => {
+    setStatus(baseStatus);
+    setNote("");
+    setEditing(true);
+  };
+  const closeEditor = () => {
+    setStatus(baseStatus);
+    setNote("");
+    setEditing(false);
+  };
+
+  const mut = useMutation({
+    mutationFn: async () => {
+      const { error } = await api.POST(
+        "/v1/workspaces/{wsId}/channels/{id}/relation",
+        {
+          params: { path: { wsId: props.wsId, id: ch.id } },
+          body: { status, note: note.trim() || null },
+        },
+      );
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      // status уже равен сохранённому; после рефетча ch.relationStatus
+      // совпадёт с ним → dirty=false. note сбрасываем.
+      setEditing(false);
+      setNote("");
+      qc.invalidateQueries({
+        queryKey: ["contact", props.wsId, props.contactId],
+      });
+      qc.invalidateQueries({ queryKey: ["contacts", props.wsId] });
+      // Бейдж статуса на карточках доски (prefix-match по всем проектам).
+      qc.invalidateQueries({ queryKey: ["project-leads"] });
+    },
+  });
+
+  return (
+    <div className="rounded-md border border-zinc-200 px-2.5 py-2">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => props.onOpenCard(ch.id, false)}
+          title="Открыть карточку канала"
+          className="flex min-w-0 flex-1 items-center gap-1 text-[12px] font-medium text-zinc-700 hover:text-emerald-700"
+        >
+          <Hash size={12} className="shrink-0 text-zinc-400" />
+          <span className="truncate">{ch.title}</span>
+          {ch.username && (
+            <span className="shrink-0 text-[11px] font-normal text-zinc-400">
+              @{ch.username}
+            </span>
+          )}
+        </button>
+        <RelationBadge status={ch.relationStatus} />
+        <button
+          type="button"
+          onClick={() => (editing ? closeEditor() : openEditor())}
+          title="Изменить статус"
+          className="shrink-0 text-zinc-400 hover:text-zinc-700"
+        >
+          <Pencil size={12} />
+        </button>
+        <button
+          type="button"
+          onClick={() => props.onOpenCard(ch.id, true)}
+          title="Сменить контакт по этому каналу"
+          className="shrink-0 text-zinc-400 hover:text-emerald-700"
+        >
+          <ArrowLeftRight size={12} />
+        </button>
+      </div>
+
+      {editing && (
+        <div className="mt-2 flex flex-col gap-1.5">
+          <select
+            value={status}
+            onChange={(e) =>
+              setStatus(e.target.value as ChannelRelationStatus)
+            }
+            className="rounded border border-zinc-300 px-1.5 py-1 text-[12px]"
+          >
+            {RELATION_CHOICES.map((s) => (
+              <option key={s} value={s}>
+                {RELATION_META[s].label}
+              </option>
+            ))}
+          </select>
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Причина / комментарий (необязательно)"
+            rows={2}
+            className="rounded border border-zinc-300 px-1.5 py-1 text-[12px]"
+          />
+          <div className="flex items-center gap-2">
+            {dirty && (
+              <button
+                type="button"
+                disabled={mut.isPending}
+                onClick={() => mut.mutate()}
+                className="rounded bg-emerald-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+              >
+                Сохранить
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={closeEditor}
+              className="text-[11px] text-zinc-500 hover:text-zinc-800"
+            >
+              Отмена
+            </button>
+            {mut.isError && (
+              <span className="text-[11px] text-red-600">Ошибка</span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {ch.relationHistory.length > 0 && (
+        <div className="mt-1.5">
+          <button
+            type="button"
+            onClick={() => setShowHistory((v) => !v)}
+            className="flex items-center gap-1 text-[11px] text-zinc-400 hover:text-zinc-700"
+          >
+            {showHistory ? (
+              <ChevronDown size={12} />
+            ) : (
+              <ChevronRight size={12} />
+            )}
+            История ({ch.relationHistory.length})
+          </button>
+          {showHistory && (
+            <ul className="mt-1 flex flex-col gap-1 border-l border-zinc-200 pl-2">
+              {ch.relationHistory.slice().reverse().map((h) => (
+                <li key={h.at} className="text-[11px] leading-snug text-zinc-600">
+                  <RelationBadge status={h.status} />{" "}
+                  {h.note && <span>— {h.note} </span>}
+                  <span className="text-zinc-400">
+                    · {h.byName ?? "—"}, {formatPastRelative(h.at)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Вертикальный список каналов админа со статусом взаимодействия по каждому.
+// Заменил горизонтальные чипы (T3.1): теперь решение по каналу видно и
+// правится прямо в сайдбаре, а заметка-памятка свернулась в историю.
+export function ChannelRelationList(props: {
+  wsId: string;
+  contact: Contact;
+  onOpenCard: (id: string, change: boolean) => void;
+}) {
+  if (props.contact.channels.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1.5 border-b border-zinc-200 px-3 py-2">
+      {props.contact.channels.map((ch) => (
+        <ChannelRelationRow
+          key={ch.id}
+          wsId={props.wsId}
+          contactId={props.contact.id}
+          channel={ch}
+          onOpenCard={props.onOpenCard}
+        />
+      ))}
+    </div>
+  );
+}
+
 export function ContactNote(props: { wsId: string; contact: Contact }) {
   const qc = useQueryClient();
   return (

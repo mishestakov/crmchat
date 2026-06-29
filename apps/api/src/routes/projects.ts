@@ -45,7 +45,7 @@ import {
   scheduleUnscheduledLeads,
 } from "../lib/project-scheduling.ts";
 import { messagesToOpenerDunning } from "../lib/opener-dunning.ts";
-import { canFillDunning } from "@repo/core";
+import { canFillDunning, ChannelRelationStatusSchema } from "@repo/core";
 import { type WorkspaceVars } from "../middleware/assert-member.ts";
 import { nextStepSql } from "./contacts.ts";
 
@@ -368,6 +368,9 @@ const LeadProgressSchema = z
         isRkn: z.boolean(),
         // Уже работает у нас на платформе (CPC/CPA) — причина отбраковки.
         alreadyWorking: z.boolean(),
+        // Глобальный статус взаимодействия по каналу — для бейджа на карточке
+        // доски. Лента истории доске не нужна (она в сайдбаре, из Contact).
+        relationStatus: ChannelRelationStatusSchema,
       })
       .nullable(),
   })
@@ -1190,6 +1193,7 @@ app.openapi(
           channelLink: channels.link,
           channelPlatform: channels.platform,
           channelMemberCount: channels.memberCount,
+          channelRelationStatus: channels.relationStatus,
           channelIsRkn: channelIsRknSql,
           channelAlreadyWorking: channelAlreadyWorkingSql,
           channelRknBlocked: channelRknBlockedSql,
@@ -1348,6 +1352,7 @@ app.openapi(
                 memberCount: l.channelMemberCount,
                 isRkn: l.channelIsRkn ?? false,
                 alreadyWorking: l.channelAlreadyWorking ?? false,
+                relationStatus: l.channelRelationStatus ?? "none",
               }
             : null,
         };

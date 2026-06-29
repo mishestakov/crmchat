@@ -4,6 +4,7 @@ import { and, count, eq, inArray, or, sql } from "drizzle-orm";
 import {
   type Channel,
   ChannelSchema as BaseChannelSchema,
+  ChannelRelationStatusSchema,
   CreateChannelSchema as BaseCreateChannel,
   type FieldDef,
   ImportChannelsSchema as BaseImportChannels,
@@ -77,7 +78,7 @@ import {
   clearPlacementRecipients,
   healPlacementRecipients,
 } from "../lib/placement-recipient.ts";
-import { buildEntityNote } from "../lib/entity-note.ts";
+import { recordChannelRelation } from "../lib/channel-relation.ts";
 import {
   accountAccessClause,
   assertAccountAccess,
@@ -1548,20 +1549,25 @@ app.openapi(
   },
 );
 
-// Памятка о канале («не отработал», «маленький CPM») — отдельной ручкой,
-// доступной member'у: общий PATCH канала admin-only (username/properties),
-// а пометки ставят менеджеры. НЕ description — тот синкается из соцсети.
+// Статус взаимодействия по каналу (глобальный, следует за каналом по всем
+// проектам) — смена статуса + комментарий-причина. Append-only: каждое
+// нажатие добавляет запись в relationHistory и обновляет relationStatus
+// (снимок). Доступно member'у. Запись без смены статуса = просто комментарий
+// (status повторяет текущий).
 app.openapi(
   createRoute({
-    method: "patch",
-    path: "/v1/workspaces/{wsId}/channels/{id}/note",
+    method: "post",
+    path: "/v1/workspaces/{wsId}/channels/{id}/relation",
     tags: ["channels"],
     request: {
       params: WsIdParam,
       body: {
         content: {
           "application/json": {
-            schema: z.object({ note: z.string().max(2000).nullable() }),
+            schema: z.object({
+              status: ChannelRelationStatusSchema,
+              note: z.string().max(2000).nullable(),
+            }),
           },
         },
       },
@@ -1569,23 +1575,19 @@ app.openapi(
     responses: {
       200: {
         content: { "application/json": { schema: ChannelSchema } },
-        description: "Note saved",
+        description: "Relation status recorded",
       },
     },
   }),
   async (c) => {
     const { wsId, id } = c.req.valid("param");
     await assertChannelAccess(id, wsId);
-    const { note } = c.req.valid("json");
-    const [updated] = await db
-      .update(channels)
-      .set({
-        note: await buildEntityNote(c.get("userId"), note),
-        updatedAt: new Date(),
-      })
-      .where(eq(channels.id, id))
-      .returning();
-    const [serialized] = await joinAdmins([updated!]);
+    const { status, note } = c.req.valid("json");
+    const updated = await recordChannelRelation(id, status, note, c.get("userId"));
+    // Канал мог исчезнуть между assertChannelAccess и UPDATE (гонка с удалением) —
+    // returning() придёт пустым. Без гарда joinAdmins([undefined]) упал бы 500.
+    if (!updated) throw new HTTPException(404, { message: "канал не найден" });
+    const [serialized] = await joinAdmins([updated]);
     return c.json(serialized!);
   },
 );
@@ -2911,7 +2913,8 @@ async function joinAdmins(
     externalId: r.externalId,
     title: r.title,
     description: r.description,
-    note: r.note,
+    relationStatus: r.relationStatus,
+    relationHistory: r.relationHistory,
     username: r.username,
     link: r.link,
     memberCount: r.memberCount,

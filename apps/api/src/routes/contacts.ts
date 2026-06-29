@@ -13,6 +13,8 @@ import {
 } from "drizzle-orm";
 import {
   CONTACT_FIELD_DEFS,
+  type ChannelRelationStatus,
+  type ChannelRelationEntry,
   ContactSchema as BaseContactSchema,
   UpdateContactSchema as BaseUpdate,
 } from "@repo/core";
@@ -127,8 +129,15 @@ type ChannelRow = {
   hasDm: boolean;
   unavailableSince: string | null;
   isRkn: boolean;
+  relationStatus: ChannelRelationStatus;
+  relationHistory: ChannelRelationEntry[];
 };
-const channelsSql = sql<ChannelRow[]>`(
+// relationHistory (append-only лог) нужен только сайдбару (detail), а в
+// списочной ручке на 1000 контактов раздувает payload без пользы — table-row
+// рисует лишь снимок relationStatus. Поэтому в list-варианте отдаём пустой
+// массив (shape остаётся валидным), полную историю — только из selectOne.
+const buildChannelsSql = (includeHistory: boolean) =>
+  sql<ChannelRow[]>`(
   SELECT COALESCE(
     json_agg(
       json_build_object(
@@ -139,7 +148,9 @@ const channelsSql = sql<ChannelRow[]>`(
         'lastMessageAt', ch.last_message_at,
         'hasDm', COALESCE((ch.meta->>'has_dm')::boolean, false),
         'unavailableSince', ch.unavailable_since,
-        'isRkn', ${sql.raw(channelRknExistsSqlText("ch"))}
+        'isRkn', ${sql.raw(channelRknExistsSqlText("ch"))},
+        'relationStatus', ch.relation_status,
+        'relationHistory', ${includeHistory ? sql`ch.relation_history` : sql`'[]'::jsonb`}
       )
       ORDER BY ch.last_message_at DESC NULLS LAST, ch.title
     ),
@@ -149,6 +160,9 @@ const channelsSql = sql<ChannelRow[]>`(
   JOIN channels ch ON ch.id = ca.channel_id
   WHERE ca.contact_id = contacts.id
 )`.as("channels");
+
+const channelsListSql = buildChannelsSql(false);
+const channelsSql = buildChannelsSql(true);
 
 const ContactSchema = BaseContactSchema.openapi("Contact");
 const UpdateContactSchema = BaseUpdate.openapi("UpdateContact");
@@ -245,7 +259,7 @@ app.openapi(
       ...getTableColumns(contacts),
       nextStep: nextStepSql,
       chatAccounts: chatAccountsSql,
-      channels: channelsSql,
+      channels: channelsListSql,
     })
       .from(contacts)
       .where(and(...conditions))

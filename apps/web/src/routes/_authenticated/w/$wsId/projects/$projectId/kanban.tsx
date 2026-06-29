@@ -25,6 +25,7 @@ import {
   useProject,
 } from "../../../../../../lib/outreach-queries";
 import { OUTREACH_QK } from "../../../../../../lib/query-keys";
+import { RelationBadge } from "../../../../../../lib/channel-relation";
 
 export const Route = createFileRoute(
   "/_authenticated/w/$wsId/projects/$projectId/kanban",
@@ -39,6 +40,38 @@ type LeadsResponse =
 type Lead = LeadsResponse["leads"][number];
 
 const NO_STAGE = "__no_stage__"; // sentinel для колонки «Без стадии»
+
+// Карточка доски = АДМИН (contactId), внутри — все его каналы-размещения в
+// проекте. Переписка/пиналка/стадия у админа одни (опенер дедупится по
+// админу), поэтому группа едет по воронке целиком.
+type LeadGroup = { key: string; anchor: Lead; items: Lead[] };
+
+// Якорь группы — item, на котором висит переписка (есть scheduled-история).
+// Дедуп опенера по админу гарантирует, что такой ровно один; fallback —
+// первый item (свежезашедший админ без отправок).
+function pickAnchor(items: Lead[]): Lead {
+  return items.find((l) => (l.messages?.length ?? 0) > 0) ?? items[0]!;
+}
+
+function groupLeads(leads: Lead[]): LeadGroup[] {
+  const byContact = new Map<string, Lead[]>();
+  const singletons: LeadGroup[] = [];
+  for (const l of leads) {
+    if (!l.contactId) {
+      // DM-путь без контакта — каждый лид своя карточка.
+      singletons.push({ key: l.id, anchor: l, items: [l] });
+      continue;
+    }
+    const arr = byContact.get(l.contactId) ?? [];
+    arr.push(l);
+    byContact.set(l.contactId, arr);
+  }
+  const groups: LeadGroup[] = [];
+  for (const [cid, items] of byContact) {
+    groups.push({ key: cid, anchor: pickAnchor(items), items });
+  }
+  return [...groups, ...singletons];
+}
 
 function KanbanPage() {
   const { wsId, projectId } = Route.useParams();
@@ -221,24 +254,39 @@ function KanbanPage() {
   // Канбан показывает лидов после ответа peer'а (project_items.repliedAt).
   // Контакт заводится на входящем (см. outreach-listener), карточка на канбане
   // появляется тогда же; до ответа лид виден только в табличке /leads.
-  const leads = useMemo(() => {
-    let out = (leadsQ.data?.leads ?? []).filter((l) => !!l.repliedAt);
+  // Группировка по админу — O(n) построение Map, зависит ТОЛЬКО от лидов.
+  // Держим в отдельном memo, чтобы ввод в поиск/тоггл фильтра не пересобирал
+  // группы на каждую букву (на 1000 лидов это заметный лаг).
+  const allGroups = useMemo(() => {
+    const replied = (leadsQ.data?.leads ?? []).filter((l) => !!l.repliedAt);
+    return groupLeads(replied);
+  }, [leadsQ.data?.leads]);
+
+  const groups = useMemo(() => {
     const q = search.trim().replace(/^@/, "").toLowerCase();
-    if (q) {
-      out = out.filter(
-        (l) =>
-          l.username?.toLowerCase().includes(q) ||
-          l.channel?.username?.toLowerCase().includes(q),
-      );
-    }
-    if (onlyWaiting) {
-      out = out.filter((l) => l.unreadCount > 0 || l.markedUnread);
-    }
-    if (accountFilter) {
-      out = out.filter((l) => l.account?.id === accountFilter);
-    }
-    return out;
-  }, [leadsQ.data?.leads, search, onlyWaiting, accountFilter]);
+    return allGroups.filter((g) => {
+      if (q) {
+        const hit = g.items.some(
+          (l) =>
+            l.username?.toLowerCase().includes(q) ||
+            l.channel?.username?.toLowerCase().includes(q) ||
+            l.channel?.title?.toLowerCase().includes(q),
+        );
+        if (!hit) return false;
+      }
+      // unreadCount/markedUnread — на контакте, у всех каналов одни, берём якорь.
+      if (onlyWaiting && !(g.anchor.unreadCount > 0 || g.anchor.markedUnread)) {
+        return false;
+      }
+      if (
+        accountFilter &&
+        !g.items.some((l) => l.account?.id === accountFilter)
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }, [allGroups, search, onlyWaiting, accountFilter]);
 
   // Аккаунты, реально присутствующие на доске (по ответившим лидам) — опции
   // селектора. Берём из самих лидов (там account уже есть), а не из всего
@@ -275,15 +323,16 @@ function KanbanPage() {
   // NO_STAGE, видны в отдельной колонке.
   const byStage = useMemo(() => {
     const validStageIds = new Set(stages.map((s) => s.id));
-    const map = new Map<string, Lead[]>();
+    const map = new Map<string, LeadGroup[]>();
     for (const s of stages) map.set(s.id, []);
     map.set(NO_STAGE, []);
-    for (const l of leads) {
-      const key = l.stageId && validStageIds.has(l.stageId) ? l.stageId : NO_STAGE;
-      map.get(key)!.push(l);
+    for (const g of groups) {
+      const sid = g.anchor.stageId;
+      const key = sid && validStageIds.has(sid) ? sid : NO_STAGE;
+      map.get(key)!.push(g);
     }
     return map;
-  }, [stages, leads]);
+  }, [stages, groups]);
 
   const sortedStages = useMemo(
     () => [...stages].sort((a, b) => a.order - b.order),
@@ -317,7 +366,7 @@ function KanbanPage() {
     );
   }
 
-  const noStageLeads = byStage.get(NO_STAGE) ?? [];
+  const noStageGroups = byStage.get(NO_STAGE) ?? [];
   const isDone = projectQ.data?.status === "done";
 
   return (
@@ -380,7 +429,7 @@ function KanbanPage() {
             <Column
               key={stage.id}
               title={stage.name}
-              leads={byStage.get(stage.id) ?? []}
+              groups={byStage.get(stage.id) ?? []}
               onDrop={(itemId) =>
                 move.mutate({ itemId, stageId: stage.id })
               }
@@ -388,11 +437,11 @@ function KanbanPage() {
               isReadOnly={isDone}
             />
           ))}
-          {noStageLeads.length > 0 && (
+          {noStageGroups.length > 0 && (
             <Column
               key={NO_STAGE}
               title="Без стадии"
-              leads={noStageLeads}
+              groups={noStageGroups}
               onDrop={(itemId) => move.mutate({ itemId, stageId: null })}
               onOpenChat={setDrawerLead}
               isReadOnly={isDone}
@@ -438,7 +487,7 @@ function KanbanPage() {
 
 function Column(props: {
   title: string;
-  leads: Lead[];
+  groups: LeadGroup[];
   onDrop: (itemId: string) => void;
   onOpenChat: (lead: Lead) => void;
   isReadOnly?: boolean;
@@ -473,16 +522,16 @@ function Column(props: {
     >
       <div className="mb-2 flex items-baseline gap-2 rounded-md bg-zinc-300/70 px-2.5 py-1.5 text-sm">
         <span className="font-medium">{props.title}</span>
-        <span className="text-zinc-500">{props.leads.length}</span>
+        <span className="text-zinc-500">{props.groups.length}</span>
       </div>
       {/* min-h-0 обязателен: без него flex-ребёнок не сжимается ниже контента,
           растёт, и overflow-hidden колонки обрезает список без скролла. */}
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto">
-        {props.leads.map((l) => (
-          <LeadCard
-            key={l.id}
-            lead={l}
-            onOpenChat={() => props.onOpenChat(l)}
+        {props.groups.map((g) => (
+          <LeadGroupCard
+            key={g.key}
+            group={g}
+            onOpenChat={() => props.onOpenChat(g.anchor)}
             isReadOnly={isReadOnly}
           />
         ))}
@@ -492,34 +541,27 @@ function Column(props: {
 }
 
 
-function LeadCard(props: {
-  lead: Lead;
+function LeadGroupCard(props: {
+  group: LeadGroup;
   onOpenChat: () => void;
   isReadOnly?: boolean;
 }) {
-  const { lead } = props;
-  const ch = lead.channel;
+  const { anchor, items } = props.group;
+  // Заголовок карточки — АДМИН (имя + @username): карточка = человек, разговор
+  // один. Ниже — все его каналы-размещения в проекте, у каждого свой статус.
   const fullName =
-    typeof lead.properties.full_name === "string"
-      ? lead.properties.full_name
+    typeof anchor.properties.full_name === "string"
+      ? anchor.properties.full_name
       : null;
-  // Заголовок карточки — канал (с иконкой платформы), как в «Списке»: видно,
-  // что за площадка. Админ — отдельной строкой ниже (имя + @username). Без
-  // канала (DM-путь) заголовок откатывается на контакт, и строку админа тогда
-  // не дублируем — он уже в заголовке.
-  const channelLabel = ch
-    ? ch.title || (ch.username ? `@${ch.username}` : null)
-    : null;
-  const adminHandle = lead.username ? `@${lead.username}` : null;
-  const display =
-    channelLabel ?? fullName ?? adminHandle ?? "—";
-  const adminLine = channelLabel
-    ? [fullName, adminHandle].filter(Boolean).join(" · ") || null
-    : null;
-  const platform =
-    ch && ch.platform in PLATFORMS ? (ch.platform as Platform) : null;
-  const unread = lead.unreadCount;
-  const health = getLeadHealth(lead);
+  const adminHandle = anchor.username ? `@${anchor.username}` : null;
+  const display = fullName ?? adminHandle ?? "—";
+  const subline = fullName && adminHandle ? adminHandle : null;
+  const unread = anchor.unreadCount;
+  const health = getLeadHealth(anchor);
+  // Каналы-размещения админа в этом проекте (DM-путь без канала — пропускаем).
+  const channels = items
+    .map((i) => i.channel)
+    .filter((c): c is NonNullable<Lead["channel"]> => !!c);
   // Подсветка застоя (§1.4): красный — пиналка выкл и затих 3+ дней назад.
   // Нейтральная карточка — белая (пиналка идёт либо коммуникация свежая).
   const toneClass =
@@ -534,7 +576,9 @@ function LeadCard(props: {
         props.isReadOnly
           ? undefined
           : (e) => {
-              e.dataTransfer.setData("text/plain", lead.id);
+              // Двигаем стадию ЯКОРЯ — разговор один на админа, группа едет
+              // целиком (стадия спутников для доски игнорируется).
+              e.dataTransfer.setData("text/plain", anchor.id);
               e.dataTransfer.effectAllowed = "move";
             }
       }
@@ -550,24 +594,44 @@ function LeadCard(props: {
     >
       <div className="flex items-start gap-2">
         <div className="flex min-w-0 flex-1 items-center gap-1.5 font-medium">
-          {platform && (
-            <PlatformBadge platform={platform} size={13} className="shrink-0" />
-          )}
+          <User size={13} className="shrink-0 text-zinc-400" />
           <span className="truncate">{display}</span>
         </div>
-        {(unread > 0 || lead.markedUnread) && (
-          <UnreadBadge count={unread} dot={lead.markedUnread} />
+        {(unread > 0 || anchor.markedUnread) && (
+          <UnreadBadge count={unread} dot={anchor.markedUnread} />
         )}
       </div>
-      {adminLine && (
-        <div className="mt-0.5 flex items-center gap-1 text-xs text-zinc-500">
-          <User size={11} className="shrink-0 text-zinc-400" />
-          <span className="truncate">{adminLine}</span>
+      {subline && (
+        <div className="mt-0.5 truncate pl-[19px] text-xs text-zinc-500">
+          {subline}
         </div>
       )}
-      {lead.nextStep && (
+      {channels.length > 0 && (
+        <div className="mt-1.5 flex flex-col gap-1">
+          {channels.map((c) => {
+            const platform =
+              c.platform in PLATFORMS ? (c.platform as Platform) : null;
+            return (
+              <div key={c.id} className="flex items-center gap-1.5">
+                {platform && (
+                  <PlatformBadge
+                    platform={platform}
+                    size={12}
+                    className="shrink-0"
+                  />
+                )}
+                <span className="min-w-0 flex-1 truncate text-xs text-zinc-700">
+                  {c.title || (c.username ? `@${c.username}` : "—")}
+                </span>
+                <RelationBadge status={c.relationStatus} />
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {anchor.nextStep && (
         <div className="mt-1">
-          <NextStepLine next={lead.nextStep} />
+          <NextStepLine next={anchor.nextStep} />
         </div>
       )}
       {health.badge?.kind === "dunning" && (

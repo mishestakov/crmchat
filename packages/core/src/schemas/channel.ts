@@ -31,6 +31,38 @@ export const EntityNoteSchema = z.object({
 });
 export type EntityNote = z.infer<typeof EntityNoteSchema>;
 
+// Статус взаимодействия с каналом — ГЛОБАЛЬНЫЙ (следует за каналом по всем
+// проектам/кампаниям). Ось «работает ли этот канал с нами» — отдельная от
+// per-campaign решения клиента (project_items.clientStatus) и шортлиста.
+//   none       — ещё не контактировали / не оценивали
+//   pending    — на связи / ждём ответа
+//   working    — работает / берём
+//   paused     — перестал / на паузе
+//   unsuitable — не подходит (наша оценка: накрутка, низкий CPM…)
+//   declined   — отказ (их решение: админ не хочет работать)
+export const ChannelRelationStatusSchema = z.enum([
+  "none",
+  "pending",
+  "working",
+  "paused",
+  "unsuitable",
+  "declined",
+]);
+export type ChannelRelationStatus = z.infer<typeof ChannelRelationStatusSchema>;
+
+// Запись в истории взаимодействия по каналу: смена статуса + причина + кто/
+// когда. Форма повторяет EntityNote (денормализованный byName на момент
+// записи), плюс status. Append-only: нелинейность (работал → перестал → отказ
+// → спросили почему) сохраняется целиком, а не перезатирается.
+export const ChannelRelationEntrySchema = z.object({
+  status: ChannelRelationStatusSchema,
+  note: z.string().nullable(),
+  byUserId: z.string(),
+  byName: z.string().nullable(),
+  at: z.iso.datetime(),
+});
+export type ChannelRelationEntry = z.infer<typeof ChannelRelationEntrySchema>;
+
 export const ChannelSchema = z.object({
   id: z.string().min(1).max(64),
   workspaceId: z.string().min(1).max(64),
@@ -38,9 +70,10 @@ export const ChannelSchema = z.object({
   externalId: z.string().nullable(),
   title: z.string().min(1).max(256),
   description: z.string().nullable(),
-  // Памятка о канале (ручная, янтарная в карточке) — НЕ description, тот
-  // синкается из соцсети.
-  note: EntityNoteSchema.nullable(),
+  // Глобальный статус взаимодействия (снимок последней записи relationHistory)
+  // + сам append-only лог. Следует за каналом по всем проектам.
+  relationStatus: ChannelRelationStatusSchema,
+  relationHistory: z.array(ChannelRelationEntrySchema),
   username: z.string().nullable(),
   link: z.string().nullable(),
   memberCount: z.number().int().nullable(),
