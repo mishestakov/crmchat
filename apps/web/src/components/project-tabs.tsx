@@ -86,11 +86,7 @@ export function ProjectTabs(props: {
           />
         </nav>
         {seq.data?.status === "draft" && (
-          <LaunchPanel
-            wsId={wsId}
-            projectId={projectId}
-            messagesCount={seq.data.messages.length}
-          />
+          <LaunchPanel wsId={wsId} projectId={projectId} />
         )}
       </div>
     </div>
@@ -101,12 +97,8 @@ export function ProjectTabs(props: {
 // /activate на бэке, каждое — ссылка к месту починки. До этого кнопка жила
 // только в «Настройках» и дизейблилась без объяснений — на тесте 10.06.26
 // её не нашли, а причину неактивности не поняли.
-function LaunchPanel(props: {
-  wsId: string;
-  projectId: string;
-  messagesCount: number;
-}) {
-  const { wsId, projectId, messagesCount } = props;
+function LaunchPanel(props: { wsId: string; projectId: string }) {
+  const { wsId, projectId } = props;
   const qc = useQueryClient();
   const navigate = useNavigate();
   // Сводка-подтверждение перед запуском, когда часть каналов отбракована.
@@ -157,7 +149,7 @@ function LaunchPanel(props: {
   const listOk = r.leadsTotal > 0;
   const eligibleOk = r.leadsEligible > 0;
   const accountsOk = r.accountsCount > 0;
-  const chainOk = messagesCount > 0;
+  const chainOk = r.chainReady;
   const allOk = eligibleOk && accountsOk && chainOk;
   // Отложено = всё, что не уйдёт = total − eligible. Не сумма корзин вручную:
   // авто-корректно, если добавится новая причина отбраковки.
@@ -217,9 +209,7 @@ function LaunchPanel(props: {
         className={itemCls(chainOk)}
       >
         {icon(chainOk)}
-        {chainOk
-          ? `Цепочка: ${messagesCount} сообщ.`
-          : "Цепочка пуста — напишите сообщение"}
+        {chainOk ? "Сообщение готово" : "Сообщение не задано — напишите опенер"}
       </Link>
       <div className="ml-auto flex items-center gap-2">
         {activate.error && (

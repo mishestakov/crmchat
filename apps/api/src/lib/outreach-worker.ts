@@ -9,6 +9,7 @@ import {
   tgChats,
   tgUsers,
   workspaces,
+  EMPTY_DUNNING,
 } from "../db/schema.ts";
 import { errMsg } from "./errors.ts";
 import {
@@ -40,7 +41,6 @@ import {
   resolveWarmTgUserIds,
   FINAL_OFFER_MSG_IDX,
 } from "./project-scheduling.ts";
-import { messagesToOpenerDunning } from "./opener-dunning.ts";
 import { failStepAndCancelFollowups } from "./outreach-chain.ts";
 import type { OutreachSchedule } from "../db/schema.ts";
 import type { TdClient } from "./tdlib/index.ts";
@@ -950,22 +950,17 @@ async function scheduleNextFollowup(
   schedule: OutreachSchedule,
 ): Promise<void> {
   const nextIdx = item.messageIdx + 1;
-  const [proj] = await db
-    .select({
-      // Пиналка — одна на воркспейс (workspaces.dunning).
-      dunning: workspaces.dunning,
-      messages: projects.messages,
-    })
-    .from(projects)
-    .innerJoin(workspaces, eq(workspaces.id, projects.workspaceId))
-    .where(eq(projects.id, item.projectId))
+  // Пиналка — одна на воркспейс (workspaces.dunning). wsId уже на item —
+  // прямой lookup по PK, без join через projects.
+  const [ws] = await db
+    .select({ dunning: workspaces.dunning })
+    .from(workspaces)
+    .where(eq(workspaces.id, item.workspaceId))
     .limit(1);
-  if (!proj) return;
-  // Переходный мост: каданс из dunning.intervals; для незабэкфилленного воркспейса
-  // конвертируем из messages на лету. Пинг с messageIdx=k берёт интервал k-1
+  if (!ws) return;
+  // Каданс из dunning.intervals. Пинг с messageIdx=k берёт интервал k-1
   // (intervals 0-based по пингам). Серия кончилась → интервала нет → return.
-  const dunning =
-    proj.dunning ?? messagesToOpenerDunning(proj.messages).dunning;
+  const dunning = ws.dunning ?? EMPTY_DUNNING;
   const nextDelay = dunning.intervals[nextIdx - 1];
   if (!nextDelay) return;
   const nextAt = nextAllowedSendAt(

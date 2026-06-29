@@ -384,7 +384,7 @@ app.openapi(
 
 // ── Доливка размещений в активную кампанию ──────────────────────────────────
 // Если кампания уже active/paused, новые размещения должны сразу пойти в аутрич
-// по общей цепочке (project.messages), независимо от уже запущенных волн —
+// по опенеру + пиналке воркспейса, независимо от уже запущенных волн —
 // offset'ы цепочки считаются от now(). Тот же общий конвейер scheduleLeads,
 // что и в активации (project-scheduling).
 //
@@ -403,7 +403,7 @@ async function dolivkaAccountsOrThrow(
     });
   }
   if (project.status !== "active" && project.status !== "paused") return null;
-  if (!project.opener?.text.trim() && project.messages.length === 0) {
+  if (!project.opener.text.trim()) {
     throw new HTTPException(400, {
       message: "У кампании нет опенера — нечего слать новым блогерам",
     });

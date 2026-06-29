@@ -248,7 +248,6 @@ function LeadsPage() {
     },
   });
 
-  const totalMsgCount = seq.data?.messages.length ?? 0;
   const total = leadsQ.data?.total ?? 0;
   const replied = leadsQ.data?.repliedCount ?? 0;
 
@@ -669,11 +668,9 @@ function LeadsPage() {
                     Канал
                   </th>
                   <th className="px-4 py-2 text-left font-normal">Аккаунт</th>
-                  {Array.from({ length: totalMsgCount }).map((_, i) => (
-                    <th key={i} className="px-4 py-2 text-left font-normal">
-                      {i === 0 ? "Первое" : `Сообщение ${i + 1}`}
-                    </th>
-                  ))}
+                  {/* Опенер — первое холодное касание. Прогресс пиналки (X/N)
+                      живёт бейджем в карточке лида слева, отдельной колонки нет. */}
+                  <th className="px-4 py-2 text-left font-normal">Опенер</th>
                 </tr>
               </thead>
               <tbody>
@@ -727,17 +724,12 @@ function LeadsPage() {
                         accountSource={l.accountSource}
                       />
                     </td>
-                    {Array.from({ length: totalMsgCount }).map((_, idx) => {
-                      const msg = l.messages.find((m) => m.messageIdx === idx);
-                      return (
-                        <td key={idx} className="px-4 py-2 align-top">
-                          <MessageStatusCell
-                            msg={msg}
-                            repliedAt={l.repliedAt}
-                          />
-                        </td>
-                      );
-                    })}
+                    <td className="px-4 py-2 align-top">
+                      <MessageStatusCell
+                        msg={l.messages.find((m) => m.messageIdx === 0)}
+                        repliedAt={l.repliedAt}
+                      />
+                    </td>
                   </tr>
                   );
                 })}

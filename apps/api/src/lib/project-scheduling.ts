@@ -10,7 +10,7 @@ import {
   workspaces,
   tgChats,
   tgUsers,
-  type ProjectMessage,
+  EMPTY_DUNNING,
   type MessageVariant,
   type ProjectDunning,
 } from "../db/schema.ts";
@@ -20,7 +20,6 @@ import { channelRknBlockedSql } from "./rkn-registry.ts";
 import { channelAlreadyWorkingSql } from "./platform-active.ts";
 import { resolveStickyByPeerIds } from "./sticky.ts";
 import { substituteVariables } from "./substitute-variables.ts";
-import { messagesToOpenerDunning } from "./opener-dunning.ts";
 import { nextAllowedSendAt } from "./outreach-schedule.ts";
 
 // Helpers для активации проекта (/activate) и доливки размещений в активный
@@ -249,10 +248,8 @@ function buildScheduledRows(opts: {
   // accountId → имя отправителя (outreach_name ?? first_name) для {{отправитель}}.
   senderNameByAccountId: Map<string, string>;
 }): ScheduledRow[] {
-  // Опенер — проектный (fallback из messages для незабэкфилленных проектов).
-  // Пиналка — workspace-уровень (opts.dunning).
-  const opener =
-    opts.project.opener ?? messagesToOpenerDunning(opts.project.messages).opener;
+  // Опенер — проектный (одно холодное касание). Пиналка — workspace-уровень.
+  const opener = opts.project.opener;
   const dunning = opts.dunning;
   // Котики — только TG: в MAX пинги текстовые (scheduler не кладёт стикер-снимок).
   const textOnlyPings = dunning.pings.filter((p) => p.kind === "text");
@@ -605,18 +602,15 @@ async function attachMaxPeer(
   );
 }
 
-// Пиналка — одна на воркспейс (workspaces.dunning). Fallback из project.messages
-// на переходный период (незабэкфилленный воркспейс).
-async function resolveWorkspaceDunning(
-  wsId: string,
-  project: typeof projects.$inferSelect,
-): Promise<ProjectDunning> {
+// Пиналка — одна на воркспейс (workspaces.dunning). Не задана → пустая серия
+// (опенер уйдёт, авто-догона не будет, пока пиналку не настроят).
+async function resolveWorkspaceDunning(wsId: string): Promise<ProjectDunning> {
   const [ws] = await db
     .select({ dunning: workspaces.dunning })
     .from(workspaces)
     .where(eq(workspaces.id, wsId))
     .limit(1);
-  return ws?.dunning ?? messagesToOpenerDunning(project.messages).dunning;
+  return ws?.dunning ?? EMPTY_DUNNING;
 }
 
 // Конвейер «лиды проекта → scheduled-строки» — общий путь активации и доливки:
@@ -649,7 +643,7 @@ export async function scheduleLeads(opts: {
     await Promise.all([
       resolveStickyByTgUserIds(opts.wsId, tgUserIds),
       resolveWarmTgUserIds(opts.wsId, tgUserIds),
-      resolveWorkspaceDunning(opts.wsId, opts.project),
+      resolveWorkspaceDunning(opts.wsId),
       resolveProjectMaxAccountIds(opts.wsId, opts.project),
     ]);
   // Имена отправителей по всем аккаунтам в игре (TG ∪ MAX) — для {{отправитель}}.
@@ -934,7 +928,7 @@ export async function armLeadDunning(
   if (!project) return "empty";
   const wsId = project.workspaceId;
 
-  const dunning = await resolveWorkspaceDunning(wsId, project);
+  const dunning = await resolveWorkspaceDunning(wsId);
   if (dunning.intervals.length === 0 || dunning.pings.length === 0)
     return "empty";
 

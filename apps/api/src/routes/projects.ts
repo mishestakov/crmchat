@@ -7,7 +7,6 @@ import {
   channels,
   contacts,
   DEFAULT_OUTREACH_STAGES,
-  messageTemplates,
   outreachAccounts,
   outreachAccountsMode,
   projectItems,
@@ -20,7 +19,6 @@ import {
   scheduledMessageStatus,
   tgChats,
   tgUsers,
-  type ProjectMessage,
   type ProjectStage,
 } from "../db/schema.ts";
 import { pickDefined } from "../lib/pick-defined.ts";
@@ -44,7 +42,6 @@ import {
   scheduleLeads,
   scheduleUnscheduledLeads,
 } from "../lib/project-scheduling.ts";
-import { messagesToOpenerDunning } from "../lib/opener-dunning.ts";
 import { canFillDunning, ChannelRelationStatusSchema } from "@repo/core";
 import { type WorkspaceVars } from "../middleware/assert-member.ts";
 import { nextStepSql } from "./contacts.ts";
@@ -65,18 +62,7 @@ const DelaySchema = z.object({
   value: z.number().int().min(0).max(365),
 });
 
-const MessageSchema = z.object({
-  id: z.string(),
-  text: z.string().min(1).max(4000),
-  // Альтернативный текст для «тёплых» лидов (тех, кто хоть раз отвечал нам
-  // через любой аккаунт воркспейса). Сейчас применяется только к первому
-  // сообщению (idx=0) — UI отдаёт это поле только для первого шага.
-  warmText: z.string().max(4000).nullable().optional(),
-  delay: DelaySchema,
-});
-
-// Целевая форма рассылки (§8 bd-autodogon): опенер + пиналка. Пока живёт рядом с
-// messages (мост на переходный период); редактор переедет на неё в этапе B2.
+// Форма рассылки: опенер (проектный, первое касание) + пиналка (на воркспейсе).
 const VariantSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("text"), text: z.string().min(1).max(4000) }),
   z.object({
@@ -86,7 +72,8 @@ const VariantSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 const OpenerSchema = z.object({
-  text: z.string().min(1).max(4000),
+  // Пустой text допустим (draft без опенера); непустоту требует гейт /activate.
+  text: z.string().max(4000),
   warmText: z.string().max(4000).nullable().optional(),
 });
 // Экспортируется для workspaces.ts — пиналка живёт на воркспейсе (одна на все
@@ -137,9 +124,9 @@ const ProjectSchema = z
     stages: z.array(StageSchema),
     accountsMode: AccountsModeSchema,
     accountsSelected: z.array(z.string()),
-    messages: z.array(MessageSchema),
-    // Опенер — проектный (пиналка на воркспейсе). Nullable на переходный период.
-    opener: OpenerSchema.nullable(),
+    // Опенер — проектный (первое касание). Пиналка живёт на воркспейсе.
+    // Пустой text = кампания ещё не готова к запуску.
+    opener: OpenerSchema,
     activatedAt: z.iso.datetime().nullable(),
     completedAt: z.iso.datetime().nullable(),
     // Клиент финализировал медиаплан (фаза «Согласование»): решения заморожены.
@@ -165,10 +152,6 @@ const CreateProjectBody = z
     // Опциональный stage_template — стадии скопируются из шаблона. Если
     // не передан, используется DEFAULT_OUTREACH_STAGES (4 стадии).
     templateId: z.string().min(1).max(64).optional(),
-    // Опциональный message_template — цепочка сообщений скопируется в
-    // projects.messages. Не передан → проект создаётся с пустой цепочкой,
-    // юзер её набьёт руками в редакторе.
-    messageTemplateId: z.string().min(1).max(64).optional(),
     // agency: бриф можно заполнить сразу при создании кампании (§5.2) либо
     // позже через PATCH. Для bd-проектов игнорируются.
     brief: z.string().max(10000).optional(),
@@ -187,9 +170,7 @@ const UpdateProjectBody = z
     stages: z.array(StageSchema).optional(),
     accountsMode: AccountsModeSchema.optional(),
     accountsSelected: z.array(z.string()).optional(),
-    messages: z.array(MessageSchema).optional(),
-    // Опенер пишется редактором проекта напрямую (B2). messages — legacy/шаблоны
-    // (мост пересчитывает опенер). Пиналка правится на воркспейсе, не здесь.
+    // Опенер пишется редактором проекта напрямую. Пиналка — на воркспейсе.
     opener: OpenerSchema.optional(),
     // agency: фаза и бриф правятся в любом статусе (не snapshot-поля).
     // phase — свободная навигация по визарду, brief-* — данные кампании.
@@ -314,7 +295,8 @@ const LeadProgressSchema = z
     // через contacts.primary_account_id, sequence ещё в draft и round-robin
     // этот лид не зацепит; null — лид незнаком, на активации уйдёт в RR.
     accountSource: z.enum(["scheduled", "sticky"]).nullable(),
-    // Прогресс по каждому сообщению цепочки. Длина = project.messages.length.
+    // Прогресс по фактическим отправкам лида (опенер + пинги пиналки) из
+    // scheduled_messages: messageIdx=0 — опенер, ≥1 — пинги.
     messages: z.array(LeadMessageProgressSchema),
     repliedAt: z.iso.datetime().nullable(),
     // Последнее сообщение в диалоге (любой стороны) — с привязанного контакта.
@@ -497,25 +479,6 @@ app.openapi(
       initialStages = tpl.stages;
     }
 
-    // Цепочка: либо копия из message-шаблона, либо пустой массив.
-    let initialMessages: ProjectMessage[] = [];
-    if (body.messageTemplateId) {
-      const [tpl] = await db
-        .select({ messages: messageTemplates.messages })
-        .from(messageTemplates)
-        .where(
-          and(
-            eq(messageTemplates.id, body.messageTemplateId),
-            eq(messageTemplates.workspaceId, wsId),
-          ),
-        )
-        .limit(1);
-      if (!tpl) {
-        throw new HTTPException(404, { message: "message template not found" });
-      }
-      initialMessages = tpl.messages;
-    }
-
     const [row] = await db
       .insert(projects)
       .values({
@@ -523,10 +486,7 @@ app.openapi(
         trackId: body.trackId,
         name: body.name,
         stages: initialStages,
-        messages: initialMessages,
-        // Мост: опенер пересчитывается из первого сообщения (пиналка — на
-        // воркспейсе, в проект не пишется).
-        opener: messagesToOpenerDunning(initialMessages).opener,
+        // Опенер набивается в редакторе проекта; на старте — пустой (default).
         // agency brief-поля (для bd остаются null/default). numeric → string,
         // ISO-даты → Date.
         brief: body.brief ?? null,
@@ -600,12 +560,11 @@ app.openapi(
       body.name !== undefined ||
       body.accountsMode !== undefined ||
       body.accountsSelected !== undefined ||
-      body.messages !== undefined ||
       body.opener !== undefined;
     if (touchedSnapshot && existing.status !== "draft") {
       throw new HTTPException(400, {
         message:
-          "Name/accounts/messages can be edited only in draft. Use contact-settings fields anytime.",
+          "Name/accounts/opener can be edited only in draft. Use contact-settings fields anytime.",
       });
     }
 
@@ -619,7 +578,6 @@ app.openapi(
           "stages",
           "accountsMode",
           "accountsSelected",
-          "messages",
           // Редактор проекта пишет опенер напрямую.
           "opener",
           // agency text/enum-поля — прямое копирование (null валиден).
@@ -629,12 +587,6 @@ app.openapi(
           "constraints",
           "advertiserData",
         ]),
-        // Мост для legacy/шаблонов: messages БЕЗ прямого opener → пересчитываем
-        // опенер из первого сообщения (пиналка живёт на воркспейсе, не здесь).
-        ...(body.messages !== undefined &&
-          body.opener === undefined && {
-            opener: messagesToOpenerDunning(body.messages).opener,
-          }),
         // numeric/timestamp требуют конверсии — pickDefined не годится.
         ...(body.budgetAmount !== undefined && {
           budgetAmount:
@@ -757,6 +709,10 @@ app.openapi(
               leadsNoRkn: z.number().int(),
               // Активные аккаунты, доступные проекту (резолв общий с /activate).
               accountsCount: z.number().int(),
+              // Готовность опенера тем же гейтом, что /activate (opener.text
+              // непустой). Фронт берёт отсюда, а не считает сам — иначе
+              // чек-лист дрейфует от реального гейта запуска.
+              chainReady: z.boolean(),
             }),
           },
         },
@@ -781,6 +737,7 @@ app.openapi(
       leadsWorking: readiness.working,
       leadsNoRkn: readiness.noRkn,
       accountsCount: accountIds.length,
+      chainReady: project.opener.text.trim().length > 0,
     });
   },
 );
@@ -809,10 +766,8 @@ app.openapi(
         message: "Only draft projects can be activated",
       });
     }
-    // Готовность к старту — по опенеру (B2 пишет его напрямую). messages.length
-    // тоже считаем валидным на переходный период (legacy/шаблоны, мост держит
-    // opener синхронным).
-    if (!project.opener?.text.trim() && project.messages.length === 0) {
+    // Готовность к старту — по опенеру (первое холодное касание).
+    if (!project.opener.text.trim()) {
       throw new HTTPException(400, { message: "Add an opener message" });
     }
 
@@ -1108,7 +1063,6 @@ app.openapi(
           "application/json": {
             schema: z.object({
               total: z.number().int(),
-              totalCount: z.number().int(),
               repliedCount: z.number().int(),
               leads: z.array(LeadProgressSchema),
             }),
@@ -1125,7 +1079,6 @@ app.openapi(
     const { projectId } = c.req.valid("param");
     const { limit, offset } = c.req.valid("query");
     const project = await assertProjectAccess(projectId, wsId, userId, role);
-    const totalCount = project.messages.length;
 
     // Фильтр лидов внутри проекта: admin видит всё, member — только лиды,
     // у которых scheduled_messages.account_id ∈ его аккаунтов. Draft-проекты
@@ -1216,7 +1169,6 @@ app.openapi(
     if (leadRows.length === 0) {
       return c.json({
         total: 0,
-        totalCount,
         repliedCount,
         leads: [],
       });
@@ -1285,7 +1237,6 @@ app.openapi(
 
     return c.json({
       total: leadRows[0]?.total ?? 0,
-      totalCount,
       repliedCount,
       leads: leadRows.map((l) => {
         const items = byLead.get(l.id) ?? [];
@@ -2004,7 +1955,6 @@ function serializeProject(
     stages: row.stages,
     accountsMode: row.accountsMode,
     accountsSelected: row.accountsSelected,
-    messages: row.messages,
     opener: row.opener,
     activatedAt: row.activatedAt?.toISOString() ?? null,
     completedAt: row.completedAt?.toISOString() ?? null,

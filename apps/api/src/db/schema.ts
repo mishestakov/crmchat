@@ -90,6 +90,11 @@ export const DEFAULT_OUTREACH_SCHEDULE: OutreachSchedule = {
 // CreateWorkspaceSchema требует mode явно (юзер выбирает radio при создании).
 export const workspaceMode = pgEnum("workspace_mode", ["bd", "agency"]);
 
+// Пустая пиналка: опенер уйдёт, авто-догона нет. Дефолт колонки и единый
+// фолбэк для читателей (nullable не несёт инфы — «не настроена» = «пустая»).
+// Тип ProjectDunning объявлен ниже — для аннотации это ок (типы хоистятся).
+export const EMPTY_DUNNING: ProjectDunning = { pings: [], intervals: [] };
+
 export const workspaces = pgTable("workspaces", {
   id: text("id").primaryKey().$defaultFn(shortId),
   name: text("name").notNull(),
@@ -100,7 +105,11 @@ export const workspaces = pgTable("workspaces", {
     .default(DEFAULT_OUTREACH_SCHEDULE),
   // Пиналка — одна на воркспейс (§1.3 bd-autodogon): фразы + котики + каданс
   // одинаковы во всех проектах. Опенер остаётся проектным (свой питч у кампании).
-  dunning: jsonb("dunning").$type<ProjectDunning>(),
+  // NOT NULL DEFAULT пустая (симметрично opener) — читателям не нужен фолбэк.
+  dunning: jsonb("dunning")
+    .$type<ProjectDunning>()
+    .notNull()
+    .default(EMPTY_DUNNING),
   // Метадата «кто создал». В access-проверках НЕ участвует — для этого
   // workspace_members. Оставлено как audit-поле, чтобы в логах было видно
   // первого админа.
@@ -601,49 +610,13 @@ export const stageTemplates = pgTable(
   (t) => [index("stage_templates_workspace_id_idx").on(t.workspaceId)],
 );
 
-// Message template — переиспользуемая цепочка сообщений на воркспейс.
-// При создании проекта или по кнопке «Сохранить как шаблон» юзер
-// складывает текущие project.messages в библиотеку; при создании следующего
-// проекта выбирает из селекта и messages копируются в новый проект.
-// Дальше шаблон и проект развязаны (правка одного не трогает другого).
-export const messageTemplates = pgTable(
-  "message_templates",
-  {
-    id: text("id").primaryKey().$defaultFn(shortId),
-    workspaceId: text("workspace_id")
-      .notNull()
-      .references(() => workspaces.id, { onDelete: "cascade" }),
-    name: text("name").notNull(),
-    messages: jsonb("messages").$type<ProjectMessage[]>().notNull().default([]),
-    createdBy: text("created_by")
-      .notNull()
-      .references(() => users.id),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [index("message_templates_workspace_id_idx").on(t.workspaceId)],
-);
-
 export type ProjectMessageDelay = {
   // 'minutes' нужен для тестов/демо; в проде разумно 'hours'/'days'.
   period: "minutes" | "hours" | "days";
   value: number;
 };
-export type ProjectMessage = {
-  id: string;
-  text: string;
-  // Альтернативный текст для «тёплых» лидов — тех, кто хотя бы раз отвечал
-  // на наш DM через любой аккаунт воркспейса (tg_chats.has_inbound=true).
-  // Сейчас редактируется только у первого шага (idx=0); валидация на это
-  // не накладывается, но активация применяет warmText только для idx=0.
-  // null/undefined/"" → tёплый получает основной text.
-  warmText?: string | null;
-  // Задержка ОТНОСИТЕЛЬНО предыдущего сообщения этого же project'а для лида.
-  // Для первого сообщения (idx=0) — относительно момента активации.
-  delay: ProjectMessageDelay;
-};
 
-// === Целевая форма рассылки (мигрирует из ProjectMessage[], §8 bd-autodogon) ===
+// === Форма рассылки: опенер + пиналка (§8 bd-autodogon) ===
 // Опенер (одно касание) + пиналка (пул пингов + каданс) заменяют плоскую ленту
 // messages[]. Заводятся аддитивно; messages дропнем после переключения всех
 // потребителей.
@@ -754,14 +727,13 @@ export const projects = pgTable(
       .$type<string[]>()
       .notNull()
       .default([]),
-    messages: jsonb("messages")
-      .$type<ProjectMessage[]>()
+    // Опенер — проектный (свой питч у кампании): первое холодное касание.
+    // Пиналка — на воркспейсе (workspaces.dunning, §1.3). Пустой text =
+    // кампания ещё не готова к запуску (гейт /activate).
+    opener: jsonb("opener")
+      .$type<ProjectOpener>()
       .notNull()
-      .default([]),
-    // Опенер — проектный (свой питч у кампании). Пиналка — на воркспейсе
-    // (workspaces.dunning, §1.3). Nullable на переходный период бэкфилла из
-    // messages; messages дропнем после переключения всех потребителей.
-    opener: jsonb("opener").$type<ProjectOpener>(),
+      .default({ text: "" }),
     activatedAt: timestamp("activated_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
 
@@ -937,7 +909,7 @@ export const projectItems = pgTable(
 // Запланированное сообщение outreach-проекта: одна строка = одна предстоящая
 // отправка. Создаётся пачкой при активации проекта (item × message_idx).
 // `text` — snapshot ПОСЛЕ подстановки {{key}} переменных, чтобы редактирование
-// project.messages не порвало уже распланированное.
+// project.opener / workspaces.dunning не порвало уже распланированное.
 //   pending → sent | failed | cancelled
 // Worker (фаза 3b) выбирает pending где sendAt <= now AND respect schedule.
 export const scheduledMessageStatus = pgEnum("scheduled_message_status", [

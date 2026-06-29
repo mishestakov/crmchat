@@ -3,7 +3,6 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { eq, inArray, isNotNull } from "drizzle-orm";
 import { db, sql } from "./db/client.ts";
-import { messagesToOpenerDunning } from "./lib/opener-dunning.ts";
 import {
   channelAdmins,
   channels,
@@ -16,7 +15,7 @@ import {
   users,
   workspaceMembers,
   workspaces,
-  type ProjectMessage,
+  type ProjectOpener,
   type ProjectStage,
 } from "./db/schema.ts";
 
@@ -147,59 +146,23 @@ await db
 
 // === Сашины проекты + лиды =================================================
 
-// Цепочка сообщений «холодное привлечение» (5.1 из product.md): Привет /
-// Ты живой / Эй грустно с задержками сутки/трое суток.
-const ACQUIRE_MESSAGES: ProjectMessage[] = [
-  {
-    id: "msg1",
-    text: "Привет, {{full_name}}! Я Саша из @CPCsupport. Видел твой канал и хочу обсудить интересную возможность сотрудничества по нашей партнёрке.",
-    delay: { period: "minutes", value: 0 },
-  },
-  {
-    id: "msg2",
-    text: "Привет, ты тут? :) Хотел вернуться к разговору про условия сотрудничества — на этой неделе у нас стартовая ставка повышенная.",
-    delay: { period: "days", value: 1 },
-  },
-  {
-    id: "msg3",
-    text: "Эй, грустно. Если совсем неинтересно — без проблем, напиши «нет». Иначе попозже стукнусь ещё раз.",
-    delay: { period: "days", value: 3 },
-  },
-];
+// Опенер «холодное привлечение» (5.1 из product.md). Пиналка (догон) — на
+// воркспейсе (workspaces.dunning), едина для всех проектов.
+const ACQUIRE_OPENER: ProjectOpener = {
+  text: "Привет, {{full_name}}! Я Саша из @CPCsupport. Видел твой канал и хочу обсудить интересную возможность сотрудничества по нашей партнёрке.",
+};
 
-const RETAIN_MESSAGES: ProjectMessage[] = [
-  {
-    id: "msg1",
-    text: "Привет, {{full_name}}! Заглянул узнать как дела с потоком и выплатами. Видел рост в канале — поздравляю.",
-    delay: { period: "minutes", value: 0 },
-  },
-  {
-    id: "msg2",
-    text: "Если есть какие-то идеи или замечания по нашей партнёрке — пиши, я на связи всегда.",
-    delay: { period: "days", value: 7 },
-  },
-];
+const RETAIN_OPENER: ProjectOpener = {
+  text: "Привет, {{full_name}}! Заглянул узнать как дела с потоком и выплатами. Видел рост в канале — поздравляю.",
+};
 
-const CHURN_MESSAGES: ProjectMessage[] = [
-  {
-    id: "msg1",
-    text: "Привет {{full_name}}, заметил спад выплат за последние недели. Можем созвониться обсудить как помочь восстановить ситуацию?",
-    delay: { period: "minutes", value: 0 },
-  },
-  {
-    id: "msg2",
-    text: "Стукнусь ещё раз — если время неудобное, скажи когда можно. Хочется разобраться вместе.",
-    delay: { period: "days", value: 2 },
-  },
-];
+const CHURN_OPENER: ProjectOpener = {
+  text: "Привет {{full_name}}, заметил спад выплат за последние недели. Можем созвониться обсудить как помочь восстановить ситуацию?",
+};
 
-const ADHOC_MESSAGES: ProjectMessage[] = [
-  {
-    id: "msg1",
-    text: "Привет, нужна помощь — хотел подсказать процесс перехода на самозанятость. Если интересно, напиши.",
-    delay: { period: "minutes", value: 0 },
-  },
-];
+const ADHOC_OPENER: ProjectOpener = {
+  text: "Привет, нужна помощь — хотел подсказать процесс перехода на самозанятость. Если интересно, напиши.",
+};
 
 // Helper: сгенерить лидов для проекта с распределением по стадиям.
 type LeadSpec = {
@@ -330,7 +293,7 @@ await db
       name: "Привлечение январь 2026",
       status: "active",
       stages: SASHA_ACQUIRE_STAGES,
-      messages: ACQUIRE_MESSAGES,
+      opener: ACQUIRE_OPENER,
       activatedAt: new Date(Date.now() - 5 * 86_400_000),
       createdBy: SASHA_ID,
     },
@@ -341,7 +304,7 @@ await db
       name: "Привлечение декабрь 2025",
       status: "done",
       stages: SASHA_ACQUIRE_STAGES,
-      messages: ACQUIRE_MESSAGES,
+      opener: ACQUIRE_OPENER,
       activatedAt: new Date(Date.now() - 35 * 86_400_000),
       completedAt: new Date(Date.now() - 5 * 86_400_000),
       createdBy: SASHA_ID,
@@ -353,7 +316,7 @@ await db
       name: "Привлечение февраль 2026",
       status: "draft",
       stages: SASHA_ACQUIRE_STAGES,
-      messages: ACQUIRE_MESSAGES,
+      opener: ACQUIRE_OPENER,
       createdBy: SASHA_ID,
     },
     // УДЕРЖАНИЕ
@@ -364,7 +327,7 @@ await db
       name: "Q1 2026 — ценные партнёры",
       status: "active",
       stages: SASHA_RETAIN_STAGES,
-      messages: RETAIN_MESSAGES,
+      opener: RETAIN_OPENER,
       activatedAt: new Date(Date.now() - 12 * 86_400_000),
       createdBy: SASHA_ID,
     },
@@ -376,7 +339,7 @@ await db
       name: "Снижение выплат — ноябрь",
       status: "active",
       stages: SASHA_CHURN_STAGES,
-      messages: CHURN_MESSAGES,
+      opener: CHURN_OPENER,
       activatedAt: new Date(Date.now() - 8 * 86_400_000),
       createdBy: SASHA_ID,
     },
@@ -388,7 +351,7 @@ await db
       name: "Переход на самозанятость",
       status: "active",
       stages: SASHA_ADHOC_STAGES,
-      messages: ADHOC_MESSAGES,
+      opener: ADHOC_OPENER,
       activatedAt: new Date(Date.now() - 3 * 86_400_000),
       createdBy: SASHA_ID,
     },
@@ -399,7 +362,7 @@ await db
       name: "Разбан ботов после правок",
       status: "active",
       stages: SASHA_ADHOC_STAGES,
-      messages: ADHOC_MESSAGES,
+      opener: ADHOC_OPENER,
       activatedAt: new Date(Date.now() - 1 * 86_400_000),
       createdBy: SASHA_ID,
     },
@@ -594,21 +557,11 @@ await db
   ])
   .onConflictDoNothing({ target: stageTemplates.id });
 
-// Универсальная цепочка для агентского запроса прайсов (P6 в agency-pivot —
-// в перспективе подкапотный механизм запроса; сейчас сидится как обычная
-// outreach-цепочка для демо).
-const CPP_OFFER_MESSAGES: ProjectMessage[] = [
-  {
-    id: "msg1",
-    text: "Привет {{full_name}}, я Женя из CPP Agency. У нас проект для бренда {{brand}} — рекламная интеграция в TG. Дата выхода — {{air_date}}. Какая твоя ставка за пост 24/48?",
-    delay: { period: "minutes", value: 0 },
-  },
-  {
-    id: "msg2",
-    text: "Стукнусь ещё раз. Бюджет до {{budget}}, готовы обсуждать формат. Если ставка на этой неделе ОК, можем фиксировать.",
-    delay: { period: "days", value: 1 },
-  },
-];
+// Опенер агентского запроса прайсов (P6 в agency-pivot — в перспективе
+// подкапотный механизм запроса; сейчас сидится как обычный опенер для демо).
+const CPP_OFFER_OPENER: ProjectOpener = {
+  text: "Привет {{full_name}}, я Женя из CPP Agency. У нас проект для бренда {{brand}} — рекламная интеграция в TG. Дата выхода — {{air_date}}. Какая твоя ставка за пост 24/48?",
+};
 
 await db
   .insert(projects)
@@ -621,7 +574,7 @@ await db
       name: "Q4 2026 Holiday",
       status: "active",
       stages: CPP_PLACEMENT_STAGES,
-      messages: CPP_OFFER_MESSAGES,
+      opener: CPP_OFFER_OPENER,
       properties: { budget: "2 000 000 ₽", spent: "850 000 ₽", placements: 18 },
       activatedAt: new Date(Date.now() - 14 * 86_400_000),
       createdBy: ZHENYA_ID,
@@ -633,7 +586,7 @@ await db
       name: "Cold pre-launch",
       status: "draft",
       stages: CPP_PLACEMENT_STAGES,
-      messages: CPP_OFFER_MESSAGES,
+      opener: CPP_OFFER_OPENER,
       properties: { budget: "500 000 ₽" },
       createdBy: ZHENYA_ID,
     },
@@ -645,7 +598,7 @@ await db
       name: "Тариф «Молодёжный»",
       status: "active",
       stages: CPP_PLACEMENT_STAGES,
-      messages: CPP_OFFER_MESSAGES,
+      opener: CPP_OFFER_OPENER,
       properties: { budget: "1 500 000 ₽", spent: "1 200 000 ₽", placements: 24 },
       activatedAt: new Date(Date.now() - 21 * 86_400_000),
       createdBy: ZHENYA_ID,
@@ -657,7 +610,7 @@ await db
       name: "B2B SMB сегмент",
       status: "active",
       stages: CPP_PLACEMENT_STAGES,
-      messages: CPP_OFFER_MESSAGES,
+      opener: CPP_OFFER_OPENER,
       properties: { budget: "800 000 ₽", spent: "320 000 ₽", placements: 9 },
       activatedAt: new Date(Date.now() - 7 * 86_400_000),
       createdBy: ZHENYA_ID,
@@ -669,7 +622,7 @@ await db
       name: "Лето 2026",
       status: "done",
       stages: CPP_PLACEMENT_STAGES,
-      messages: CPP_OFFER_MESSAGES,
+      opener: CPP_OFFER_OPENER,
       properties: { budget: "600 000 ₽", spent: "600 000 ₽", placements: 12 },
       activatedAt: new Date(Date.now() - 90 * 86_400_000),
       completedAt: new Date(Date.now() - 30 * 86_400_000),
@@ -683,7 +636,7 @@ await db
       name: "EdTech Q1",
       status: "draft",
       stages: CPP_PLACEMENT_STAGES,
-      messages: CPP_OFFER_MESSAGES,
+      opener: CPP_OFFER_OPENER,
       properties: { budget: "1 200 000 ₽" },
       createdBy: ZHENYA_ID,
     },
@@ -966,7 +919,7 @@ await db
     budgetAmount: "1500000",
     tov: "Тёплый, праздничный, без пафоса.",
     constraints: "Без алкоголя в кадре. Не упоминать конкурентов.",
-    messages: CPP_OFFER_MESSAGES,
+    opener: CPP_OFFER_OPENER,
     createdBy: ZHENYA_ID,
   })
   .onConflictDoNothing({ target: projects.id });
@@ -1079,16 +1032,6 @@ if (workingSeed.length > 0) {
     { kind: "sticker" as const, setName: "Cutecatsmeme", uniqueId: "AgAD8AYAAkVRkw4" },
     { kind: "sticker" as const, setName: "Cutecatsmeme", uniqueId: "AgADIAgAAkVRkw4" },
   ];
-  // Опенер — проектный (из первого сообщения цепочки).
-  const projRows = await db
-    .select({ id: projects.id, messages: projects.messages })
-    .from(projects);
-  for (const p of projRows) {
-    await db
-      .update(projects)
-      .set({ opener: messagesToOpenerDunning(p.messages).opener })
-      .where(eq(projects.id, p.id));
-  }
   // Пиналка — одна на воркспейс (§1.3): дефолтные фразы + котики + каданс из 5
   // шагов (2д→4-5д→7д→2-3д→4-5д). В проде менеджер правит в настройках воркспейса.
   const DEFAULT_DUNNING = {
@@ -1114,7 +1057,7 @@ if (workingSeed.length > 0) {
       .where(eq(workspaces.id, w.id));
   }
   console.log(
-    `[backfill] opener на ${projRows.length} проектах, пиналка (+${KOTIKI.length} котиков) на ${wsRows.length} воркспейсах`,
+    `[backfill] пиналка (+${KOTIKI.length} котиков) на ${wsRows.length} воркспейсах`,
   );
 }
 

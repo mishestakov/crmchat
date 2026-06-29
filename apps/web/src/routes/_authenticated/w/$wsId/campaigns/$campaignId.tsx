@@ -21,10 +21,9 @@ import {
 import { Modal } from "../../../../../components/modal";
 import { AddChannelsModal } from "../../../../../components/add-channels-modal";
 import {
-  MessagesEditor,
-  newMessage,
-  type Message,
-} from "../../../../../components/messages-editor";
+  OpenerEditor,
+  type Opener,
+} from "../../../../../components/opener-editor";
 import { api } from "../../../../../lib/api";
 import { copyText } from "../../../../../lib/clipboard";
 import { errorMessage } from "../../../../../lib/errors";
@@ -800,20 +799,17 @@ function LaunchModal({
 }) {
   const qc = useQueryClient();
   const projectId = campaign.id;
-  const [messages, setMessages] = useState<Message[]>(() =>
-    campaign.messages.length > 0 ? campaign.messages : [newMessage()],
-  );
-  const chainDirty =
-    JSON.stringify(messages) !== JSON.stringify(campaign.messages);
-  const chainEmpty =
-    messages.length === 0 || messages.every((m) => !m.text.trim());
+  const baseOpener: Opener = campaign.opener;
+  const [opener, setOpener] = useState<Opener>(baseOpener);
+  const openerDirty = JSON.stringify(opener) !== JSON.stringify(baseOpener);
+  const openerEmpty = !opener.text.trim();
 
   const launch = useMutation({
     mutationFn: async () => {
-      if (chainDirty) {
+      if (openerDirty) {
         const { error } = await api.PATCH(
           "/v1/workspaces/{wsId}/projects/{projectId}",
-          { params: { path: { wsId, projectId } }, body: { messages } },
+          { params: { path: { wsId, projectId } }, body: { opener } },
         );
         if (error) throw error;
       }
@@ -840,9 +836,9 @@ function LaunchModal({
         подставит @username его канала (YouTube/TikTok — ссылкой), а если
         каналов несколько — все через запятую.
       </p>
-      <MessagesEditor
-        value={messages}
-        onChange={setMessages}
+      <OpenerEditor
+        value={opener}
+        onChange={setOpener}
         variables={LAUNCH_VARIABLES}
       />
       {launch.error && (
@@ -858,9 +854,9 @@ function LaunchModal({
         </button>
         <button
           type="button"
-          disabled={chainEmpty || launch.isPending}
+          disabled={openerEmpty || launch.isPending}
           onClick={() => launch.mutate()}
-          title={chainEmpty ? "Сначала задайте цепочку сообщений" : undefined}
+          title={openerEmpty ? "Сначала задайте опенер" : undefined}
           className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
         >
           <Send size={15} />
