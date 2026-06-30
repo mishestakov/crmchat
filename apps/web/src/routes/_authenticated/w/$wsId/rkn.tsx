@@ -6,6 +6,7 @@ import { errorMessage } from "../../../../lib/errors";
 import { formatRelative } from "../../../../lib/date-utils";
 import { ProgressBar } from "../../../../components/progress-bar";
 import { SearchInput } from "../../../../components/search-input";
+import { FilterChip } from "../../../../components/filter-chip";
 
 // Словарь РКН (T4.5): поиск по реестру страниц с Госуслуг. Главный сценарий —
 // проверить блогера, которого ещё нет в CRM (по юзернейму/названию). Данные
@@ -106,7 +107,7 @@ function RknPage() {
         />
       </div>
       <div className="mb-3 flex flex-wrap gap-1.5">
-        <NetworkChip
+        <FilterChip
           label="Все"
           active={network === null}
           onClick={() => {
@@ -115,7 +116,7 @@ function RknPage() {
           }}
         />
         {(d?.networks ?? []).map((n) => (
-          <NetworkChip
+          <FilterChip
             key={n.network}
             label={`${n.network} ${n.count.toLocaleString("ru")}`}
             active={network === n.network}
@@ -208,23 +209,3 @@ function externalHref(url: string): string {
     : `https://${u.replace(/^[/@:]+/, "")}`;
 }
 
-function NetworkChip(props: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={props.onClick}
-      className={
-        "rounded-full px-3 py-1 text-xs font-medium ring-1 transition-colors " +
-        (props.active
-          ? "bg-zinc-900 text-white ring-zinc-900"
-          : "bg-white text-zinc-600 ring-zinc-200 hover:bg-zinc-50")
-      }
-    >
-      {props.label}
-    </button>
-  );
-}

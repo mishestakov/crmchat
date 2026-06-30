@@ -1,0 +1,4 @@
+# Зависимости суточного синка «Каналы Яндекса» (platform_active_sync.py).
+# Ставить в окружении джоба на YT-хосте (не в node-проекте).
+ytsaurus-client>=0.13   # даёт `yt.wrapper`
+psycopg[binary]>=3.1

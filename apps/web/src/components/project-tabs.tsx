@@ -247,11 +247,6 @@ function LaunchPanel(props: { wsId: string; projectId: string }) {
                 • без контакта: {r.leadsNoContact}
               </li>
             )}
-            {r.leadsWorking > 0 && (
-              <li className="text-zinc-500">
-                • уже работает у нас: {r.leadsWorking}
-              </li>
-            )}
             {r.leadsNoRkn > 0 && (
               <li className="text-zinc-500">• без РКН: {r.leadsNoRkn}</li>
             )}

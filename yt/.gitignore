@@ -1,0 +1,4 @@
+# Python bytecode + любые сырые выгрузки (derived) — не коммитим.
+__pycache__/
+*.tsv
+*.zip

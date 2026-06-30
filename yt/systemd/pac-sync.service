@@ -1,0 +1,16 @@
+# Oneshot-запуск суточного синка «Каналы Яндекса».
+# Установка: см. yt/README.md. Правь WorkingDirectory под путь репо на хосте.
+[Unit]
+Description=Sync Yandex platform-active channels (CPC/CPA) into Postgres
+After=docker.service
+Requires=docker.service
+# Алерт при падении (опционально): создай pac-sync-alert.service.
+OnFailure=pac-sync-alert.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/crmchat
+ExecStart=/usr/bin/docker compose --env-file .env.production -f docker-compose.prod.yml --profile jobs run --rm pac-sync
+# Подчищаем висячие oneshot-контейнеры на всякий случай.
+ExecStartPre=-/usr/bin/docker compose --env-file .env.production -f docker-compose.prod.yml rm -f pac-sync
+TimeoutStartSec=1800

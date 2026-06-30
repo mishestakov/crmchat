@@ -1,6 +1,9 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
+  check,
+  date,
   index,
   integer,
   jsonb,
@@ -14,6 +17,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import type { EntityNote, ChannelRelationEntry } from "@repo/core";
+import { channelMatchCandidatesSqlText } from "../lib/channel-match-keys.ts";
 import { shortId } from "./short-id.ts";
 import type { PostSnapshot, CreativeSnapshot } from "../lib/td-message.ts";
 
@@ -1355,24 +1359,89 @@ export const rknSync = pgTable("rkn_sync", {
   total: integer("total").notNull().default(0),
 });
 
-// Каналы, уже работающие у нас на платформе (CPC/CPA-активность) — гейт
-// отбраковки «уже работает». Суточный синк с YT-кластера (tgads + cpa_network),
-// bulk-replace. Зеркало rkn_records: natural-key из выгрузки + source + derived
-// match_key для матча с channels (по тем же кандидатам, что РКН).
+// Каналы, уже работающие у нас на платформах Яндекса (CPC=tgads / CPA=
+// cpa_network) — обогащение «Каналы Яндекса» (см. specs/yt-platform-active.md).
+// Питает гейт отбраковки «уже работает» (platform-active.ts) и одноимённую
+// страницу-справочник (зеркало РКН). Суточный bulk-replace python-джобом:
+// node владеет DDL + чтением, python пишет сырую идентичность + штампует мету.
+//
+// Одна строка на запись-источник (без мержа CPC/CPA); «оба источника» считаем
+// при чтении группировкой по match_key. PK — namespaced natural key из
+// выгрузки, чтобы дедупить внутри source и не путать CPC-id с CPA-id.
 export const platformActiveChannels = pgTable(
   "platform_active_channels",
   {
-    // tg_chat_id из выгрузки рекл-платформ — natural key (дедуп при синке).
-    tgChatId: text("tg_chat_id").primaryKey(),
-    // cpc | cpa | both — в какой системе канал крутится (подпись отбраковки).
+    // "<source>:<natural_id>" из выгрузки (cpc:tg_chat_id / cpa:page_key).
+    sourceKey: text("source_key").primaryKey(),
+    // cpc | cpa — из какой рекл-системы Яндекса пришла запись.
     source: text("source").notNull(),
-    // Нормализованный ключ матчинга с channels ("telegram:<username>" или
-    // "telegram:-100<id>"). NULL — выгрузка не дала матчабельной идентичности
-    // (тогда канал не сматчить, гейт его не накроет). Заполняется при ингесте.
-    matchKey: text("match_key"),
+    // --- идентичность (питает generated match_key + дисплей/поиск) ---
+    // Обычный text, а не channelPlatform enum: generated match_key требует
+    // immutable-выражения, а enum::text — STABLE (enum_out). Значения те же,
+    // что в enum; vk не пролезает через CHECK ниже. Строка байт-в-байт
+    // совпадает с channels.platform для матча гейтом.
+    platform: text("platform").notNull(),
+    externalId: text("external_id"),
+    username: text("username"),
+    link: text("link"),
+    // Яндекс-логин владельца — только CPA. Идентификация админа под win-back.
+    ownerLogin: text("owner_login"),
+    // Все отпечатки канала (username/external_id/инвайт-хэш) — DERIVED тем же
+    // channelMatchCandidatesSqlText, что и сторона channels, но по голым
+    // колонкам. Массив, а не один ключ: матч симметричный (pac.match_key &&
+    // candidates), поэтому канал, известный пока только по @username (id
+    // появляется лишь после открытия карточки), всё равно находится. python НЕ
+    // считает ключи — пишет сырую идентичность; контракт: идентичность в той
+    // же канонической форме, что хранит channels (username без «@» — derive
+    // делает только lower()). NULL-элементы безвредны в `&&`.
+    matchKey: text("match_key")
+      .array()
+      .generatedAlwaysAs(sql.raw(channelMatchCandidatesSqlText(""))),
+    // --- активность (свежесть; детектор «отвалился» под win-back) ---
+    lastPostDate: date("last_post_date"),
+    recentPostsCount: integer("recent_posts_count").notNull().default(0),
+    recentViews: bigint("recent_views", { mode: "number" })
+      .notNull()
+      .default(0),
+    // --- состояние/здоровье канала на платформе ---
+    botStatus: text("bot_status"), // CPC: OK / ADMIN_RULES_TIMEOUT / …
+    isActive: boolean("is_active"), // CPC: активен в tgads
+    isCpv: boolean("is_cpv"), // CPC: допущен в режим CPV — маркер качества
+    moderationStatus: text("moderation_status"), // CPA: этап ЖЦ страницы
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
   },
-  (t) => [index("platform_active_channels_match_key_idx").on(t.matchKey)],
+  (t) => [
+    // GIN под array-overlap (`pac.match_key && candidates`) гейта/бейджа.
+    index("platform_active_channels_match_key_idx").using("gin", t.matchKey),
+    // Замена enum-валидации (см. коммент к platform): держим домен платформ.
+    // Список выводим из channelPlatform.enumValues — enum остаётся единственным
+    // in-process источником правды домена, не дублируем литералы.
+    check(
+      "platform_active_channels_platform_check",
+      // sql.raw с литералами: bind-параметры в CHECK у CREATE TABLE запрещены.
+      // Значения — enum-лейблы (наши константы), список из enumValues.
+      sql.raw(
+        `platform IN (${channelPlatform.enumValues
+          .map((v) => `'${v}'`)
+          .join(", ")})`,
+      ),
+    ),
+    // Домен source — те же 2 значения, что пишет python (cpc/cpa).
+    check(
+      "platform_active_channels_source_check",
+      sql.raw("source IN ('cpc', 'cpa')"),
+    ),
+  ],
 );
+
+// Мета суточного синка «Каналы Яндекса» — singleton (id='platform_active').
+// Зеркало rkn_sync: дата последнего успешного синка + статус последней попытки
+// (ok / текст ошибки) + размер снапшота для шапки страницы. Штампует python.
+export const platformActiveSync = pgTable("platform_active_sync", {
+  id: text("id").primaryKey(),
+  lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
+  lastStatus: text("last_status"),
+  total: integer("total").notNull().default(0),
+});

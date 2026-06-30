@@ -8,6 +8,7 @@ import {
   channels,
   contacts,
   platformActiveChannels,
+  platformActiveSync,
   projects,
   projectItems,
   stageTemplates,
@@ -990,21 +991,47 @@ console.log(
 // Боевые данные — суточный синк выгрузки с YT (tgads + cpa_network); локально
 // не гоняется, поэтому здесь синтетика по уже засиженным каналам.
 const workingSeed = await db
-  .select({ username: channels.username })
+  .select({ platform: channels.platform, username: channels.username })
   .from(channels)
   .where(isNotNull(channels.username))
   .limit(8);
 if (workingSeed.length > 0) {
+  // Пишем сырую идентичность — match_key выводит generated-колонка сама,
+  // как в бою. source на строку (cpc|cpa); «оба» в проде — две строки.
   await db
     .insert(platformActiveChannels)
     .values(
-      workingSeed.map((c, i) => ({
-        tgChatId: `seed_${i}`,
-        source: (["both", "cpc", "cpa"] as const)[i % 3]!,
-        matchKey: `telegram:${c.username!.toLowerCase()}`,
-      })),
+      workingSeed.map((c, i) => {
+        const cpc = i % 2 === 0;
+        return {
+          sourceKey: `seed:${i}`,
+          source: cpc ? "cpc" : "cpa",
+          platform: c.platform,
+          username: c.username,
+          recentPostsCount: (i % 4) * 3,
+          recentViews: i * 1500,
+          // Свежесть: часть «отвалилась» (старая дата) под будущий win-back.
+          lastPostDate: i % 3 === 0 ? "2026-04-10" : "2026-06-28",
+          botStatus: cpc ? (i % 3 === 0 ? "ADMIN_RULES_TIMEOUT" : "OK") : null,
+          isActive: cpc ? i % 3 !== 0 : null,
+          isCpv: cpc ? i % 2 === 0 : null,
+          moderationStatus: cpc ? null : "Закончился тестовый период",
+        };
+      }),
     )
-    .onConflictDoNothing({ target: platformActiveChannels.tgChatId });
+    .onConflictDoNothing({ target: platformActiveChannels.sourceKey });
+  // Мета синка — чтобы шапка справочника в деве показывала «обновлено», а не
+  // «не загружен». В бою штампует python-джоб.
+  const syncRow = {
+    id: "platform_active",
+    lastSyncAt: new Date(),
+    lastStatus: "ok",
+    total: workingSeed.length,
+  };
+  await db
+    .insert(platformActiveSync)
+    .values(syncRow)
+    .onConflictDoUpdate({ target: platformActiveSync.id, set: syncRow });
   console.log(`[platform_active] seeded ${workingSeed.length} working channels`);
 }
 

@@ -17,7 +17,6 @@ import {
 import { contactTgUserIdSql } from "./contact-sql.ts";
 import { maxPeerRef } from "./max-account-client.ts";
 import { channelRknBlockedSql } from "./rkn-registry.ts";
-import { channelAlreadyWorkingSql } from "./platform-active.ts";
 import { resolveStickyByPeerIds } from "./sticky.ts";
 import { substituteVariables } from "./substitute-variables.ts";
 import { nextAllowedSendAt } from "./outreach-schedule.ts";
@@ -377,7 +376,6 @@ async function prepareLeads(opts: {
       link: channels.link,
       title: channels.title,
       rknBlocked: channelRknBlockedSql,
-      alreadyWorking: channelAlreadyWorkingSql,
     })
     .from(projectItems)
     .leftJoin(channels, eq(channels.id, projectItems.channelId))
@@ -403,16 +401,15 @@ async function prepareLeads(opts: {
   // «Отбракован» = обязан регистрироваться (>10к) и не в реестре — то же
   // условие, что красная пилюля «Нет РКН» (channelRknBlockedSql). Малые
   // (<10к) и неизвестные по размеру не блокируются.
-  // «Уже работает на платформе»: канал уже крутится у нас в CPC/CPA
-  // (platform_active_channels, суточный синк) — партнёра не пере-питчим.
-  // Тоже lenient-OR и тоже исключение из sendable.
+  // «Уже работает на платформе» НЕ исключаем из sendable (CPC/CPA-сигнал
+  // ненадёжен — бейдж на лиде, менеджер решает сам). Гейтит только РКН.
   const sendableKeys = new Set<string>();
   for (const r of channelRows) {
     // MAX-админ без @username ключуется по contactId (adminKey) — иначе выпал бы
     // из синтеза {{каналы}}/{{ссылка}}, как раньше любой no-@username.
     const key = adminKey(r.adminUsername, r.adminContactId);
     if (!key) continue;
-    if (!r.rknBlocked && !r.alreadyWorking) sendableKeys.add(key);
+    if (!r.rknBlocked) sendableKeys.add(key);
     const entry = canals.get(key) ?? { idents: [], title: null, link: null };
     const { ident, link } = channelIdentifier({
       platform: r.platform,
@@ -739,8 +736,6 @@ export async function scheduleUnscheduledLeads(opts: {
         // а не `not (...)`: NULL (неизвестный размер) = годен (см.
         // countUnscheduledLeads).
         sql`${channelRknBlockedSql} is not true`,
-        // «уже работает у нас» — тоже не планируем.
-        sql`not ${channelAlreadyWorkingSql}`,
         unscheduledLeadSql,
       ),
     )

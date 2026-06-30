@@ -71,7 +71,6 @@ type Bucket = "action" | "flight" | "wont";
 const STATE_BUCKET: Record<OutreachState, Bucket | null> = {
   replied: null,
   excluded: "wont",
-  already_working: "wont",
   blocked_rkn: "wont",
   no_contact: "action",
   bot_manual: "action",
@@ -142,7 +141,6 @@ const STATE_PRIORITY: Record<OutreachState, number> = {
   in_flight: 50,
   not_scheduled: 40,
   excluded: 30,
-  already_working: 20,
   blocked_rkn: 10,
 };
 
@@ -901,7 +899,8 @@ function LeadCell({
         </div>
       )}
       {lead.contactReady && ch?.alreadyWorking && (
-        // Уже работает у нас на платформе (CPC/CPA) — партнёра не питчим.
+        // Уже работает у нас на платформе (CPC/CPA) — информ-бейдж, НЕ гейт:
+        // отправку не блокирует, менеджер решает сам.
         <div>
           <span className="rounded bg-sky-100 px-1.5 py-0.5 text-xs font-medium text-sky-700">
             уже работает

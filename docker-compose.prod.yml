@@ -23,14 +23,23 @@ services:
       timeout: 3s
       retries: 20
 
+  # Схема применяется ВРУЧНУЮ, не на каждый `up` (был авто `push --force`,
+  # который при дрейфе мог молча снести данные на проде). За profiles:["migrate"]
+  # → `up` его НЕ поднимает. На деплое запускают руками с TTY:
+  #   docker compose --env-file .env.production -f docker-compose.prod.yml \
+  #     --profile migrate run --rm api-migrate
+  # `push` без --force ИНТЕРАКТИВЕН: показывает дифф и спрашивает перед дропами.
+  # Деструктивные изменения (смена типа колонки и т.п.) — явным yt/sql/*.sql.
+  # См. yt/DEPLOY.md.
   api-migrate:
+    profiles: ["migrate"]
     build:
       context: .
       dockerfile: apps/api/Dockerfile
     restart: "no"
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-    command: ["pnpm", "exec", "drizzle-kit", "push", "--force"]
+    command: ["pnpm", "exec", "drizzle-kit", "push"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -90,8 +99,6 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
     depends_on:
-      api-migrate:
-        condition: service_completed_successfully
       postgres:
         condition: service_healthy
 
@@ -104,6 +111,27 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:8081:80"
+
+  # Суточный синк «Каналы Яндекса» (CPC/CPA-активность с YT) — см.
+  # specs/yt-platform-active.md и yt/README.md. Oneshot за `profiles`, чтобы
+  # `up -d` его НЕ поднимал: запускает планировщик хоста через
+  #   docker compose --env-file .env.production -f docker-compose.prod.yml \
+  #     --profile jobs run --rm pac-sync
+  # Пишет отдельным scoped-юзером pac_sync (только platform_active_*), match_key
+  # выводит generated-колонка. YT-токен монтируется с хоста read-only.
+  pac-sync:
+    profiles: ["jobs"]
+    build:
+      context: ./yt
+      dockerfile: Dockerfile
+    restart: "no"
+    environment:
+      PLATFORM_ACTIVE_DSN: postgres://pac_sync:${PAC_SYNC_PASSWORD:-}@postgres:5432/${POSTGRES_DB}
+    volumes:
+      - ${YT_TOKEN_FILE:-/root/.yt/token}:/root/.yt/token:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   postgres-data:

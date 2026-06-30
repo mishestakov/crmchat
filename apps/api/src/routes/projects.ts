@@ -222,12 +222,14 @@ const LeadAccountSchema = z
 // Состояние лида для триажа списка — единый источник правды, фронт только
 // группирует в корзины (нужно действие / в работе / не отправляем). Дефолт —
 // needs_review (нужно действие): всё, что не попало в явное «система работает»
-// (in_flight) или явный терминал (excluded/already_working/blocked_rkn),
+// (in_flight) или явный терминал (excluded/blocked_rkn),
 // поднимаем человеку, а не хороним в «не отправляем» и не прячем в «в работе».
+// «Уже работает на платформе» НЕ гейтим (CPC/CPA-сигнал ненадёжен: админ мог
+// смениться, у одного админа часть каналов активна) — это бейдж на лиде,
+// менеджер решает сам (channel.alreadyWorking).
 const OUTREACH_STATES = [
   "replied", // ответил — живёт на канбане, не в триаже списка
   "excluded", // менеджер исключил вручную (терминал) → не отправляем
-  "already_working", // уже работает у нас на платформе (авто-терминал) → не отправляем
   "blocked_rkn", // >10k и не в реестре РКН (авто-терминал) → не отправляем
   "no_contact", // нет годного контакта → нужно действие (резолвер)
   "bot_manual", // админ-бот → нужно действие (открыть + Запустить бота)
@@ -242,14 +244,12 @@ function deriveOutreachState(l: {
   repliedAt: Date | null;
   skippedAt: Date | null;
   contactReady: boolean | null;
-  channelAlreadyWorking: boolean | null;
   channelRknBlocked: boolean | null;
   adminIsBot: boolean | null;
   messages: { status: string; error: string | null }[];
 }): OutreachState {
   if (l.repliedAt) return "replied";
   if (l.skippedAt) return "excluded";
-  if (l.channelAlreadyWorking) return "already_working";
   if (l.channelRknBlocked) return "blocked_rkn";
   if (!l.contactReady) return "no_contact";
 
@@ -653,7 +653,6 @@ app.openapi(
 async function longlistContactReadiness(projectId: string): Promise<{
   total: number;
   noContact: number;
-  working: number;
   noRkn: number;
   eligible: number;
 }> {
@@ -661,8 +660,8 @@ async function longlistContactReadiness(projectId: string): Promise<{
     .select({
       total: sql<number>`count(*)::int`,
       noContact: sql<number>`(count(*) filter (where not ${contactReadySql}))::int`,
-      working: sql<number>`(count(*) filter (where ${contactReadySql} and ${channelAlreadyWorkingSql}))::int`,
-      noRkn: sql<number>`(count(*) filter (where ${contactReadySql} and not ${channelAlreadyWorkingSql} and ${channelRknBlockedSql}))::int`,
+      // «Уже работает» больше не отбраковка (бейдж, не гейт) — из воронки убрано.
+      noRkn: sql<number>`(count(*) filter (where ${contactReadySql} and ${channelRknBlockedSql}))::int`,
     })
     .from(projectItems)
     .leftJoin(channels, eq(channels.id, projectItems.channelId))
@@ -675,16 +674,14 @@ async function longlistContactReadiness(projectId: string): Promise<{
     );
   const total = row?.total ?? 0;
   const noContact = row?.noContact ?? 0;
-  const working = row?.working ?? 0;
   const noRkn = row?.noRkn ?? 0;
   // eligible = остаток партиции (корзины взаимоисключающие) — не отдельный
   // count-фильтр, чтобы не гонять EXISTS-предикаты лишний раз.
   return {
     total,
     noContact,
-    working,
     noRkn,
-    eligible: total - noContact - working - noRkn,
+    eligible: total - noContact - noRkn,
   };
 }
 
@@ -705,7 +702,6 @@ app.openapi(
               // eligible реально уйдёт в рассылку; noContact/noRkn — отбраковка.
               leadsEligible: z.number().int(),
               leadsNoContact: z.number().int(),
-              leadsWorking: z.number().int(),
               leadsNoRkn: z.number().int(),
               // Активные аккаунты, доступные проекту (резолв общий с /activate).
               accountsCount: z.number().int(),
@@ -734,7 +730,6 @@ app.openapi(
       leadsTotal: readiness.total,
       leadsEligible: readiness.eligible,
       leadsNoContact: readiness.noContact,
-      leadsWorking: readiness.working,
       leadsNoRkn: readiness.noRkn,
       accountsCount: accountIds.length,
       chainReady: project.opener.text.trim().length > 0,
@@ -1288,7 +1283,6 @@ app.openapi(
             repliedAt: l.repliedAt,
             skippedAt: l.skippedAt,
             contactReady: l.contactReady,
-            channelAlreadyWorking: l.channelAlreadyWorking,
             channelRknBlocked: l.channelRknBlocked,
             adminIsBot: l.adminIsBot,
             messages,

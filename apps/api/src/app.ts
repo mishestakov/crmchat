@@ -22,6 +22,7 @@ import outreachAccounts from "./routes/outreach-accounts.ts";
 import outreachSchedule from "./routes/outreach-schedule.ts";
 import outreachDunning from "./routes/outreach-dunning.ts";
 import projects from "./routes/projects.ts";
+import platformActive from "./routes/platform-active.ts";
 import quickSend from "./routes/quick-send.ts";
 import rkn from "./routes/rkn.ts";
 import shareClient from "./routes/share-client.ts";
@@ -53,6 +54,8 @@ protectedApp.route("/", me);
 protectedApp.route("/", workspaces);
 // Словарь РКН — глобальный (реестр один на всех), только requireSession.
 protectedApp.route("/", rkn);
+// Справочник «Каналы Яндекса» — тоже глобальный датасет, только requireSession.
+protectedApp.route("/", platformActive);
 // /v1/invites/:code GET + POST accept — только requireSession, без
 // assertMember (приглашённый ещё не member).
 protectedApp.route("/", publicInvites);

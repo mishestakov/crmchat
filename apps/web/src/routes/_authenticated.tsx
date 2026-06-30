@@ -99,6 +99,9 @@ function AuthLayout() {
                 <SidebarLink to="/w/$wsId/rkn" wsId={wsId}>
                   РКН-реестр
                 </SidebarLink>
+                <SidebarLink to="/w/$wsId/platform-active" wsId={wsId}>
+                  Каналы Яндекса
+                </SidebarLink>
               </SidebarGroup>
               <SidebarGroup title="Работа">
                 {/* Sidebar-сплит по workspace.mode: agency → «Кампании»
@@ -206,6 +209,7 @@ function SidebarLink(props: {
   to:
     | "/w/$wsId/channels"
     | "/w/$wsId/rkn"
+    | "/w/$wsId/platform-active"
     | "/w/$wsId/settings"
     | "/w/$wsId/outreach/accounts"
     | "/w/$wsId/projects"

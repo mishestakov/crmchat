@@ -1,0 +1,12 @@
+# Суточное расписание синка «Каналы Яндекса».
+# Persistent=true — догоняет пропущенный запуск после даунтайма VM.
+[Unit]
+Description=Daily timer for Yandex platform-active channels sync
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

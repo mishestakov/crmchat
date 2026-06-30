@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { FilterChip } from "../../../../components/filter-chip";
 import { X } from "lucide-react";
 import type { Channel, ImportChannelsMapping, Property } from "@repo/core";
 import { PLATFORMS, PlatformBadge, type Platform } from "../../../../lib/platforms";
@@ -456,34 +457,6 @@ function ChannelsPage() {
   );
 }
 
-function FilterChip({
-  label,
-  icon,
-  active,
-  onClick,
-}: {
-  label: string;
-  icon?: ReactNode;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={
-        "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 transition-colors " +
-        (active
-          ? "bg-zinc-900 text-white ring-zinc-900"
-          : "bg-white text-zinc-600 ring-zinc-200 hover:bg-zinc-50")
-      }
-    >
-      {icon}
-      {label}
-    </button>
-  );
-}
-
 function AdminCell({
   admins,
   onOpenChat,
@@ -646,7 +619,6 @@ function ImportWizard(props: {
   const setPropertyKey = (header: string, propertyKey: string) => {
     setMappings((m) => ({ ...m, [header]: { slot: "property", propertyKey } }));
   };
-
 
   // Какие slot'ы уже заняты (кроме текущей колонки) — чтобы не дать выбрать
   // дважды один типизированный слот.
