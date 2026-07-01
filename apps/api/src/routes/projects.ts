@@ -25,7 +25,10 @@ import { pickDefined } from "../lib/pick-defined.ts";
 import { emitProjectChanged, subscribeProject } from "../lib/events.ts";
 import { myAccountIdsSql } from "../lib/outreach-access.ts";
 import { channelIsRknSql, channelRknBlockedSql } from "../lib/rkn-registry.ts";
-import { channelAlreadyWorkingSql } from "../lib/platform-active.ts";
+import {
+  fetchPlatformActivity,
+  PlatformActivitySchema,
+} from "../lib/platform-active.ts";
 import { contactReadySql } from "../lib/contact-sql.ts";
 import {
   assertProjectAccess,
@@ -226,7 +229,7 @@ const LeadAccountSchema = z
 // поднимаем человеку, а не хороним в «не отправляем» и не прячем в «в работе».
 // «Уже работает на платформе» НЕ гейтим (CPC/CPA-сигнал ненадёжен: админ мог
 // смениться, у одного админа часть каналов активна) — это бейдж на лиде,
-// менеджер решает сам (channel.alreadyWorking).
+// менеджер решает сам (channel.platformActivity).
 const OUTREACH_STATES = [
   "replied", // ответил — живёт на канбане, не в триаже списка
   "excluded", // менеджер исключил вручную (терминал) → не отправляем
@@ -348,8 +351,10 @@ const LeadProgressSchema = z
         // красная тревога «Нет РКН».
         memberCount: z.number().int().nullable(),
         isRkn: z.boolean(),
-        // Уже работает у нас на платформе (CPC/CPA) — причина отбраковки.
-        alreadyWorking: z.boolean(),
+        // Активность канала на рекл-платформах Яндекса (CPC/CPA): источники,
+        // свежесть постов, здоровье. null — не нашли. Информ-сигнал для бейджа
+        // (работает/простаивает/проблема + тултип), НЕ гейт.
+        platformActivity: PlatformActivitySchema.nullable(),
         // Глобальный статус взаимодействия по каналу — для бейджа на карточке
         // доски. Лента истории доске не нужна (она в сайдбаре, из Contact).
         relationStatus: ChannelRelationStatusSchema,
@@ -1143,7 +1148,6 @@ app.openapi(
           channelMemberCount: channels.memberCount,
           channelRelationStatus: channels.relationStatus,
           channelIsRkn: channelIsRknSql,
-          channelAlreadyWorking: channelAlreadyWorkingSql,
           channelRknBlocked: channelRknBlockedSql,
           contactReady: contactReadySql,
           // Админ-получатель — бот: авторитетный сигнал tg_users.is_bot
@@ -1169,32 +1173,43 @@ app.openapi(
       });
     }
 
-    // Все scheduled_messages для этих лидов одним запросом, агрегируем в JS.
-    // Колонки sentAt/readAt/error per scheduled_message нужны для UI-таблицы
-    // лидов (донор-style), accountId — чтобы показать через какой аккаунт
-    // рассылается этому лиду.
-    const sched = await db
-      .select({
-        itemId: scheduledMessages.itemId,
-        accountId: scheduledMessages.accountId,
-        messageIdx: scheduledMessages.messageIdx,
-        dunningRound: scheduledMessages.dunningRound,
-        status: scheduledMessages.status,
-        sendAt: scheduledMessages.sendAt,
-        sentAt: scheduledMessages.sentAt,
-        readAt: scheduledMessages.readAt,
-        error: scheduledMessages.error,
-      })
-      .from(scheduledMessages)
-      .where(
-        and(
-          eq(scheduledMessages.projectId, projectId),
-          inArray(
-            scheduledMessages.itemId,
-            leadRows.map((l) => l.id),
+    // Две независимые выборки по leadRows — параллельно (обе стартуют после
+    // страницы лидов, друг от друга не зависят).
+    //  • activityByChannel — активность на рекл-платформах (CPC/CPA), set-based
+    //    для каналов страницы (см. fetchPlatformActivity).
+    //  • sched — scheduled_messages этих лидов; sentAt/readAt/error нужны
+    //    UI-таблице (донор-style), accountId — через какой аккаунт рассылается.
+    const [activityByChannel, sched] = await Promise.all([
+      fetchPlatformActivity([
+        ...new Set(
+          leadRows
+            .map((l) => l.channelId)
+            .filter((id): id is string => id !== null),
+        ),
+      ]),
+      db
+        .select({
+          itemId: scheduledMessages.itemId,
+          accountId: scheduledMessages.accountId,
+          messageIdx: scheduledMessages.messageIdx,
+          dunningRound: scheduledMessages.dunningRound,
+          status: scheduledMessages.status,
+          sendAt: scheduledMessages.sendAt,
+          sentAt: scheduledMessages.sentAt,
+          readAt: scheduledMessages.readAt,
+          error: scheduledMessages.error,
+        })
+        .from(scheduledMessages)
+        .where(
+          and(
+            eq(scheduledMessages.projectId, projectId),
+            inArray(
+              scheduledMessages.itemId,
+              leadRows.map((l) => l.id),
+            ),
           ),
         ),
-      );
+    ]);
 
     // Sticky-предсказание для draft-лидов (без scheduled_messages):
     // тот же резолвер, что в /activate — гарантирует, что UI совпадёт с
@@ -1296,7 +1311,7 @@ app.openapi(
                 platform: l.channelPlatform ?? "telegram",
                 memberCount: l.channelMemberCount,
                 isRkn: l.channelIsRkn ?? false,
-                alreadyWorking: l.channelAlreadyWorking ?? false,
+                platformActivity: activityByChannel.get(l.channelId) ?? null,
                 relationStatus: l.channelRelationStatus ?? "none",
               }
             : null,

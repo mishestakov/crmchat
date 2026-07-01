@@ -15,6 +15,7 @@ import type { paths } from "@repo/api-client";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
 import { getLeadHealth } from "../../../../../../lib/lead-health";
+import { formatViews } from "../../../../../../lib/format";
 import { ProjectTabs } from "../../../../../../components/project-tabs";
 import { type AccountRow } from "../../../../../../components/chat-drawer";
 import { ChannelBadges } from "../../../../../../components/channel-badges";
@@ -808,6 +809,76 @@ function SiblingChannels({ group }: { group: LeadGroup }) {
   );
 }
 
+// Обогащённый бейдж «Каналы Яндекса»: цвет = свежесть (работает/простаивает/
+// проблема), тултип (native title) = источники + свежесть + здоровье. Данные —
+// суточный синк CPC/CPA, окно 60 дней. Информ-сигнал, не гейт.
+type PlatformActivity = NonNullable<
+  NonNullable<Lead["channel"]>["platformActivity"]
+>;
+
+// CPA moderation_status приходит как «<код>: <текст>». Красим 🔴 отказы
+// модерации и технические блокеры (по распределению статусов от 2026-07-01):
+// 1 маленькая аудитория, 2 контент не подходит, 8 отказ, 12 отвязана,
+// 16 отказ по оферте, 23 фрод, 29 бот не админ. 11 «тестовый период» — НЕ
+// отказ, его состояние решает свежесть постов. NULL — статуса нет.
+const PROBLEM_MODERATION_CODES = new Set([1, 2, 8, 12, 16, 23, 29]);
+function isProblemModeration(s: string | null): boolean {
+  const code = s ? Number.parseInt(s, 10) : NaN;
+  return Number.isFinite(code) && PROBLEM_MODERATION_CODES.has(code);
+}
+
+function formatPostDate(iso: string | null): string {
+  if (!iso) return "не видели";
+  const [y, m, d] = iso.split("-");
+  return d ? `${d}.${m}.${y}` : iso;
+}
+
+const PLATFORM_SOURCE_LABEL: Record<string, string> = {
+  cpc: "CPC (Директ)",
+  cpa: "CPA (партнёрка)",
+};
+
+function PlatformActivityBadge({ activity }: { activity: PlatformActivity }) {
+  const problem =
+    activity.isActive === false ||
+    (activity.botStatus !== null && activity.botStatus !== "OK") ||
+    isProblemModeration(activity.moderationStatus);
+  const { label, cls } = problem
+    ? { label: "проблема", cls: "bg-rose-100 text-rose-700" }
+    : activity.recentPosts > 0
+      ? { label: "работает", cls: "bg-emerald-100 text-emerald-700" }
+      : { label: "простаивает", cls: "bg-amber-100 text-amber-700" };
+
+  const lines = [
+    `Каналы Яндекса · ${label}`,
+    `Источники: ${activity.sources
+      .map((s) => PLATFORM_SOURCE_LABEL[s] ?? s)
+      .join(" · ")}`,
+    `Последний пост: ${formatPostDate(activity.lastPostDate)}`,
+    `За 60 дней: ${activity.recentPosts} постов · ${formatViews(
+      activity.recentViews,
+    )} показов`,
+  ];
+  if (activity.moderationStatus)
+    lines.push(`Модерация (CPA): ${activity.moderationStatus}`);
+  const cpc: string[] = [];
+  if (activity.isActive !== null)
+    cpc.push(activity.isActive ? "активен" : "выключен");
+  if (activity.isCpv) cpc.push("допущен к CPV");
+  if (activity.botStatus && activity.botStatus !== "OK")
+    cpc.push(`бот: ${activity.botStatus}`);
+  if (cpc.length) lines.push(`CPC: ${cpc.join(" · ")}`);
+
+  return (
+    <span
+      title={lines.join("\n")}
+      className={`rounded px-1.5 py-0.5 text-xs font-medium ${cls}`}
+    >
+      {label}
+    </span>
+  );
+}
+
 function LeadCell({
   lead,
   group,
@@ -898,13 +969,12 @@ function LeadCell({
           </span>
         </div>
       )}
-      {lead.contactReady && ch?.alreadyWorking && (
-        // Уже работает у нас на платформе (CPC/CPA) — информ-бейдж, НЕ гейт:
-        // отправку не блокирует, менеджер решает сам.
+      {ch?.platformActivity && (
+        // Активность на рекл-платформах Яндекса (CPC/CPA) — информ-бейдж, НЕ
+        // гейт: отправку не блокирует, менеджер решает сам. Гейта contactReady
+        // тут нет — активность канала от готовности контакта не зависит.
         <div>
-          <span className="rounded bg-sky-100 px-1.5 py-0.5 text-xs font-medium text-sky-700">
-            уже работает
-          </span>
+          <PlatformActivityBadge activity={ch.platformActivity} />
         </div>
       )}
       {lead.repliedAt && lead.contactId && (
