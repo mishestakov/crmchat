@@ -848,6 +848,9 @@ function PlatformActivityBadge({ activity }: { activity: PlatformActivity }) {
     : activity.recentPosts > 0
       ? { label: "работает", cls: "bg-emerald-100 text-emerald-700" }
       : { label: "простаивает", cls: "bg-amber-100 text-amber-700" };
+  // На бейдже — источник (Я.CPC / Я.CPA / Я.CPA+CPC): понятно, о чём сигнал.
+  // Состояние (работает/простаивает/проблема) несёт цвет + первая строка тултипа.
+  const sourceTag = `Я.${activity.sources.map((s) => s.toUpperCase()).join("+")}`;
 
   const lines = [
     `Каналы Яндекса · ${label}`,
@@ -874,7 +877,7 @@ function PlatformActivityBadge({ activity }: { activity: PlatformActivity }) {
       title={lines.join("\n")}
       className={`rounded px-1.5 py-0.5 text-xs font-medium ${cls}`}
     >
-      {label}
+      {sourceTag}
     </span>
   );
 }
@@ -911,6 +914,12 @@ function LeadCell({
             isRkn={ch.isRkn}
             memberCount={ch.memberCount}
           />
+        )}
+        {/* Активность на рекл-платформах Яндекса (CPC/CPA) — правее РКН.
+            Информ-сигнал, НЕ гейт; contactReady не гейтит (активность от
+            готовности контакта не зависит). */}
+        {ch?.platformActivity && (
+          <PlatformActivityBadge activity={ch.platformActivity} />
         )}
         {/* Чип непрочитанных — как на канбане. Виден и при снятой галочке
             «только не ответившие»: клик по строке открывает чат. */}
@@ -967,14 +976,6 @@ function LeadCell({
           <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700">
             без контакта
           </span>
-        </div>
-      )}
-      {ch?.platformActivity && (
-        // Активность на рекл-платформах Яндекса (CPC/CPA) — информ-бейдж, НЕ
-        // гейт: отправку не блокирует, менеджер решает сам. Гейта contactReady
-        // тут нет — активность канала от готовности контакта не зависит.
-        <div>
-          <PlatformActivityBadge activity={ch.platformActivity} />
         </div>
       )}
       {lead.repliedAt && lead.contactId && (
