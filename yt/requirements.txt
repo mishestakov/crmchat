@@ -1,4 +1,9 @@
 # Зависимости суточного синка «Каналы Яндекса» (platform_active_sync.py).
 # Ставить в окружении джоба на YT-хосте (не в node-проекте).
 ytsaurus-client>=0.13   # даёт `yt.wrapper`
-psycopg[binary]>=3.1
+# C++-биндинги YSON — обязательны для чтения таблиц/результатов YQL
+# (read_table/run_query отдают YSON). Вынесены в отдельный compiled-пакет,
+# ytsaurus-client их не тянет сам. На YT-хосте они ambient, в чистом
+# контейнере — нет, иначе «YtFormatError: YSON bindings required».
+ytsaurus-yson>=0.4
+psycopg[binary]>=3.2,<4   # <4: не пускаем будущий breaking-мажор при пересборке
