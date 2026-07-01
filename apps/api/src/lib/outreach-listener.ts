@@ -341,6 +341,32 @@ async function onNewMessage(
   const senderIdStr = String(senderUserId);
 
   try {
+    const now = new Date();
+    // Сводим отправителя к контакту СРАЗУ (идемпотентно; заодно дозаписывает
+    // tg_user_id контакту, заведённому только по username). Нужно ДО матча
+    // project_items ниже, чтобы починить денормализованное поле.
+    const contactId = await resolveContactByChat(workspaceId, senderIdStr, client);
+
+    // Repair project_items.tg_user_id. Воркер заполняет его ТОЛЬКО после
+    // успешной авто-отправки опенера; если её не было — бот (BOT_SKIPPED),
+    // ручной первый контакт, падение воркера (DELETED_SKIPPED/PEER_FLOOD) — поле
+    // остаётся пустым, и ВЕСЬ матч по tg_user_id молча промахивается: карточка
+    // не встаёт на канбан (funnel-ветка ниже), не гасится капельница, не
+    // отмечается «прочитано» (onReadOutbox). Раз входящее сведено к контакту —
+    // дозаполняем поле его карточкам, и существующая логика срабатывает штатно.
+    if (contactId) {
+      await db
+        .update(projectItems)
+        .set({ tgUserId: senderIdStr })
+        .where(
+          and(
+            eq(projectItems.workspaceId, workspaceId),
+            eq(projectItems.contactId, contactId),
+            isNull(projectItems.tgUserId),
+          ),
+        );
+    }
+
     // Входящий ответ ТЕКУЩЕГО контакта лида → две независимые вещи (разные
     // оси состояния, раньше обе висели на одном условии isNull(repliedAt)):
     //
@@ -418,12 +444,8 @@ async function onNewMessage(
     // unread держит onReadInbox (TG на каждое incoming шлёт парный
     // updateChatReadInbox с authoritative unread_count, см. td_api.tl). Тут
     // только bump lastMessageAt + first-write-wins sticky (COALESCE): +1 здесь
-    // гонился бы с onReadInbox и давал +2 на первое сообщение.
-    const now = new Date();
-    // Сводим отправителя к контакту общим резолвером (он же дозапишет tg_user_id
-    // контакту, заведённому только по username). Не нашли — незнакомец, создаём.
-    const contactId = await resolveContactByChat(workspaceId, senderIdStr, client);
-
+    // гонился бы с onReadInbox и давал +2 на первое сообщение. contactId и now
+    // уже получены в начале обработчика (нужны были для backfill выше).
     if (!contactId) {
       let createdId: string | null = null;
       try {
