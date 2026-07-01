@@ -959,7 +959,7 @@ export function ChatPanel(props: {
         <div
           ref={scrollRef}
           onScroll={onScroll}
-          className="flex-1 overflow-y-auto overflow-x-hidden bg-zinc-50 p-4"
+          className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden bg-zinc-50 p-4"
         >
           <>
             {initialQ.isLoading && (
@@ -1772,7 +1772,10 @@ export function ChannelRelationList(props: {
 }) {
   if (props.contact.channels.length === 0) return null;
   return (
-    <div className="flex flex-col gap-1.5 border-b border-zinc-200 px-3 py-2">
+    // max-h + собственный скролл: у сетевого админа десятки каналов, без потолка
+    // список выдавливал чат и поле ввода за край drawer'а. Потолок — no-op при
+    // паре каналов (список короче), включается только когда их много.
+    <div className="flex max-h-48 flex-col gap-1.5 overflow-y-auto border-b border-zinc-200 px-3 py-2">
       {props.contact.channels.map((ch) => (
         <ChannelRelationRow
           key={ch.id}
