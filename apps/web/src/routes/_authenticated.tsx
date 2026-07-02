@@ -99,9 +99,13 @@ function AuthLayout() {
                 <SidebarLink to="/w/$wsId/rkn" wsId={wsId}>
                   РКН-реестр
                 </SidebarLink>
-                <SidebarLink to="/w/$wsId/platform-active" wsId={wsId}>
-                  Каналы Яндекса
-                </SidebarLink>
+                {/* «Каналы Яндекса» (CPC/CPA-сигнал для отбора) — BD-инструмент;
+                    в agency прячем (mode-шов). */}
+                {mode !== "agency" && (
+                  <SidebarLink to="/w/$wsId/platform-active" wsId={wsId}>
+                    Каналы Яндекса
+                  </SidebarLink>
+                )}
               </SidebarGroup>
               <SidebarGroup title="Работа">
                 {/* Sidebar-сплит по workspace.mode: agency → «Кампании»
