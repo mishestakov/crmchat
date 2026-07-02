@@ -63,11 +63,17 @@ export function PlacementPane({
   wsId,
   projectId,
   placement,
+  siblings,
+  onSelectPlacement,
   onRemoved,
 }: {
   wsId: string;
   projectId: string;
   placement: Placement;
+  // Размещения того же админа в кампании (Option A): чипы-переключатель над
+  // общим чатом. <2 — чипы не показываем, переключать нечего.
+  siblings: Placement[];
+  onSelectPlacement: (id: string) => void;
   onRemoved: () => void;
 }) {
   const qc = useQueryClient();
@@ -174,7 +180,15 @@ export function PlacementPane({
   const dirty = JSON.stringify(draft) !== JSON.stringify(toDraft(placement));
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full flex-col">
+      {siblings.length >= 2 && (
+        <SiblingChips
+          siblings={siblings}
+          activeId={placement.id}
+          onSelect={onSelectPlacement}
+        />
+      )}
+      <div className="flex min-h-0 flex-1">
       {/* Центр: карточка канала — метрики, описание, лента постов. */}
       <div className="min-w-0 flex-1 overflow-hidden border-r border-zinc-200">
         {channelQ.data ? (
@@ -316,6 +330,54 @@ export function PlacementPane({
           />
         )}
       </div>
+      </div>
+    </div>
+  );
+}
+
+// Чипы-переключатель размещений одного админа (Option A): общий чат ведётся с
+// админом, а размещений у него в кампании может быть несколько. Показываем
+// только при ≥2 — иначе переключать нечего. Клик по чипу переключает выбранную
+// строку в родителе (панель пересоздаётся, чат тот же — контакт один).
+// Переиспользуемо в ProductionPane тем же паттерном: onSelect → controlled
+// selectedId у InboxShell (не тащить siblings в сам InboxShell — он generic).
+function SiblingChips({
+  siblings,
+  activeId,
+  onSelect,
+}: {
+  siblings: Placement[];
+  activeId: string;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <div className="flex items-center gap-1.5 overflow-x-auto border-b border-zinc-200 bg-zinc-50 px-3 py-1.5">
+      <span className="mr-1 shrink-0 text-[11px] text-zinc-400">
+        Диалог по {siblings.length} размещениям:
+      </span>
+      {siblings.map((s) => {
+        const active = s.id === activeId;
+        const label = s.channel?.username
+          ? `@${s.channel.username}`
+          : (s.channel?.title ?? "канал");
+        return (
+          <button
+            key={s.id}
+            type="button"
+            onClick={() => onSelect(s.id)}
+            title={s.channel?.title ?? undefined}
+            className={
+              "shrink-0 rounded-full px-2.5 py-1 text-xs font-medium " +
+              (active
+                ? "bg-emerald-600 text-white"
+                : "border border-zinc-300 bg-white text-zinc-600 hover:bg-zinc-100")
+            }
+          >
+            {label}
+            {s.chainStatus === "declined" ? " ✗" : ""}
+          </button>
+        );
+      })}
     </div>
   );
 }

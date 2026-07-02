@@ -516,16 +516,24 @@ function LonglistPhase({
   const pct = total > 0 ? Math.round((ready / total) * 100) : 0;
   const isDraft = campaign.status === "draft";
 
-  // Сколько ещё каналов у того же админа — для хинта «+N» в строке (этап 16.8).
-  const adminCounts = useMemo(() => {
+  // Управляемый выбор строки: чипы «братьев» в drawer'е (Option A) переключают
+  // активное размещение того же админа, не уходя из панели.
+  const [selId, setSelId] = useState<string | null>(null);
+
+  // Размещения одного админа в кампании: один memo кормит и хинт «ещё N у
+  // админа» в строке (этап 16.8), и чипы-переключатель в панели (Option A).
+  // Группируем видимый список по adminContactId — count = длина массива.
+  const adminGroups = useMemo(() => {
     const data = placementsQ.data ?? [];
     const src = showDeclined
       ? data
       : data.filter((p) => p.chainStatus !== "declined");
-    const m = new Map<string, number>();
+    const m = new Map<string, Placement[]>();
     for (const p of src) {
       if (p.adminContactId) {
-        m.set(p.adminContactId, (m.get(p.adminContactId) ?? 0) + 1);
+        const g = m.get(p.adminContactId);
+        if (g) g.push(p);
+        else m.set(p.adminContactId, [p]);
       }
     }
     return m;
@@ -604,6 +612,8 @@ function LonglistPhase({
         <InboxShell
           items={visible}
           getId={(p) => p.id}
+          selectedId={selId}
+          onSelectId={setSelId}
           emptyHint="Лонглист пуст. Нажмите «Добавить блогеров», чтобы импортировать каналы — они сразу просканируются."
           renderRow={(p, selected, onSelect) => (
             <BloggerRow
@@ -612,7 +622,7 @@ function LonglistPhase({
               onSelect={onSelect}
               siblingCount={
                 p.adminContactId
-                  ? (adminCounts.get(p.adminContactId) ?? 1) - 1
+                  ? (adminGroups.get(p.adminContactId)?.length ?? 1) - 1
                   : 0
               }
             />
@@ -622,6 +632,17 @@ function LonglistPhase({
               wsId={wsId}
               projectId={projectId}
               placement={p}
+              siblings={
+                p.adminContactId
+                  ? (adminGroups.get(p.adminContactId) ?? []).filter(
+                      // Чипы — только живые размещения: отказанные (available=false)
+                      // исключены из прогресса/гейтов везде, не делаем их
+                      // переключаемыми и не считаем в «Диалог по N».
+                      (s) => s.chainStatus !== "declined",
+                    )
+                  : []
+              }
+              onSelectPlacement={setSelId}
               onRemoved={() => {}}
             />
           )}
