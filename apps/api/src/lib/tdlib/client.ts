@@ -74,7 +74,17 @@ export function createTdClient(opts: CreateTdClientOptions): TdClient {
     // у contact'ов, которое юзер уже руками обнулил.
     skipOldUpdates: true,
     tdlibParameters: {
-      use_message_database: false,
+      // use_message_database: персистим чаты+сообщения между рестартами. По
+      // td_api.tl:10583 ВКЛЮЧАЕТ по цепочке use_chat_info_database →
+      // use_file_database (info о скачанных файлах тоже переживает рестарт).
+      // Зачем: getChatHistory(only_local) отдаёт полную историю мгновенно и без
+      // сети — фундамент для публичных read-only share-ссылок на переписку
+      // (внешний эндпоинт НИКОГДА не дёргает MTProto → не абьюзят аккаунт) и для
+      // будущего LLM-экспорта. Байты медиа лежат файлами в filesDirectory
+      // (персистят благодаря implied use_file_database), но только после
+      // реального downloadFile. Аддитивно к существующим data-dir: message DB
+      // создастся и наполнится лениво при открытии чатов, re-auth не нужен.
+      use_message_database: true,
       use_secret_chats: false,
       system_language_code: "en",
       device_model: opts.deviceModel ?? "CRM",

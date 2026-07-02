@@ -26,6 +26,7 @@ import platformActive from "./routes/platform-active.ts";
 import quickSend from "./routes/quick-send.ts";
 import rkn from "./routes/rkn.ts";
 import shareClient from "./routes/share-client.ts";
+import conversationShareClient from "./routes/conversation-share-client.ts";
 import shares from "./routes/shares.ts";
 import stageTemplates from "./routes/stage-templates.ts";
 import stickers from "./routes/stickers.ts";
@@ -46,6 +47,9 @@ app.route("/", auth);
 // session). Монтируется ДО protectedApp, чтобы /v1/share/* не попало под
 // requireSession.
 app.route("/", shareClient);
+// public: read-only переписка по magic-link (auth по токену внутри роутера).
+// Тоже ДО protectedApp, чтобы /v1/share/conv/* не попало под requireSession.
+app.route("/", conversationShareClient);
 
 // everything below requires a session
 const protectedApp = new OpenAPIHono<{ Variables: SessionVars }>();

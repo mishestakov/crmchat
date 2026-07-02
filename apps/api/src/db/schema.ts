@@ -1316,6 +1316,42 @@ export const projectShares = pgTable(
   (t) => [index("project_shares_project_id_idx").on(t.projectId)],
 );
 
+// Magic-link на ПЕРЕПИСКУ с контактом (read-only), для вставки во внешнюю CRM
+// БД-шников. Доступ = знание токена. Ссылка на пару (contact, account) — тот
+// диалог, из которого её скопировали. Отдаётся live через TDLib (only_local),
+// поэтому вечно актуальна, но зависит от живого аккаунта. Без expires_at:
+// осознанно бессрочная (постоянная ссылка в карточке CRM), гасится только
+// revoked_at. Идемпотентность «одна активная ссылка на (contact, account)»
+// обеспечивается в ручке создания, не уникальным индексом (revoke не удаляет
+// строку — нужна история).
+export const conversationShares = pgTable(
+  "conversation_shares",
+  {
+    id: text("id").primaryKey().$defaultFn(shortId),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    contactId: text("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    // Аккаунт, чьим диалогом с контактом делимся (у него в TDLib лежит история).
+    accountId: text("account_id")
+      .notNull()
+      .references(() => outreachAccounts.id, { onDelete: "cascade" }),
+    // 32 байта URL-safe random (≈256 бит) — не угадывается.
+    token: text("token").notNull().unique(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("conversation_shares_contact_id_idx").on(t.contactId),
+  ],
+);
+
 // --- РКН-реестр (T4.5) ---
 // Глобальный словарь страниц из реестра РКН (Госуслуги, SocNet_reestr):
 // НЕ workspace-scoped — реестр один на всех. ~200k строк, полный дамп всех

@@ -18,6 +18,7 @@ import {
   Download,
   FileText,
   Hash,
+  Link2,
   Mail,
   MailOpen,
   MoreHorizontal,
@@ -436,6 +437,34 @@ export function ChatPanel(props: {
       qc.invalidateQueries({
         queryKey: ["contact", props.wsId, props.contact.id],
       });
+    },
+    onError: (e) => setActionError(errorMessage(e)),
+  });
+
+  // Публичная read-only ссылка на переписку — копируется в буфер, вставляется
+  // во внешнюю CRM. Идемпотентно: повторный клик вернёт ту же ссылку.
+  const [shareCopied, setShareCopied] = useState(false);
+  const shareMut = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.POST(
+        "/v1/workspaces/{wsId}/contacts/{id}/share",
+        {
+          params: { path: { wsId: props.wsId, id: props.contact.id } },
+          body: { accountId: props.accountId },
+        },
+      );
+      if (error) throw error;
+      return data!;
+    },
+    onSuccess: async (d) => {
+      setActionError(null);
+      const ok = await copyText(window.location.origin + d.url);
+      if (!ok) {
+        setActionError("Не удалось скопировать ссылку");
+        return;
+      }
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2000);
     },
     onError: (e) => setActionError(errorMessage(e)),
   });
@@ -889,6 +918,19 @@ export function ChatPanel(props: {
                 Закрепить за аккаунтом
               </button>
             )}
+            <button
+              type="button"
+              disabled={shareMut.isPending}
+              onClick={() => shareMut.mutate()}
+              title="Скопировать публичную read-only ссылку на переписку (для внешней CRM)"
+              className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 disabled:opacity-40"
+            >
+              {shareCopied ? (
+                <Check size={16} className="text-emerald-600" />
+              ) : (
+                <Link2 size={16} />
+              )}
+            </button>
             {props.onClose && (
               <button
                 type="button"
