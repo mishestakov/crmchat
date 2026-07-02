@@ -39,6 +39,14 @@ export const myAccountIdsSql = (workspaceId: string, userId: string): SQL =>
       )
   )`;
 
+// Subquery «все аккаунты workspace'а» — для сигналов уровня команды («кто-либо
+// из воркспейса общался»), в отличие от myAccountIdsSql (только мои +
+// делегированные). Совпадает со скоупом joinAdmins (channels.ts): сигнал «уже
+// общались» должен видеть переписку любого аккаунта команды, а не только
+// смотрящего.
+export const workspaceAccountIdsSql = (workspaceId: string): SQL =>
+  sql`(SELECT oa.id FROM outreach_accounts oa WHERE oa.workspace_id = ${workspaceId})`;
+
 // Drizzle WHERE-фрагмент для list-запросов. Использовать как
 // `.where(accountAccessClause(wsId, userId, role))` — уже включает фильтр
 // по workspace_id.

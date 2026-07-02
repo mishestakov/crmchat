@@ -23,7 +23,10 @@ import {
 } from "../db/schema.ts";
 import { pickDefined } from "../lib/pick-defined.ts";
 import { emitProjectChanged, subscribeProject } from "../lib/events.ts";
-import { myAccountIdsSql } from "../lib/outreach-access.ts";
+import {
+  myAccountIdsSql,
+  workspaceAccountIdsSql,
+} from "../lib/outreach-access.ts";
 import { channelIsRknSql, channelRknBlockedSql } from "../lib/rkn-registry.ts";
 import {
   fetchPlatformActivity,
@@ -302,6 +305,17 @@ const LeadProgressSchema = z
     // scheduled_messages: messageIdx=0 — опенер, ≥1 — пинги.
     messages: z.array(LeadMessageProgressSchema),
     repliedAt: z.iso.datetime().nullable(),
+    // «Уже общались» с этим админом-контактом — справочный сигнал (не гейт):
+    // прочитать прошлую переписку перед новым опенером и, возможно, написать
+    // иначе. Cross-project: считается по tg_chats пира (peerUserId) через
+    // аккаунты воркспейса, а не по текущему проекту — то есть загорится и если
+    // общались в другом проекте/у другого клиента. talked = мы когда-либо ему
+    // писали (lastOutboundAt); replied = он хоть раз ответил (has_inbound). null
+    // — у лида нет tgUserId (MAX/stub без @). Фронт: replied→«был диалог»,
+    // talked && !replied→«писали, тишина».
+    contactHistory: z
+      .object({ talked: z.boolean(), replied: z.boolean() })
+      .nullable(),
     // Последнее сообщение в диалоге (любой стороны) — с привязанного контакта.
     // Для подсветки «жёлтый» (§1.4 bd-autodogon): застой считается от последней
     // активности в треде, чтобы ловить и «он молчит нам», и «он написал, а мы
@@ -1137,6 +1151,25 @@ app.openapi(
              where ${tgChats.peerUserId} = ${projectItems.tgUserId}
                and ${tgChats.accountId} in ${myAccountIdsSql(wsId, userId)})
           )`.mapWith(contacts.lastMessageAt),
+          // «Уже общались» — cross-project сигнал по пиру (tg_chats). Скоуп —
+          // ВЕСЬ workspace (workspaceAccountIdsSql), а НЕ myAccountIdsSql как у
+          // lastMessageAt выше: это командный сигнал «кто-либо из нас уже писал
+          // этому контакту», совпадает с joinAdmins в channels.ts. При
+          // single-owner скоупы идентичны; расходятся при делегациях/мультиюзере,
+          // и тогда правильно видеть переписку коллег (иначе шлём второй холодный
+          // опенер уже прогретому контакту). talked/replied — раздельные exists,
+          // чтобы различать тир «писали, тишина» и «был диалог» (joinAdmins берёт
+          // только has_inbound).
+          alreadyTalked: sql<boolean>`exists (
+            select 1 from ${tgChats}
+            where ${tgChats.peerUserId} = ${projectItems.tgUserId}
+              and ${tgChats.accountId} in ${workspaceAccountIdsSql(wsId)}
+              and ${tgChats.lastOutboundAt} is not null)`,
+          alreadyReplied: sql<boolean>`exists (
+            select 1 from ${tgChats}
+            where ${tgChats.peerUserId} = ${projectItems.tgUserId}
+              and ${tgChats.accountId} in ${workspaceAccountIdsSql(wsId)}
+              and ${tgChats.hasInbound} = true)`,
           nextStep: nextStepSql,
           stageId: projectItems.stageId,
           skippedAt: projectItems.skippedAt,
@@ -1286,6 +1319,9 @@ app.openapi(
           accountSource,
           messages,
           repliedAt: l.repliedAt?.toISOString() ?? null,
+          contactHistory: l.tgUserId
+            ? { talked: l.alreadyTalked, replied: l.alreadyReplied }
+            : null,
           lastMessageAt: l.lastMessageAt?.toISOString() ?? null,
           contactId: l.contactId,
           unreadCount: l.unreadCount,

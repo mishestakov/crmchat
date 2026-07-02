@@ -19,6 +19,7 @@ import { formatViews } from "../../../../../../lib/format";
 import { ProjectTabs } from "../../../../../../components/project-tabs";
 import { type AccountRow } from "../../../../../../components/chat-drawer";
 import { ChannelBadges } from "../../../../../../components/channel-badges";
+import { RelationBadge } from "../../../../../../lib/channel-relation";
 import { UnreadBadge } from "../../../../../../components/unread-badge";
 import { LeadChatDrawer } from "../../../../../../components/lead-chat-drawer";
 import { LeadPrepPane } from "../../../../../../components/lead-prep-pane";
@@ -897,6 +898,21 @@ function LeadCell({
   onToggleSkip: () => void;
 }) {
   const ch = lead.channel;
+  // «Уже общались»: replied перекрывает talked. null — сигнала нет.
+  const history = lead.contactHistory;
+  const contactBadge = history?.replied
+    ? {
+        label: "был диалог",
+        title: "С этим контактом уже был диалог — открыть переписку",
+        cls: "bg-emerald-100 text-emerald-700",
+      }
+    : history?.talked
+      ? {
+          label: "писали",
+          title: "Этому контакту уже писали, ответа не было — открыть переписку",
+          cls: "bg-sky-100 text-sky-700",
+        }
+      : null;
   const admin = lead.username ? `@${lead.username}` : null;
   const health = getLeadHealth(lead);
   const toggleSkip = (e: React.MouseEvent) => {
@@ -933,6 +949,21 @@ function LeadCell({
           >
             <UnreadBadge count={lead.unreadCount} dot={lead.markedUnread} />
           </span>
+        )}
+        {/* «Уже общались» с этим контактом (cross-project, по любому проекту
+            воркспейса). Справочно, не гейт: клик по строке откроет переписку. */}
+        {contactBadge && (
+          <span
+            title={contactBadge.title}
+            className={`rounded px-1.5 py-0.5 text-xs font-medium ${contactBadge.cls}`}
+          >
+            {contactBadge.label}
+          </span>
+        )}
+        {/* Модификатор исхода по каналу — канонический RelationBadge; none/pending
+            в этой витрине не показываем (нет содержательного исхода). */}
+        {ch && ch.relationStatus !== "none" && ch.relationStatus !== "pending" && (
+          <RelationBadge status={ch.relationStatus} />
         )}
       </div>
       {admin && (
