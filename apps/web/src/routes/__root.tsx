@@ -1,12 +1,30 @@
-import { Outlet, createRootRouteWithContext } from "@tanstack/react-router";
+import {
+  Outlet,
+  createRootRouteWithContext,
+  useRouterState,
+} from "@tanstack/react-router";
+import { useEffect } from "react";
 import type { QueryClient } from "@tanstack/react-query";
+import { pageTitle } from "../lib/page-titles";
 
-export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
-  component: () => (
+// Заголовок вкладки по текущему маршруту (leaf-матч). Централизованно, без head
+// в каждом route-файле; дефолт — «CRM» (см. page-titles.ts).
+function RootLayout() {
+  const routeId = useRouterState({
+    select: (s) => s.matches.at(-1)?.routeId,
+  });
+  useEffect(() => {
+    document.title = pageTitle(routeId);
+  }, [routeId]);
+  return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
       <Outlet />
     </div>
-  ),
+  );
+}
+
+export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
+  component: RootLayout,
   errorComponent: ({ error, reset }) => (
     <div className="flex min-h-screen items-center justify-center bg-zinc-50 p-6">
       <div className="w-full max-w-md space-y-3 rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
