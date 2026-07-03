@@ -73,7 +73,7 @@ export async function ensureContactTgUserId(args: {
   // (applyChatUnread идемпотентен: unread<=0 и совпадение — no-op). Не «лишний
   // RPC на каждом резолве»: ветка достижима только когда tg_user_id ещё не было
   // (ранний return выше), т.е. один раз на контакт.
-  await applyChatUnread(
+  void applyChatUnread(
     args.client,
     args.workspaceId,
     args.contactId,
