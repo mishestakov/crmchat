@@ -11,6 +11,7 @@ import { BackButton } from "../../../../../../components/back-button";
 import { ProjectTabs } from "../../../../../../components/project-tabs";
 import { TruncationBanner } from "../../../../../../components/truncation-banner";
 import { LeadChatDrawer } from "../../../../../../components/lead-chat-drawer";
+import { AdminSuggestionBadge } from "../../../../../../components/admin-suggestion-badge";
 import { NextStepLine } from "../../../../../../components/next-step-line";
 import { UnreadBadge } from "../../../../../../components/unread-badge";
 import { SearchInput } from "../../../../../../components/search-input";
@@ -546,6 +547,7 @@ function LeadGroupCard(props: {
   onOpenChat: () => void;
   isReadOnly?: boolean;
 }) {
+  const { wsId } = Route.useParams();
   const { anchor, items } = props.group;
   // Заголовок карточки — АДМИН (имя + @username): карточка = человек, разговор
   // один. Ниже — все его каналы-размещения в проекте, у каждого свой статус.
@@ -612,18 +614,27 @@ function LeadGroupCard(props: {
             const platform =
               c.platform in PLATFORMS ? (c.platform as Platform) : null;
             return (
-              <div key={c.id} className="flex items-center gap-1.5">
-                {platform && (
-                  <PlatformBadge
-                    platform={platform}
-                    size={12}
-                    className="shrink-0"
+              <div key={c.id} className="flex flex-col gap-1">
+                <div className="flex items-center gap-1.5">
+                  {platform && (
+                    <PlatformBadge
+                      platform={platform}
+                      size={12}
+                      className="shrink-0"
+                    />
+                  )}
+                  <span className="min-w-0 flex-1 truncate text-xs text-zinc-700">
+                    {c.title || (c.username ? `@${c.username}` : "—")}
+                  </span>
+                  <RelationBadge status={c.relationStatus} />
+                </div>
+                {c.suggestedAdmin && (
+                  <AdminSuggestionBadge
+                    wsId={wsId}
+                    channelId={c.id}
+                    suggestedAdmin={c.suggestedAdmin}
                   />
                 )}
-                <span className="min-w-0 flex-1 truncate text-xs text-zinc-700">
-                  {c.title || (c.username ? `@${c.username}` : "—")}
-                </span>
-                <RelationBadge status={c.relationStatus} />
               </div>
             );
           })}

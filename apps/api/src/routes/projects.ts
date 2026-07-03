@@ -372,6 +372,10 @@ const LeadProgressSchema = z
         // Глобальный статус взаимодействия по каналу — для бейджа на карточке
         // доски. Лента истории доске не нужна (она в сайдбаре, из Contact).
         relationStatus: ChannelRelationStatusSchema,
+        // Авто-детект нашёл другого админа канала, чем текущий получатель
+        // размещения. Не null → маркер «админ сменился → перевести на @X»
+        // (клик = set-admin по этому @). Гасится при осознанном set-admin.
+        suggestedAdmin: z.string().nullable(),
       })
       .nullable(),
   })
@@ -1182,6 +1186,10 @@ app.openapi(
           channelRelationStatus: channels.relationStatus,
           channelIsRkn: channelIsRknSql,
           channelRknBlocked: channelRknBlockedSql,
+          // Кандидат смены админа: авто-детект нашёл на канале ДРУГОГО админа,
+          // чем текущий получатель размещения (см. channels.ts import guard).
+          // Не пустой → на карточке маркер «админ сменился → перевести на @X».
+          suggestedAdmin: sql<string | null>`${channels.meta}->>'suggested_admin'`,
           contactReady: contactReadySql,
           // Админ-получатель — бот: авторитетный сигнал tg_users.is_bot
           // (userTypeBot), для гейта «ручной способ» в триаже списка.
@@ -1349,6 +1357,7 @@ app.openapi(
                 isRkn: l.channelIsRkn ?? false,
                 platformActivity: activityByChannel.get(l.channelId) ?? null,
                 relationStatus: l.channelRelationStatus ?? "none",
+                suggestedAdmin: l.suggestedAdmin ?? null,
               }
             : null,
         };

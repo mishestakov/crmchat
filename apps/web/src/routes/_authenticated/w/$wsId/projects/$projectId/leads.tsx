@@ -19,6 +19,7 @@ import { formatViews } from "../../../../../../lib/format";
 import { ProjectTabs } from "../../../../../../components/project-tabs";
 import { type AccountRow } from "../../../../../../components/chat-drawer";
 import { ChannelBadges } from "../../../../../../components/channel-badges";
+import { AdminSuggestionBadge } from "../../../../../../components/admin-suggestion-badge";
 import { RelationBadge } from "../../../../../../lib/channel-relation";
 import { UnreadBadge } from "../../../../../../components/unread-badge";
 import { LeadChatDrawer } from "../../../../../../components/lead-chat-drawer";
@@ -970,6 +971,13 @@ function LeadCell({
         <div className="text-xs text-zinc-500" title="Админ-получатель аутрича">
           админ {admin}
         </div>
+      )}
+      {ch?.suggestedAdmin && (
+        <AdminSuggestionBadge
+          wsId={wsId}
+          channelId={ch.id}
+          suggestedAdmin={ch.suggestedAdmin}
+        />
       )}
       <SiblingChannels group={group} />
       {health.badge?.kind === "dunning" && (

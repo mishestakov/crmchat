@@ -811,10 +811,12 @@ app.openapi(
       override: true,
       clearScheduleOnly: isAdminChange,
     });
-    // Сбрасываем contact_method (теперь способ связи — человек/бот, не группа).
+    // Сбрасываем contact_method (теперь способ связи — человек/бот, не группа)
+    // и снимаем предложение смены админа (suggested_admin) — осознанный set-admin
+    // разрешает расхождение: либо приняли кандидата, либо выбрали своего.
     await db
       .update(channels)
-      .set({ meta: sql`${channels.meta} - 'contact_method'` })
+      .set({ meta: sql`${channels.meta} - 'contact_method' - 'suggested_admin'` })
       .where(eq(channels.id, id));
 
     const [serialized] = await joinAdmins([await assertChannelAccess(id, wsId)]);
@@ -2741,20 +2743,96 @@ app.openapi(
       `;
     }
 
-    // Step 7: channel_admins. Связи для всех staged-row'ов, где есть и
-    // channelId, и contactId.
-    const allChannelAdminLinks: { channelId: string; contactId: string }[] = [];
+    // Step 7: channel_admins. Авто-детект админа из импорта НЕ перебивает
+    // активное размещение молча — иначе рождается «зомби»-карточка: канал
+    // числится за одним контактом, а карточка ведёт другого (channel_admins и
+    // project_items.contact_id расходятся, heal тут не звался). Классифицируем
+    // каждую детект-связь по состоянию размещений канала:
+    //  • КОНФЛИКТ (есть живое размещение с ДРУГИМ получателем) → channel_admins
+    //    не трогаем, кладём кандидата в meta.suggested_admin: оператор увидит на
+    //    карточке «админ сменился → перевести?» и решит сам (осознанный set-admin);
+    //  • БЕЗОПАСНО (размещения нет / получатель совпадает / сирота) → пишем
+    //    channel_admins; для каналов с размещениями лечим сирот (heal без
+    //    override — заполняем contact_id IS NULL, не перетирая настроенных).
+    const detectedLinks: {
+      channelId: string;
+      contactId: string;
+      username: string;
+    }[] = [];
     for (const staged of stagedList) {
       if (!staged.adminUsername) continue;
       const channelId = idByKey.get(stagedKey(staged));
       const contactId = usernameToContactId.get(staged.adminUsername);
       if (channelId && contactId) {
-        allChannelAdminLinks.push({ channelId, contactId });
+        detectedLinks.push({
+          channelId,
+          contactId,
+          username: staged.adminUsername,
+        });
       }
     }
-    if (allChannelAdminLinks.length > 0) {
-      for (const chunk of chunks(allChannelAdminLinks, INSERT_CHUNK)) {
+    if (detectedLinks.length > 0) {
+      const detChannelIds = [...new Set(detectedLinks.map((l) => l.channelId))];
+      const placementRows = await db
+        .select({
+          channelId: projectItems.channelId,
+          contactId: projectItems.contactId,
+        })
+        .from(projectItems)
+        .where(inArray(projectItems.channelId, detChannelIds));
+      const recipientsByChannel = new Map<string, Set<string>>();
+      const channelsWithPlacement = new Set<string>();
+      for (const p of placementRows) {
+        if (!p.channelId) continue;
+        channelsWithPlacement.add(p.channelId);
+        if (p.contactId) {
+          const set = recipientsByChannel.get(p.channelId) ?? new Set<string>();
+          set.add(p.contactId);
+          recipientsByChannel.set(p.channelId, set);
+        }
+      }
+      const safeLinks: { channelId: string; contactId: string }[] = [];
+      const healChannelIds = new Set<string>();
+      const conflicts: { channelId: string; username: string }[] = [];
+      for (const l of detectedLinks) {
+        const recips = recipientsByChannel.get(l.channelId);
+        if (recips && recips.size > 0 && !recips.has(l.contactId)) {
+          conflicts.push({ channelId: l.channelId, username: l.username });
+        } else {
+          safeLinks.push({ channelId: l.channelId, contactId: l.contactId });
+          if (channelsWithPlacement.has(l.channelId)) {
+            healChannelIds.add(l.channelId);
+          }
+        }
+      }
+      for (const chunk of chunks(safeLinks, INSERT_CHUNK)) {
         await db.insert(channelAdmins).values(chunk).onConflictDoNothing();
+      }
+      for (const channelId of healChannelIds) {
+        await healPlacementRecipients(channelId);
+      }
+      // Safe-канал больше не в конфликте → гасим возможный старый suggested_admin
+      // (иначе маркер «админ сменился» завис бы после того, как расхождение ушло:
+      // прошлый импорт мог его выставить, а этот подтвердил совпадение). Только
+      // каналы с размещением — suggested_admin в принципе ставится лишь для них.
+      if (healChannelIds.size > 0) {
+        await db
+          .update(channels)
+          .set({ meta: sql`${channels.meta} - 'suggested_admin'` })
+          .where(inArray(channels.id, [...healChannelIds]));
+      }
+      if (conflicts.length > 0) {
+        // Один bulk-UPDATE через unnest (идиома этого файла, ср. Step 6 выше),
+        // а не N round-trip'ов: у каждого конфликта свой username в meta.
+        const ids = conflicts.map((c) => c.channelId);
+        const usernames = conflicts.map((c) => c.username);
+        await sqlClient`
+          UPDATE channels c SET
+            meta = c.meta || jsonb_build_object('suggested_admin', u.username),
+            updated_at = now()
+          FROM unnest(${ids}::text[], ${usernames}::text[]) AS u(id, username)
+          WHERE c.id = u.id
+        `;
       }
     }
 
