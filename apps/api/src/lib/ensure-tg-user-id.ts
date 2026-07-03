@@ -2,6 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import { contacts } from "../db/schema.ts";
 import { errMsg } from "./errors.ts";
+import { applyChatUnread } from "./outreach-listener.ts";
 import { syncTgUserNow } from "./tg-replicator.ts";
 import type { TdClient } from "./tdlib/index.ts";
 
@@ -61,10 +62,23 @@ export async function ensureContactTgUserId(args: {
     console.error(`[ensure-tg-user-id] syncTgUserNow ${tgUserId}:`, errMsg(e));
   });
 
-  // unread больше не восстанавливаем здесь: onReadInbox/onMarkedUnread теперь
-  // сами резолвят username-only контакт (resolveContactByChat дозаписывает
-  // tg_user_id), поэтому к моменту открытия чата счётчик уже актуален — лишний
-  // getChat-RPC на каждом резолве убран.
+  // Контакт ТОЛЬКО ЧТО стал находимым по tg_user_id. Если updateChatReadInbox
+  // пришёл, пока контакт был username-only стабом, read-обработчики могли его НЕ
+  // зарезолвить: resolveContactByChat промахивается, когда tg_users-реплика ещё
+  // холодная И offline getUser не отдал username (частая гонка на первом ответе
+  // лида). Тогда authoritative unread отбрасывается как no-contact и переиграть
+  // его больше нечем — в мессенджере бейдж есть, у нас 0, карточка выпадает из
+  // «Ждут ответа». searchPublicChat выше резолвит надёжнее getUser, так что этот
+  // переход — последний шанс восстановить unread. Дочитываем из getChat один раз
+  // (applyChatUnread идемпотентен: unread<=0 и совпадение — no-op). Не «лишний
+  // RPC на каждом резолве»: ветка достижима только когда tg_user_id ещё не было
+  // (ранний return выше), т.е. один раз на контакт.
+  await applyChatUnread(
+    args.client,
+    args.workspaceId,
+    args.contactId,
+    Number(tgUserId),
+  );
 
   return tgUserId;
 }
