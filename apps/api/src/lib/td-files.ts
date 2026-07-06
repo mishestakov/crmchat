@@ -27,16 +27,26 @@ const EMPTY_CAPTION: Caption = { text: "", entities: [] };
 
 function mediaContent(path: string, asPhoto: boolean, caption: Caption) {
   const cap = { _: "formattedText", text: caption.text, entities: caption.entities };
+  // td_api.tl: файл обёрнут в inputPhoto/inputDocument, сам InputFile — ВНУТРИ.
+  //   inputMessagePhoto photo:inputPhoto caption ... (5839)
+  //   inputPhoto photo:InputFile thumbnail video added_sticker_file_ids width height (5674)
+  //   inputMessageDocument document:inputDocument caption (5823)
+  //   inputDocument document:InputFile thumbnail disable_content_type_detection (5665)
+  // Раньше InputFile клали прямо в photo/document (плоско, старая схема) → TDLib
+  // не находил вложенный InputFile: «InputFile is not specified», картинки не слались.
   return asPhoto
     ? {
         _: "inputMessagePhoto",
-        photo: { _: "inputFileLocal", path },
-        thumbnail: null,
-        video: null,
-        added_sticker_file_ids: [],
-        // 0/0 — TDLib сам прочитает размеры из файла.
-        width: 0,
-        height: 0,
+        photo: {
+          _: "inputPhoto",
+          photo: { _: "inputFileLocal", path },
+          thumbnail: null,
+          video: null,
+          added_sticker_file_ids: [],
+          // 0/0 — TDLib сам прочитает размеры из файла.
+          width: 0,
+          height: 0,
+        },
         caption: cap,
         show_caption_above_media: false,
         self_destruct_type: null,
@@ -44,9 +54,12 @@ function mediaContent(path: string, asPhoto: boolean, caption: Caption) {
       }
     : {
         _: "inputMessageDocument",
-        document: { _: "inputFileLocal", path },
-        thumbnail: null,
-        disable_content_type_detection: false,
+        document: {
+          _: "inputDocument",
+          document: { _: "inputFileLocal", path },
+          thumbnail: null,
+          disable_content_type_detection: false,
+        },
         caption: cap,
       };
 }
