@@ -50,6 +50,7 @@ import {
   type Placement,
   type Campaign,
   PHASE_CLIENT_STEP,
+  placementPricing,
   formatRub,
   formatViews,
   cpv,
@@ -276,6 +277,15 @@ function CtlBtn({
 }
 
 // ── Фаза 1: Бриф ──────────────────────────────────────────────────────────
+// Парс процента из ru-ввода: запятая → точка, пусто/мусор → дефолт. Иначе
+// Number("20,5")=NaN → JSON шлёт null → Zod z.number() (не nullable) 400-ит
+// весь бриф (не только это поле).
+function parsePct(s: string, dflt: number): number {
+  if (!s.trim()) return dflt;
+  const n = Number(s.trim().replace(",", "."));
+  return Number.isFinite(n) ? n : dflt;
+}
+
 function BriefPhase({
   wsId,
   campaign,
@@ -286,7 +296,7 @@ function BriefPhase({
   const qc = useQueryClient();
   // Даты храним как YYYY-MM-DD (формат <input type=date>); в API уходит ISO.
   const toDateInput = (iso: string | null) => (iso ? iso.slice(0, 10) : "");
-  const [draft, setDraft] = useState(() => ({
+  const snapshot = () => ({
     brief: campaign.brief ?? "",
     budgetAmount: campaign.budgetAmount?.toString() ?? "",
     periodStart: toDateInput(campaign.periodStart),
@@ -294,16 +304,15 @@ function BriefPhase({
     tov: campaign.tov ?? "",
     constraints: campaign.constraints ?? "",
     advertiserData: campaign.advertiserData ?? "",
-  }));
-  const server = {
-    brief: campaign.brief ?? "",
-    budgetAmount: campaign.budgetAmount?.toString() ?? "",
-    periodStart: toDateInput(campaign.periodStart),
-    periodEnd: toDateInput(campaign.periodEnd),
-    tov: campaign.tov ?? "",
-    constraints: campaign.constraints ?? "",
-    advertiserData: campaign.advertiserData ?? "",
-  };
+    // Ценовые настройки кампании (срез 3).
+    akPercent: campaign.akPercent.toString(),
+    vatEnabled: campaign.vatEnabled,
+    vatRate: campaign.vatRate.toString(),
+    ordEnabled: campaign.ordEnabled,
+    splitEnabled: campaign.splitEnabled,
+  });
+  const [draft, setDraft] = useState(snapshot);
+  const server = snapshot();
   const dirty = JSON.stringify(draft) !== JSON.stringify(server);
 
   const save = useMutation({
@@ -326,13 +335,28 @@ function BriefPhase({
             tov: draft.tov || null,
             constraints: draft.constraints || null,
             advertiserData: draft.advertiserData || null,
+            akPercent: parsePct(draft.akPercent, 0),
+            vatEnabled: draft.vatEnabled,
+            vatRate: parsePct(draft.vatRate, 22),
+            ordEnabled: draft.ordEnabled,
+            splitEnabled: draft.splitEnabled,
           },
         },
       );
       if (error) throw error;
     },
-    onSuccess: () =>
-      qc.invalidateQueries({ queryKey: ["campaign", wsId, campaign.id] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["campaign", wsId, campaign.id] });
+      // Пустой ввод АК/ставки ушёл как 0/22 (колонки NOT NULL), а draft держит
+      // "" — иначе dirty остался бы навсегда true и кнопка «Сохранить» не
+      // спряталась бы после успешного сейва (§6). Приводим черновик к тому же
+      // числу, что и сервер.
+      setDraft((d) => ({
+        ...d,
+        akPercent: String(parsePct(d.akPercent, 0)),
+        vatRate: String(parsePct(d.vatRate, 22)),
+      }));
+    },
   });
 
   return (
@@ -411,6 +435,73 @@ function BriefPhase({
             Подставится в ЕРИД-шаг всех размещений кампании.
           </p>
         </BriefField>
+
+        <div className="border-t border-zinc-100 pt-4">
+          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-zinc-400">
+            Ценообразование
+          </div>
+          <p className="mb-3 text-xs text-zinc-400">
+            Множители цепочки «стоимость блогера → цена клиенту». Применяются ко
+            всем сделкам кампании.
+          </p>
+          <div className="flex flex-wrap items-center gap-4">
+            <label className="flex items-center gap-2 text-sm text-zinc-700">
+              Агентская комиссия
+              <input
+                inputMode="numeric"
+                value={draft.akPercent}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, akPercent: e.target.value }))
+                }
+                className="w-16 rounded-md border border-zinc-300 px-2 py-1 text-right text-sm focus:border-emerald-500 focus:outline-none"
+              />
+              %
+            </label>
+            <label className="flex items-center gap-2 text-sm text-zinc-700">
+              <input
+                type="checkbox"
+                checked={draft.vatEnabled}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, vatEnabled: e.target.checked }))
+                }
+              />
+              НДС клиенту
+              <input
+                inputMode="numeric"
+                value={draft.vatRate}
+                disabled={!draft.vatEnabled}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, vatRate: e.target.value }))
+                }
+                className="w-14 rounded-md border border-zinc-300 px-2 py-1 text-right text-sm focus:border-emerald-500 focus:outline-none disabled:bg-zinc-100 disabled:text-zinc-400"
+              />
+              %
+            </label>
+            <label className="flex items-center gap-2 text-sm text-zinc-700">
+              <input
+                type="checkbox"
+                checked={draft.ordEnabled}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, ordEnabled: e.target.checked }))
+                }
+              />
+              +3% ОРД
+            </label>
+            <label
+              className="flex items-center gap-2 text-sm text-zinc-700"
+              title="Делить сумму блогера на создание контента (без ОРД) и размещение (+3%). Доля создания задаётся у каждого блогера в сделке."
+            >
+              <input
+                type="checkbox"
+                checked={draft.splitEnabled}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, splitEnabled: e.target.checked }))
+                }
+              />
+              Сплит создание/размещение
+            </label>
+          </div>
+        </div>
         {dirty && (
           <button
             type="button"
@@ -632,6 +723,13 @@ function LonglistPhase({
               wsId={wsId}
               projectId={projectId}
               placement={p}
+              pricing={{
+                akPercent: campaign.akPercent,
+                vat: campaign.vatEnabled,
+                vatRate: campaign.vatRate,
+                ord3: campaign.ordEnabled,
+                split: campaign.splitEnabled,
+              }}
               siblings={
                 p.adminContactId
                   ? (adminGroups.get(p.adminContactId) ?? []).filter(
@@ -1028,6 +1126,42 @@ function ReviewPhase({
   const accountsQ = useOutreachAccounts(wsId);
   const [chatFor, setChatFor] = useState<Placement | null>(null);
 
+  // Клиентский срез (Задача 3) прячет «серые» финансовые колонки — закупку,
+  // надбавку, к оплате блогеру, прибыль. Внутренний — вся цепочка + P&L.
+  const [view, setView] = useState<"internal" | "client">("internal");
+  const internalView = view === "internal";
+
+  // Цена каждой строки — через единый движок из полей блогера × множителей
+  // кампании (Срез А: не legacy clientPrice, а посчитанная цепочка). Прогноз для
+  // CPV — снапшот forecastViews или живой охват канала.
+  const priced = shortlist.map((p) => {
+    const forecast = p.forecastViews ?? p.channel?.avgReach ?? null;
+    return { p, forecast, pricing: placementPricing(campaign, p, forecast) };
+  });
+  const T = priced.reduce(
+    (a, { p, forecast, pricing }) => ({
+      views: a.views + (forecast ?? 0),
+      net: a.net + (p.priceAmount ?? 0),
+      beforeAk: a.beforeAk + pricing.beforeAk,
+      createPart: a.createPart + pricing.createPart,
+      placePart: a.placePart + pricing.placePart,
+      clientNoVat: a.clientNoVat + pricing.clientNoVat,
+      clientVat: a.clientVat + pricing.clientVat,
+      profit: a.profit + pricing.profit,
+    }),
+    {
+      views: 0,
+      net: 0,
+      beforeAk: 0,
+      createPart: 0,
+      placePart: 0,
+      clientNoVat: 0,
+      clientVat: 0,
+      profit: 0,
+    },
+  );
+  const margin = T.clientNoVat > 0 ? (T.profit / T.clientNoVat) * 100 : 0;
+
   return (
     <div className="space-y-4">
       <ShareAccessBlock
@@ -1060,25 +1194,67 @@ function ReviewPhase({
         </div>
       ) : (
         <>
-          <div className="text-xs text-zinc-500">
-            В шортлисте {shortlist.length} · решений клиента {decided}/
-            {shortlist.length}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs text-zinc-500">
+              В шортлисте {shortlist.length} · решений клиента {decided}/
+              {shortlist.length}
+              {internalView && (
+                <span className="ml-2 text-zinc-400">
+                  · АК {campaign.akPercent}%
+                  {campaign.ordEnabled ? " · +3% ОРД" : ""} · НДС{" "}
+                  {campaign.vatEnabled ? campaign.vatRate + "%" : "—"}
+                  {campaign.splitEnabled ? " · сплит созд/разм" : ""}
+                </span>
+              )}
+            </div>
+            <div className="inline-flex overflow-hidden rounded-lg border border-zinc-200 text-xs">
+              {(["client", "internal"] as const).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setView(v)}
+                  className={
+                    "px-3 py-1.5 font-medium " +
+                    (view === v
+                      ? "bg-zinc-900 text-white"
+                      : "text-zinc-500 hover:bg-zinc-50")
+                  }
+                >
+                  {v === "client" ? "Клиентский вид" : "Внутренний вид"}
+                </button>
+              ))}
+            </div>
           </div>
           <TableCard>
             <thead className="bg-zinc-50 text-xs text-zinc-500">
               <tr>
                 <Th>Канал</Th>
                 <Th className="text-right">Подписчики</Th>
-                <Th className="text-right">Охват</Th>
+                <Th className="text-right">Прогноз</Th>
                 <Th className="text-right">ERR</Th>
-                <Th className="text-right">Цена</Th>
-                <Th className="text-right">Цена для клиента</Th>
+                <Th className="text-right">CPV</Th>
+                {internalView && (
+                  <Th className="border-l border-dashed border-zinc-300 text-right">
+                    Чистая блогеру
+                  </Th>
+                )}
+                {internalView && <Th className="text-right">Надбавка</Th>}
+                {internalView && (
+                  <Th className="text-right">К оплате блогеру</Th>
+                )}
+                <Th className="border-l border-dashed border-zinc-300 text-right">
+                  Клиенту до НДС
+                </Th>
+                {campaign.vatEnabled && (
+                  <Th className="text-right">Клиенту с НДС</Th>
+                )}
+                {internalView && <Th className="text-right">Прибыль GI</Th>}
                 <Th>Решение клиента</Th>
                 <Th>Комментарий</Th>
               </tr>
             </thead>
             <tbody>
-              {shortlist.map((p) => {
+              {priced.map(({ p, forecast, pricing }) => {
                 const cs = clientView[p.clientStatus];
                 return (
                   <tr key={p.id} className="border-t border-zinc-100">
@@ -1106,21 +1282,55 @@ function ReviewPhase({
                       {formatViews(p.channel?.memberCount ?? null)}
                     </td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-zinc-700">
-                      {formatViews(p.channel?.avgReach ?? null)}
+                      {formatViews(forecast)}
                     </td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-zinc-700">
                       {p.channel?.err != null ? p.channel.err + "%" : "—"}
                     </td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-zinc-700">
-                      {formatRub(p.priceAmount)}
+                      {forecast ? cpv(pricing.clientNoVat, forecast) : "—"}
                     </td>
-                    <td className="px-4 py-2.5 text-right">
-                      <ClientPriceCell
-                        wsId={wsId}
-                        projectId={projectId}
-                        placement={p}
-                      />
+                    {internalView && (
+                      <td className="border-l border-dashed border-zinc-200 bg-zinc-50/60 px-4 py-2.5 text-right tabular-nums text-zinc-700">
+                        {formatRub(p.priceAmount)}
+                      </td>
+                    )}
+                    {internalView && (
+                      <td className="bg-zinc-50/60 px-4 py-2.5 text-right tabular-nums text-zinc-500">
+                        {p.surchargePercent
+                          ? `+${p.surchargePercent}%`
+                          : "—"}
+                        {p.bloggerVat && (
+                          <span className="ml-1 rounded bg-zinc-200 px-1 text-[10px] text-zinc-600">
+                            НДС
+                          </span>
+                        )}
+                      </td>
+                    )}
+                    {internalView && (
+                      <td className="bg-zinc-50/60 px-4 py-2.5 text-right tabular-nums text-zinc-700">
+                        {formatRub(pricing.beforeAk)}
+                        {campaign.splitEnabled && p.createShare != null && (
+                          <div className="text-[10px] font-normal text-zinc-400">
+                            созд {formatRub(pricing.createPart)} ·
+                            разм {formatRub(pricing.placePart)}
+                          </div>
+                        )}
+                      </td>
+                    )}
+                    <td className="border-l border-dashed border-zinc-200 px-4 py-2.5 text-right tabular-nums font-medium text-zinc-900">
+                      {formatRub(pricing.clientNoVat)}
                     </td>
+                    {campaign.vatEnabled && (
+                      <td className="px-4 py-2.5 text-right tabular-nums text-zinc-700">
+                        {formatRub(pricing.clientVat)}
+                      </td>
+                    )}
+                    {internalView && (
+                      <td className="bg-zinc-50/60 px-4 py-2.5 text-right tabular-nums text-emerald-700">
+                        {formatRub(pricing.profit)}
+                      </td>
+                    )}
                     <td className="px-4 py-2.5">
                       <Chip tone={cs.tone}>{cs.label}</Chip>
                     </td>
@@ -1131,7 +1341,86 @@ function ReviewPhase({
                 );
               })}
             </tbody>
+            <tfoot className="border-t-2 border-zinc-200 bg-zinc-50 font-medium text-zinc-800">
+              <tr>
+                <td className="px-4 py-2.5" colSpan={2}>
+                  Итого ({shortlist.length})
+                </td>
+                <td className="px-4 py-2.5 text-right tabular-nums">
+                  {formatViews(T.views || null)}
+                </td>
+                <td />
+                <td className="px-4 py-2.5 text-right tabular-nums">
+                  {T.views > 0 ? cpv(T.clientNoVat, T.views) : "—"}
+                </td>
+                {internalView && (
+                  <td className="px-4 py-2.5 text-right tabular-nums">
+                    {formatRub(T.net)}
+                  </td>
+                )}
+                {internalView && <td />}
+                {internalView && (
+                  <td className="px-4 py-2.5 text-right tabular-nums">
+                    {formatRub(T.beforeAk)}
+                  </td>
+                )}
+                <td className="px-4 py-2.5 text-right tabular-nums">
+                  {formatRub(T.clientNoVat)}
+                </td>
+                {campaign.vatEnabled && (
+                  <td className="px-4 py-2.5 text-right tabular-nums">
+                    {formatRub(T.clientVat)}
+                  </td>
+                )}
+                {internalView && (
+                  <td className="px-4 py-2.5 text-right tabular-nums text-emerald-700">
+                    {formatRub(T.profit)}
+                  </td>
+                )}
+                <td colSpan={2} />
+              </tr>
+            </tfoot>
           </TableCard>
+
+          {internalView && (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+              <Stat
+                label="Σ к оплате блогерам, до НДС"
+                value={formatRub(T.beforeAk)}
+              />
+              <Stat
+                label="Σ к оплате Go Influence, до НДС"
+                value={formatRub(T.clientNoVat)}
+              />
+              <Stat
+                label={
+                  campaign.vatEnabled
+                    ? "Клиентский бюджет, с НДС"
+                    : "Клиентский бюджет"
+                }
+                value={formatRub(
+                  campaign.vatEnabled ? T.clientVat : T.clientNoVat,
+                )}
+              />
+              <Stat
+                label="Прибыль Go Influence"
+                value={formatRub(T.profit)}
+              />
+              <Stat label="Маржинальность" value={margin.toFixed(1) + "%"} />
+              {campaign.splitEnabled && (
+                <>
+                  <Stat
+                    label="Σ за создание (без ОРД)"
+                    value={formatRub(T.createPart)}
+                  />
+                  <Stat
+                    label="Σ за размещение (+3%)"
+                    value={formatRub(T.placePart)}
+                  />
+                </>
+              )}
+            </div>
+          )}
         </>
       )}
 
@@ -1897,13 +2186,26 @@ function WrapupPhase({ wsId, campaign }: { wsId: string; campaign: Campaign }) {
       }),
   });
 
-  const totalBudget = rows.reduce((s, p) => s + (p.priceAmount ?? 0), 0);
-  // Средний CPV считаем по строкам с реально снятыми просмотрами: иначе бюджет
+  // Отчёт считаем по ЦЕНЕ КЛИЕНТА (посчитанная цепочка, Срез А), не по закупке —
+  // чтобы бюджет/CPV совпадали с медиапланом и клиентским порталом. Прогноз для
+  // план-факта — снапшот forecastViews (что обещали) или живой охват.
+  const priced = rows.map((p) => {
+    const forecast = p.forecastViews ?? p.channel?.avgReach ?? null;
+    return { p, forecast, price: placementPricing(campaign, p, forecast).clientNoVat };
+  });
+  const totalBudget = priced.reduce((s, r) => s + r.price, 0);
+  const totalForecast = priced.reduce((s, r) => s + (r.forecast ?? 0), 0);
+  // Средний CPV факт — по строкам с реально снятыми просмотрами: иначе бюджет
   // ещё-не-снятых попадёт в числитель при нуле в знаменателе → CPV завышается
   // в разы и «прыгает» вниз по мере добора метрик.
-  const measured = rows.filter((p) => p.metricsViews !== null);
-  const measuredViews = measured.reduce((s, p) => s + (p.metricsViews ?? 0), 0);
-  const measuredBudget = measured.reduce((s, p) => s + (p.priceAmount ?? 0), 0);
+  const measured = priced.filter((r) => r.p.metricsViews !== null);
+  const measuredViews = measured.reduce((s, r) => s + (r.p.metricsViews ?? 0), 0);
+  const measuredBudget = measured.reduce((s, r) => s + r.price, 0);
+  // Прогнозный CPV — та же симметрия: числитель только по строкам, у которых
+  // есть прогноз, иначе цена forecast-less строк раздула бы CPV при нуле в знаменателе.
+  const forecastBudget = priced
+    .filter((r) => r.forecast != null)
+    .reduce((s, r) => s + r.price, 0);
 
   return (
     <div className="space-y-4">
@@ -1956,12 +2258,25 @@ function WrapupPhase({ wsId, campaign }: { wsId: string; campaign: Campaign }) {
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <Stat label="Постов вышло" value={String(rows.length)} />
-            <Stat label="Σ просмотров" value={formatViews(measuredViews)} />
-            <Stat label="Σ бюджет" value={formatRub(totalBudget)} />
             <Stat
-              label="Средний CPV"
+              label="Σ просмотров (факт)"
+              value={formatViews(measuredViews)}
+              sub={
+                totalForecast > 0
+                  ? `прогноз ${formatViews(totalForecast)}`
+                  : undefined
+              }
+            />
+            <Stat label="Σ бюджет клиенту" value={formatRub(totalBudget)} />
+            <Stat
+              label="Средний CPV (факт)"
               value={
                 measured.length > 0 ? cpv(measuredBudget, measuredViews) : "—"
+              }
+              sub={
+                totalForecast > 0
+                  ? `прогноз ${cpv(forecastBudget, totalForecast)}`
+                  : undefined
               }
             />
           </div>
@@ -1971,8 +2286,9 @@ function WrapupPhase({ wsId, campaign }: { wsId: string; campaign: Campaign }) {
               <tr>
                 <Th>Канал</Th>
                 <Th>Пост</Th>
+                <Th className="text-right">Прогноз</Th>
                 <Th className="text-right">
-                  <Eye size={13} className="inline" />
+                  <Eye size={13} className="inline" /> факт
                 </Th>
                 <Th className="text-right">
                   <Heart size={13} className="inline" />
@@ -1983,19 +2299,22 @@ function WrapupPhase({ wsId, campaign }: { wsId: string; campaign: Campaign }) {
                 <Th className="text-right">
                   <Repeat2 size={13} className="inline" />
                 </Th>
-                <Th className="text-right">CPV</Th>
+                <Th className="text-right">CPV факт</Th>
                 <Th>Дата выхода</Th>
                 <Th>Снято</Th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((p) => (
+              {priced.map(({ p, forecast, price }) => (
                 <tr key={p.id} className="border-t border-zinc-100">
                   <td className="px-4 py-2.5">
                     <ChannelCell placement={p} />
                   </td>
                   <td className="px-4 py-2.5">
                     <PostSnapshotCell placement={p} />
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums text-zinc-400">
+                    {formatViews(forecast)}
                   </td>
                   <td className="px-4 py-2.5 text-right tabular-nums text-zinc-700">
                     {p.metricsViews === null ? "—" : formatViews(p.metricsViews)}
@@ -2010,7 +2329,7 @@ function WrapupPhase({ wsId, campaign }: { wsId: string; campaign: Campaign }) {
                     {p.metricsShares ?? "—"}
                   </td>
                   <td className="px-4 py-2.5 text-right tabular-nums text-zinc-700">
-                    {cpv(p.priceAmount, p.metricsViews)}
+                    {cpv(price, p.metricsViews)}
                   </td>
                   <td className="px-4 py-2.5">
                     <PublishDateCell placement={p} />
@@ -2028,11 +2347,21 @@ function WrapupPhase({ wsId, campaign }: { wsId: string; campaign: Campaign }) {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({
+  label,
+  value,
+  sub,
+}: {
+  label: string;
+  value: string;
+  // Вторая строка мелким серым — для план-факта («прогноз …» под фактом).
+  sub?: string;
+}) {
   return (
     <div className="rounded-2xl bg-white p-4 shadow-sm">
       <div className="text-xs text-zinc-400">{label}</div>
       <div className="mt-1 text-xl font-semibold text-zinc-900">{value}</div>
+      {sub && <div className="text-xs text-zinc-400">{sub}</div>}
     </div>
   );
 }
@@ -2153,87 +2482,6 @@ function OutreachStatus({ p }: { p: Placement }) {
 // Клик по каналу открывает общий ChannelDrawer (лента постов, авто-синк
 // статистики «открыл-актуализировалось», админы) — переиспользуем со страницы
 // Каналов. stopPropagation, чтобы не сработал row-click (drawer размещения).
-// Цена для клиента: по умолчанию «= [закупочная]» серым (клиент видит ту же
-// сумму). Клик → инпут с оверрайдом; пусто → снова «совпадает» (clientPrice=null).
-function ClientPriceCell({
-  wsId,
-  projectId,
-  placement,
-}: {
-  wsId: string;
-  projectId: string;
-  placement: Placement;
-}) {
-  const qc = useQueryClient();
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState("");
-  const save = useMutation({
-    mutationFn: async (val: number | null) => {
-      const { error } = await api.PATCH(
-        "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}",
-        {
-          params: { path: { wsId, projectId, placementId: placement.id } },
-          body: { clientPrice: val },
-        },
-      );
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      setEditing(false);
-      qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] });
-    },
-  });
-  const commit = () => {
-    const t = draft.replace(/\s/g, "");
-    const val = t === "" ? null : Number(t);
-    if (val !== null && !Number.isFinite(val)) return setEditing(false);
-    if ((placement.clientPrice ?? null) === val) return setEditing(false);
-    save.mutate(val);
-  };
-  if (editing) {
-    return (
-      <input
-        autoFocus
-        type="number"
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") commit();
-          if (e.key === "Escape") setEditing(false);
-        }}
-        placeholder="как закупка"
-        className="w-28 rounded-md border border-emerald-400 px-2 py-1 text-right text-sm focus:outline-none"
-      />
-    );
-  }
-  const hasOverride = placement.clientPrice != null;
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        setDraft(
-          hasOverride
-            ? String(placement.clientPrice)
-            : placement.priceAmount != null
-              ? String(placement.priceAmount)
-              : "",
-        );
-        setEditing(true);
-      }}
-      title="Цена для клиента — кликните, чтобы указать другую (по умолчанию совпадает с закупочной)"
-      className={
-        "rounded px-1.5 py-0.5 text-sm tabular-nums hover:bg-zinc-100 " +
-        (hasOverride ? "font-medium text-zinc-900" : "text-zinc-400")
-      }
-    >
-      {hasOverride
-        ? formatRub(placement.clientPrice)
-        : `= ${formatRub(placement.priceAmount)}`}
-    </button>
-  );
-}
-
 function ChannelCell({
   placement,
   preview,

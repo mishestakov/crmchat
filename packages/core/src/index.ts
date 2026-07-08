@@ -5,3 +5,4 @@ export * from "./schemas/activity.ts";
 export * from "./schemas/channel.ts";
 export * from "./parse-channel-input.ts";
 export * from "./dunning.ts";
+export * from "./pricing.ts";

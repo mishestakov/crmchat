@@ -719,6 +719,28 @@ export const projects = pgTable(
     // Реквизиты рекламодателя (ИНН + название) для маркировки ЕРИД — общие на
     // кампанию (вводятся в брифе), автоподставляются в ЕРИД-шаг размещений.
     advertiserData: text("advertiser_data"),
+    // Ценовые настройки кампании (срез 3): множители цепочки сделки, единые на
+    // кампанию. Дефолты = бывшие константы @repo/core. vat_rate — ставка
+    // клиентского НДС, свободным числом (22 сейчас, меняется без правки кода —
+    // расхардкод бывшей константы CLIENT_VAT_RATE). Аддитивно (безопасно на
+    // проде): ALTER TABLE projects
+    //   ADD COLUMN ak_percent numeric(5,2) NOT NULL DEFAULT 20,
+    //   ADD COLUMN vat_enabled boolean NOT NULL DEFAULT true,
+    //   ADD COLUMN vat_rate numeric(5,2) NOT NULL DEFAULT 22,
+    //   ADD COLUMN ord_enabled boolean NOT NULL DEFAULT false;
+    akPercent: numeric("ak_percent", { precision: 5, scale: 2 })
+      .notNull()
+      .default("20"),
+    vatEnabled: boolean("vat_enabled").notNull().default(true),
+    vatRate: numeric("vat_rate", { precision: 5, scale: 2 })
+      .notNull()
+      .default("22"),
+    ordEnabled: boolean("ord_enabled").notNull().default(false),
+    // Сплит создание/размещение (срез 5): включает деление суммы блогера на
+    // «создание контента» (без ОРД) и «размещение» (+3%). Доля — на размещении
+    // (project_items.create_share). Прод: ALTER TABLE projects
+    //   ADD COLUMN split_enabled boolean NOT NULL DEFAULT false;
+    splitEnabled: boolean("split_enabled").notNull().default(false),
     // Клиент финализировал медиаплан по своей magic-link: с этого момента он
     // больше не меняет решения (фаза «Согласование» заморожена). Менеджер может
     // переоткрыть из кабинета (обнулить) — тогда клиент снова правит.
@@ -826,6 +848,36 @@ export const projectItems = pgTable(
     clientPrice: numeric("client_price", { precision: 12, scale: 2 }),
     forecastViews: integer("forecast_views"),
     forecastErr: numeric("forecast_err", { precision: 5, scale: 2 }),
+
+    // === блок «блогеру» (ценообразование сделки, живёт на размещении) =======
+    // Всё про деньги блогера — на размещении, не на контакте и не на канале:
+    // один контакт может вести разные каналы через разные ИП, а один канал —
+    // биллиться по-разному в разных сделках. Наследование вперёд — «подставить»
+    // из истории размещений канала. Аддитивно (безопасно на проде):
+    //   ALTER TABLE project_items
+    //     ADD COLUMN surcharge_percent numeric(5,2),
+    //     ADD COLUMN blogger_vat boolean NOT NULL DEFAULT false,
+    //     ADD COLUMN format text,
+    //     ADD COLUMN quoted_rates text;
+    // priceAmount (выше) = сумма блогеру чистыми (W). «К оплате» = W×(1+%сверху) —
+    // считаем, не храним. Налоговый режим блогера нас не волнует — не бухсофт.
+    // «% сверху» — то, что блогер просит накинуть (10% «на налоги», комиссию —
+    // не важно на что). Чисто аддитивно: W×(1+surcharge). null = 0.
+    surchargePercent: numeric("surcharge_percent", { precision: 5, scale: 2 }),
+    // Галочка «это НДС»: если стоит, «% сверху» трактуется как зачётный НДС
+    // (у НДСного агентства входящий НДС зачитывается → в цепочку цены идёт
+    // чистая W, а не W×(1+%)). Если снята — надбавка просто добавляется.
+    bloggerVat: boolean("blogger_vat").notNull().default(false),
+    // Формат, на который стоит цена (1/24, 2/48 …) — свободный текст-ярлык.
+    format: text("format"),
+    // Полный прайс блогера как он ответил (все форматы) — free text, не парсим.
+    quotedRates: text("quoted_rates"),
+    // Доля создания контента в % (0..100) при сплите (срез 5). Остальное —
+    // размещение, на него идёт +3% ОРД. null/0 = без сплита (всё размещение).
+    // Активна только при projects.split_enabled. Прод: ALTER TABLE project_items
+    //   ADD COLUMN create_share numeric(5,2);
+    createShare: numeric("create_share", { precision: 5, scale: 2 }),
+
     clientStatus: placementClientStatus("client_status")
       .notNull()
       .default("pending"),

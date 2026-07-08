@@ -165,6 +165,17 @@ const PlacementSchema = z
     clientPrice: z.number().nullable(),
     forecastViews: z.number().int().nullable(),
     forecastErr: z.number().nullable(),
+    // Блок «блогеру» (ценообразование сделки, живёт на размещении).
+    // surchargePercent — «% сверху» (надбавка, не важно налог/комиссия);
+    // bloggerVat — эта надбавка есть НДС (зачётный); format — выбранный формат
+    // под цену; quotedRates — весь прайс блогера как ответил.
+    surchargePercent: z.number().nullable(),
+    bloggerVat: z.boolean(),
+    format: z.string().nullable(),
+    quotedRates: z.string().nullable(),
+    // Доля создания контента в % (0..100) при сплите (срез 5). Остальное —
+    // размещение, на него +3% ОРД. null = без сплита. Активна при project.splitEnabled.
+    createShare: z.number().nullable(),
     clientStatus: ClientStatusSchema,
     clientStatusComment: z.string().nullable(),
     shortlistedAt: z.iso.datetime().nullable(),
@@ -207,6 +218,12 @@ const UpdatePlacementBody = z
     clientPrice: z.number().nonnegative().nullable().optional(),
     forecastViews: z.number().int().nonnegative().nullable().optional(),
     forecastErr: z.number().nonnegative().nullable().optional(),
+    // Блок «блогеру» — редактируется в сделке-панели.
+    surchargePercent: z.number().min(0).max(100).nullable().optional(),
+    bloggerVat: z.boolean().optional(),
+    format: z.string().max(200).nullable().optional(),
+    quotedRates: z.string().max(4000).nullable().optional(),
+    createShare: z.number().min(0).max(100).nullable().optional(),
     clientStatus: ClientStatusSchema.optional(),
     // true → добавить в шортлист (проставить shortlisted_at=now), false → вернуть
     // в лонглист (сбросить). Явная кнопка «В шортлист» у менеджера.
@@ -718,6 +735,18 @@ app.openapi(
           forecastErr:
             body.forecastErr === null ? null : String(body.forecastErr),
         }),
+        // Блок «блогеру»: numeric → String (как priceAmount); bool/text —
+        // прямым копированием через pickDefined ниже.
+        ...(body.surchargePercent !== undefined && {
+          surchargePercent:
+            body.surchargePercent === null
+              ? null
+              : String(body.surchargePercent),
+        }),
+        ...(body.createShare !== undefined && {
+          createShare:
+            body.createShare === null ? null : String(body.createShare),
+        }),
         // Смена статуса менеджером — это новое решение: сбрасываем коммент
         // (он принадлежал прежнему статусу клиента) и обновляем отметку
         // времени, чтобы comment/at не рассинхронизировались со статусом.
@@ -731,6 +760,9 @@ app.openapi(
         }),
         // production: enum/text/int/jsonb — прямое копирование (null валиден).
         ...pickDefined(body, [
+          "bloggerVat",
+          "format",
+          "quotedRates",
           "contractStatus",
           "creativeStatus",
           "creativeRound",
@@ -1010,6 +1042,11 @@ function placementColumns() {
     clientPrice: projectItems.clientPrice,
     forecastViews: projectItems.forecastViews,
     forecastErr: projectItems.forecastErr,
+    surchargePercent: projectItems.surchargePercent,
+    bloggerVat: projectItems.bloggerVat,
+    format: projectItems.format,
+    quotedRates: projectItems.quotedRates,
+    createShare: projectItems.createShare,
     clientStatus: projectItems.clientStatus,
     clientStatusComment: projectItems.clientStatusComment,
     shortlistedAt: projectItems.shortlistedAt,
@@ -1129,6 +1166,11 @@ function serializePlacement(
     clientPrice: string | null;
     forecastViews: number | null;
     forecastErr: string | null;
+    surchargePercent: string | null;
+    bloggerVat: boolean;
+    format: string | null;
+    quotedRates: string | null;
+    createShare: string | null;
     clientStatus: (typeof placementClientStatus.enumValues)[number];
     clientStatusComment: string | null;
     shortlistedAt: Date | null;
@@ -1231,6 +1273,12 @@ function serializePlacement(
     clientPrice: row.clientPrice === null ? null : Number(row.clientPrice),
     forecastViews: row.forecastViews,
     forecastErr: row.forecastErr === null ? null : Number(row.forecastErr),
+    surchargePercent:
+      row.surchargePercent === null ? null : Number(row.surchargePercent),
+    bloggerVat: row.bloggerVat,
+    format: row.format,
+    quotedRates: row.quotedRates,
+    createShare: row.createShare === null ? null : Number(row.createShare),
     clientStatus: row.clientStatus,
     clientStatusComment: row.clientStatusComment,
     shortlistedAt: row.shortlistedAt?.toISOString() ?? null,

@@ -10,6 +10,7 @@ import {
   Eye,
   Check,
 } from "lucide-react";
+import { computeDealPricing } from "@repo/core";
 import { api, sendContactDocument } from "../../../../../lib/api";
 import { errorMessage } from "../../../../../lib/errors";
 import { formatPastRelative } from "../../../../../lib/date-utils";
@@ -28,22 +29,45 @@ import {
   type MessageThumb,
   renderMessageEntities,
 } from "../../../../../lib/tg-message";
-import { ChannelCard } from "../../../../../components/channel-card";
+import { type ChannelMessage } from "../../../../../components/channel-card";
+import { ChannelPreviewDrawer } from "../../../../../components/channel-preview-drawer";
 import { ContactResolver } from "../../../../../components/contact-resolver";
+import { RKN_THRESHOLD } from "../../../../../components/channel-badges";
 import {
+  formatRub,
   formatViews,
+  cpv,
   type Placement,
   type ContractStatus,
   type CreativeStatus,
 } from "./-shared";
 import { deriveProduction, PROD_OWNER } from "./-ui";
 
-// Менеджер вводит руками только цену — прогнозы (охват/ERR) берём из канала
-// (этап 16.10), «готов» заменён кнопками решения.
-type Draft = { priceAmount: string };
+// Черновик сделки: всё про деньги блогера живёт на размещении (не на контакте,
+// не на канале). Прогнозы (охват/ERR) берём из канала, «готов» — кнопки решения.
+//   priceAmount      — сумма блогеру чистыми (W)
+//   surchargePercent — «% сверху» (надбавка блогера, не важно налог/комиссия)
+//   bloggerVat       — эта надбавка есть зачётный НДС
+//   format           — формат под цену (1/24 …)
+//   quotedRates      — весь прайс блогера как ответил (free text)
+type Draft = {
+  priceAmount: string;
+  surchargePercent: string;
+  bloggerVat: boolean;
+  format: string;
+  quotedRates: string;
+  createShare: string;
+};
 
 function toDraft(p: Placement): Draft {
-  return { priceAmount: p.priceAmount?.toString() ?? "" };
+  return {
+    priceAmount: p.priceAmount?.toString() ?? "",
+    surchargePercent: p.surchargePercent?.toString() ?? "",
+    bloggerVat: p.bloggerVat,
+    format: p.format ?? "",
+    quotedRates: p.quotedRates ?? "",
+    createShare: p.createShare?.toString() ?? "",
+  };
 }
 
 // null для пустой строки, иначе число.
@@ -63,6 +87,7 @@ export function PlacementPane({
   wsId,
   projectId,
   placement,
+  pricing: pricingSettings,
   siblings,
   onSelectPlacement,
   onRemoved,
@@ -70,6 +95,14 @@ export function PlacementPane({
   wsId: string;
   projectId: string;
   placement: Placement;
+  // Ценовые настройки кампании (срез 3/5): множители цепочки, едины на кампанию.
+  pricing: {
+    akPercent: number;
+    vat: boolean;
+    vatRate: number;
+    ord3: boolean;
+    split: boolean;
+  };
   // Размещения того же админа в кампании (Option A): чипы-переключатель над
   // общим чатом. <2 — чипы не показываем, переключать нечего.
   siblings: Placement[];
@@ -78,8 +111,17 @@ export function PlacementPane({
 }) {
   const qc = useQueryClient();
   const accountsQ = useOutreachAccounts(wsId);
-  const [draft, setDraft] = useState<Draft>(() => toDraft(placement));
+  const [draft, setDraftRaw] = useState<Draft>(() => toDraft(placement));
+  // Мерж-патч: колл-сайты правят по одному полю (setDraft({ priceAmount })).
+  const setDraft = (patch: Partial<Draft>) =>
+    setDraftRaw((d) => ({ ...d, ...patch }));
   const [changing, setChanging] = useState(false);
+  // Превью канала — выезжает справа поверх (переиспользуем ChannelPreviewDrawer,
+  // тот же, что на согласовании и у клиента). Постоянной карточки канала больше
+  // нет: место отдано чату+сделке, канал — по клику на строку метрик.
+  const [previewOpen, setPreviewOpen] = useState(false);
+  // Расценки блогера — свёрнуты, если пусто; развёрнуты, если уже заполнены.
+  const [ratesOpen, setRatesOpen] = useState(() => !!placement.quotedRates);
   const channelId = placement.channel?.id ?? null;
 
   const channelQ = useQuery({
@@ -118,14 +160,25 @@ export function PlacementPane({
   const invalidate = () =>
     qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] });
 
-  // Автосейв цены на blur (единственное ручное поле).
+  // Поля сделки для PATCH (цена + блок «блогеру») — общие для автосейва и
+  // «Согласован», чтобы решение не теряло введённое.
+  const dealBody = () => ({
+    priceAmount: numOrNull(draft.priceAmount),
+    surchargePercent: numOrNull(draft.surchargePercent),
+    bloggerVat: draft.bloggerVat,
+    format: draft.format.trim() || null,
+    quotedRates: draft.quotedRates.trim() || null,
+    createShare: numOrNull(draft.createShare),
+  });
+
+  // Автосейв полей сделки на blur (уход фокуса со всей строки).
   const save = useMutation({
     mutationFn: async () => {
       const { error } = await api.PATCH(
         "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}",
         {
           params: { path: { wsId, projectId, placementId: placement.id } },
-          body: { priceAmount: numOrNull(draft.priceAmount) },
+          body: dealBody(),
         },
       );
       if (error) throw error;
@@ -142,8 +195,8 @@ export function PlacementPane({
         {
           params: { path: { wsId, projectId, placementId: placement.id } },
           body: {
+            ...dealBody(),
             available: true,
-            priceAmount: numOrNull(draft.priceAmount),
             forecastViews: avgReach,
             forecastErr: cErr,
             shortlisted: true,
@@ -179,6 +232,25 @@ export function PlacementPane({
   // Кнопка «Сохранить» — только при наличии изменений (CLAUDE.md §6).
   const dirty = JSON.stringify(draft) !== JSON.stringify(toDraft(placement));
 
+  // Живой показ цены клиенту (не персистим): множители — из настроек кампании,
+  // блок «блогеру» — из черновика размещения, прогноз — снапшот или авто-охват
+  // канала. CPV по базе до НДС.
+  const bloggerCost = numOrNull(draft.priceAmount) ?? 0;
+  // Доля создания при сплите (срез 5): вход в % создания, движок сам делит.
+  const createShareNum = numOrNull(draft.createShare);
+  const pricing = computeDealPricing({
+    cost: bloggerCost,
+    surchargePercent: numOrNull(draft.surchargePercent) ?? 0,
+    bloggerVat: draft.bloggerVat,
+    akPercent: pricingSettings.akPercent,
+    vat: pricingSettings.vat,
+    vatRate: pricingSettings.vatRate,
+    ord3: pricingSettings.ord3,
+    splitEnabled: pricingSettings.split,
+    createShare: createShareNum,
+    forecastViews: placement.forecastViews ?? avgReach,
+  });
+
   return (
     <div className="flex h-full flex-col">
       {siblings.length >= 2 && (
@@ -189,37 +261,33 @@ export function PlacementPane({
         />
       )}
       <div className="flex min-h-0 flex-1">
-      {/* Центр: карточка канала — метрики, описание, лента постов. */}
-      <div className="min-w-0 flex-1 overflow-hidden border-r border-zinc-200">
-        {channelQ.data ? (
-          <ChannelCard wsId={wsId} channel={channelQ.data} compact />
-        ) : (
-          <div className="flex h-full items-center justify-center px-6 text-center text-sm text-zinc-400">
-            {channelQ.isLoading ? "Загрузка канала…" : "Канал недоступен"}
-          </div>
-        )}
-      </div>
-
-      {/* Правый рельс (50/50): сделка + переписка/чат-по-способу, если способ
-          связи выбран (человек/бот/группа/личка), иначе резолвер. */}
-      <div className="flex min-w-0 flex-1 flex-col bg-white">
+      {/* Две колонки: центр — вся инфо по размещению (сделка, вертикальный
+          столбец), право — чат во всю высоту. Канал не занимает постоянного
+          места: метрики кликабельны → превью выезжает справа поверх. Резолвер
+          (на всю ширину) — если способ связи ещё не выбран. */}
         {hasMethod && !changing ? (
           <>
+            <div className="flex w-96 shrink-0 flex-col overflow-y-auto border-r border-zinc-200 bg-white">
             <div
               onBlur={(e) => {
                 // Сохраняем, только когда фокус ушёл со всей строки.
                 if (e.currentTarget.contains(e.relatedTarget as Node)) return;
                 if (dirty && !save.isPending) save.mutate();
               }}
-              className="border-b border-zinc-200 px-4 py-3"
+              className="px-4 py-3"
             >
               {isBot && (
                 <div className="mb-2 rounded-md bg-zinc-100 px-2 py-1 text-[11px] text-zinc-600">
                   Бот — авторассылка сюда не идёт, напишите вручную в чате ниже.
                 </div>
               )}
-              {(avgReach !== null || cErr !== null) && (
-                <div className="mb-2 flex items-baseline gap-4 text-xs text-zinc-500">
+              {channelId && (
+                <button
+                  type="button"
+                  onClick={() => setPreviewOpen(true)}
+                  title="Открыть превью канала — лента постов и охваты"
+                  className="mb-2 flex w-full items-baseline gap-3 rounded-md px-1 py-1 text-xs text-zinc-500 hover:bg-zinc-100"
+                >
                   {avgReach !== null && (
                     <span>
                       ср. охват{" "}
@@ -231,17 +299,158 @@ export function PlacementPane({
                       ERR <b className="text-zinc-700">{cErr}%</b>
                     </span>
                   )}
-                </div>
+                  {placement.channel?.memberCount != null && (
+                    <span>
+                      <b className="text-zinc-700">
+                        {formatViews(placement.channel.memberCount)}
+                      </b>{" "}
+                      подп.
+                    </span>
+                  )}
+                  {placement.channel &&
+                    !placement.channel.isRkn &&
+                    placement.channel.memberCount != null &&
+                    placement.channel.memberCount > RKN_THRESHOLD && (
+                      <span className="font-medium text-red-600">не в РКН</span>
+                    )}
+                  <span className="ml-auto inline-flex items-center gap-1 text-emerald-700">
+                    <Eye size={13} /> канал
+                  </span>
+                </button>
               )}
-              <div className="flex items-end gap-3">
+              <div className="flex flex-wrap items-end gap-3">
                 <BarField label="Цена ₽">
                   <BarNum
                     value={draft.priceAmount}
                     onChange={(v) => setDraft({ priceAmount: v })}
                   />
                 </BarField>
+                <BarField label="Формат">
+                  <input
+                    value={draft.format}
+                    placeholder="1/24"
+                    maxLength={200}
+                    onChange={(e) => setDraft({ format: e.target.value })}
+                    className="w-20 rounded-md border border-zinc-300 px-2 py-1 text-sm focus:border-emerald-500 focus:outline-none"
+                  />
+                </BarField>
+                <BarField label={draft.bloggerVat ? "НДС %" : "% сверху"}>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      inputMode="numeric"
+                      value={draft.surchargePercent}
+                      placeholder="0"
+                      onChange={(e) =>
+                        setDraft({ surchargePercent: e.target.value })
+                      }
+                      className="w-12 rounded-md border border-zinc-300 px-2 py-1 text-right text-sm focus:border-emerald-500 focus:outline-none"
+                    />
+                    <label
+                      className="inline-flex items-center gap-1 text-xs text-zinc-600"
+                      title="Надбавка — это зачётный НДС блогера"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={draft.bloggerVat}
+                        onChange={(e) =>
+                          setDraft({ bloggerVat: e.target.checked })
+                        }
+                      />
+                      НДС
+                    </label>
+                  </div>
+                </BarField>
+                {pricingSettings.split && (
+                  <BarField label="Создание %">
+                    <input
+                      inputMode="numeric"
+                      value={draft.createShare}
+                      placeholder="0"
+                      title="Доля создания контента — без ОРД. Остальное — размещение, на него +3%."
+                      onChange={(e) =>
+                        setDraft({ createShare: e.target.value })
+                      }
+                      className="w-12 rounded-md border border-zinc-300 px-2 py-1 text-right text-sm focus:border-emerald-500 focus:outline-none"
+                    />
+                  </BarField>
+                )}
                 <SaveHint pending={save.isPending} error={save.error} />
               </div>
+              {bloggerCost > 0 && (
+                <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-xs text-zinc-500">
+                  {Math.round(pricing.payout) !== Math.round(bloggerCost) && (
+                    <span>
+                      Блогеру{" "}
+                      <b className="text-zinc-700">
+                        {formatRub(pricing.payout)}
+                      </b>
+                    </span>
+                  )}
+                  {pricingSettings.split && createShareNum != null && (
+                    <span className="text-zinc-400">
+                      созд.{" "}
+                      <b className="text-zinc-600">
+                        {formatRub(pricing.createPart)}
+                      </b>{" "}
+                      · разм.{" "}
+                      <b className="text-zinc-600">
+                        {formatRub(pricing.placePart)}
+                      </b>
+                    </span>
+                  )}
+                  <span>
+                    Клиенту{" "}
+                    <b className="text-zinc-700">
+                      {formatRub(pricing.clientVat)}
+                    </b>
+                    {pricingSettings.vat && " с НДС"}
+                  </span>
+                  {pricingSettings.vat && (
+                    <span className="text-zinc-400">
+                      {formatRub(pricing.clientNoVat)} до НДС
+                    </span>
+                  )}
+                  {pricing.cpv !== null && (
+                    <span>
+                      CPV{" "}
+                      <b className="text-zinc-700">
+                        {cpv(
+                          pricing.clientNoVat,
+                          placement.forecastViews ?? avgReach,
+                        )}
+                      </b>
+                    </span>
+                  )}
+                </div>
+              )}
+              <div className="mt-2">
+                <button
+                  type="button"
+                  onClick={() => setRatesOpen((o) => !o)}
+                  className="text-[11px] text-zinc-500 hover:text-zinc-700"
+                >
+                  {ratesOpen ? "скрыть расценки ▴" : "расценки блогера ▾"}
+                  {!ratesOpen && draft.quotedRates.trim() ? " ·" : ""}
+                </button>
+                {ratesOpen && (
+                  <textarea
+                    value={draft.quotedRates}
+                    placeholder="Весь прайс блогера как ответил…"
+                    maxLength={4000}
+                    onChange={(e) => setDraft({ quotedRates: e.target.value })}
+                    rows={2}
+                    className="mt-1 w-full resize-none rounded-md border border-zinc-200 px-2 py-1 text-xs focus:border-emerald-500 focus:outline-none"
+                  />
+                )}
+              </div>
+              {channelId && (
+                <PlacementHistory
+                  wsId={wsId}
+                  channelId={channelId}
+                  excludeId={placement.id}
+                  onApply={(patch) => setDraft(patch)}
+                />
+              )}
               <div className="mt-2.5 flex items-center gap-2">
                 <button
                   type="button"
@@ -272,6 +481,9 @@ export function PlacementPane({
                 />
               </div>
             </div>
+            </div>
+            {/* Право: чат во всю высоту. */}
+            <div className="flex min-w-0 flex-1 flex-col bg-white">
             {placement.adminContactId ? (
               <>
                 <ContactHeader
@@ -310,27 +522,49 @@ export function PlacementPane({
                 ) : null}
               </>
             )}
+            </div>
           </>
         ) : (
-          <ContactResolver
-            wsId={wsId}
-            channelId={channelId}
-            channel={channelQ.data ?? null}
-            onResolved={invalidate}
-            onClose={hasMethod ? () => setChanging(false) : undefined}
-            headerAction={
-              <RemovePlacementButton
-                wsId={wsId}
-                projectId={projectId}
-                placementId={placement.id}
-                onRemoved={onRemoved}
-                className="shrink-0"
-              />
-            }
-          />
+          <div className="flex min-w-0 flex-1 flex-col bg-white">
+            <ContactResolver
+              wsId={wsId}
+              channelId={channelId}
+              channel={channelQ.data ?? null}
+              onResolved={invalidate}
+              onClose={hasMethod ? () => setChanging(false) : undefined}
+              headerAction={
+                <RemovePlacementButton
+                  wsId={wsId}
+                  projectId={projectId}
+                  placementId={placement.id}
+                  onRemoved={onRemoved}
+                  className="shrink-0"
+                />
+              }
+            />
+          </div>
         )}
       </div>
-      </div>
+      {previewOpen && channelId && (
+        <ChannelPreviewDrawer
+          title={placement.channel?.title ?? "Канал"}
+          subtitle="Лента канала"
+          wsId={wsId}
+          channelId={channelId}
+          queryKey={["placement-channel-preview", wsId, channelId]}
+          queryFn={async () => {
+            // Для одного активного канала бьём в /history (греет кэш и отдаёт
+            // ленту разом) — без гонки cold-cache, как было бы у /preview.
+            const { data, error } = await api.GET(
+              "/v1/workspaces/{wsId}/channels/{id}/history",
+              { params: { path: { wsId, id: channelId }, query: { limit: 30 } } },
+            );
+            if (error) throw error;
+            return (data!.messages as ChannelMessage[]) ?? [];
+          }}
+          onClose={() => setPreviewOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -451,6 +685,89 @@ function ContactHeader({
       >
         сменить
       </button>
+    </div>
+  );
+}
+
+// История размещений канала (срез 4): прошлые сделки по этому каналу через все
+// кампании (агрегат project_items, не отдельная сущность). Кнопка «подставить»
+// тянет условия последнего размещения (цена + формат + надбавка/НДС) в черновик
+// — наследование вперёд без отдельной сущности. Пусто → ничего не рисуем
+// (первый выход блогера — истории нет).
+function PlacementHistory({
+  wsId,
+  channelId,
+  excludeId,
+  onApply,
+}: {
+  wsId: string;
+  channelId: string;
+  excludeId: string;
+  onApply: (patch: Partial<Draft>) => void;
+}) {
+  const q = useQuery({
+    queryKey: ["placement-history", wsId, channelId, excludeId] as const,
+    queryFn: async () => {
+      const { data, error } = await api.GET(
+        "/v1/workspaces/{wsId}/channels/{id}/placement-history",
+        { params: { path: { wsId, id: channelId }, query: { excludeId } } },
+      );
+      if (error) throw error;
+      return data.items;
+    },
+    staleTime: 60 * 1000,
+  });
+  const items = q.data ?? [];
+  if (items.length === 0) return null;
+  const last = items[0]!;
+  const fmtDate = (iso: string) =>
+    new Date(iso).toLocaleDateString("ru-RU", {
+      month: "short",
+      year: "2-digit",
+    });
+  return (
+    <div className="mt-2.5 rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">
+          История размещений
+        </span>
+        {last.priceAmount !== null && (
+          <button
+            type="button"
+            onClick={() =>
+              onApply({
+                priceAmount: String(last.priceAmount),
+                surchargePercent:
+                  last.surchargePercent !== null
+                    ? String(last.surchargePercent)
+                    : "",
+                bloggerVat: last.bloggerVat,
+                format: last.format ?? "",
+              })
+            }
+            className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800"
+          >
+            подставить →
+          </button>
+        )}
+      </div>
+      <div className="space-y-0.5">
+        {items.map((h) => (
+          <div
+            key={h.placementId}
+            className="flex justify-between gap-2 text-[11px] text-zinc-600"
+          >
+            <span className="min-w-0 truncate">
+              {h.campaignName} · {fmtDate(h.date)}
+            </span>
+            <span className="shrink-0 tabular-nums text-zinc-500">
+              {h.priceAmount !== null
+                ? formatRub(h.priceAmount)
+                : "—"}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

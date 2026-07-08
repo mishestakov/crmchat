@@ -1,6 +1,6 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { and, count, eq, inArray, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNotNull, ne, or, sql } from "drizzle-orm";
 import {
   type Channel,
   ChannelSchema as BaseChannelSchema,
@@ -58,6 +58,7 @@ import {
   contacts,
   outreachAccounts,
   projectItems,
+  projects,
   tgChats,
   tgUsers,
 } from "../db/schema.ts";
@@ -1834,6 +1835,94 @@ app.openapi(
     }
 
     return c.json({ messages: items });
+  },
+);
+
+// История размещений канала (срез 4): агрегат project_items по channelId через
+// ВСЕ кампании воркспейса — «за сколько этот канал размещали раньше». Канал —
+// накопительный актив (единый источник цены = placement, отдельной сущности
+// истории нет), поэтому просто читаем прошлые сделки. Показываем только те, где
+// была цена; текущее размещение исключаем через excludeId.
+const PlacementHistoryItem = z.object({
+  placementId: z.string(),
+  projectId: z.string(),
+  campaignName: z.string(),
+  // publishedAt ?? scheduledAt ?? createdAt — когда размещение было/заведено.
+  date: z.iso.datetime(),
+  priceAmount: z.number().nullable(),
+  // Условия сделки — чтобы «подставить» в новом размещении тянуло не только цену.
+  surchargePercent: z.number().nullable(),
+  bloggerVat: z.boolean(),
+  format: z.string().nullable(),
+});
+const PlacementHistoryResponse = z.object({
+  items: z.array(PlacementHistoryItem),
+});
+
+app.openapi(
+  createRoute({
+    method: "get",
+    path: "/v1/workspaces/{wsId}/channels/{id}/placement-history",
+    tags: ["channels"],
+    request: {
+      params: WsIdParam,
+      query: z.object({
+        // Исключить текущее размещение (чтобы своя же строка не попала в историю).
+        excludeId: z.string().min(1).max(64).optional(),
+        limit: z.coerce.number().int().min(1).max(50).default(20),
+      }),
+    },
+    responses: {
+      200: {
+        content: {
+          "application/json": { schema: PlacementHistoryResponse },
+        },
+        description: "Past placements of this channel across campaigns",
+      },
+    },
+  }),
+  async (c) => {
+    const { wsId, id } = c.req.valid("param");
+    const { excludeId, limit } = c.req.valid("query");
+    await assertChannelAccess(id, wsId);
+    const dateExpr = sql`COALESCE(${projectItems.publishedAt}, ${projectItems.scheduledAt}, ${projectItems.createdAt})`;
+    const rows = await db
+      .select({
+        placementId: projectItems.id,
+        projectId: projectItems.projectId,
+        campaignName: projects.name,
+        priceAmount: projectItems.priceAmount,
+        surchargePercent: projectItems.surchargePercent,
+        bloggerVat: projectItems.bloggerVat,
+        format: projectItems.format,
+        publishedAt: projectItems.publishedAt,
+        scheduledAt: projectItems.scheduledAt,
+        createdAt: projectItems.createdAt,
+      })
+      .from(projectItems)
+      .innerJoin(projects, eq(projects.id, projectItems.projectId))
+      .where(
+        and(
+          eq(projectItems.channelId, id),
+          eq(projectItems.workspaceId, wsId),
+          isNotNull(projectItems.priceAmount),
+          excludeId ? ne(projectItems.id, excludeId) : undefined,
+        ),
+      )
+      .orderBy(desc(dateExpr))
+      .limit(limit);
+    const items = rows.map((r) => ({
+      placementId: r.placementId,
+      projectId: r.projectId,
+      campaignName: r.campaignName,
+      date: (r.publishedAt ?? r.scheduledAt ?? r.createdAt).toISOString(),
+      priceAmount: r.priceAmount === null ? null : Number(r.priceAmount),
+      surchargePercent:
+        r.surchargePercent === null ? null : Number(r.surchargePercent),
+      bloggerVat: r.bloggerVat,
+      format: r.format,
+    }));
+    return c.json({ items });
   },
 );
 

@@ -1,6 +1,7 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { and, asc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
+import { computeDealPricing } from "@repo/core";
 import { db } from "../db/client.ts";
 import {
   channelSubscriptions,
@@ -53,9 +54,9 @@ const ClientPlacementSchema = z
         err: z.number().nullable(),
       })
       .nullable(),
-    // Цена, которую видит клиент: оверрайд clientPrice, иначе закупочная
-    // (priceAmount). Менеджер задаёт clientPrice в кабинете, если хочет скрыть
-    // реальную закупку; не задал — клиент видит закупочную (его осознанный выбор).
+    // Цена, которую видит клиент: посчитанная цепочка ценообразования (поля
+    // блогера × множители кампании), ДО НДС (clientNoVat) — база прогнозного CPV,
+    // как в «рыбе». Не закупка. С-НДС-срез — настройка дашборда (Задача 3).
     price: z.number().nullable(),
     // Прогноз охвата (снапшот на согласовании, менеджер может править) — знаменатель
     // прогнозного CPV, главного фильтра клиента. null → не зафиксировали.
@@ -116,6 +117,43 @@ async function resolveShare(token: string) {
   return share;
 }
 
+// Цена клиенту ДО НДС (clientNoVat) из строки размещения × множителей проекта.
+// Единый расчёт для обоих клиентских эндпоинтов (шортлист + отчёт), чтобы цена
+// не разъехалась между ними. Numeric-колонки БД приходят строками → Number().
+// Показываем до НДС — база прогнозного CPV (как в «рыбе»/внутреннем отчёте);
+// с-НДС-срез — настройка клиентского дашборда (Задача 3).
+function clientPriceNoVat(
+  proj: {
+    akPercent: string;
+    vatEnabled: boolean;
+    vatRate: string;
+    ordEnabled: boolean;
+    splitEnabled: boolean;
+  },
+  row: {
+    priceAmount: string | null;
+    surchargePercent: string | null;
+    bloggerVat: boolean;
+    createShare: string | null;
+  },
+): number | null {
+  if (row.priceAmount === null) return null;
+  return Math.round(
+    computeDealPricing({
+      cost: Number(row.priceAmount),
+      surchargePercent:
+        row.surchargePercent === null ? 0 : Number(row.surchargePercent),
+      bloggerVat: row.bloggerVat,
+      akPercent: Number(proj.akPercent),
+      vat: proj.vatEnabled,
+      vatRate: Number(proj.vatRate),
+      ord3: proj.ordEnabled,
+      splitEnabled: proj.splitEnabled,
+      createShare: row.createShare === null ? null : Number(row.createShare),
+    }).clientNoVat,
+  );
+}
+
 app.openapi(
   createRoute({
     method: "get",
@@ -133,48 +171,57 @@ app.openapi(
     const { token } = c.req.valid("param");
     const share = await resolveShare(token);
 
-    const [project] = await db
-      .select({
-        name: projects.name,
-        brief: projects.brief,
-        budgetAmount: projects.budgetAmount,
-        finalizedAt: projects.clientFinalizedAt,
-        clientName: tracks.name,
-        agencyName: workspaces.name,
-      })
-      .from(projects)
-      .innerJoin(tracks, eq(tracks.id, projects.trackId))
-      .innerJoin(workspaces, eq(workspaces.id, projects.workspaceId))
-      .where(eq(projects.id, share.projectId))
-      .limit(1);
+    // project (шапка+множители) и rows зависят только от share.projectId — параллельно.
+    const [[project], rows] = await Promise.all([
+      db
+        .select({
+          name: projects.name,
+          brief: projects.brief,
+          budgetAmount: projects.budgetAmount,
+          finalizedAt: projects.clientFinalizedAt,
+          clientName: tracks.name,
+          agencyName: workspaces.name,
+          akPercent: projects.akPercent,
+          vatEnabled: projects.vatEnabled,
+          vatRate: projects.vatRate,
+          ordEnabled: projects.ordEnabled,
+          splitEnabled: projects.splitEnabled,
+        })
+        .from(projects)
+        .innerJoin(tracks, eq(tracks.id, projects.trackId))
+        .innerJoin(workspaces, eq(workspaces.id, projects.workspaceId))
+        .where(eq(projects.id, share.projectId))
+        .limit(1),
+      // Только шортлист (shortlisted_at NOT NULL) — то, что агентство отобрало.
+      db
+        .select({
+          id: projectItems.id,
+          priceAmount: projectItems.priceAmount,
+          surchargePercent: projectItems.surchargePercent,
+          bloggerVat: projectItems.bloggerVat,
+          createShare: projectItems.createShare,
+          forecastViews: projectItems.forecastViews,
+          clientStatus: projectItems.clientStatus,
+          clientStatusComment: projectItems.clientStatusComment,
+          channelTitle: channels.title,
+          channelUsername: channels.username,
+          channelPlatform: channels.platform,
+          channelMembers: channels.memberCount,
+          channelAvgReach: sql<number | null>`(${channels.meta} ->> 'avg_reach')::int`,
+          channelErr: sql<number | null>`(${channels.meta} ->> 'err')::float8`,
+          channelId: channels.id,
+        })
+        .from(projectItems)
+        .leftJoin(channels, eq(channels.id, projectItems.channelId))
+        .where(
+          and(
+            eq(projectItems.projectId, share.projectId),
+            sql`${projectItems.shortlistedAt} IS NOT NULL`,
+          ),
+        )
+        .orderBy(asc(projectItems.createdAt)),
+    ]);
     if (!project) throw new HTTPException(404, { message: "not found" });
-
-    // Только шортлист (shortlisted_at NOT NULL) — то, что агентство отобрало.
-    const rows = await db
-      .select({
-        id: projectItems.id,
-        priceAmount: projectItems.priceAmount,
-        clientPrice: projectItems.clientPrice,
-        forecastViews: projectItems.forecastViews,
-        clientStatus: projectItems.clientStatus,
-        clientStatusComment: projectItems.clientStatusComment,
-        channelTitle: channels.title,
-        channelUsername: channels.username,
-        channelPlatform: channels.platform,
-        channelMembers: channels.memberCount,
-        channelAvgReach: sql<number | null>`(${channels.meta} ->> 'avg_reach')::int`,
-        channelErr: sql<number | null>`(${channels.meta} ->> 'err')::float8`,
-        channelId: channels.id,
-      })
-      .from(projectItems)
-      .leftJoin(channels, eq(channels.id, projectItems.channelId))
-      .where(
-        and(
-          eq(projectItems.projectId, share.projectId),
-          sql`${projectItems.shortlistedAt} IS NOT NULL`,
-        ),
-      )
-      .orderBy(asc(projectItems.createdAt));
 
     return c.json({
       campaignName: project.name,
@@ -196,11 +243,9 @@ app.openapi(
               err: r.channelErr,
             }
           : null,
-        // Цена для клиента: оверрайд clientPrice, иначе закупочная (совпадает).
-        price: (() => {
-          const eff = r.clientPrice ?? r.priceAmount;
-          return eff === null ? null : Number(eff);
-        })(),
+        // Цена для клиента — посчитанная цепочка (Срез А), не закупка. Legacy
+        // clientPrice-оверрайд снят: клиент видит настоящую цену.
+        price: clientPriceNoVat(project, r),
         forecastViews: r.forecastViews,
         clientStatus: r.clientStatus,
         clientStatusComment: r.clientStatusComment,
@@ -597,8 +642,8 @@ app.openapi(
 );
 
 // Шаг 3 клиента — отчёт: вышедшие посты (postUrl задан) + собранные метрики +
-// мини-превью (как карточка у менеджера). Цена — clientPrice ?? priceAmount
-// (без внутренней наценки, как в шортлисте). Появляется, когда есть публикации.
+// мини-превью (как карточка у менеджера). Цена — посчитанная клиентская до НДС
+// (та же цепочка, что в шортлисте). Появляется, когда есть публикации.
 const ClientReportItemSchema = z
   .object({
     id: z.string(),
@@ -644,39 +689,56 @@ app.openapi(
   async (c) => {
     const { token } = c.req.valid("param");
     const share = await resolveShare(token);
-    const rows = await db
-      .select({
-        id: projectItems.id,
-        priceAmount: projectItems.priceAmount,
-        clientPrice: projectItems.clientPrice,
-        postUrl: projectItems.postUrl,
-        publishedAt: projectItems.publishedAt,
-        scheduledAt: projectItems.scheduledAt,
-        views: projectItems.metricsViews,
-        likes: projectItems.metricsLikes,
-        comments: projectItems.metricsComments,
-        shares: projectItems.metricsShares,
-        postSnapshot: projectItems.postSnapshot,
-        channelTitle: channels.title,
-        channelUsername: channels.username,
-        channelPlatform: channels.platform,
-        channelId: channels.id,
-      })
-      .from(projectItems)
-      .leftJoin(channels, eq(channels.id, projectItems.channelId))
-      .where(
-        and(
-          eq(projectItems.projectId, share.projectId),
-          // Только реально вышедшие размещения медиаплана: одобрено клиентом +
-          // в шортлисте + есть ссылка на пост (как отчёт менеджера в WrapupPhase).
-          // Иначе отклонённое/недошортлиженное с проставленным post_url утекло бы
-          // в клиентский отчёт и итоги.
-          eq(projectItems.clientStatus, "approved"),
-          sql`${projectItems.shortlistedAt} IS NOT NULL`,
-          sql`${projectItems.postUrl} IS NOT NULL`,
-        ),
-      )
-      .orderBy(asc(projectItems.createdAt));
+    // proj (множители) и rows зависят только от share.projectId — тянем параллельно.
+    const [[proj], rows] = await Promise.all([
+      db
+        .select({
+          akPercent: projects.akPercent,
+          vatEnabled: projects.vatEnabled,
+          vatRate: projects.vatRate,
+          ordEnabled: projects.ordEnabled,
+          splitEnabled: projects.splitEnabled,
+        })
+        .from(projects)
+        .where(eq(projects.id, share.projectId))
+        .limit(1),
+      db
+        .select({
+          id: projectItems.id,
+          priceAmount: projectItems.priceAmount,
+          surchargePercent: projectItems.surchargePercent,
+          bloggerVat: projectItems.bloggerVat,
+          createShare: projectItems.createShare,
+          postUrl: projectItems.postUrl,
+          publishedAt: projectItems.publishedAt,
+          scheduledAt: projectItems.scheduledAt,
+          views: projectItems.metricsViews,
+          likes: projectItems.metricsLikes,
+          comments: projectItems.metricsComments,
+          shares: projectItems.metricsShares,
+          postSnapshot: projectItems.postSnapshot,
+          channelTitle: channels.title,
+          channelUsername: channels.username,
+          channelPlatform: channels.platform,
+          channelId: channels.id,
+        })
+        .from(projectItems)
+        .leftJoin(channels, eq(channels.id, projectItems.channelId))
+        .where(
+          and(
+            eq(projectItems.projectId, share.projectId),
+            // Только реально вышедшие размещения медиаплана: одобрено клиентом +
+            // в шортлисте + есть ссылка на пост (как отчёт менеджера в WrapupPhase).
+            // Иначе отклонённое/недошортлиженное с проставленным post_url утекло бы
+            // в клиентский отчёт и итоги.
+            eq(projectItems.clientStatus, "approved"),
+            sql`${projectItems.shortlistedAt} IS NOT NULL`,
+            sql`${projectItems.postUrl} IS NOT NULL`,
+          ),
+        )
+        .orderBy(asc(projectItems.createdAt)),
+    ]);
+    if (!proj) throw new HTTPException(404, { message: "not found" });
 
     return c.json({
       items: rows.map((r) => {
@@ -686,7 +748,7 @@ app.openapi(
           : snap?.thumbB64
             ? `data:image/jpeg;base64,${snap.thumbB64}`
             : null;
-        const eff = r.clientPrice ?? r.priceAmount;
+        const price = clientPriceNoVat(proj, r);
         return {
           id: r.id,
           channel: r.channelId
@@ -702,7 +764,7 @@ app.openapi(
           likes: r.likes,
           comments: r.comments,
           shares: r.shares,
-          price: eff === null ? null : Number(eff),
+          price,
           preview: snap ? { cover, text: snap.text ?? null } : null,
         };
       }),

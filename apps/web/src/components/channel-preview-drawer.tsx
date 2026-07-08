@@ -12,6 +12,13 @@ export function ChannelPreviewDrawer(props: {
   queryKey: readonly unknown[];
   queryFn: () => Promise<ChannelMessage[]>;
   onClose: () => void;
+  // Переданы → посты рендерятся с full-res медиа (лениво, поверх блюра, через
+  // /post-media). Без них — только блюр-thumb (лёгкий вид для клиентской ссылки).
+  wsId?: string;
+  channelId?: string;
+  // Подпись под заголовком. Дефолт — «из кэша» (only_local вызовы). Живой
+  // источник (/history) должен передать свою, чтобы подпись не врала.
+  subtitle?: string;
 }) {
   const q = useQuery({
     queryKey: props.queryKey as unknown[],
@@ -26,7 +33,9 @@ export function ChannelPreviewDrawer(props: {
       title={
         <div className="min-w-0">
           <div className="truncate font-medium">{props.title}</div>
-          <div className="text-xs text-zinc-500">Предпросмотр · из кэша</div>
+          <div className="text-xs text-zinc-500">
+            {props.subtitle ?? "Предпросмотр · из кэша"}
+          </div>
         </div>
       }
     >
@@ -44,7 +53,12 @@ export function ChannelPreviewDrawer(props: {
           ) : (
             <div className="flex flex-col gap-2">
               {posts.map((m) => (
-                <Post key={m.id} m={m} />
+                <Post
+                  key={m.id}
+                  m={m}
+                  wsId={props.wsId}
+                  channelId={props.channelId}
+                />
               ))}
             </div>
           )}

@@ -4,7 +4,10 @@
 
 export function formatRub(n: number | null): string {
   if (n === null) return "—";
-  return n.toLocaleString("ru-RU") + " ₽";
+  // Рубли показываем целыми — округляем здесь, чтобы каллеры (цены из движка —
+  // дробные float) не оборачивали каждый вызов в Math.round. CPV идёт отдельным
+  // cpv() с копейками, его это не трогает.
+  return Math.round(n).toLocaleString("ru-RU") + " ₽";
 }
 
 export function formatViews(n: number | null): string {

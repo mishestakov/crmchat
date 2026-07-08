@@ -127,6 +127,13 @@ const ProjectSchema = z
     tov: z.string().nullable(),
     constraints: z.string().nullable(),
     advertiserData: z.string().nullable(),
+    // Ценовые настройки кампании (срез 3): множители цепочки сделки.
+    akPercent: z.number(),
+    vatEnabled: z.boolean(),
+    vatRate: z.number(),
+    ordEnabled: z.boolean(),
+    // Сплит создание/размещение (срез 5): +3% ОРД только на долю размещения.
+    splitEnabled: z.boolean(),
     stages: z.array(StageSchema),
     accountsMode: AccountsModeSchema,
     accountsSelected: z.array(z.string()),
@@ -188,6 +195,12 @@ const UpdateProjectBody = z
     tov: z.string().max(2000).nullable().optional(),
     constraints: z.string().max(2000).nullable().optional(),
     advertiserData: z.string().max(2000).nullable().optional(),
+    // Ценовые настройки кампании (срез 3).
+    akPercent: z.number().min(0).max(100).optional(),
+    vatEnabled: z.boolean().optional(),
+    vatRate: z.number().min(0).max(100).optional(),
+    ordEnabled: z.boolean().optional(),
+    splitEnabled: z.boolean().optional(),
   })
   .openapi("UpdateProject");
 
@@ -609,11 +622,21 @@ app.openapi(
           "tov",
           "constraints",
           "advertiserData",
+          // boolean-настройки цены — прямое копирование.
+          "vatEnabled",
+          "ordEnabled",
+          "splitEnabled",
         ]),
         // numeric/timestamp требуют конверсии — pickDefined не годится.
         ...(body.budgetAmount !== undefined && {
           budgetAmount:
             body.budgetAmount === null ? null : String(body.budgetAmount),
+        }),
+        ...(body.akPercent !== undefined && {
+          akPercent: String(body.akPercent),
+        }),
+        ...(body.vatRate !== undefined && {
+          vatRate: String(body.vatRate),
         }),
         ...(body.periodStart !== undefined && {
           periodStart: body.periodStart ? new Date(body.periodStart) : null,
@@ -2006,6 +2029,11 @@ function serializeProject(
     tov: row.tov,
     constraints: row.constraints,
     advertiserData: row.advertiserData,
+    akPercent: Number(row.akPercent),
+    vatEnabled: row.vatEnabled,
+    vatRate: Number(row.vatRate),
+    ordEnabled: row.ordEnabled,
+    splitEnabled: row.splitEnabled,
     stages: row.stages,
     accountsMode: row.accountsMode,
     accountsSelected: row.accountsSelected,

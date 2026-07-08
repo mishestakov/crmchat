@@ -1,4 +1,5 @@
 import type { components } from "@repo/api-client";
+import { computeDealPricing, type DealPricing } from "@repo/core";
 
 // Доменные типы агентского флоу берём из api-client (single source of truth —
 // OpenAPI). Локально — только конфиг фаз. formatRub/formatViews переехали в
@@ -13,6 +14,30 @@ export type ContractStatus = Placement["contractStatus"];
 export type CreativeStatus = Placement["creativeStatus"];
 // Кампания = agency-проект (тот же Project-ответ, что у bd-проектов).
 export type Campaign = components["schemas"]["Project"];
+
+// Полная цена размещения: поля блогера (на размещении) × множители кампании
+// (АК/НДС/ОРД). Единый вход в движок для read-only отчётов и P&L — drawer при
+// живом редактировании считает свой вариант из черновика теми же аргументами.
+// forecast — снапшот прогноза (что обещали клиенту) или живой охват канала.
+export function placementPricing(
+  campaign: Campaign,
+  p: Placement,
+  forecastViews: number | null,
+): DealPricing {
+  return computeDealPricing({
+    cost: p.priceAmount ?? 0,
+    surchargePercent: p.surchargePercent ?? 0,
+    bloggerVat: p.bloggerVat,
+    akPercent: campaign.akPercent,
+    vat: campaign.vatEnabled,
+    vatRate: campaign.vatRate,
+    ord3: campaign.ordEnabled,
+    // Сплит (срез 5): движок сам делит createShare% на создание/размещение.
+    splitEnabled: campaign.splitEnabled,
+    createShare: p.createShare,
+    forecastViews,
+  });
+}
 
 // Фазы кампании — порядок воронки. На проде приходит из projects.phase.
 export const CAMPAIGN_PHASES = [
