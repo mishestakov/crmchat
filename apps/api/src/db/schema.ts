@@ -890,6 +890,17 @@ export const projectItems = pgTable(
     // (показывается клиенту, виден на фазе согласования).
     shortlistedAt: timestamp("shortlisted_at", { withTimezone: true }),
 
+    // Причина отказа (когда available=false): кто отказался + свободный текст.
+    // declineBy — 'blogger' (их решение: не хочет работать) или 'us' (наше: цена
+    // не устроила, нет свободных дат, не подошёл). declineNote — деталь текстом.
+    // Живёт per-placement (по кампании), не глобально: «нет дат в этот раз» ≠
+    // «канал плохой навсегда». Показываем в «Истории размещений» следующей
+    // кампании этого канала. Прод: ALTER TABLE project_items
+    //   ADD COLUMN decline_by text,
+    //   ADD COLUMN decline_note text;
+    declineBy: text("decline_by"),
+    declineNote: text("decline_note"),
+
     // === production (фаза 5) ===============================================
     // Когда отправлен финальный оффер «вы выбраны» (bulk-send по шортлисту).
     finalOfferSentAt: timestamp("final_offer_sent_at", { withTimezone: true }),

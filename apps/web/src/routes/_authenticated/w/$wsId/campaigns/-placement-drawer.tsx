@@ -121,6 +121,9 @@ export function PlacementPane({
   const [previewOpen, setPreviewOpen] = useState(false);
   // Расценки блогера — свёрнуты, если пусто; развёрнуты, если уже заполнены.
   const [ratesOpen, setRatesOpen] = useState(() => !!placement.quotedRates);
+  // Форма отказа: раскрывается по «Отказ», спрашивает кто отказался + причину.
+  const [declineOpen, setDeclineOpen] = useState(false);
+  const [declineNote, setDeclineNote] = useState("");
   const channelId = placement.channel?.id ?? null;
 
   const channelQ = useQuery({
@@ -211,13 +214,20 @@ export function PlacementPane({
   });
 
   // «Отказ» — не работаем: available=false (строка прячется из списка, A4).
+  // Фиксируем ПОЧЕМУ: кто отказался (блогер их решением / мы своим — цена, нет
+  // дат, не подошёл) + деталь текстом. Причина уезжает в «Историю размещений»
+  // канала → в следующей кампании видно, чем закончилось в прошлый раз.
   const decline = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (arg: { by: "blogger" | "us"; note: string }) => {
       const { error } = await api.PATCH(
         "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}",
         {
           params: { path: { wsId, projectId, placementId: placement.id } },
-          body: { available: false },
+          body: {
+            available: false,
+            declineBy: arg.by,
+            declineNote: arg.note.trim() || null,
+          },
         },
       );
       if (error) throw error;
@@ -450,34 +460,87 @@ export function PlacementPane({
                   onApply={(patch) => setDraft(patch)}
                 />
               )}
-              <div className="mt-2.5 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => agree.mutate()}
-                  disabled={agree.isPending}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-                  title="Блогер согласился — в шортлист"
-                >
-                  <Check size={15} />
-                  Согласован
-                </button>
-                <button
-                  type="button"
-                  onClick={() => decline.mutate()}
-                  disabled={decline.isPending}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-600 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
-                  title="Не работаем — скрыть из списка"
-                >
-                  <X size={15} />
-                  Отказ
-                </button>
-                <RemovePlacementButton
-                  wsId={wsId}
-                  projectId={projectId}
-                  placementId={placement.id}
-                  onRemoved={onRemoved}
-                  className="ml-auto"
-                />
+              <div className="mt-2.5">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => agree.mutate()}
+                    disabled={agree.isPending}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                    title="Блогер согласился — в шортлист"
+                  >
+                    <Check size={15} />
+                    Согласован
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDeclineOpen((o) => !o)}
+                    className={
+                      "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium disabled:opacity-50 " +
+                      (declineOpen
+                        ? "border-red-300 bg-red-50 text-red-600"
+                        : "border-zinc-300 text-zinc-600 hover:bg-red-50 hover:text-red-600")
+                    }
+                    title="Не сложилось — отметить, кто отказался"
+                  >
+                    <X size={15} />
+                    Отказ
+                  </button>
+                  {/* Мусорка — не решение по переговорам, а «убрал по ошибке /
+                      не рассматриваем». Отделяем разделителем, чтобы не читалась
+                      как ещё один способ «отказать». */}
+                  <div className="ml-auto flex items-center gap-2">
+                    <span className="h-5 w-px bg-zinc-200" />
+                    <RemovePlacementButton
+                      wsId={wsId}
+                      projectId={projectId}
+                      placementId={placement.id}
+                      onRemoved={onRemoved}
+                    />
+                  </div>
+                </div>
+                {declineOpen && (
+                  <div className="mt-2 space-y-2 rounded-lg border border-zinc-200 bg-zinc-50 p-2.5">
+                    <textarea
+                      value={declineNote}
+                      onChange={(e) => setDeclineNote(e.target.value)}
+                      placeholder="Причина (необязательно): дорого, нет свободных дат, накрутка, не ответил…"
+                      maxLength={2000}
+                      rows={2}
+                      className="w-full resize-none rounded-md border border-zinc-200 px-2 py-1 text-xs focus:border-red-400 focus:outline-none"
+                    />
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-medium text-zinc-500">
+                        Кто отказался?
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          decline.mutate({ by: "blogger", note: declineNote })
+                        }
+                        disabled={decline.isPending}
+                        className="rounded-md border border-zinc-300 bg-white px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                      >
+                        Блогер
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          decline.mutate({ by: "us", note: declineNote })
+                        }
+                        disabled={decline.isPending}
+                        className="rounded-md border border-zinc-300 bg-white px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                      >
+                        Мы
+                      </button>
+                    </div>
+                    {decline.error && (
+                      <p className="text-[11px] text-red-600">
+                        {errorMessage(decline.error)}
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
             </div>
@@ -738,20 +801,28 @@ function PlacementHistory({
           </button>
         )}
       </div>
-      <div className="space-y-0.5">
+      <div className="space-y-1">
         {items.map((h) => (
-          <div
-            key={h.placementId}
-            className="flex justify-between gap-2 text-[11px] text-zinc-600"
-          >
-            <span className="min-w-0 truncate">
-              {h.campaignName} · {fmtDate(h.date)}
-            </span>
-            <span className="shrink-0 tabular-nums text-zinc-500">
-              {h.priceAmount !== null
-                ? formatRub(h.priceAmount)
-                : "—"}
-            </span>
+          <div key={h.placementId} className="text-[11px] text-zinc-600">
+            <div className="flex justify-between gap-2">
+              <span className="min-w-0 truncate">
+                {h.campaignName} · {fmtDate(h.date)}
+              </span>
+              {h.declineBy ? (
+                <span className="shrink-0 font-medium text-red-600">
+                  ✗ {h.declineBy === "blogger" ? "блогер отказался" : "мы отказались"}
+                </span>
+              ) : (
+                <span className="shrink-0 tabular-nums text-zinc-500">
+                  {h.priceAmount !== null ? formatRub(h.priceAmount) : "—"}
+                </span>
+              )}
+            </div>
+            {h.declineNote && (
+              <div className="truncate text-[10px] text-zinc-400">
+                {h.declineNote}
+              </div>
+            )}
           </div>
         ))}
       </div>

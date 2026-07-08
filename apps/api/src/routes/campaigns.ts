@@ -84,6 +84,10 @@ const ChainStatusSchema = z.enum([
   "declined",
 ]);
 
+// Кто отказался по размещению (при available=false): blogger — их решение (не
+// хочет работать), us — наше (цена не устроила, нет свободных дат, не подошёл).
+const DeclineBySchema = z.enum(["blogger", "us"]);
+
 // Ссылка на помеченное сообщение в чате (договор/креатив/акт). albumId !=null →
 // сервер дочитает весь альбом при рендере (media_album_id). Файлы не храним.
 const MsgRefSchema = z.object({
@@ -179,6 +183,10 @@ const PlacementSchema = z
     clientStatus: ClientStatusSchema,
     clientStatusComment: z.string().nullable(),
     shortlistedAt: z.iso.datetime().nullable(),
+    // Причина отказа (при available=false): кто отказался + текст. blogger — их
+    // решение, us — наше (цена/даты/не подошёл). null = не отказ или без причины.
+    declineBy: DeclineBySchema.nullable(),
+    declineNote: z.string().nullable(),
     repliedAt: z.iso.datetime().nullable(),
     // production (фаза 5)
     finalOfferSentAt: z.iso.datetime().nullable(),
@@ -228,6 +236,10 @@ const UpdatePlacementBody = z
     // true → добавить в шортлист (проставить shortlisted_at=now), false → вернуть
     // в лонглист (сбросить). Явная кнопка «В шортлист» у менеджера.
     shortlisted: z.boolean().optional(),
+    // Причина отказа — шлётся вместе с available:false. При available:true
+    // (возврат в работу) поля чистятся сервером.
+    declineBy: DeclineBySchema.optional(),
+    declineNote: z.string().max(2000).nullable().optional(),
     // production (фаза 5)
     contractStatus: z.enum(placementContractStatus.enumValues).optional(),
     creativeStatus: z.enum(placementCreativeStatus.enumValues).optional(),
@@ -720,6 +732,11 @@ app.openapi(
       .update(projectItems)
       .set({
         ...(body.available !== undefined && { available: body.available }),
+        // Причина отказа: пишем при отказе; при возврате в работу (available:true,
+        // напр. «Согласован») — чистим, чтобы не осталась протухшая причина.
+        ...(body.available === true && { declineBy: null, declineNote: null }),
+        ...(body.declineBy !== undefined && { declineBy: body.declineBy }),
+        ...(body.declineNote !== undefined && { declineNote: body.declineNote }),
         ...(body.priceAmount !== undefined && {
           priceAmount:
             body.priceAmount === null ? null : String(body.priceAmount),
@@ -1050,6 +1067,8 @@ function placementColumns() {
     clientStatus: projectItems.clientStatus,
     clientStatusComment: projectItems.clientStatusComment,
     shortlistedAt: projectItems.shortlistedAt,
+    declineBy: projectItems.declineBy,
+    declineNote: projectItems.declineNote,
     repliedAt: projectItems.repliedAt,
     finalOfferSentAt: projectItems.finalOfferSentAt,
     contractStatus: projectItems.contractStatus,
@@ -1174,6 +1193,8 @@ function serializePlacement(
     clientStatus: (typeof placementClientStatus.enumValues)[number];
     clientStatusComment: string | null;
     shortlistedAt: Date | null;
+    declineBy: string | null;
+    declineNote: string | null;
     repliedAt: Date | null;
     finalOfferSentAt: Date | null;
     contractStatus: (typeof placementContractStatus.enumValues)[number];
@@ -1282,6 +1303,10 @@ function serializePlacement(
     clientStatus: row.clientStatus,
     clientStatusComment: row.clientStatusComment,
     shortlistedAt: row.shortlistedAt?.toISOString() ?? null,
+    // text-колонка → сужаем к enum'у (на запись валидируется DeclineBySchema,
+    // так что в БД только blogger/us/null).
+    declineBy: (row.declineBy ?? null) as "blogger" | "us" | null,
+    declineNote: row.declineNote,
     repliedAt: row.repliedAt?.toISOString() ?? null,
     finalOfferSentAt: row.finalOfferSentAt?.toISOString() ?? null,
     // Реальный статус доставки финального оффера (из scheduled_messages), а не

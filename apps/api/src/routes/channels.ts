@@ -1854,6 +1854,10 @@ const PlacementHistoryItem = z.object({
   surchargePercent: z.number().nullable(),
   bloggerVat: z.boolean(),
   format: z.string().nullable(),
+  // Чем закончилось прошлое размещение: отказ (кто + причина) → менеджер видит
+  // «в прошлый раз блогер отказался / нам было дорого» при заводе нового.
+  declineBy: z.enum(["blogger", "us"]).nullable(),
+  declineNote: z.string().nullable(),
 });
 const PlacementHistoryResponse = z.object({
   items: z.array(PlacementHistoryItem),
@@ -1895,6 +1899,8 @@ app.openapi(
         surchargePercent: projectItems.surchargePercent,
         bloggerVat: projectItems.bloggerVat,
         format: projectItems.format,
+        declineBy: projectItems.declineBy,
+        declineNote: projectItems.declineNote,
         publishedAt: projectItems.publishedAt,
         scheduledAt: projectItems.scheduledAt,
         createdAt: projectItems.createdAt,
@@ -1905,7 +1911,12 @@ app.openapi(
         and(
           eq(projectItems.channelId, id),
           eq(projectItems.workspaceId, wsId),
-          isNotNull(projectItems.priceAmount),
+          // Показываем размещения с ценой (история расценок) ИЛИ отказы — «в
+          // прошлый раз отказался сам / нам было дорого» важно и без цены.
+          or(
+            isNotNull(projectItems.priceAmount),
+            eq(projectItems.available, false),
+          ),
           excludeId ? ne(projectItems.id, excludeId) : undefined,
         ),
       )
@@ -1921,6 +1932,9 @@ app.openapi(
         r.surchargePercent === null ? null : Number(r.surchargePercent),
       bloggerVat: r.bloggerVat,
       format: r.format,
+      // text-колонка → enum (на запись валидируется, в БД только blogger/us/null).
+      declineBy: (r.declineBy ?? null) as "blogger" | "us" | null,
+      declineNote: r.declineNote,
     }));
     return c.json({ items });
   },
