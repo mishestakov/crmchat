@@ -46,6 +46,27 @@ export function ContactPicker(props: {
     (c) => !props.excludeIds.has(c.id),
   );
 
+  // Ввести ПРОИЗВОЛЬНЫЙ @username/ссылку напрямую — доступно ВСЕГДА, когда есть
+  // что резолвить, даже если поиск нашёл существующие контакты. Раньше опция
+  // пряталась при непустых результатах → нельзя было назначить админа, с которым
+  // ещё не общались, если набранное частично совпадало по имени с чужим контактом.
+  // Не дублируем, если ровно этот @username уже есть среди найденных.
+  const uname = debounced.replace(/^@/, "").trim();
+  const isMaxLink = /max\.ru\/u\//i.test(uname);
+  const showCreate =
+    !!props.onCreateByUsername &&
+    !!contactsQ.data &&
+    uname.length > 0 &&
+    // пробел → это поиск по имени, а не @хендл/ссылка — не предлагаем «использовать»
+    !/\s/.test(uname) &&
+    !results.some((c) => {
+      const un = (c.properties as Record<string, unknown>).telegram_username;
+      return typeof un === "string" && un.toLowerCase() === uname.toLowerCase();
+    });
+  const createLabel = isMaxLink
+    ? "Использовать MAX-ссылку"
+    : `Использовать ${uname.includes("/") ? uname : `@${uname}`}`;
+
   return (
     <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50/40 p-3">
       <div className="mb-2 flex items-center gap-2">
@@ -72,34 +93,12 @@ export function ContactPicker(props: {
       {debounced.length > 0 && contactsQ.isLoading && (
         <p className="text-xs text-zinc-500">Поиск…</p>
       )}
-      {debounced.length > 0 && contactsQ.data && results.length === 0 && (
-        <div className="space-y-2">
+      {debounced.length > 0 &&
+        contactsQ.data &&
+        results.length === 0 &&
+        !showCreate && (
           <p className="text-xs text-zinc-500">Ничего не найдено</p>
-          {props.onCreateByUsername &&
-            (() => {
-              const uname = debounced.replace(/^@/, "").trim();
-              if (!uname) return null;
-              // MAX-ссылка max.ru/u/<token> — сырой URL «стрёмный»: имя достанется
-              // только при создании (резолв на сервере), поэтому показываем чистый
-              // лейбл. Уже привязанный контакт находится поиском по max_link (выше)
-              // и показывается по имени в results.
-              const isMaxLink = /max\.ru\/u\//i.test(uname);
-              const label = isMaxLink
-                ? "Создать MAX-контакт по ссылке"
-                : `Создать контакт ${uname.includes("/") ? uname : `@${uname}`}`;
-              return (
-                <button
-                  type="button"
-                  onClick={() => props.onCreateByUsername!(uname)}
-                  disabled={props.loading}
-                  className="w-full rounded-md bg-emerald-600 px-2 py-1.5 text-left text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-                >
-                  + {label}
-                </button>
-              );
-            })()}
-        </div>
-      )}
+        )}
       {results.length > 0 && (
         <ul className="max-h-64 space-y-1 overflow-y-auto">
           {results.map((c) => {
@@ -130,6 +129,19 @@ export function ContactPicker(props: {
             );
           })}
         </ul>
+      )}
+      {showCreate && (
+        <button
+          type="button"
+          onClick={() => props.onCreateByUsername!(uname)}
+          disabled={props.loading}
+          className={
+            "w-full rounded-md bg-emerald-600 px-2 py-1.5 text-left text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50" +
+            (results.length > 0 ? " mt-2" : "")
+          }
+        >
+          + {createLabel}
+        </button>
       )}
     </div>
   );
