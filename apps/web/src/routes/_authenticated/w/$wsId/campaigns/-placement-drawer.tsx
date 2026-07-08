@@ -29,8 +29,8 @@ import {
   type MessageThumb,
   renderMessageEntities,
 } from "../../../../../lib/tg-message";
-import { type ChannelMessage } from "../../../../../components/channel-card";
-import { ChannelPreviewDrawer } from "../../../../../components/channel-preview-drawer";
+import { ChannelCard } from "../../../../../components/channel-card";
+import { Drawer } from "../../../../../components/drawer";
 import { ContactResolver } from "../../../../../components/contact-resolver";
 import { RKN_THRESHOLD } from "../../../../../components/channel-badges";
 import {
@@ -116,9 +116,9 @@ export function PlacementPane({
   const setDraft = (patch: Partial<Draft>) =>
     setDraftRaw((d) => ({ ...d, ...patch }));
   const [changing, setChanging] = useState(false);
-  // Превью канала — выезжает справа поверх (переиспользуем ChannelPreviewDrawer,
-  // тот же, что на согласовании и у клиента). Постоянной карточки канала больше
-  // нет: место отдано чату+сделке, канал — по клику на строку метрик.
+  // Превью канала — выезжает справа поверх (ChannelCard в Drawer: работает для
+  // всех платформ). Постоянной карточки канала больше нет: место отдано
+  // чату+сделке, канал — по клику на строку метрик.
   const [previewOpen, setPreviewOpen] = useState(false);
   // Расценки блогера — свёрнуты, если пусто; развёрнуты, если уже заполнены.
   const [ratesOpen, setRatesOpen] = useState(() => !!placement.quotedRates);
@@ -546,24 +546,32 @@ export function PlacementPane({
         )}
       </div>
       {previewOpen && channelId && (
-        <ChannelPreviewDrawer
-          title={placement.channel?.title ?? "Канал"}
-          subtitle="Лента канала"
-          wsId={wsId}
-          channelId={channelId}
-          queryKey={["placement-channel-preview", wsId, channelId]}
-          queryFn={async () => {
-            // Для одного активного канала бьём в /history (греет кэш и отдаёт
-            // ленту разом) — без гонки cold-cache, как было бы у /preview.
-            const { data, error } = await api.GET(
-              "/v1/workspaces/{wsId}/channels/{id}/history",
-              { params: { path: { wsId, id: channelId }, query: { limit: 30 } } },
-            );
-            if (error) throw error;
-            return (data!.messages as ChannelMessage[]) ?? [];
-          }}
+        <Drawer
+          width={480}
           onClose={() => setPreviewOpen(false)}
-        />
+          title={
+            <div className="min-w-0">
+              <div className="truncate font-medium">
+                {placement.channel?.title ?? "Канал"}
+              </div>
+              <div className="text-xs text-zinc-500">Лента канала</div>
+            </div>
+          }
+        >
+          {/* Лента — через рабочую ChannelCard, а НЕ /history: карточка сама
+              авто-синкает канал и рендерит ленту по платформе — telegram-историю
+              ИЛИ провайдерные видео (meta.recent_videos: youtube/tiktok/dzen).
+              Раньше preview бил в /history (только telegram) → «history supported
+              only for platform=telegram» на провайдерах и «sync first» на ещё не
+              синканутом telegram (карточку, которая синкает, тут не монтировали). */}
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {channelQ.data ? (
+              <ChannelCard wsId={wsId} channel={channelQ.data} compact />
+            ) : (
+              <p className="p-3 text-sm text-zinc-400">Загрузка канала…</p>
+            )}
+          </div>
+        </Drawer>
       )}
     </div>
   );
