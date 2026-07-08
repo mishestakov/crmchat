@@ -875,6 +875,19 @@ app.openapi(
       const second = await fetchHistory(true);
       if (second.messages.length > result.messages.length) result = second;
     }
+    // Сетевой добор старого при пагинации. Локальная message-DB включена только
+    // с 02.07 (use_message_database, коммит 90681b5) → диалоги ДО этого в ней не
+    // персистились, и скролл вверх упирался в пустоту (в мессенджере история
+    // есть, у нас — нет). Если локальный ответ на пагинацию пуст — один раз
+    // добираем с серверов TG (only_local=false). Только на ПУСТОМ ответе (не
+    // флудим на каждый скролл) и только при `before` (первый open и так сетевой).
+    // Side-effect getChatHistory(false): TDLib персистит добранное в локал (DB
+    // включена) → следующий скролл уже из кэша; и backfillInboundOutbound ниже
+    // подлатает tg_chats пропущенными при skipOldUpdates датами.
+    if (onlyLocal && before && result.messages.length === 0) {
+      const net = await fetchHistory(false);
+      if (net.messages.length > 0) result = net;
+    }
     if (!onlyLocal) historyFetched.add(cacheKey);
 
     // Backfill last_inbound_at / last_outbound_at точными датами.
