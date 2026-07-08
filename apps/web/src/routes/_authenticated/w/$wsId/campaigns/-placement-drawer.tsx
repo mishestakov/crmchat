@@ -241,6 +241,17 @@ export function PlacementPane({
   // Кнопка «Сохранить» — только при наличии изменений (CLAUDE.md §6).
   const dirty = JSON.stringify(draft) !== JSON.stringify(toDraft(placement));
 
+  // Гейт «Согласован»: в шортлист (→ клиентский вид) нельзя без цены, формата и
+  // налоговой инфы блогера (% сверху/НДС). Иначе клиент согласует 0 ₽ без
+  // наценки, как и случилось. «% сверху» = 0 валиден, но должен быть введён
+  // явно (не null) — значит менеджер спросил блогера, а не забыл.
+  const agreeMissing: string[] = [];
+  if ((numOrNull(draft.priceAmount) ?? 0) <= 0) agreeMissing.push("цену");
+  if (!draft.format.trim()) agreeMissing.push("формат");
+  if (numOrNull(draft.surchargePercent) === null)
+    agreeMissing.push(draft.bloggerVat ? "НДС %" : "% сверху");
+  const agreeReady = agreeMissing.length === 0;
+
   // Живой показ цены клиенту (не персистим): множители — из настроек кампании,
   // блок «блогеру» — из черновика размещения, прогноз — снапшот или авто-охват
   // канала. CPV по базе до НДС.
@@ -465,9 +476,13 @@ export function PlacementPane({
                   <button
                     type="button"
                     onClick={() => agree.mutate()}
-                    disabled={agree.isPending}
+                    disabled={agree.isPending || !agreeReady}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-                    title="Блогер согласился — в шортлист"
+                    title={
+                      agreeReady
+                        ? "Блогер согласился — в шортлист"
+                        : `Заполните: ${agreeMissing.join(", ")}`
+                    }
                   >
                     <Check size={15} />
                     Согласован
@@ -499,6 +514,11 @@ export function PlacementPane({
                     />
                   </div>
                 </div>
+                {!agreeReady && (
+                  <p className="mt-1.5 text-[11px] text-amber-600">
+                    Для согласования заполните: {agreeMissing.join(", ")}.
+                  </p>
+                )}
                 {declineOpen && (
                   <div className="mt-2 space-y-2 rounded-lg border border-zinc-200 bg-zinc-50 p-2.5">
                     <textarea
