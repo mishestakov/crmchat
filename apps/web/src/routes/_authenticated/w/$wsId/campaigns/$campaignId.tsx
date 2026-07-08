@@ -69,6 +69,7 @@ import {
 } from "./-ui";
 import { PlacementPane, ProductionPane } from "./-placement-drawer";
 import { ChannelDrawer } from "../../../../../components/channel-drawer";
+import { ChannelFeedDrawer } from "../../../../../components/channel-feed-drawer";
 import {
   ChannelPreviewDrawer,
 } from "../../../../../components/channel-preview-drawer";
@@ -2487,8 +2488,8 @@ function ChannelCell({
   preview,
 }: {
   placement: Placement;
-  // preview=true → лёгкий дровер из кэша (only_local, без сети) — для
-  // согласования, где каналов много и не хочется флудить. Иначе полный дровер.
+  // preview=true → лёгкое превью «Лента канала» (ChannelFeedDrawer, compact) для
+  // согласования. Иначе — полный ChannelDrawer (лента + админы + статистика).
   preview?: boolean;
 }) {
   const { wsId } = Route.useParams();
@@ -2528,17 +2529,14 @@ function ChannelCell({
         // инбокс. Гасим всплытие на обёртке.
         <span onClick={(e) => e.stopPropagation()}>
           {preview ? (
-            <ChannelPreviewDrawer
+            // Лёгкое превью «Лента канала» на согласовании — общий
+            // ChannelFeedDrawer (работает для всех платформ). Раньше бил в
+            // /preview (только telegram) → для TikTok/YouTube «Нет кэшированных
+            // постов», хотя у них лента есть (meta.recent_videos).
+            <ChannelFeedDrawer
+              wsId={wsId}
+              channelId={ch.id}
               title={ch.title}
-              queryKey={["channel-preview", wsId, ch.id]}
-              queryFn={async () => {
-                const { data, error } = await api.GET(
-                  "/v1/workspaces/{wsId}/channels/{id}/preview",
-                  { params: { path: { wsId, id: ch.id } } },
-                );
-                if (error) throw error;
-                return data!.messages as ChannelMessage[];
-              }}
               onClose={() => setOpen(false)}
             />
           ) : (

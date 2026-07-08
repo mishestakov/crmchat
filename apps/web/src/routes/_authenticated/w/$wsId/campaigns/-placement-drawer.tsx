@@ -29,8 +29,7 @@ import {
   type MessageThumb,
   renderMessageEntities,
 } from "../../../../../lib/tg-message";
-import { ChannelCard } from "../../../../../components/channel-card";
-import { Drawer } from "../../../../../components/drawer";
+import { ChannelFeedDrawer } from "../../../../../components/channel-feed-drawer";
 import { ContactResolver } from "../../../../../components/contact-resolver";
 import { RKN_THRESHOLD } from "../../../../../components/channel-badges";
 import {
@@ -116,8 +115,8 @@ export function PlacementPane({
   const setDraft = (patch: Partial<Draft>) =>
     setDraftRaw((d) => ({ ...d, ...patch }));
   const [changing, setChanging] = useState(false);
-  // Превью канала — выезжает справа поверх (ChannelCard в Drawer: работает для
-  // всех платформ). Постоянной карточки канала больше нет: место отдано
+  // Превью канала — выезжает справа поверх (общий ChannelFeedDrawer: работает
+  // для всех платформ). Постоянной карточки канала больше нет: место отдано
   // чату+сделке, канал — по клику на строку метрик.
   const [previewOpen, setPreviewOpen] = useState(false);
   // Расценки блогера — свёрнуты, если пусто; развёрнуты, если уже заполнены.
@@ -546,32 +545,12 @@ export function PlacementPane({
         )}
       </div>
       {previewOpen && channelId && (
-        <Drawer
-          width={480}
+        <ChannelFeedDrawer
+          wsId={wsId}
+          channelId={channelId}
+          title={placement.channel?.title ?? "Канал"}
           onClose={() => setPreviewOpen(false)}
-          title={
-            <div className="min-w-0">
-              <div className="truncate font-medium">
-                {placement.channel?.title ?? "Канал"}
-              </div>
-              <div className="text-xs text-zinc-500">Лента канала</div>
-            </div>
-          }
-        >
-          {/* Лента — через рабочую ChannelCard, а НЕ /history: карточка сама
-              авто-синкает канал и рендерит ленту по платформе — telegram-историю
-              ИЛИ провайдерные видео (meta.recent_videos: youtube/tiktok/dzen).
-              Раньше preview бил в /history (только telegram) → «history supported
-              only for platform=telegram» на провайдерах и «sync first» на ещё не
-              синканутом telegram (карточку, которая синкает, тут не монтировали). */}
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {channelQ.data ? (
-              <ChannelCard wsId={wsId} channel={channelQ.data} compact />
-            ) : (
-              <p className="p-3 text-sm text-zinc-400">Загрузка канала…</p>
-            )}
-          </div>
-        </Drawer>
+        />
       )}
     </div>
   );
