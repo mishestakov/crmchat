@@ -78,6 +78,8 @@ scripts/
 # случайным `git add -A`
 /plan.md
 /product.md
-/gitflow.md
 /tools/
 specs/*.txt
+
+# service-account ключи (Google Docs API и пр.) — секреты, не в git
+apps/api/.secrets/

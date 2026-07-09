@@ -61,6 +61,8 @@ export function phaseLabel(key: string): string {
 // переименование фазы/шага ловит компилятор.
 export const PHASE_CLIENT_STEP: Partial<Record<PhaseKey, ShareStep>> = {
   review: "bloggers",
-  production: "creatives",
+  // Креатив во время производства согласуют в Google-доке, не в портале —
+  // ссылка клиенту на Запуске открывает его согласованный медиаплан.
+  production: "bloggers",
   wrapup: "report",
 };

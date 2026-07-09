@@ -9,10 +9,15 @@ import {
   Hash,
   Eye,
   Check,
+  Undo2,
+  ExternalLink,
+  Copy,
+  RefreshCw,
 } from "lucide-react";
 import { computeDealPricing } from "@repo/core";
 import { api, sendContactDocument } from "../../../../../lib/api";
 import { errorMessage } from "../../../../../lib/errors";
+import { copyText } from "../../../../../lib/clipboard";
 import { formatPastRelative } from "../../../../../lib/date-utils";
 import { useOutreachAccounts } from "../../../../../lib/outreach-queries";
 import { LeadChatPanel } from "../../../../../components/lead-chat-drawer";
@@ -1648,7 +1653,6 @@ function CreativeStep({
 }) {
   const qc = useQueryClient();
   const status = placement.creativeStatus;
-  const clientComment = placement.creativeClientComment;
   const q = useQuery({
     queryKey: [
       "step-message",
@@ -1692,30 +1696,55 @@ function CreativeStep({
   // Содержимое креатива перечитается само по staleTime / при смене блогера.
   const invalidate = () =>
     qc.invalidateQueries({ queryKey: ["placements", wsId, projectId] });
-  const patchStatus = async (body: {
-    creativeStatus: "client_review";
-    creativeRound?: number;
-  }) => {
+  const patchStatus = async (creativeStatus: CreativeStatus) => {
     const { error } = await api.PATCH(
       "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}",
-      { params: { path: { wsId, projectId, placementId: placement.id } }, body },
+      {
+        params: { path: { wsId, projectId, placementId: placement.id } },
+        body: { creativeStatus },
+      },
     );
     if (error) throw error;
   };
-  // Отправка креатива клиенту. bumpRound=true — после правок блогера (новый
-  // раунд). Кнопки «Показать клиенту» и «снова» в разных ветках статуса —
-  // одновременно не видны, поэтому общий isPending/error безопасен.
-  const sendToClient = useMutation({
-    mutationFn: (bumpRound: boolean) =>
-      patchStatus({
-        creativeStatus: "client_review",
-        ...(bumpRound ? { creativeRound: placement.creativeRound + 1 } : {}),
-      }),
+
+  // Собрать на согласование / следующую итерацию: авто-создать (или
+  // переиспользовать) Google-док и залить текущий текст креатива из TG. Статус →
+  // client_review, счётчик итераций +1 (на бэке).
+  const collect = useMutation({
+    mutationFn: async () => {
+      const { error } = await api.POST(
+        "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}/creative-doc/collect",
+        { params: { path: { wsId, projectId, placementId: placement.id } } },
+      );
+      if (error) throw error;
+    },
     onSuccess: invalidate,
   });
 
-  // Переслать коммент клиента блогеру (quick-send, человеко-флоу). Текст
-  // редактируемый — правки клиента ≠ дословно то, что просим у блогера.
+  // Зафиксировать: прочитать док, сдиффать с базлайном. Изменилось →
+  // blogger_review (+ финалка блогеру); нет → approved.
+  const freeze = useMutation({
+    mutationFn: async () => {
+      const { error } = await api.POST(
+        "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}/creative-doc/freeze",
+        { params: { path: { wsId, projectId, placementId: placement.id } } },
+      );
+      if (error) throw error;
+    },
+    onSuccess: invalidate,
+  });
+
+  // «Блогер ОК» → финализация; «Отозвать согласование» → назад к клиенту в док.
+  const markApproved = useMutation({
+    mutationFn: () => patchStatus("approved"),
+    onSuccess: invalidate,
+  });
+  const revoke = useMutation({
+    mutationFn: () => patchStatus("client_review"),
+    onSuccess: invalidate,
+  });
+
+  // Отправка текста блогеру (quick-send, human-flow). Текст редактируемый.
   const [fwdOpen, setFwdOpen] = useState(false);
   const [fwdText, setFwdText] = useState("");
   const forward = useMutation({
@@ -1733,6 +1762,25 @@ function CreativeStep({
       setFwdOpen(false);
       qc.invalidateQueries({ queryKey: ["chat-history"] });
     },
+  });
+
+  // T2: сообщить блогеру «согласовано» в один клик (human-flow quick-send).
+  const notifyApproved = useMutation({
+    mutationFn: async () => {
+      if (!adminContactId || !sendAccountId) {
+        throw new Error("Нет аккаунта или контакта для отправки");
+      }
+      const { error } = await api.POST("/v1/workspaces/{wsId}/quick-send", {
+        params: { path: { wsId } },
+        body: {
+          accountId: sendAccountId,
+          contactId: adminContactId,
+          text: "Добрый день! Креатив согласовали — можно готовить публикацию по плану.",
+        },
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["chat-history"] }),
   });
 
   return (
@@ -1795,48 +1843,144 @@ function CreativeStep({
       )}
 
       {status === "approved" ? (
-        <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-700">
-          <Check size={14} /> Клиент одобрил креатив
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-700">
+            <Check size={14} /> Креатив согласован
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {/* T2: сообщить блогеру, что креатив согласован */}
+            <button
+              type="button"
+              onClick={() => notifyApproved.mutate()}
+              disabled={
+                notifyApproved.isPending ||
+                notifyApproved.isSuccess ||
+                !adminContactId ||
+                !sendAccountId
+              }
+              className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
+              <Send size={12} />
+              {notifyApproved.isSuccess
+                ? "Блогеру сообщено"
+                : notifyApproved.isPending
+                  ? "Отправляем…"
+                  : "Сообщить блогеру: согласовано"}
+            </button>
+            {/* T1: откат согласования — вернуть креатив к клиенту в док */}
+            <button
+              type="button"
+              onClick={() => revoke.mutate()}
+              disabled={revoke.isPending}
+              className="inline-flex items-center gap-1 rounded-lg border border-zinc-300 px-2.5 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50 disabled:opacity-50"
+            >
+              <Undo2 size={12} /> Отозвать согласование
+            </button>
+            {placement.creativeDocUrl && (
+              <a
+                href={placement.creativeDocUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 rounded-lg border border-zinc-300 px-2.5 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50"
+              >
+                <ExternalLink size={12} /> Открыть док
+              </a>
+            )}
+          </div>
+          {(notifyApproved.error || revoke.error) && (
+            <p className="text-[11px] text-red-600">
+              {errorMessage(notifyApproved.error ?? revoke.error)}
+            </p>
+          )}
         </div>
       ) : status === "client_review" ? (
-        <div className="rounded-md bg-blue-50 px-2 py-1 text-[11px] text-blue-700">
-          У клиента на согласовании — ждём ответа.
-        </div>
-      ) : status === "revising" ? (
         <div className="space-y-1.5">
-          {clientComment && (
-            <p className="rounded-md bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
-              Клиент просит правки: {clientComment}
-            </p>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {placement.creativeDocUrl && (
+              <>
+                <a
+                  href={placement.creativeDocUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 rounded-lg border border-zinc-300 px-2.5 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50"
+                >
+                  <ExternalLink size={12} /> Открыть док
+                </a>
+                <button
+                  type="button"
+                  onClick={() => copyText(placement.creativeDocUrl ?? "")}
+                  className="inline-flex items-center gap-1 rounded-lg border border-zinc-300 px-2.5 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50"
+                >
+                  <Copy size={12} /> Ссылку клиенту
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => freeze.mutate()}
+              disabled={freeze.isPending}
+              className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
+              <Check size={12} />
+              {freeze.isPending ? "Читаем док…" : "Зафиксировать правки"}
+            </button>
+          </div>
+          <p className="text-[11px] text-zinc-500">
+            Клиент правит в Google-доке. Когда закончит — «Зафиксировать правки».
+          </p>
+          {freeze.error && (
+            <p className="text-[11px] text-red-600">{errorMessage(freeze.error)}</p>
+          )}
+        </div>
+      ) : status === "blogger_review" ? (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-amber-700">
+            <FileText size={14} /> Клиент внёс правки — отправьте финал блогеру
+          </div>
+          {placement.creativeDocText && (
+            <div className="max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-md bg-zinc-50 px-2 py-1.5 text-[11px] text-zinc-600">
+              {placement.creativeDocText}
+            </div>
           )}
           <div className="flex flex-wrap gap-1.5">
             <button
               type="button"
               onClick={() => {
-                setFwdText(clientComment ?? "");
+                // Сидим текст только при ОТКРЫТИИ — иначе повторный клик
+                // (свернуть) затирает правки байера в textarea.
+                if (!fwdOpen) setFwdText(placement.creativeDocText ?? "");
                 setFwdOpen((v) => !v);
               }}
               disabled={!adminContactId || !sendAccountId}
               className="inline-flex items-center gap-1 rounded-lg border border-zinc-300 px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
             >
-              <Send size={12} /> Переслать блогеру
+              <Send size={12} /> Отправить блогеру
             </button>
             <button
               type="button"
-              onClick={() => sendToClient.mutate(true)}
-              disabled={sendToClient.isPending}
-              className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+              onClick={() => markApproved.mutate()}
+              disabled={markApproved.isPending}
+              className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
             >
-              {sendToClient.isPending ? "…" : "Показать клиенту снова"}
+              <Check size={12} /> Блогер ОК
+            </button>
+            <button
+              type="button"
+              onClick={() => collect.mutate()}
+              disabled={collect.isPending}
+              className="inline-flex items-center gap-1 rounded-lg border border-zinc-300 px-2.5 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50 disabled:opacity-50"
+            >
+              <RefreshCw size={12} />
+              {collect.isPending ? "…" : "Новая версия → собрать"}
             </button>
           </div>
           {fwdOpen && (
             <div className="space-y-1.5 rounded-lg border border-zinc-200 p-2">
               <textarea
-                rows={3}
+                rows={4}
                 value={fwdText}
                 onChange={(e) => setFwdText(e.target.value)}
-                placeholder="Что просим поправить у блогера"
+                placeholder="Финальный текст блогеру"
                 className="w-full resize-none rounded-md border border-zinc-300 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none"
               />
               <button
@@ -1854,17 +1998,28 @@ function CreativeStep({
               )}
             </div>
           )}
+          {(markApproved.error || collect.error) && (
+            <p className="text-[11px] text-red-600">
+              {errorMessage(markApproved.error ?? collect.error)}
+            </p>
+          )}
         </div>
       ) : (
-        // none / awaiting / internal_review — креатив на нашей проверке
-        <button
-          type="button"
-          onClick={() => sendToClient.mutate(false)}
-          disabled={sendToClient.isPending}
-          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-        >
-          {sendToClient.isPending ? "Отправляем…" : "Показать клиенту"}
-        </button>
+        // none / awaiting / internal_review — креатив помечен, собрать в док
+        <div className="space-y-1.5">
+          <button
+            type="button"
+            onClick={() => collect.mutate()}
+            disabled={collect.isPending}
+            className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            <RefreshCw size={13} />
+            {collect.isPending ? "Создаём док…" : "Собрать на согласование"}
+          </button>
+          {collect.error && (
+            <p className="text-[11px] text-red-600">{errorMessage(collect.error)}</p>
+          )}
+        </div>
       )}
 
       <div>
@@ -1876,11 +2031,6 @@ function CreativeStep({
           убрать пометку
         </button>
       </div>
-      {sendToClient.error && (
-        <p className="text-[11px] text-red-600">
-          {errorMessage(sendToClient.error)}
-        </p>
-      )}
     </div>
   );
 }

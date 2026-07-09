@@ -549,13 +549,21 @@ export const placementContractStatus = pgEnum("placement_contract_status", [
   "revising", // блогер вносит правки
   "signed", // подписан с двух сторон
 ]);
+// Жизненный цикл согласования креатива через Google-док (пилот с агентством):
+// awaiting → client_review (текст в доке, идёт согласование) → blogger_review
+// (правки залиты обратно блогеру, ждём его ОК) → approved (финал, в публикацию).
+// internal_review/revising — легаси прежней in-app модели, в Google-флоу не
+// используются (из pgEnum значения не удалить — просто не трогаем). Прод:
+//   ALTER TYPE placement_creative_status ADD VALUE IF NOT EXISTS 'blogger_review'
+//     AFTER 'client_review';
 export const placementCreativeStatus = pgEnum("placement_creative_status", [
   "none",
   "awaiting", // ждём драфт от блогера
-  "internal_review", // агентство проверяет на соответствие ТЗ
-  "client_review", // отправлено клиенту на ОК
-  "revising", // правки
-  "approved", // клиент одобрил
+  "internal_review", // легаси
+  "client_review", // текст в доке, идёт согласование с клиентом
+  "blogger_review", // правки отправлены блогеру, ждём его ОК
+  "revising", // легаси
+  "approved", // финализирован (в публикацию)
 ]);
 
 // Снятие метрик опубликованного поста (фаза «Отчёт»). Менеджер жмёт «снять
@@ -934,6 +942,15 @@ export const projectItems = pgTable(
     creativeClientSentAt: timestamp("creative_client_sent_at", {
       withTimezone: true,
     }),
+    // Согласование креатива через Google-док (пилот, модель «1 док = 1 креатив»).
+    // Док авто-создаётся в Общем диске агентства при «Собрать на согласование» и
+    // переиспользуется между итерациями. id — для Docs/Drive API, url — ссылка
+    // клиенту. creativeDocText — базлайн для диффа: текст, залитый в док на
+    // текущий круг (creative_round); при «Зафиксировать» сравниваем текущий текст
+    // дока с ним — изменился → blogger_review, нет → approved.
+    creativeDocId: text("creative_doc_id"),
+    creativeDocUrl: text("creative_doc_url"),
+    creativeDocText: text("creative_doc_text"),
 
     // Фаза «Отчёт»: снимок поста, снятый metrics-worker'ом через TDLib.
     // postSnapshot — текст + минитамбнейл (base64 jpeg из payload, без

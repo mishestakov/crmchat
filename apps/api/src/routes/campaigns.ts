@@ -46,6 +46,7 @@ import {
   buildPostSnapshot,
   type TdContent,
   CreativeMediaSchema,
+  extractFormattedText,
   mapCreativeMediaList,
   type PostSnapshot,
   PostSnapshotSchema,
@@ -53,6 +54,13 @@ import {
   TdMessageEntitySchema,
 } from "../lib/td-message.ts";
 import { respondWithCreativeMedia } from "../lib/creative-media-response.ts";
+import { getDoc, batchUpdate, docPlainText } from "../lib/google-docs.ts";
+import { bodyChanged, rewriteRequests } from "../lib/creative-doc.ts";
+import {
+  createDocInFolder,
+  shareAnyoneCommenter,
+  driveFolderId,
+} from "../lib/google-drive.ts";
 import { type WorkspaceVars } from "../middleware/assert-member.ts";
 
 // Agency-кампания переиспользует projects (kind='agency') + project_items
@@ -194,6 +202,12 @@ const PlacementSchema = z
     contractStatus: z.enum(placementContractStatus.enumValues),
     creativeStatus: z.enum(placementCreativeStatus.enumValues),
     creativeRound: z.number().int(),
+    // Ссылка на Google-док согласования креатива (авто-создаётся). null = дока
+    // ещё нет (не жали «Собрать на согласование»).
+    creativeDocUrl: z.string().nullable(),
+    // Текущий базлайн/финальный текст креатива из дока (что байер шлёт блогеру на
+    // blogger_review). null = ещё не собирали.
+    creativeDocText: z.string().nullable(),
     scheduledAt: z.iso.datetime().nullable(),
     erid: z.string().nullable(),
     eridAdvertiserData: z.string().nullable(),
@@ -1162,6 +1176,8 @@ function placementColumns() {
     contractStatus: projectItems.contractStatus,
     creativeStatus: projectItems.creativeStatus,
     creativeRound: projectItems.creativeRound,
+    creativeDocUrl: projectItems.creativeDocUrl,
+    creativeDocText: projectItems.creativeDocText,
     scheduledAt: projectItems.scheduledAt,
     erid: projectItems.erid,
     eridAdvertiserData: projectItems.eridAdvertiserData,
@@ -1288,6 +1304,8 @@ function serializePlacement(
     contractStatus: (typeof placementContractStatus.enumValues)[number];
     creativeStatus: (typeof placementCreativeStatus.enumValues)[number];
     creativeRound: number;
+    creativeDocUrl: string | null;
+    creativeDocText: string | null;
     scheduledAt: Date | null;
     erid: string | null;
     eridAdvertiserData: string | null;
@@ -1410,6 +1428,8 @@ function serializePlacement(
     contractStatus: row.contractStatus,
     creativeStatus: row.creativeStatus,
     creativeRound: row.creativeRound,
+    creativeDocUrl: row.creativeDocUrl,
+    creativeDocText: row.creativeDocText,
     scheduledAt: row.scheduledAt?.toISOString() ?? null,
     erid: row.erid,
     eridAdvertiserData: row.eridAdvertiserData,
@@ -1762,6 +1782,212 @@ app.openapi(
       })
       .where(eq(projectItems.id, placementId));
     return c.json({ snapshot });
+  },
+);
+
+// ===========================================================================
+// ===========================================================================
+// Согласование креативов через Google-док (пилот с агентством, «1 док = 1
+// креатив»). «Собрать на согласование» авто-создаёт док в Общем диске агентства,
+// пишет туда текст креатива и шарит клиенту; байер/клиент правят в Google;
+// «Зафиксировать» читает док и по диффу решает судьбу креатива.
+// ===========================================================================
+
+const PlacementDocParam = z.object({
+  wsId: z.string(),
+  projectId: z.string(),
+  placementId: z.string(),
+});
+
+// Читает текст помеченного креатива из TG (склейка альбома). "" если недоступно.
+async function readCreativeText(
+  wsId: string,
+  ref: { chatId: string; messageId: string; albumId: string | null; accountId: string },
+): Promise<string> {
+  const client = await getOutreachWorkerClient({ id: ref.accountId, workspaceId: wsId });
+  if (!client) return "";
+  const msgs = await readTaggedMessages(client, ref);
+  return msgs
+    .map((m) => extractFormattedText(m.content as TdContent).text)
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
+}
+
+// «Собрать на согласование» / «Собрать следующую итерацию» — авто-создаёт (один
+// раз) Google-док креатива, пишет туда текущий текст из TG, шарит клиенту,
+// счётчик итераций +1, статус → client_review. Док переиспользуется между
+// итерациями (история — через версии Google).
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}/creative-doc/collect",
+    tags: ["agency"],
+    request: { params: PlacementDocParam },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({ url: z.string(), round: z.number().int() }),
+          },
+        },
+        description: "Креатив залит в Google-док",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const { projectId, placementId } = c.req.valid("param");
+    await assertProjectAccess(projectId, wsId, userId, role);
+
+    const [p] = await db
+      .select({
+        id: projectItems.id,
+        username: projectItems.username,
+        stepMessages: projectItems.stepMessages,
+        creativeRound: projectItems.creativeRound,
+        creativeDocId: projectItems.creativeDocId,
+        creativeDocUrl: projectItems.creativeDocUrl,
+      })
+      .from(projectItems)
+      .where(
+        and(eq(projectItems.id, placementId), eq(projectItems.projectId, projectId)),
+      )
+      .limit(1);
+    if (!p) throw new HTTPException(404, { message: "placement not found" });
+
+    const ref = p.stepMessages?.creative;
+    if (!ref) {
+      throw new HTTPException(422, {
+        message: "Сначала пометьте сообщение блогера как «креатив»",
+      });
+    }
+    const text = await readCreativeText(wsId, ref);
+    if (!text) {
+      throw new HTTPException(422, {
+        message: "Не удалось прочитать текст креатива из TG",
+      });
+    }
+
+    // Док создаём один раз, дальше переиспользуем. id/url персистим СРАЗУ после
+    // создания — до записи текста: если batchUpdate упадёт, при повторе возьмём
+    // тот же док, а не создадим сироту.
+    let docId = p.creativeDocId;
+    let url = p.creativeDocUrl;
+    if (!docId) {
+      const created = await createDocInFolder(
+        `Креатив — @${p.username ?? "канал"}`,
+        driveFolderId(),
+      );
+      docId = created.id;
+      url = created.url;
+      await db
+        .update(projectItems)
+        .set({ creativeDocId: docId, creativeDocUrl: url })
+        .where(eq(projectItems.id, p.id));
+      // Шаринг клиенту best-effort: политика организации может запрещать внешний
+      // доступ — тогда байер расшарит вручную, док уже создан.
+      try {
+        await shareAnyoneCommenter(docId);
+      } catch (e) {
+        console.error(`[creative-doc] share failed:`, errMsg(e));
+      }
+    }
+    if (!docId || !url) {
+      throw new HTTPException(500, { message: "не удалось получить ссылку на док" });
+    }
+
+    const doc = await getDoc(docId);
+    await batchUpdate(docId, rewriteRequests(doc, text));
+
+    const round = (p.creativeRound || 0) + 1;
+    await db
+      .update(projectItems)
+      .set({
+        creativeDocText: text,
+        creativeRound: round,
+        creativeStatus: "client_review",
+        // Момент «показали клиенту» → работает флаг editedAfterSent (блогер
+        // переправил креатив после отправки).
+        creativeClientSentAt: new Date(),
+      })
+      .where(eq(projectItems.id, p.id));
+
+    return c.json({ url, round });
+  },
+);
+
+// «Зафиксировать правки клиента» — читает док и диффает весь текст против
+// базлайна. Не изменилось → approved (финал, байер шлёт go-сигнал). Изменилось →
+// blogger_review, базлайн обновляем на финальный текст (его байер шлёт блогеру).
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/placements/{placementId}/creative-doc/freeze",
+    tags: ["agency"],
+    request: { params: PlacementDocParam },
+    responses: {
+      200: {
+        content: {
+          "application/json": {
+            schema: z.object({
+              changed: z.boolean(),
+              finalText: z.string(),
+              contactId: z.string().nullable(),
+              accountId: z.string().nullable(),
+            }),
+          },
+        },
+        description: "Результат диффа",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const role = c.get("workspaceRole");
+    const { projectId, placementId } = c.req.valid("param");
+    await assertProjectAccess(projectId, wsId, userId, role);
+
+    const [p] = await db
+      .select({
+        id: projectItems.id,
+        contactId: projectItems.contactId,
+        stepMessages: projectItems.stepMessages,
+        creativeDocId: projectItems.creativeDocId,
+        creativeDocText: projectItems.creativeDocText,
+      })
+      .from(projectItems)
+      .where(
+        and(eq(projectItems.id, placementId), eq(projectItems.projectId, projectId)),
+      )
+      .limit(1);
+    if (!p) throw new HTTPException(404, { message: "placement not found" });
+    if (!p.creativeDocId) {
+      throw new HTTPException(422, {
+        message: "Док не создан — сначала «Собрать на согласование»",
+      });
+    }
+
+    const doc = await getDoc(p.creativeDocId);
+    const text = docPlainText(doc);
+    const changed = bodyChanged(text, p.creativeDocText ?? "");
+    await db
+      .update(projectItems)
+      .set({
+        creativeStatus: changed ? "blogger_review" : "approved",
+        ...(changed && { creativeDocText: text }),
+      })
+      .where(eq(projectItems.id, p.id));
+
+    return c.json({
+      changed,
+      finalText: text.trim(),
+      contactId: p.contactId,
+      accountId: p.stepMessages?.creative?.accountId ?? null,
+    });
   },
 );
 

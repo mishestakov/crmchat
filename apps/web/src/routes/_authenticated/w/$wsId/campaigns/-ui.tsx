@@ -55,7 +55,8 @@ export const creativeView: Record<CreativeStatus, View> = {
   none: { label: "—", tone: "zinc" },
   awaiting: { label: "ждём драфт", tone: "zinc" },
   internal_review: { label: "проверка", tone: "violet" },
-  client_review: { label: "у клиента", tone: "blue" },
+  client_review: { label: "в доке", tone: "blue" },
+  blogger_review: { label: "финалка блогеру", tone: "amber" },
   revising: { label: "правки", tone: "amber" },
   approved: { label: "одобрен", tone: "emerald" },
 };
@@ -103,7 +104,9 @@ export function deriveProduction(p: Placement): {
     if (p.creativeStatus === "internal_review")
       return { owner: "us", stage: "Креатив · проверяем драфт", cta: "Проверить драфт" };
     if (p.creativeStatus === "client_review")
-      return { owner: "client", stage: "Креатив · у клиента на ОК", cta: null };
+      return { owner: "client", stage: "Креатив · в доке у клиента", cta: null };
+    if (p.creativeStatus === "blogger_review")
+      return { owner: "us", stage: "Креатив · финалку блогеру", cta: "Отправить блогеру" };
     // none / awaiting / revising — ждём драфт/правки от блогера
     return { owner: "blogger", stage: "Креатив · ждём от блогера", cta: null };
   }

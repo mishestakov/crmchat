@@ -73,18 +73,6 @@ function SharePage() {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["share", token] }),
   });
-  // Креативы на согласование (Фаза B) — появляются на этапе производства.
-  const creativesQ = useQuery({
-    queryKey: ["share-creatives", token] as const,
-    queryFn: async () => {
-      const { data, error } = await api.GET("/v1/share/{token}/creatives", {
-        params: { path: { token } },
-      });
-      if (error) throw error;
-      return data!.creatives;
-    },
-    retry: false,
-  });
   // Шаг 3 — отчёт: вышедшие посты + метрики. Появляется в конце кампании.
   const reportQ = useQuery({
     queryKey: ["share-report", token] as const,
@@ -98,10 +86,10 @@ function SharePage() {
     retry: false,
   });
 
-  // Ждём и доп-запросы: дефолт-таб (highestAvailable) считается из creatives/
-  // report — иначе на голой ссылке вспышка «Блогеры» → прыжок на готовый этап.
+  // Ждём и доп-запрос отчёта: дефолт-таб (highestAvailable) считается из report —
+  // иначе на голой ссылке вспышка «Блогеры» → прыжок на готовый этап.
   // retry:false → при ошибке isLoading спадает, не зависаем.
-  if (projectQ.isLoading || creativesQ.isLoading || reportQ.isLoading) {
+  if (projectQ.isLoading || reportQ.isLoading) {
     return <Centered>Загрузка…</Centered>;
   }
   if (projectQ.error) {
@@ -123,24 +111,15 @@ function SharePage() {
     p.placements.length > 0 &&
     p.placements.every((pl) => pl.clientStatus !== "pending");
 
-  // Три стадии клиента: блогеры → креативы → отчёт. done определяет, где клиент
-  // сейчас (current = первая незавершённая). Креативы/отчёт «есть» по наличию
-  // данных (как сами секции), креативы done — когда все согласованы.
-  const creatives = creativesQ.data ?? [];
+  // Две стадии клиента: блогеры → отчёт. done определяет, где клиент сейчас
+  // (current = первая незавершённая). Отчёт «есть» по наличию данных.
   const report = reportQ.data ?? [];
-  // done монотонно: наличие отчёта означает, что предыдущие стадии пройдены
-  // (даже если креативы клиенту не показывали — путь мог идти мимо).
+  // done монотонно: наличие отчёта означает, что предыдущие стадии пройдены.
   const reportReady = report.length > 0;
-  // Бейджи «ждут вашего решения»: блогеры без решения (до финализации) и
-  // креативы (эндпоинт отдаёт только client_review — это и есть ждущие).
+  // Бейдж «ждут вашего решения»: блогеры без решения (до финализации).
   const bloggersPending = finalized
     ? 0
     : p.placements.filter((pl) => pl.clientStatus === "pending").length;
-  // Список креативов теперь содержит и одобренные → «ждут» считаем по статусу,
-  // а не по длине.
-  const creativesPending = creatives.filter(
-    (c) => c.status === "client_review",
-  ).length;
   const stages: {
     key: ShareStep;
     label: string;
@@ -153,26 +132,13 @@ function SharePage() {
       done: finalized || reportReady,
       badge: bloggersPending,
     },
-    {
-      key: "creatives",
-      label: "Креативы",
-      // Пройдено, когда все показанные креативы согласованы (или уже есть отчёт).
-      done:
-        reportReady ||
-        (creatives.length > 0 && creatives.every((c) => c.status === "approved")),
-      badge: creativesPending,
-    },
     { key: "report", label: "Отчёт", done: reportReady, badge: 0 },
   ];
   const currentIdx = stages.findIndex((s) => !s.done);
   // Дефолт — наибольшая ДОСТУПНАЯ стадия (где есть данные): клиент сразу видит
   // самое свежее, что выдало агентство, и не попадает на пустой таб. Явный ?step
   // (ссылка от агентства / рефреш / шеринг) переопределяет.
-  const highestAvailable: ShareStep = reportReady
-    ? "report"
-    : creatives.length > 0
-      ? "creatives"
-      : "bloggers";
+  const highestAvailable: ShareStep = reportReady ? "report" : "bloggers";
   const active: ShareStep = step ?? highestAvailable;
   // Копируем ДЕТЕРМИНИРОВАННЫЙ deep-link (с явным ?step), а не текущий href —
   // иначе на дефолте (без параметра) ссылка «поплывёт» при смене стадий.
@@ -353,28 +319,6 @@ function SharePage() {
             ))}
         </section>
         )}
-
-        {active === "creatives" &&
-          (creatives.length > 0 ? (
-            <section className="rounded-2xl bg-white shadow-sm">
-              <div className="border-b border-zinc-100 px-5 py-3">
-                <h2 className="text-sm font-semibold text-zinc-900">
-                  Креативы на согласование
-                </h2>
-                <p className="text-xs text-zinc-500">
-                  Посмотрите, как будет выглядеть пост, и согласуйте или
-                  попросите правки.
-                </p>
-              </div>
-              <div className="divide-y divide-zinc-100">
-                {creatives.map((cr) => (
-                  <CreativeCard key={cr.placementId} token={token} creative={cr} />
-                ))}
-              </div>
-            </section>
-          ) : (
-            <EmptyTab text="Креативы ещё не на согласовании." />
-          ))}
 
         {active === "report" &&
           (reportReady ? (
@@ -575,121 +519,7 @@ function DecisionPill({
   );
 }
 
-type ClientCreative = components["schemas"]["ClientCreative"];
-
-// Карточка креатива в клиентском портале (Фаза B): рендер «как будет выглядеть»
-// (медиа норм-разрешения с TDLib + текст) + Согласовать / На правки + коммент.
-function CreativeCard({
-  token,
-  creative,
-}: {
-  token: string;
-  creative: ClientCreative;
-}) {
-  const qc = useQueryClient();
-  const serverComment = creative.comment ?? "";
-  const [comment, setComment] = useState(serverComment);
-  const [prevServer, setPrevServer] = useState(serverComment);
-  if (serverComment !== prevServer) {
-    setPrevServer(serverComment);
-    setComment(serverComment);
-  }
-  const decide = useMutation({
-    mutationFn: async (status: "approved" | "revising") => {
-      const { error } = await api.POST(
-        "/v1/share/{token}/placements/{placementId}/creative-decision",
-        {
-          params: { path: { token, placementId: creative.placementId } },
-          body: { status, comment: comment.trim() || null },
-        },
-      );
-      if (error) throw error;
-    },
-    onSuccess: () =>
-      qc.invalidateQueries({ queryKey: ["share-creatives", token] }),
-  });
-  const mediaUrl = (idx: number) =>
-    `/v1/share/${token}/placements/${creative.placementId}/creative-media/${idx}`;
-  return (
-    <div className="space-y-3 px-5 py-4">
-      <div className="text-sm font-medium text-zinc-900">
-        {creative.channelTitle}
-      </div>
-      {/* Превью поста: медиа + текст, как в Telegram */}
-      <div className="max-w-md overflow-hidden rounded-xl border border-zinc-200">
-        {creative.media.length > 0 && (
-          <div
-            className={
-              "grid gap-0.5 bg-zinc-100 " +
-              (creative.media.length === 1 ? "grid-cols-1" : "grid-cols-2")
-            }
-          >
-            {creative.media.map((m) => (
-              <div key={m.idx} className="relative bg-zinc-50">
-                <img
-                  src={mediaUrl(m.idx)}
-                  alt=""
-                  loading="lazy"
-                  className="h-full max-h-80 w-full object-cover"
-                />
-                {m.kind === "video" && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/25 text-2xl text-white">
-                    ▶
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-        {creative.text && (
-          <div className="whitespace-pre-line px-3 py-2 text-sm text-zinc-800">
-            {creative.text}
-          </div>
-        )}
-      </div>
-      {creative.status === "approved" ? (
-        <div className="text-sm font-medium text-emerald-700">✓ Согласовано</div>
-      ) : creative.status === "revising" ? (
-        <div className="text-sm text-amber-700">
-          Отправлено на правки{creative.comment ? `: ${creative.comment}` : ""}
-        </div>
-      ) : (
-        <div className="space-y-2">
-          <textarea
-            rows={2}
-            value={comment}
-            onChange={(e) => setComment(e.target.value)}
-            placeholder="Комментарий к правкам (необязательно)"
-            className="w-full max-w-md resize-none rounded-lg border border-zinc-300 px-2 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
-          />
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => decide.mutate("approved")}
-              disabled={decide.isPending}
-              className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-            >
-              Согласовать
-            </button>
-            <button
-              type="button"
-              onClick={() => decide.mutate("revising")}
-              disabled={decide.isPending}
-              className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
-            >
-              На правки
-            </button>
-          </div>
-        </div>
-      )}
-      {decide.error && (
-        <p className="text-xs text-red-600">{errorMessage(decide.error)}</p>
-      )}
-    </div>
-  );
-}
-
-// Табы трёх клиентских стадий (блогеры · креативы · отчёт). Клик переключает
+// Табы двух клиентских стадий (блогеры · отчёт). Клик переключает
 // активную секцию. Кружок слева: ✓ пройдено, номер на текущей/будущей; цвет —
 // done/current/upcoming (currentIdx === -1 → всё пройдено).
 function StageTabs({
