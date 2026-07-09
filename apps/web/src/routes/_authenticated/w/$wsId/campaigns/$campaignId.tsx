@@ -1671,12 +1671,33 @@ function ShortlistPhase({
   );
   const accountsQ = useOutreachAccounts(wsId);
   const [chatFor, setChatFor] = useState<Placement | null>(null);
-  // Кому ещё не ушёл оффер (или ушёл с ошибкой) — только им шлёт «оповестить».
-  const notOffered = approved.filter(
-    (p) =>
-      p.hasRecipient &&
-      (p.finalOfferStatus === "none" || p.finalOfferStatus === "failed"),
-  ).length;
+  // Группируем по ПОЛУЧАТЕЛЮ (админ-контакту), а не по каналу: у одного админа
+  // может быть несколько одобренных каналов — оффер уходит один на человека
+  // (бэк дедупит рассылку тем же ключом). Таблица по контактам + каналы через
+  // запятую делают явным, кому и что уйдёт. Ключ зеркалит бэковый contactId-first.
+  const groupMap = new Map<
+    string,
+    { key: string; rep: Placement; placements: Placement[] }
+  >();
+  for (const p of approved) {
+    const key =
+      p.adminContactId ??
+      (p.adminUsername ? `@${p.adminUsername.toLowerCase()}` : p.id);
+    const g = groupMap.get(key);
+    if (g) g.placements.push(p);
+    else groupMap.set(key, { key, rep: p, placements: [p] });
+  }
+  const groups = [...groupMap.values()];
+  // Статус оффера группы: у представителя (единственного с scheduled_message)
+  // реальный статус, у сиблингов — 'none'; берём информативный.
+  const groupOfferStatus = (g: { placements: Placement[] }) =>
+    g.placements.find((p) => p.finalOfferStatus !== "none")?.finalOfferStatus ??
+    "none";
+  // Скольким получателям ещё слать (none/failed = не в очереди/не отправлен).
+  const notOffered = groups.filter((g) => {
+    const s = groupOfferStatus(g);
+    return g.rep.hasRecipient && (s === "none" || s === "failed");
+  }).length;
   const [text, setText] = useState(
     "Привет! Рады сообщить — вы выбраны в проект. Давайте согласуем дату выхода и детали 🙌",
   );
@@ -1750,46 +1771,63 @@ function ShortlistPhase({
         <TableCard>
           <thead className="bg-zinc-50 text-xs text-zinc-500">
             <tr>
-              <Th>Канал</Th>
+              <Th>Контакт</Th>
+              <Th>Каналы</Th>
               <Th>Подтверждение</Th>
             </tr>
           </thead>
           <tbody>
-            {approved.map((p) => (
-              <tr key={p.id} className="border-t border-zinc-100">
-                <td className="px-4 py-2.5">
-                  <div className="flex items-center gap-2">
-                    <ChannelCell placement={p} />
-                    {p.adminContactId && (
-                      <button
-                        type="button"
-                        onClick={() => setChatFor(p)}
-                        title="Переписка с админом"
-                        className="relative shrink-0 rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-                      >
-                        <MessageCircle size={15} />
-                        {p.unread > 0 && (
-                          <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-500 px-1 text-[10px] font-semibold leading-none text-white">
-                            {p.unread}
-                          </span>
-                        )}
-                      </button>
+            {groups.map((g) => {
+              const status = groupOfferStatus(g);
+              return (
+                <tr key={g.key} className="border-t border-zinc-100">
+                  <td className="px-4 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-medium text-zinc-900">
+                        {g.rep.adminUsername
+                          ? `@${g.rep.adminUsername}`
+                          : "без контакта"}
+                      </span>
+                      {g.rep.adminContactId && (
+                        <button
+                          type="button"
+                          onClick={() => setChatFor(g.rep)}
+                          title="Переписка с админом"
+                          className="relative shrink-0 rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                        >
+                          <MessageCircle size={15} />
+                          {g.rep.unread > 0 && (
+                            <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-500 px-1 text-[10px] font-semibold leading-none text-white">
+                              {g.rep.unread}
+                            </span>
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-4 py-2.5 text-sm text-zinc-600">
+                    {g.placements
+                      .map((p) =>
+                        p.channel?.username
+                          ? `@${p.channel.username}`
+                          : (p.channel?.title ?? "—"),
+                      )
+                      .join(", ")}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    {status === "sent" ? (
+                      <Chip tone="emerald">отправлен</Chip>
+                    ) : status === "queued" ? (
+                      <Chip tone="amber">в очереди</Chip>
+                    ) : status === "failed" ? (
+                      <Chip tone="red">ошибка</Chip>
+                    ) : (
+                      <span className="text-xs text-zinc-400">не отправлен</span>
                     )}
-                  </div>
-                </td>
-                <td className="px-4 py-2.5">
-                  {p.finalOfferStatus === "sent" ? (
-                    <Chip tone="emerald">отправлен</Chip>
-                  ) : p.finalOfferStatus === "queued" ? (
-                    <Chip tone="amber">в очереди</Chip>
-                  ) : p.finalOfferStatus === "failed" ? (
-                    <Chip tone="red">ошибка</Chip>
-                  ) : (
-                    <span className="text-xs text-zinc-400">не отправлен</span>
-                  )}
-                </td>
-              </tr>
-            ))}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </TableCard>
       )}

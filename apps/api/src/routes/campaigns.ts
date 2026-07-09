@@ -900,6 +900,7 @@ app.openapi(
         id: projectItems.id,
         username: projectItems.username,
         tgUserId: projectItems.tgUserId,
+        contactId: projectItems.contactId,
         properties: projectItems.properties,
       })
       .from(projectItems)
@@ -909,17 +910,58 @@ app.openapi(
           eq(projectItems.clientStatus, "approved"),
           isNotNull(projectItems.shortlistedAt),
           sql`(${projectItems.username} IS NOT NULL OR ${projectItems.tgUserId} IS NOT NULL)`,
-          // Не дублируем оффер: пропускаем тех, кому он уже отправлен или в
-          // очереди (повторный «оповестить» добивает только оставшихся/неудачных).
-          sql`NOT EXISTS (
-            SELECT 1 FROM ${scheduledMessages}
-            WHERE ${scheduledMessages.itemId} = ${projectItems.id}
-              AND ${scheduledMessages.messageIdx} = ${FINAL_OFFER_MSG_IDX}
-              AND ${scheduledMessages.status} IN ('sent', 'pending')
-          )`,
         ),
       );
-    if (rows.length === 0) {
+
+    // Один DM на ПОЛУЧАТЕЛЯ, а не на канал: у одного админа может быть несколько
+    // одобренных каналов (сиблинги) с одинаковым contactId/tgUserId. Ключ —
+    // contactId (стабильная личность админа), затем tgUserId, затем username.
+    const recipientKey = (r: {
+      id: string;
+      contactId: string | null;
+      tgUserId: string | null;
+      username: string | null;
+    }) =>
+      r.contactId ??
+      r.tgUserId ??
+      (r.username ? `@${r.username.toLowerCase()}` : r.id);
+
+    // Уже оповещённые получатели: sent/pending оффер у ЛЮБОГО их канала в проекте
+    // (по контакту, не по item — иначе повторный «оповестить» задублит DM админу,
+    // которому оффер ушёл через другой его канал).
+    const offeredRows = await db
+      .select({
+        id: projectItems.id,
+        username: projectItems.username,
+        tgUserId: projectItems.tgUserId,
+        contactId: projectItems.contactId,
+      })
+      .from(scheduledMessages)
+      .innerJoin(projectItems, eq(projectItems.id, scheduledMessages.itemId))
+      .where(
+        and(
+          eq(projectItems.projectId, projectId),
+          eq(scheduledMessages.messageIdx, FINAL_OFFER_MSG_IDX),
+          inArray(scheduledMessages.status, ["sent", "pending"]),
+        ),
+      );
+    const offeredKeys = new Set(offeredRows.map(recipientKey));
+
+    // Группируем кандидатов по получателю: targets — по одному представителю на
+    // нового получателя (реальный DM); sendItemIds — ВСЕ item'ы этих получателей
+    // (все сиблинг-каналы помечаем «оффер запущен»).
+    const seen = new Set<string>();
+    const targets: typeof rows = [];
+    const sendItemIds: string[] = [];
+    for (const r of rows) {
+      const key = recipientKey(r);
+      if (offeredKeys.has(key)) continue;
+      sendItemIds.push(r.id);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      targets.push(r);
+    }
+    if (targets.length === 0) {
       throw new HTTPException(400, {
         message: "Все одобренные блогеры уже оповещены",
       });
@@ -932,7 +974,7 @@ app.openapi(
         message: "Нет активных Telegram-аккаунтов для рассылки",
       });
     }
-    const tgUserIds = rows
+    const tgUserIds = targets
       .map((r) => r.tgUserId)
       .filter((x): x is string => x !== null);
     const sticky = await resolveStickyByTgUserIds(wsId, tgUserIds);
@@ -942,7 +984,7 @@ app.openapi(
 
     let rr = 0;
     const now = new Date();
-    const scheduled = rows.map((pl) => {
+    const scheduled = targets.map((pl) => {
       const stickyAcc = pl.tgUserId ? sticky.get(pl.tgUserId) : undefined;
       // sticky берём только если аккаунт ещё активен; иначе round-robin.
       const accountId =
@@ -976,12 +1018,7 @@ app.openapi(
       await tx
         .update(projectItems)
         .set({ finalOfferSentAt: now })
-        .where(
-          inArray(
-            projectItems.id,
-            rows.map((r) => r.id),
-          ),
-        );
+        .where(inArray(projectItems.id, sendItemIds));
       // Worker берёт pending только при project.status='active'.
       if (project.status !== "active") {
         await tx
