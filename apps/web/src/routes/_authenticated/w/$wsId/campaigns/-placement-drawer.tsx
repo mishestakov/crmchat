@@ -29,6 +29,7 @@ import {
   type MessageThumb,
   renderMessageEntities,
 } from "../../../../../lib/tg-message";
+import { ChannelCard } from "../../../../../components/channel-card";
 import { ChannelFeedDrawer } from "../../../../../components/channel-feed-drawer";
 import { ContactResolver } from "../../../../../components/contact-resolver";
 import { RKN_THRESHOLD } from "../../../../../components/channel-badges";
@@ -661,23 +662,38 @@ export function PlacementPane({
             </div>
           </>
         ) : (
-          <div className="flex min-w-0 flex-1 flex-col bg-white">
-            <ContactResolver
-              wsId={wsId}
-              channelId={channelId}
-              channel={channelQ.data ?? null}
-              onResolved={invalidate}
-              onClose={hasMethod ? () => setChanging(false) : undefined}
-              headerAction={
-                <RemovePlacementButton
-                  wsId={wsId}
-                  projectId={projectId}
-                  placementId={placement.id}
-                  onRemoved={onRemoved}
-                  className="shrink-0"
-                />
-              }
-            />
+          // Способ связи ещё не выбран (или «сменить»): слева — превью канала
+          // (метрики + лента постов), справа — резолвер контакта. Раньше был
+          // дедлок: чтобы назначить админа, надо судить о канале, а превью на
+          // этом этапе не показывали. Паттерн из BD-режима (LeadPrepPane).
+          <div className="flex min-h-0 flex-1 bg-white">
+            <div className="min-w-0 flex-1 overflow-hidden border-r border-zinc-200">
+              {channelQ.data ? (
+                <ChannelCard wsId={wsId} channel={channelQ.data} compact />
+              ) : (
+                <div className="flex h-full items-center justify-center px-6 text-center text-sm text-zinc-400">
+                  {channelQ.isLoading ? "Загрузка канала…" : "Канал недоступен"}
+                </div>
+              )}
+            </div>
+            <div className="flex w-[360px] shrink-0 flex-col">
+              <ContactResolver
+                wsId={wsId}
+                channelId={channelId}
+                channel={channelQ.data ?? null}
+                onResolved={invalidate}
+                onClose={hasMethod ? () => setChanging(false) : undefined}
+                headerAction={
+                  <RemovePlacementButton
+                    wsId={wsId}
+                    projectId={projectId}
+                    placementId={placement.id}
+                    onRemoved={onRemoved}
+                    className="shrink-0"
+                  />
+                }
+              />
+            </div>
           </div>
         )}
       </div>
