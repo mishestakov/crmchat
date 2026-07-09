@@ -166,6 +166,17 @@ export function PlacementPane({
     accountsQ.data.some(
       (a) => a.status === "active" && a.platform === chan.platform,
     );
+  // Закрытый MAX-канал без членства: /history зовёт fetchMaxPosts на чат, где
+  // аккаунт не состоит → пусто/ошибка. ChannelCard такой обходит (MaxJoinPrompt).
+  const chanMaxPending =
+    chan?.platform === "max" && cMeta.mx_pending === true;
+  // 410 у /history — по кулдауну недоступности (unavailableLastCheckAt < 1ч),
+  // не по факту unavailableReason. Зеркалим PostsFeed (channel-card.tsx).
+  const UNAVAILABLE_COOLDOWN_MS = 60 * 60 * 1000;
+  const chanInCooldown =
+    !!chan?.unavailableLastCheckAt &&
+    Date.now() - new Date(chan.unavailableLastCheckAt).getTime() <
+      UNAVAILABLE_COOLDOWN_MS;
   const historyQ = useQuery({
     queryKey: ["channel-history", wsId, channelId] as const,
     queryFn: async () => {
@@ -182,8 +193,9 @@ export function PlacementPane({
       !!channelId &&
       !!chan?.externalId &&
       !chanIsProvider &&
+      !chanMaxPending &&
       chanHasActiveAccount &&
-      !chan?.unavailableReason &&
+      !chanInCooldown &&
       avgReach === null,
     retry: false,
     staleTime: 5 * 60 * 1000,
@@ -195,7 +207,10 @@ export function PlacementPane({
   useEffect(() => {
     if (!historyQ.isSuccess || metricsRefreshed.current) return;
     metricsRefreshed.current = true;
+    // И карточку канала (строка метрик), и список каналов — как PostsFeed:
+    // у строки списка свой meta с avg_reach/err, без инвалидации останется старым.
     qc.invalidateQueries({ queryKey: ["channel", wsId, channelId] });
+    qc.invalidateQueries({ queryKey: ["channels", wsId] });
   }, [historyQ.isSuccess, wsId, channelId, qc]);
   // Бот — ручной способ связи (этап 16.9): авто-цепочка его пропускает.
   // Авторитетно из tg_users.is_bot (userTypeBot), НЕ суффикс @…bot (резал живых

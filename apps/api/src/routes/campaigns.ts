@@ -913,21 +913,51 @@ app.openapi(
         ),
       );
 
-    // Один DM на ПОЛУЧАТЕЛЯ, а не на канал: у одного админа может быть несколько
-    // одобренных каналов (сиблинги) с одинаковым contactId/tgUserId. Ключ —
-    // contactId (стабильная личность админа), затем tgUserId, затем username.
-    const recipientKey = (r: {
+    // Один DM на ПОЛУЧАТЕЛЯ, а не на канал. Идентичность получателя может быть
+    // РАЗМАЗАНА по разным полям у сиблинг-каналов одного человека: у одного канала
+    // админ привязан контактом (contactId+tgUserId), у другого — только tg_user_id,
+    // доресолвленный воркером (contactId=null, см. outreach-worker). Ключ по одному
+    // полю разнёс бы их и снова задублил DM. Объединяем по ЛЮБОМУ общему
+    // идентификатору (contactId / tgUserId / @username) через union-find.
+    // Компромисс: объединение по @username может СЛИТЬ двух разных людей, если
+    // хэндл был переназначен (один item хранит устаревший @p, теперь принадлежащий
+    // другому) — тогда один не получит DM. Это редкая аномалия данных; убрать
+    // username из ключа вернуло бы дубли для «один канал резолвнут, другой только
+    // по @username» (тот же человек), что хуже.
+    const parent = new Map<string, string>();
+    const find = (x: string): string => {
+      if (!parent.has(x)) parent.set(x, x);
+      let root = x;
+      while (parent.get(root)! !== root) root = parent.get(root)!;
+      let cur = x; // сжатие пути
+      while (cur !== root) {
+        const nxt = parent.get(cur)!;
+        parent.set(cur, root);
+        cur = nxt;
+      }
+      return root;
+    };
+    const union = (a: string, b: string) => {
+      const ra = find(a);
+      const rb = find(b);
+      if (ra !== rb) parent.set(ra, rb);
+    };
+    const idsOf = (r: {
       id: string;
       contactId: string | null;
       tgUserId: string | null;
       username: string | null;
-    }) =>
-      r.contactId ??
-      r.tgUserId ??
-      (r.username ? `@${r.username.toLowerCase()}` : r.id);
+    }) => {
+      const ids: string[] = [];
+      if (r.contactId) ids.push(`c:${r.contactId}`);
+      if (r.tgUserId) ids.push(`t:${r.tgUserId}`);
+      if (r.username) ids.push(`u:${r.username.toLowerCase()}`);
+      if (ids.length === 0) ids.push(`i:${r.id}`);
+      return ids;
+    };
 
     // Уже оповещённые получатели: sent/pending оффер у ЛЮБОГО их канала в проекте
-    // (по контакту, не по item — иначе повторный «оповестить» задублит DM админу,
+    // (по человеку, не по item — иначе повторный «оповестить» задублит DM админу,
     // которому оффер ушёл через другой его канал).
     const offeredRows = await db
       .select({
@@ -945,27 +975,41 @@ app.openapi(
           inArray(scheduledMessages.status, ["sent", "pending"]),
         ),
       );
-    const offeredKeys = new Set(offeredRows.map(recipientKey));
 
-    // Группируем кандидатов по получателю: targets — по одному представителю на
-    // нового получателя (реальный DM); sendItemIds — ВСЕ item'ы этих получателей
-    // (все сиблинг-каналы помечаем «оффер запущен»).
-    const seen = new Set<string>();
-    const targets: typeof rows = [];
-    const sendItemIds: string[] = [];
-    for (const r of rows) {
-      const key = recipientKey(r);
-      if (offeredKeys.has(key)) continue;
-      sendItemIds.push(r.id);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      targets.push(r);
+    // Регистрируем идентификаторы кандидатов и уже-оповещённых в ОДНОЙ структуре,
+    // чтобы оффер и кандидат одного человека попали в одну группу.
+    for (const r of [...offeredRows, ...rows]) {
+      const ids = idsOf(r);
+      for (let i = 1; i < ids.length; i++) union(ids[0]!, ids[i]!);
+      find(ids[0]!);
     }
-    if (targets.length === 0) {
+    const rootOf = (r: {
+      id: string;
+      contactId: string | null;
+      tgUserId: string | null;
+      username: string | null;
+    }) => find(idsOf(r)[0]!);
+    const offeredRoots = new Set(offeredRows.map(rootOf));
+
+    // Группируем кандидатов по получателю; пропускаем уже оповещённых.
+    const byRoot = new Map<string, typeof rows>();
+    for (const r of rows) {
+      const root = rootOf(r);
+      if (offeredRoots.has(root)) continue;
+      const g = byRoot.get(root);
+      if (g) g.push(r);
+      else byRoot.set(root, [r]);
+    }
+    if (byRoot.size === 0) {
       throw new HTTPException(400, {
         message: "Все одобренные блогеры уже оповещены",
       });
     }
+    // Представитель группы — с tg_user_id (чтобы сохранить sticky-аккаунт того,
+    // кто вёл переписку), иначе первый. Реальный DM — по одному на представителя.
+    const targets = [...byRoot.values()].map(
+      (g) => g.find((r) => r.tgUserId) ?? g[0]!,
+    );
 
     // active-аккаунты проекта (round-robin) + sticky-continuity.
     const accountIds = await resolveProjectAccountIds(wsId, project);
@@ -1015,10 +1059,17 @@ app.openapi(
       // Для реального статуса доставки используйте finalOfferStatus (none/
       // queued/sent/failed), считаемый из scheduled_messages. Это поле — лишь
       // отметка факта запуска рассылки.
+      // Штампуем только представителей (у них есть scheduled_message) — иначе у
+      // сиблингов finalOfferSentAt противоречил бы finalOfferStatus='none'.
       await tx
         .update(projectItems)
         .set({ finalOfferSentAt: now })
-        .where(inArray(projectItems.id, sendItemIds));
+        .where(
+          inArray(
+            projectItems.id,
+            targets.map((t) => t.id),
+          ),
+        );
       // Worker берёт pending только при project.status='active'.
       if (project.status !== "active") {
         await tx

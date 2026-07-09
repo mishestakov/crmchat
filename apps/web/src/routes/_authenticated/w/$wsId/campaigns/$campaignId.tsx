@@ -1696,7 +1696,7 @@ function ShortlistPhase({
   // Скольким получателям ещё слать (none/failed = не в очереди/не отправлен).
   const notOffered = groups.filter((g) => {
     const s = groupOfferStatus(g);
-    return g.rep.hasRecipient && (s === "none" || s === "failed");
+    return g.placements.some((p) => p.hasRecipient) && (s === "none" || s === "failed");
   }).length;
   const [text, setText] = useState(
     "Привет! Рады сообщить — вы выбраны в проект. Давайте согласуем дату выхода и детали 🙌",
@@ -1786,7 +1786,9 @@ function ShortlistPhase({
                       <span className="truncate text-sm font-medium text-zinc-900">
                         {g.rep.adminUsername
                           ? `@${g.rep.adminUsername}`
-                          : "без контакта"}
+                          : g.rep.adminContactId
+                            ? "контакт"
+                            : "без контакта"}
                       </span>
                       {g.rep.adminContactId && (
                         <button
