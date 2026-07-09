@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   X,
@@ -145,6 +145,57 @@ export function PlacementPane({
   const cMeta = (channelQ.data?.meta ?? {}) as Record<string, unknown>;
   const avgReach = typeof cMeta.avg_reach === "number" ? cMeta.avg_reach : null;
   const cErr = typeof cMeta.err === "number" ? cMeta.err : null;
+
+  // Авто-подтягивание метрик при открытии строки лонглиста. Раньше ср.охват/ERR
+  // наполнялись только когда менеджер открывал превью-дровер (ChannelCard →
+  // PostsFeed → /history). Дёргаем тот же /history headless при монтировании
+  // панели — ТОТ ЖЕ queryKey/queryFn, что у PostsFeed, поэтому последующее
+  // открытие превью идёт из кэша, без второго TDLib-захода. Только не-provider
+  // (у YouTube/TikTok/Dzen метрики пишет /sync, не /history), с активным
+  // outreach-аккаунтом платформы, вне unavailable, и лишь пока метрик нет
+  // (avgReach === null) — просканированные не тревожим (флуд убрали, этап 16.10).
+  const chan = channelQ.data;
+  const chanIsProvider =
+    chan?.platform === "youtube" ||
+    chan?.platform === "tiktok" ||
+    chan?.platform === "dzen";
+  const chanHasActiveAccount =
+    !!chan &&
+    !!accountsQ.data &&
+    accountsQ.data.some(
+      (a) => a.status === "active" && a.platform === chan.platform,
+    );
+  const historyQ = useQuery({
+    queryKey: ["channel-history", wsId, channelId] as const,
+    queryFn: async () => {
+      const { data, error } = await api.GET(
+        "/v1/workspaces/{wsId}/channels/{id}/history",
+        {
+          params: { path: { wsId, id: channelId! }, query: { limit: 50 } },
+        },
+      );
+      if (error) throw error;
+      return data!.messages;
+    },
+    enabled:
+      !!channelId &&
+      !!chan?.externalId &&
+      !chanIsProvider &&
+      chanHasActiveAccount &&
+      !chan?.unavailableReason &&
+      avgReach === null,
+    retry: false,
+    staleTime: 5 * 60 * 1000,
+  });
+  // Лента пересчитала метрики на бэке (meta.avg_reach/err) → перечитать channelQ,
+  // чтобы строка метрик показала свежие цифры. Один раз на успех: панель
+  // пересоздаётся по placement.id, поэтому ref свежий на каждый выбор канала.
+  const metricsRefreshed = useRef(false);
+  useEffect(() => {
+    if (!historyQ.isSuccess || metricsRefreshed.current) return;
+    metricsRefreshed.current = true;
+    qc.invalidateQueries({ queryKey: ["channel", wsId, channelId] });
+  }, [historyQ.isSuccess, wsId, channelId, qc]);
   // Бот — ручной способ связи (этап 16.9): авто-цепочка его пропускает.
   // Авторитетно из tg_users.is_bot (userTypeBot), НЕ суффикс @…bot (резал живых
   // @talbot/@robot).
@@ -318,6 +369,9 @@ export function PlacementPane({
                     <span>
                       ERR <b className="text-zinc-700">{cErr}%</b>
                     </span>
+                  )}
+                  {avgReach === null && historyQ.isFetching && (
+                    <span className="text-zinc-400">подтягиваем охваты…</span>
                   )}
                   {placement.channel?.memberCount != null && (
                     <span>
