@@ -670,8 +670,6 @@ export const legalEntities = pgTable(
     //   ord_sync(object_type, object_id, operator, external_id, erir_id, status,
     //            synced_at, error) — PK (object_type, object_id, operator).
     // Тогда одну сущность можно слать в разные ОРД, а erid/erir_id у каждого свой.
-    // Задел под ОРД-интеграцию (Фаза 2) — не заполняем сейчас:
-    // ordObjectId / erirId / ordSyncedAt / ordStatus.
     createdBy: text("created_by")
       .notNull()
       .references(() => users.id),
@@ -686,6 +684,85 @@ export const legalEntities = pgTable(
     index("legal_entities_workspace_id_idx").on(t.workspaceId),
     index("legal_entities_track_id_idx").on(t.trackId),
     index("legal_entities_contact_id_idx").on(t.contactId),
+  ],
+);
+
+// Договор — канон ОРД-сущности «Договор». Заведено сейчас как SCHEMA-задел под
+// Фазу 2 (API/UI появятся с ОРД-интеграцией): все поля ЕРИР «под рукой». id =
+// ОРД external_id. Ссылается на два юрлица (заказчик/исполнитель). Коды —
+// канонические, wire-формат оператора получаем маппером (как у legalEntityType):
+//   наш type → Яндекс → VK:  service→contract→service, intermediary→
+//   intermediary-contract→mediation, additional→additional-agreement→additional.
+// Агентские связки: рекламодатель↔агентство (service, «изначальный») и
+// агентство↔блогер (service/intermediary). subject_type/action_type/flags —
+// как в ОРД. amount строкой (numeric) — деньги.
+export const contractType = pgEnum("contract_type", [
+  "service", // договор оказания услуг (в т.ч. изначальный)
+  "intermediary", // посреднический/агентский
+  "additional", // доп. соглашение (нужен parentContractId)
+]);
+export const contractSubjectType = pgEnum("contract_subject_type", [
+  "org_distribution", // организация распространения (РА↔ОРС)
+  "distribution", // распространение рекламы (площадка)
+  "mediation", // посредничество
+  "representation", // представительство
+  "other",
+]);
+export const contractActionType = pgEnum("contract_action_type", [
+  "distribution",
+  "conclude",
+  "commercial",
+  "other",
+]);
+
+export const contracts = pgTable(
+  "contracts",
+  {
+    id: text("id").primaryKey().$defaultFn(shortId), // = ОРД external_id
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    type: contractType("type").notNull(),
+    // Стороны — юрлица (ОРД client_external_id / contractor_external_id).
+    clientId: text("client_id")
+      .notNull()
+      .references(() => legalEntities.id), // заказчик
+    contractorId: text("contractor_id")
+      .notNull()
+      .references(() => legalEntities.id), // исполнитель
+    // Какого клиента-трека касается (удобство для агентского договора; не ОРД).
+    trackId: text("track_id").references(() => tracks.id, {
+      onDelete: "set null",
+    }),
+    number: text("number"), // ОРД serial — номер договора
+    date: date("date"), // дата договора (yyyy-mm-dd)
+    subjectType: contractSubjectType("subject_type"),
+    actionType: contractActionType("action_type"),
+    amount: numeric("amount"), // сумма, руб
+    vatIncluded: boolean("vat_included").notNull().default(false),
+    // ОРД flags:
+    contractorIsCreativesReporter: boolean("contractor_is_creatives_reporter")
+      .notNull()
+      .default(false),
+    agentActingForPublisher: boolean("agent_acting_for_publisher"), // только intermediary
+    isChargePaidByAgent: boolean("is_charge_paid_by_agent"),
+    // Доп. соглашение → родительский договор (ОРД parent_contract_external_id).
+    parentContractId: text("parent_contract_id"),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("contracts_workspace_id_idx").on(t.workspaceId),
+    index("contracts_client_id_idx").on(t.clientId),
+    index("contracts_contractor_id_idx").on(t.contractorId),
+    index("contracts_track_id_idx").on(t.trackId),
   ],
 );
 
