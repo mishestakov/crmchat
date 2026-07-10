@@ -656,6 +656,7 @@ export function PlacementPane({
                       account: null,
                     }}
                     accounts={accountsQ.data ?? []}
+                    showAdminChannels={false}
                   />
                 </div>
               </>
@@ -1032,6 +1033,8 @@ export function ProductionPane({
   projectId,
   placement,
   advertiserData,
+  siblings,
+  onSelectPlacement,
 }: {
   wsId: string;
   projectId: string;
@@ -1039,6 +1042,10 @@ export function ProductionPane({
   // Реквизиты рекламодателя с кампании (бриф) — дефолт для ЕРИД-шага, если у
   // размещения свои не заданы.
   advertiserData: string | null;
+  // Размещения того же админа в кампании (для чипов-переключателя, как в
+  // лонглисте). <2 → чипы скрыты. Пусто = нет переключения.
+  siblings: Placement[];
+  onSelectPlacement: (id: string) => void;
 }) {
   const qc = useQueryClient();
   const accountsQ = useOutreachAccounts(wsId);
@@ -1304,7 +1311,8 @@ export function ProductionPane({
   const owner = PROD_OWNER[prod.owner];
 
   // Степпер-гармошка: раскрыт текущий (первый незакрытый), сделанные свёрнуты
-  // зелёным summary, будущие приглушены. Дата выхода свёрнута внутрь «Публикации».
+  // зелёным summary, будущие приглушены. Предполагаемая дата выхода живёт в шаге
+  // «Креатив» (согласуется вместе с ним); «Публикация» — факт выхода (ссылка/дата).
   const steps: {
     key: string;
     icon: React.ReactNode;
@@ -1374,20 +1382,35 @@ export function ProductionPane({
           ? `Креатив · раунд ${draft.creativeRound}`
           : "Креатив",
       done: draft.creativeStatus === "approved",
-      summary: `Одобрен клиентом${draft.creativeRound > 1 ? ` · v${draft.creativeRound}` : ""}`,
-      body: stepMessages.creative ? (
-        <CreativeStep
-          wsId={wsId}
-          projectId={projectId}
-          placement={placement}
-          sendAccountId={sendAccountId}
-          adminContactId={adminContactId}
-          onUntag={() => tagMut.mutate({ kind: "creative", ref: null })}
-        />
-      ) : (
-        <p className="text-[11px] text-zinc-400">
-          Пометьте сообщение блогера с креативом в чате справа → «Креатив».
-        </p>
+      summary: `Одобрен клиентом${draft.creativeRound > 1 ? ` · v${draft.creativeRound}` : ""}${draft.scheduledDate ? ` · выход ${draft.scheduledDate}` : ""}`,
+      body: (
+        <div className="space-y-3">
+          {/* Предполагаемая дата выхода согласуется вместе с креативом; факт
+              выхода (ссылка на пост) — на шаге «Публикация», дата факта — в отчёте. */}
+          <label className="flex items-center gap-2 text-xs text-zinc-500">
+            Предполагаемая дата выхода
+            <input
+              type="date"
+              value={draft.scheduledDate}
+              onChange={(e) => set("scheduledDate", e.target.value)}
+              className="rounded-md border border-zinc-300 px-2 py-1 text-sm focus:border-emerald-500 focus:outline-none"
+            />
+          </label>
+          {stepMessages.creative ? (
+            <CreativeStep
+              wsId={wsId}
+              projectId={projectId}
+              placement={placement}
+              sendAccountId={sendAccountId}
+              adminContactId={adminContactId}
+              onUntag={() => tagMut.mutate({ kind: "creative", ref: null })}
+            />
+          ) : (
+            <p className="text-[11px] text-zinc-400">
+              Пометьте сообщение блогера с креативом в чате справа → «Креатив».
+            </p>
+          )}
+        </div>
       ),
     },
     {
@@ -1458,24 +1481,13 @@ export function ProductionPane({
       icon: <Eye size={15} />,
       title: "Публикация",
       done: !!placement.postUrl,
-      summary: draft.scheduledDate ? `Вышел · ${draft.scheduledDate}` : "Вышел",
+      // Факт выхода — реальная дата поста (publishedAt ставит capture-post по
+      // ссылке), а не планируемая дата с шага «Креатив».
+      summary: placement.publishedAt
+        ? `Вышел · ${placement.publishedAt.slice(0, 10)}`
+        : "Вышел",
       body: (
-        <div className="space-y-2">
-          <label className="flex items-center gap-2 text-xs text-zinc-500">
-            Дата выхода
-            <input
-              type="date"
-              value={draft.scheduledDate}
-              onChange={(e) => set("scheduledDate", e.target.value)}
-              className="rounded-md border border-zinc-300 px-2 py-1 text-sm focus:border-emerald-500 focus:outline-none"
-            />
-          </label>
-          <PublishStep
-            wsId={wsId}
-            projectId={projectId}
-            placement={placement}
-          />
-        </div>
+        <PublishStep wsId={wsId} projectId={projectId} placement={placement} />
       ),
     },
   ];
@@ -1493,7 +1505,17 @@ export function ProductionPane({
   const openKey = openStep ?? (currentIdx >= 0 ? steps[currentIdx]!.key : null);
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full flex-col">
+      {/* Чипы-переключатель размещений одного админа (переиспользуем из
+          лонглиста) — видно, что речь про несколько каналов, без ухода из инбокса. */}
+      {siblings.length >= 2 && (
+        <SiblingChips
+          siblings={siblings}
+          activeId={placement.id}
+          onSelect={onSelectPlacement}
+        />
+      )}
+      <div className="flex min-h-0 flex-1">
       {/* Левая зона: степпер шагов производства + автосейв. */}
       <div className="flex w-[440px] shrink-0 flex-col border-r border-zinc-200">
         <div className="border-b border-zinc-200 px-5 py-3">
@@ -1620,6 +1642,7 @@ export function ProductionPane({
             onTagMessage={(kind, ref) => tagMut.mutate({ kind, ref })}
             taggedKindByMessageId={taggedKindByMessageId}
             jumpTo={jumpTo}
+            showAdminChannels={false}
           />
         ) : (
           <div className="flex h-full items-center justify-center px-6 text-center text-sm text-zinc-400">
@@ -1627,6 +1650,7 @@ export function ProductionPane({
             переписываться здесь.
           </div>
         )}
+      </div>
       </div>
     </div>
   );

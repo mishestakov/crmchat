@@ -162,6 +162,9 @@ export function ChatDrawer(props: {
   // Лид-специфичная полоска под шапкой (статус + ссылка на карточку). Чат
   // контакто-скоупный, поэтому стадию рисует вызывающий (LeadChatDrawer).
   headerExtra?: ReactNode;
+  // Прокидывается в ChatPanel (см. там): скрыть список всех каналов админа в
+  // agency-кампании. Спред {...props} уносит его дальше сам.
+  showAdminChannels?: boolean;
 }) {
   return (
     <Drawer width={480} onClose={props.onClose}>
@@ -190,6 +193,11 @@ export function ChatPanel(props: {
   jumpTo?: { messageId: string; nonce: number } | null;
   // Полоска под шапкой (статус лида + ссылка на карточку); пусто вне канбана.
   headerExtra?: ReactNode;
+  // Список всех каналов админа (ChannelRelationList) под шапкой. В BD-режиме
+  // (лид-борды, канбан) нужен — там ведём админа целиком. В agency-кампании нас
+  // интересуют только каналы, за которыми пришли, поэтому вызывающий из кампании
+  // передаёт false. undefined = показывать (дефолт BD).
+  showAdminChannels?: boolean;
 }) {
   const qc = useQueryClient();
   const accountById = new Map(props.accounts.map((a) => [a.id, a]));
@@ -943,11 +951,13 @@ export function ChatPanel(props: {
           </div>
         </div>
         {props.headerExtra}
-        <ChannelRelationList
-          wsId={props.wsId}
-          contact={props.contact}
-          onOpenCard={(id, change) => setChannelView({ id, change })}
-        />
+        {props.showAdminChannels !== false && (
+          <ChannelRelationList
+            wsId={props.wsId}
+            contact={props.contact}
+            onOpenCard={(id, change) => setChannelView({ id, change })}
+          />
+        )}
         {fresherColleague && (
           <button
             type="button"

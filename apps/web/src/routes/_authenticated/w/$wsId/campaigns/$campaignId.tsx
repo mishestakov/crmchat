@@ -1435,6 +1435,7 @@ function ReviewPhase({
           }}
           accounts={accountsQ.data ?? []}
           onClose={() => setChatFor(null)}
+          showAdminChannels={false}
         />
       )}
     </div>
@@ -1736,6 +1737,14 @@ function ShortlistPhase({
           onChange={(e) => setText(e.target.value)}
           className="w-full rounded-xl border border-zinc-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
         />
+        <p className="text-xs text-zinc-500">
+          Подстановка:{" "}
+          <code className="rounded bg-zinc-100 px-1">{"{{каналы}}"}</code> —
+          каналы получателя через запятую (TG — @username, YouTube/TikTok/Дзен —
+          ссылкой);{" "}
+          <code className="rounded bg-zinc-100 px-1">{"{{отправитель}}"}</code> —
+          имя вашего аккаунта.
+        </p>
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -1844,6 +1853,7 @@ function ShortlistPhase({
           }}
           accounts={accountsQ.data ?? []}
           onClose={() => setChatFor(null)}
+          showAdminChannels={false}
         />
       )}
     </div>
@@ -1891,6 +1901,16 @@ function ProductionPhase({
         PROD_OWNER_ORDER.indexOf(deriveProduction(a).owner) -
         PROD_OWNER_ORDER.indexOf(deriveProduction(b).owner),
     );
+
+  // Размещения одного админа (по adminContactId) — кормит чипы-переключатель в
+  // инбоксе (тот же паттерн, что в лонглисте). Дёшево, без memo.
+  const adminGroups = new Map<string, Placement[]>();
+  for (const p of rows) {
+    if (!p.adminContactId) continue;
+    const g = adminGroups.get(p.adminContactId);
+    if (g) g.push(p);
+    else adminGroups.set(p.adminContactId, [p]);
+  }
 
   // Ссылка клиенту — под рукой и на «Запуске» (согласование креативов идёт здесь).
 
@@ -2122,6 +2142,12 @@ function ProductionPhase({
                 projectId={projectId}
                 placement={p}
                 advertiserData={campaign.advertiserData}
+                siblings={
+                  p.adminContactId
+                    ? (adminGroups.get(p.adminContactId) ?? [])
+                    : []
+                }
+                onSelectPlacement={setSelectedId}
               />
             )}
           />

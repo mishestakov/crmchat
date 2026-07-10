@@ -81,6 +81,9 @@ export function LeadChatDrawer(props: {
     pending?: boolean;
     disabled?: boolean;
   };
+  // agency-кампания передаёт false — скрыть список всех каналов админа (см.
+  // ChatPanel.showAdminChannels). BD-вызовы не передают → блок остаётся.
+  showAdminChannels?: boolean;
 }) {
   const chat = useLeadChat(props);
   if (!chat) return null;
@@ -99,6 +102,7 @@ export function LeadChatDrawer(props: {
       onSelectAccount={chat.setAccountId}
       onClose={props.onClose}
       headerExtra={headerExtra}
+      showAdminChannels={props.showAdminChannels}
     />
   );
 }
@@ -173,6 +177,9 @@ export function LeadChatPanel(props: {
   onTagMessage?: (kind: MessageTagKind, ref: MessageTagRef) => void;
   taggedKindByMessageId?: Record<string, MessageTagKind>;
   jumpTo?: { messageId: string; nonce: number } | null;
+  // agency-кампания передаёт false — скрыть список всех каналов админа (см.
+  // ChatPanel.showAdminChannels).
+  showAdminChannels?: boolean;
 }) {
   const chat = useLeadChat(props);
   if (!chat) {
@@ -192,6 +199,7 @@ export function LeadChatPanel(props: {
       onTagMessage={props.onTagMessage}
       taggedKindByMessageId={props.taggedKindByMessageId}
       jumpTo={props.jumpTo}
+      showAdminChannels={props.showAdminChannels}
     />
   );
 }
