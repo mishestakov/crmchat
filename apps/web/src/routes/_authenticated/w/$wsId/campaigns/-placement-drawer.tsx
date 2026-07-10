@@ -651,6 +651,7 @@ export function PlacementPane({
                       account: null,
                     }}
                     accounts={accountsQ.data ?? []}
+                    showAdminChannels={false}
                   />
                 </div>
               </>
@@ -1615,6 +1616,7 @@ export function ProductionPane({
             onTagMessage={(kind, ref) => tagMut.mutate({ kind, ref })}
             taggedKindByMessageId={taggedKindByMessageId}
             jumpTo={jumpTo}
+            showAdminChannels={false}
           />
         ) : (
           <div className="flex h-full items-center justify-center px-6 text-center text-sm text-zinc-400">

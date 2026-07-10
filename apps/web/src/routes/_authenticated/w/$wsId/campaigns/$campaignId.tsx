@@ -1435,6 +1435,7 @@ function ReviewPhase({
           }}
           accounts={accountsQ.data ?? []}
           onClose={() => setChatFor(null)}
+          showAdminChannels={false}
         />
       )}
     </div>
@@ -1844,6 +1845,7 @@ function ShortlistPhase({
           }}
           accounts={accountsQ.data ?? []}
           onClose={() => setChatFor(null)}
+          showAdminChannels={false}
         />
       )}
     </div>
