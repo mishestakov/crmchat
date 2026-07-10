@@ -1902,6 +1902,16 @@ function ProductionPhase({
         PROD_OWNER_ORDER.indexOf(deriveProduction(b).owner),
     );
 
+  // Размещения одного админа (по adminContactId) — кормит чипы-переключатель в
+  // инбоксе (тот же паттерн, что в лонглисте). Дёшево, без memo.
+  const adminGroups = new Map<string, Placement[]>();
+  for (const p of rows) {
+    if (!p.adminContactId) continue;
+    const g = adminGroups.get(p.adminContactId);
+    if (g) g.push(p);
+    else adminGroups.set(p.adminContactId, [p]);
+  }
+
   // Ссылка клиенту — под рукой и на «Запуске» (согласование креативов идёт здесь).
 
   const pickView = (v: "matrix" | "inbox") => {
@@ -2132,6 +2142,12 @@ function ProductionPhase({
                 projectId={projectId}
                 placement={p}
                 advertiserData={campaign.advertiserData}
+                siblings={
+                  p.adminContactId
+                    ? (adminGroups.get(p.adminContactId) ?? [])
+                    : []
+                }
+                onSelectPlacement={setSelectedId}
               />
             )}
           />

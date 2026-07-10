@@ -1028,6 +1028,8 @@ export function ProductionPane({
   projectId,
   placement,
   advertiserData,
+  siblings,
+  onSelectPlacement,
 }: {
   wsId: string;
   projectId: string;
@@ -1035,6 +1037,10 @@ export function ProductionPane({
   // Реквизиты рекламодателя с кампании (бриф) — дефолт для ЕРИД-шага, если у
   // размещения свои не заданы.
   advertiserData: string | null;
+  // Размещения того же админа в кампании (для чипов-переключателя, как в
+  // лонглисте). <2 → чипы скрыты. Пусто = нет переключения.
+  siblings: Placement[];
+  onSelectPlacement: (id: string) => void;
 }) {
   const qc = useQueryClient();
   const accountsQ = useOutreachAccounts(wsId);
@@ -1494,7 +1500,17 @@ export function ProductionPane({
   const openKey = openStep ?? (currentIdx >= 0 ? steps[currentIdx]!.key : null);
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full flex-col">
+      {/* Чипы-переключатель размещений одного админа (переиспользуем из
+          лонглиста) — видно, что речь про несколько каналов, без ухода из инбокса. */}
+      {siblings.length >= 2 && (
+        <SiblingChips
+          siblings={siblings}
+          activeId={placement.id}
+          onSelect={onSelectPlacement}
+        />
+      )}
+      <div className="flex min-h-0 flex-1">
       {/* Левая зона: степпер шагов производства + автосейв. */}
       <div className="flex w-[440px] shrink-0 flex-col border-r border-zinc-200">
         <div className="border-b border-zinc-200 px-5 py-3">
@@ -1629,6 +1645,7 @@ export function ProductionPane({
             переписываться здесь.
           </div>
         )}
+      </div>
       </div>
     </div>
   );
