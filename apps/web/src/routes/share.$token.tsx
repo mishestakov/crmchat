@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Check, X, Users, Link as LinkIcon } from "lucide-react";
+import { Check, X, Users, Link as LinkIcon, Eye } from "lucide-react";
 import type { components } from "@repo/api-client";
 import { api } from "../lib/api";
 import { errorMessage } from "../lib/errors";
@@ -480,6 +480,17 @@ function PlacementRow({
                 </a>
               )}
             </div>
+            {/* Явная кнопка предпросмотра — киллер-фича «посмотреть контент
+                канала» не должна прятаться за кликом по названию. */}
+            <button
+              type="button"
+              disabled={!ch}
+              onClick={onPreview}
+              className="mt-1.5 inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-40"
+            >
+              <Eye size={13} />
+              Предпросмотр постов
+            </button>
           </div>
         </div>
       </td>
