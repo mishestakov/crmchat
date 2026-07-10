@@ -739,8 +739,14 @@ export const contracts = pgTable(
     subjectType: contractSubjectType("subject_type"),
     actionType: contractActionType("action_type"),
     amount: numeric("amount"), // сумма, руб
+    // ОРД-флаги — НЕ проприетарные, это ЕРИР-семантика у обоих операторов, просто
+    // в разной wire-форме: Яндекс — именованные булевы (как у нас), VK — массив
+    // строк flags[]. Храним канон-булевыми, адаптер собирает нужную форму:
+    //   contractorIsCreativesReporter = Яндекс isRegReport   = VK "contractor_is_creatives_reporter"
+    //   agentActingForPublisher       = Яндекс agentActingForPublisher = VK "agent_acting_for_publisher"
+    //   isChargePaidByAgent           = Яндекс isChargePaidByAgent     = VK "is_charge_paid_by_agent"
+    //   vatIncluded                   = VK "vat_included" (у Яндекса НДС на суммах)
     vatIncluded: boolean("vat_included").notNull().default(false),
-    // ОРД flags:
     contractorIsCreativesReporter: boolean("contractor_is_creatives_reporter")
       .notNull()
       .default(false),
