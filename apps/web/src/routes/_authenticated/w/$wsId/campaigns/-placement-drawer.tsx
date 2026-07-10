@@ -1300,7 +1300,8 @@ export function ProductionPane({
   const owner = PROD_OWNER[prod.owner];
 
   // Степпер-гармошка: раскрыт текущий (первый незакрытый), сделанные свёрнуты
-  // зелёным summary, будущие приглушены. Дата выхода свёрнута внутрь «Публикации».
+  // зелёным summary, будущие приглушены. Предполагаемая дата выхода живёт в шаге
+  // «Креатив» (согласуется вместе с ним); «Публикация» — факт выхода (ссылка/дата).
   const steps: {
     key: string;
     icon: React.ReactNode;
@@ -1370,20 +1371,35 @@ export function ProductionPane({
           ? `Креатив · раунд ${draft.creativeRound}`
           : "Креатив",
       done: draft.creativeStatus === "approved",
-      summary: `Одобрен клиентом${draft.creativeRound > 1 ? ` · v${draft.creativeRound}` : ""}`,
-      body: stepMessages.creative ? (
-        <CreativeStep
-          wsId={wsId}
-          projectId={projectId}
-          placement={placement}
-          sendAccountId={sendAccountId}
-          adminContactId={adminContactId}
-          onUntag={() => tagMut.mutate({ kind: "creative", ref: null })}
-        />
-      ) : (
-        <p className="text-[11px] text-zinc-400">
-          Пометьте сообщение блогера с креативом в чате справа → «Креатив».
-        </p>
+      summary: `Одобрен клиентом${draft.creativeRound > 1 ? ` · v${draft.creativeRound}` : ""}${draft.scheduledDate ? ` · выход ${draft.scheduledDate}` : ""}`,
+      body: (
+        <div className="space-y-3">
+          {/* Предполагаемая дата выхода согласуется вместе с креативом; факт
+              выхода (ссылка на пост) — на шаге «Публикация», дата факта — в отчёте. */}
+          <label className="flex items-center gap-2 text-xs text-zinc-500">
+            Предполагаемая дата выхода
+            <input
+              type="date"
+              value={draft.scheduledDate}
+              onChange={(e) => set("scheduledDate", e.target.value)}
+              className="rounded-md border border-zinc-300 px-2 py-1 text-sm focus:border-emerald-500 focus:outline-none"
+            />
+          </label>
+          {stepMessages.creative ? (
+            <CreativeStep
+              wsId={wsId}
+              projectId={projectId}
+              placement={placement}
+              sendAccountId={sendAccountId}
+              adminContactId={adminContactId}
+              onUntag={() => tagMut.mutate({ kind: "creative", ref: null })}
+            />
+          ) : (
+            <p className="text-[11px] text-zinc-400">
+              Пометьте сообщение блогера с креативом в чате справа → «Креатив».
+            </p>
+          )}
+        </div>
       ),
     },
     {
@@ -1454,24 +1470,13 @@ export function ProductionPane({
       icon: <Eye size={15} />,
       title: "Публикация",
       done: !!placement.postUrl,
-      summary: draft.scheduledDate ? `Вышел · ${draft.scheduledDate}` : "Вышел",
+      // Факт выхода — реальная дата поста (publishedAt ставит capture-post по
+      // ссылке), а не планируемая дата с шага «Креатив».
+      summary: placement.publishedAt
+        ? `Вышел · ${placement.publishedAt.slice(0, 10)}`
+        : "Вышел",
       body: (
-        <div className="space-y-2">
-          <label className="flex items-center gap-2 text-xs text-zinc-500">
-            Дата выхода
-            <input
-              type="date"
-              value={draft.scheduledDate}
-              onChange={(e) => set("scheduledDate", e.target.value)}
-              className="rounded-md border border-zinc-300 px-2 py-1 text-sm focus:border-emerald-500 focus:outline-none"
-            />
-          </label>
-          <PublishStep
-            wsId={wsId}
-            projectId={projectId}
-            placement={placement}
-          />
-        </div>
+        <PublishStep wsId={wsId} projectId={projectId} placement={placement} />
       ),
     },
   ];
