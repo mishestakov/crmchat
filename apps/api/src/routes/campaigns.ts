@@ -917,6 +917,10 @@ app.openapi(
           eq(projectItems.projectId, projectId),
           eq(projectItems.clientStatus, "approved"),
           isNotNull(projectItems.shortlistedAt),
+          // Отказавшихся (available=false) не оффереем и не перечисляем в
+          // {{каналы}} — тот же гейт, что в опенере (этап 16.10). Иначе DM мог
+          // бы рекламировать канал, от которого блогер уже отказался.
+          sql`${projectItems.available} is distinct from false`,
           sql`(${projectItems.username} IS NOT NULL OR ${projectItems.tgUserId} IS NOT NULL)`,
         ),
       )
