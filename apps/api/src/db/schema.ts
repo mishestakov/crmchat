@@ -600,6 +600,71 @@ export const tracks = pgTable(
   (t) => [index("tracks_workspace_id_idx").on(t.workspaceId)],
 );
 
+// Юрлицо (контрагент) — форма 1:1 с ОРД-сущностью «Организация», чтобы будущая
+// интеграция с ОРД/ЕРИР склеилась без переделки: id этой строки = Organization.id,
+// который шлём в ОРД (идемпотентно). Таблица РОЛЕ-АГНОСТИЧНА — в ОРД и
+// рекламодатель, и агентство, и блогер суть «Организации», просто с разными
+// ролями (isRr/isOrs). Владельца различаем взаимоисключающими FK:
+//   trackId   → рекламодатель (клиент, чаще ООО/АО);
+//   contactId → блогер/РР (человек, чаще самозанятый/ИП — свой ИНН);
+//   оба null  → агентство-self (одно на workspace).
+// type — единственное обязательное по ОРД; диктует, какие поля нужны (ИНН 10
+// знаков для ul, 12 для ip/fl; для иностранцев — oksmNumber и пр.). ОРД ключует
+// по ИНН+type, а НЕ по ОГРН — ogrn/city храним ТОЛЬКО ради человекочитаемой
+// строки маркировки, в ОРД они не уезжают.
+export const legalEntityType = pgEnum("legal_entity_type", [
+  "ul", // юрлицо РФ (ООО/АО) — ИНН 10
+  "ip", // ИП — ИНН 12
+  "fl", // физлицо/самозанятый — ИНН 12
+  "ful", // иностранное юрлицо
+  "ffl", // иностранное физлицо
+]);
+
+export const legalEntities = pgTable(
+  "legal_entities",
+  {
+    id: text("id").primaryKey().$defaultFn(shortId), // = ОРД Organization.id
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    // Владелец = рекламодатель (клиент). Сейчас 1 юрлицо = 1 клиент (без
+    // селектора в кампании). Взаимоисключающе с contactId.
+    trackId: text("track_id").references(() => tracks.id, {
+      onDelete: "cascade",
+    }),
+    // Владелец = блогер/РР (человек). Один блогер = одно юрлицо, много каналов,
+    // поэтому связь на contact (человека), а не на channel.
+    contactId: text("contact_id").references(() => contacts.id, {
+      onDelete: "cascade",
+    }),
+    type: legalEntityType("type").notNull().default("ul"),
+    inn: text("inn"), // валидируем в @repo/core (checksum + длина по type)
+    orgForm: text("org_form"), // «ООО»/«АО»/«ИП» — только для строки маркировки
+    name: text("name"), // «Инстамарт Сервис» (без формы — форма в orgForm)
+    kpp: text("kpp"), // ОРД: юрлица РФ
+    ogrn: text("ogrn"), // только для строки маркировки (ОРД не просит)
+    city: text("city"), // только для строки маркировки
+    address: text("address"), // ОРД: адрес регистрации
+    oksmNumber: text("oksm_number"), // ОРД: код страны для иностранцев
+    // Задел под ОРД-интеграцию (Фаза 2) — не заполняем сейчас:
+    // ordObjectId / erirId / ordSyncedAt / ordStatus.
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("legal_entities_workspace_id_idx").on(t.workspaceId),
+    index("legal_entities_track_id_idx").on(t.trackId),
+    index("legal_entities_contact_id_idx").on(t.contactId),
+  ],
+);
+
 // Stage template — переиспользуемый шаблон стадий канбана на воркспейс.
 // При создании проекта стадии копируются из template.stages; правка
 // шаблона существующие проекты не трогает (однонаправленное копирование).
