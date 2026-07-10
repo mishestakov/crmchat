@@ -30,6 +30,7 @@ const LegalEntitySchema = z
     ogrn: z.string().nullable(),
     city: z.string().nullable(),
     address: z.string().nullable(),
+    phone: z.string().nullable(),
     oksmNumber: z.string().nullable(),
     createdAt: z.iso.datetime(),
   })
@@ -47,6 +48,7 @@ const LegalEntityInputSchema = z
     ogrn: z.string().trim().max(15).nullable().optional(),
     city: z.string().trim().max(120).nullable().optional(),
     address: z.string().trim().max(500).nullable().optional(),
+    phone: z.string().trim().max(30).nullable().optional(),
     oksmNumber: z.string().trim().max(3).nullable().optional(),
   })
   .superRefine((v, ctx) => {
@@ -93,6 +95,7 @@ function serialize(row: typeof legalEntities.$inferSelect) {
     ogrn: row.ogrn,
     city: row.city,
     address: row.address,
+    phone: row.phone,
     oksmNumber: row.oksmNumber,
     createdAt: row.createdAt.toISOString(),
   };
@@ -180,6 +183,7 @@ app.openapi(
       ogrn: body.ogrn ?? null,
       city: body.city ?? null,
       address: body.address ?? null,
+      phone: body.phone ?? null,
       oksmNumber: body.oksmNumber ?? null,
     };
 

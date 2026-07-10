@@ -130,6 +130,7 @@ type LegalEntityDraft = {
   ogrn: string;
   city: string;
   address: string;
+  phone: string;
 };
 const EMPTY_ENTITY: LegalEntityDraft = {
   type: "ul",
@@ -140,6 +141,7 @@ const EMPTY_ENTITY: LegalEntityDraft = {
   ogrn: "",
   city: "",
   address: "",
+  phone: "",
 };
 const ENTITY_TYPES: { value: LegalEntityType; label: string }[] = [
   { value: "ul", label: "Юрлицо (ООО/АО)" },
@@ -198,6 +200,7 @@ function LegalEntityCard({ wsId, clientId }: { wsId: string; clientId: string })
             ogrn: cur.ogrn.trim() || null,
             city: cur.city.trim() || null,
             address: cur.address.trim() || null,
+            phone: cur.phone.trim() || null,
           },
         },
       );
@@ -260,6 +263,7 @@ function LegalEntityCard({ wsId, clientId }: { wsId: string; clientId: string })
         <Field label="КПП" value={cur.kpp} onChange={(v) => set("kpp", v)} />
         <Field label="ОГРН" value={cur.ogrn} onChange={(v) => set("ogrn", v)} />
         <Field label="Город" value={cur.city} onChange={(v) => set("city", v)} placeholder="Москва" />
+        <Field label="Телефон" value={cur.phone} onChange={(v) => set("phone", v)} placeholder="+7…" />
         <Field label="Адрес" value={cur.address} onChange={(v) => set("address", v)} />
       </div>
 

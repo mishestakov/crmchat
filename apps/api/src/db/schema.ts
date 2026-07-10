@@ -612,6 +612,17 @@ export const tracks = pgTable(
 // знаков для ul, 12 для ip/fl; для иностранцев — oksmNumber и пр.). ОРД ключует
 // по ИНН+type, а НЕ по ОГРН — ogrn/city храним ТОЛЬКО ради человекочитаемой
 // строки маркировки, в ОРД они не уезжают.
+//
+// Коды — стандартные РФ-аббревиатуры (наш КАНОНИЧЕСКИЙ вид), НЕ wire-формат
+// конкретного ОРД: у операторов он разный, маппим при пуше (Фаза 2):
+//   наш → Яндекс-ОРД → VK-ОРД
+//   ul  →   ul        → juridical
+//   ip  →   ip        → ip
+//   fl  →   fl        → physical
+//   ful →   ful       → (иностр. юрлицо)
+//   ffl →   ffl       → (иностр. физлицо)
+// id строки = ОРД external_id (мы задаём сами, идемпотентный PUT, стабильный
+// токен маркировки). shortId = 12 hex ⊂ [a-zA-Z0-9_-], ≤255 — валиден как есть.
 export const legalEntityType = pgEnum("legal_entity_type", [
   "ul", // юрлицо РФ (ООО/АО) — ИНН 10
   "ip", // ИП — ИНН 12
@@ -645,7 +656,14 @@ export const legalEntities = pgTable(
     ogrn: text("ogrn"), // только для строки маркировки (ОРД не просит)
     city: text("city"), // только для строки маркировки
     address: text("address"), // ОРД: адрес регистрации
+    phone: text("phone"), // ОРД (VK требует в juridical_details; Яндекс — иностранцам)
     oksmNumber: text("oksm_number"), // ОРД: код страны для иностранцев
+    // Роль (advertiser/publisher/agency) НЕ храним — выводим из владельца:
+    // trackId→рекламодатель, contactId→блогер/РР, оба null→агентство. VK держит
+    // roles[] явно; на пуше подставим из этого правила (мульти-роль у нас не
+    // возникает: агентство ≠ клиент ≠ блогер). Статус синка в ОРД — тоже Фаза 2,
+    // и ПО-ОПЕРАТОРНО (можем слать и в VK, и в Яндекс) → отдельная таблица
+    // legal_entity_ord_sync(entityId, operator, erirId, status), не колонки тут.
     // Задел под ОРД-интеграцию (Фаза 2) — не заполняем сейчас:
     // ordObjectId / erirId / ordSyncedAt / ordStatus.
     createdBy: text("created_by")
