@@ -14,7 +14,12 @@ import {
   Copy,
   RefreshCw,
 } from "lucide-react";
-import { computeDealPricing } from "@repo/core";
+import {
+  computeDealPricing,
+  markingMessage,
+  advertiserLine,
+  type AdvertiserRequisites,
+} from "@repo/core";
 import { api, sendContactDocument } from "../../../../../lib/api";
 import { errorMessage } from "../../../../../lib/errors";
 import { copyText } from "../../../../../lib/clipboard";
@@ -1067,9 +1072,25 @@ export function ProductionPane({
   const [openStep, setOpenStep] = useState<string | null>(null);
   const set = <K extends keyof ProdDraft>(k: K, v: ProdDraft[K]) =>
     setDraft((d) => ({ ...d, [k]: v }));
-  // Эффективные реквизиты рекламодателя для ЕРИД: своё на размещении (если
-  // менеджер переопределил) иначе из брифа кампании.
-  const eridAdv = draft.eridAdvertiserData || advertiserData || "";
+  // Реквизиты рекламодателя для ЕРИД: единый источник — юрлицо клиента
+  // (project → track → legal_entity). Fallback на старый free-text брифа
+  // (advertiserData), пока юрлицо не заведено — не ломаем существующие кампании.
+  const advertiserQ = useQuery({
+    queryKey: ["advertiser", wsId, projectId] as const,
+    queryFn: async () => {
+      const { data, error } = await api.GET(
+        "/v1/workspaces/{wsId}/projects/{projectId}/advertiser",
+        { params: { path: { wsId, projectId } } },
+      );
+      if (error) throw error;
+      return (data ?? null) as AdvertiserRequisites | null;
+    },
+  });
+  const advReqs: AdvertiserRequisites = advertiserQ.data?.name
+    ? advertiserQ.data
+    : { name: advertiserData || null };
+  const advLine = advertiserLine(advReqs); // строка «Рекламодатель …» для превью/снимка
+  const markingText = markingMessage(advReqs, draft.erid);
   // Прыжок к помеченному сообщению в чате справа (клик «открыть в чате»). nonce
   // растёт на каждый клик — повторный прыжок к тому же id срабатывает снова.
   const [jumpTo, setJumpTo] = useState<{
@@ -1166,10 +1187,13 @@ export function ProductionPane({
       if (!adminContactId || !sendAccountId) {
         throw new Error("Нет привязанного админа или аккаунта для отправки");
       }
-      const text = `ERID: ${draft.erid}\nРекламодатель: ${eridAdv}\n\nНанесите «Реклама» + ERID в левый нижний угол креатива.`;
       const { error: sErr } = await api.POST("/v1/workspaces/{wsId}/quick-send", {
         params: { path: { wsId } },
-        body: { accountId: sendAccountId, contactId: adminContactId, text },
+        body: {
+          accountId: sendAccountId,
+          contactId: adminContactId,
+          text: markingText,
+        },
       });
       if (sErr) throw sErr;
       const { error: pErr } = await api.PATCH(
@@ -1178,7 +1202,8 @@ export function ProductionPane({
           params: { path: { wsId, projectId, placementId: placement.id } },
           body: {
             erid: draft.erid || null,
-            eridAdvertiserData: eridAdv || null,
+            // Снимок отправленной строки рекламодателя (что реально ушло).
+            eridAdvertiserData: advLine || null,
             eridSentAt: new Date().toISOString(),
           },
         },
@@ -1427,17 +1452,23 @@ export function ProductionPane({
             placeholder="erid токен"
             className="w-full rounded-md border border-zinc-300 px-2 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
           />
-          <input
-            value={draft.eridAdvertiserData}
-            onChange={(e) => set("eridAdvertiserData", e.target.value)}
-            placeholder={advertiserData || "данные рекла (ИНН + название)"}
-            title={
-              advertiserData
-                ? "По умолчанию берётся из брифа кампании — впишите, чтобы переопределить"
-                : undefined
-            }
-            className="w-full rounded-md border border-zinc-300 px-2 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
-          />
+          {/* Реквизиты рекламодателя — единый источник (карточка клиента), не
+              вводим здесь. Показываем итоговую маркировку, что уйдёт в чат. */}
+          {advLine ? (
+            <div className="rounded-md bg-zinc-50 px-2.5 py-2 text-xs">
+              <div className="mb-0.5 text-[10px] uppercase tracking-wide text-zinc-400">
+                Уйдёт в чат
+              </div>
+              <div className="whitespace-pre-line text-zinc-700">
+                {markingText}
+              </div>
+            </div>
+          ) : (
+            <p className="rounded-md bg-amber-50 px-2.5 py-2 text-[11px] text-amber-700">
+              Реквизиты рекламодателя не заполнены — добавьте юрлицо в карточке
+              клиента, тогда они подставятся в маркировку.
+            </p>
+          )}
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -1471,7 +1502,8 @@ export function ProductionPane({
             </p>
           )}
           <p className="text-[11px] text-zinc-400">
-            Блогер наносит «Реклама» + ERID на картинку (левый нижний угол).
+            Блогер наносит маркировку на картинку/видео небольшим, но заметным
+            шрифтом.
           </p>
         </div>
       ),

@@ -2,6 +2,12 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Plus } from "lucide-react";
+import {
+  type LegalEntityType,
+  advertiserLine,
+  isValidInn,
+  innLengthForType,
+} from "@repo/core";
 import { api } from "../../../../../lib/api";
 import { errorMessage } from "../../../../../lib/errors";
 import { phaseLabel, formatRub } from "./-shared";
@@ -13,18 +19,16 @@ export const Route = createFileRoute(
   component: ClientPage,
 });
 
-// Реквизиты клиента живут в tracks.properties (jsonb) — без отдельных колонок
-// (спека §3.1). Поля-строки, рендерятся как форма.
-const FIELDS = [
-  { key: "legal_entity", label: "Юр. лицо" },
-  { key: "inn", label: "ИНН" },
+// Прочие (не-ЕРИД) реквизиты клиента живут в tracks.properties (jsonb). Юрлицо
+// (ИНН/ОГРН/…) вынесено в отдельную таблицу legal_entities (форма ОРД) —
+// см. LegalEntityCard.
+const PROPS_FIELDS = [
   { key: "accountant_contact", label: "Контакт бухгалтерии" },
   { key: "notes", label: "Заметки" },
 ] as const;
 
 function ClientPage() {
   const { wsId, clientId } = Route.useParams();
-  const qc = useQueryClient();
 
   const clientsQ = useQuery({
     queryKey: ["tracks", wsId] as const,
@@ -66,7 +70,9 @@ function ClientPage() {
         <h1 className="text-xl font-semibold">{client.name}</h1>
       </div>
 
-      <RequisitesCard
+      <LegalEntityCard wsId={wsId} clientId={clientId} />
+
+      <PropertiesCard
         wsId={wsId}
         clientId={clientId}
         properties={client.properties as Record<string, unknown>}
@@ -113,7 +119,207 @@ function ClientPage() {
   );
 }
 
-function RequisitesCard({
+// Юрлицо рекламодателя — структурированные реквизиты (форма ОРД). Один клиент =
+// одно юрлицо. Из этих полей собирается строка маркировки в ЕРИД-шаге.
+type LegalEntityDraft = {
+  type: LegalEntityType;
+  orgForm: string;
+  name: string;
+  inn: string;
+  kpp: string;
+  ogrn: string;
+  city: string;
+  address: string;
+};
+const EMPTY_ENTITY: LegalEntityDraft = {
+  type: "ul",
+  orgForm: "",
+  name: "",
+  inn: "",
+  kpp: "",
+  ogrn: "",
+  city: "",
+  address: "",
+};
+const ENTITY_TYPES: { value: LegalEntityType; label: string }[] = [
+  { value: "ul", label: "Юрлицо (ООО/АО)" },
+  { value: "ip", label: "ИП" },
+  { value: "fl", label: "Физлицо / самозанятый" },
+  { value: "ful", label: "Иностранное юрлицо" },
+  { value: "ffl", label: "Иностранное физлицо" },
+];
+
+function LegalEntityCard({ wsId, clientId }: { wsId: string; clientId: string }) {
+  const qc = useQueryClient();
+  const entityQ = useQuery({
+    queryKey: ["legal-entity", wsId, clientId] as const,
+    queryFn: async () => {
+      const { data, error } = await api.GET(
+        "/v1/workspaces/{wsId}/tracks/{trackId}/legal-entity",
+        { params: { path: { wsId, trackId: clientId } } },
+      );
+      if (error) throw error;
+      // null, если реквизиты ещё не заведены.
+      return (data ?? null) as Partial<LegalEntityDraft> | null;
+    },
+  });
+
+  const server: LegalEntityDraft = {
+    ...EMPTY_ENTITY,
+    ...Object.fromEntries(
+      Object.entries(entityQ.data ?? {}).map(([k, v]) => [k, v ?? ""]),
+    ),
+    type: (entityQ.data?.type as LegalEntityType) ?? "ul",
+  };
+  const [draft, setDraft] = useState<LegalEntityDraft | null>(null);
+  const cur = draft ?? server;
+  const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(server);
+  const set = <K extends keyof LegalEntityDraft>(k: K, v: LegalEntityDraft[K]) =>
+    setDraft({ ...cur, [k]: v });
+
+  const innLen = innLengthForType(cur.type);
+  const innError =
+    cur.inn.trim() !== "" &&
+    innLen !== null &&
+    (cur.inn.trim().length !== innLen || !isValidInn(cur.inn.trim()));
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const { error } = await api.PUT(
+        "/v1/workspaces/{wsId}/tracks/{trackId}/legal-entity",
+        {
+          params: { path: { wsId, trackId: clientId } },
+          body: {
+            type: cur.type,
+            orgForm: cur.orgForm.trim() || null,
+            name: cur.name.trim() || null,
+            inn: cur.inn.trim() || null,
+            kpp: cur.kpp.trim() || null,
+            ogrn: cur.ogrn.trim() || null,
+            city: cur.city.trim() || null,
+            address: cur.address.trim() || null,
+          },
+        },
+      );
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["legal-entity", wsId, clientId] });
+      setDraft(null); // ресинк с сервером
+    },
+  });
+
+  const preview = advertiserLine(cur);
+
+  if (entityQ.isLoading) {
+    return (
+      <div className="rounded-2xl bg-white p-5 text-sm text-zinc-500 shadow-sm">
+        Загрузка реквизитов…
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-2xl bg-white p-5 shadow-sm space-y-3">
+      <div>
+        <h2 className="text-sm font-semibold text-zinc-900">
+          Реквизиты рекламодателя
+        </h2>
+        <p className="text-xs text-zinc-500">
+          Подставляются в маркировку ЕРИД. Одно юрлицо на клиента.
+        </p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="block">
+          <span className="mb-1 block text-xs text-zinc-500">Тип</span>
+          <select
+            value={cur.type}
+            onChange={(e) => set("type", e.target.value as LegalEntityType)}
+            className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
+          >
+            {ENTITY_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <Field label="Форма (ООО/АО/ИП)" value={cur.orgForm} onChange={(v) => set("orgForm", v)} />
+        <Field label="Название" value={cur.name} onChange={(v) => set("name", v)} placeholder="Инстамарт Сервис" />
+        <div>
+          <Field
+            label={`ИНН${innLen ? ` (${innLen} цифр)` : ""}`}
+            value={cur.inn}
+            onChange={(v) => set("inn", v)}
+            invalid={innError}
+          />
+          {innError && (
+            <p className="mt-0.5 text-[11px] text-red-600">Неверный ИНН</p>
+          )}
+        </div>
+        <Field label="КПП" value={cur.kpp} onChange={(v) => set("kpp", v)} />
+        <Field label="ОГРН" value={cur.ogrn} onChange={(v) => set("ogrn", v)} />
+        <Field label="Город" value={cur.city} onChange={(v) => set("city", v)} placeholder="Москва" />
+        <Field label="Адрес" value={cur.address} onChange={(v) => set("address", v)} />
+      </div>
+
+      {preview && (
+        <div className="rounded-lg bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
+          <span className="text-zinc-400">В маркировке: </span>
+          {preview}
+        </div>
+      )}
+
+      {dirty && (
+        <button
+          type="button"
+          onClick={() => save.mutate()}
+          disabled={save.isPending || innError}
+          className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+        >
+          {save.isPending ? "Сохраняем…" : "Сохранить"}
+        </button>
+      )}
+      {save.error && (
+        <p className="text-sm text-red-600">{errorMessage(save.error)}</p>
+      )}
+    </div>
+  );
+}
+
+function Field({
+  label,
+  value,
+  onChange,
+  placeholder,
+  invalid,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  invalid?: boolean;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs text-zinc-500">{label}</span>
+      <input
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+        className={
+          "w-full rounded-md border px-3 py-1.5 text-sm focus:outline-none " +
+          (invalid
+            ? "border-red-400 focus:border-red-500"
+            : "border-zinc-300 focus:border-emerald-500")
+        }
+      />
+    </label>
+  );
+}
+
+// Прочие реквизиты клиента (бухгалтерия, заметки) — свободный текст в properties.
+function PropertiesCard({
   wsId,
   clientId,
   properties,
@@ -124,7 +330,10 @@ function RequisitesCard({
 }) {
   const qc = useQueryClient();
   const server = Object.fromEntries(
-    FIELDS.map((f) => [f.key, (properties[f.key] as string | undefined) ?? ""]),
+    PROPS_FIELDS.map((f) => [
+      f.key,
+      (properties[f.key] as string | undefined) ?? "",
+    ]),
   );
   const [draft, setDraft] = useState<Record<string, string>>(server);
   const dirty = JSON.stringify(draft) !== JSON.stringify(server);
@@ -135,7 +344,6 @@ function RequisitesCard({
         "/v1/workspaces/{wsId}/tracks/{trackId}",
         {
           params: { path: { wsId, trackId: clientId } },
-          // Мержим в существующие properties, чтобы не затереть прочие ключи.
           body: { properties: { ...properties, ...draft } },
         },
       );
@@ -146,19 +354,15 @@ function RequisitesCard({
 
   return (
     <div className="rounded-2xl bg-white p-5 shadow-sm space-y-3">
-      <h2 className="text-sm font-semibold text-zinc-900">Реквизиты</h2>
+      <h2 className="text-sm font-semibold text-zinc-900">Прочее</h2>
       <div className="grid gap-3 sm:grid-cols-2">
-        {FIELDS.map((f) => (
-          <label key={f.key} className="block">
-            <span className="mb-1 block text-xs text-zinc-500">{f.label}</span>
-            <input
-              value={draft[f.key] ?? ""}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, [f.key]: e.target.value }))
-              }
-              className="w-full rounded-md border border-zinc-300 px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
-            />
-          </label>
+        {PROPS_FIELDS.map((f) => (
+          <Field
+            key={f.key}
+            label={f.label}
+            value={draft[f.key] ?? ""}
+            onChange={(v) => setDraft((d) => ({ ...d, [f.key]: v }))}
+          />
         ))}
       </div>
       {dirty && (
