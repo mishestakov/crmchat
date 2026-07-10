@@ -724,12 +724,14 @@ export const contracts = pgTable(
       .references(() => workspaces.id, { onDelete: "cascade" }),
     type: contractType("type").notNull(),
     // Стороны — юрлица (ОРД client_external_id / contractor_external_id).
+    // onDelete cascade: legal_entities само каскадится от track/contact, поэтому
+    // без явного onDelete NO-ACTION-FK блокировал бы удаление клиента с договором.
     clientId: text("client_id")
       .notNull()
-      .references(() => legalEntities.id), // заказчик
+      .references(() => legalEntities.id, { onDelete: "cascade" }), // заказчик
     contractorId: text("contractor_id")
       .notNull()
-      .references(() => legalEntities.id), // исполнитель
+      .references(() => legalEntities.id, { onDelete: "cascade" }), // исполнитель
     // Какого клиента-трека касается (удобство для агентского договора; не ОРД).
     trackId: text("track_id").references(() => tracks.id, {
       onDelete: "set null",

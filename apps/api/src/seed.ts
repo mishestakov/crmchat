@@ -7,6 +7,7 @@ import {
   channelAdmins,
   channels,
   contacts,
+  legalEntities,
   platformActiveChannels,
   platformActiveSync,
   projects,
@@ -905,6 +906,37 @@ await db
     },
   ])
   .onConflictDoNothing({ target: tracks.id });
+
+// Юрлица рекламодателей — структурные реквизиты для ЕРИД (раньше жили free-text
+// в properties.inn/legal_entity; теперь отдельная таблица, ОРД-канон). Прод-
+// backfill старых properties → apps/api/src/db/backfill-legal-entities.sql.
+await db
+  .insert(legalEntities)
+  .values([
+    {
+      id: "le_ag_coke",
+      workspaceId: AGENCY_WS,
+      trackId: "trk_ag_coke",
+      type: "ul",
+      orgForm: "ООО",
+      name: "Кока-Кола",
+      inn: "7707049388",
+      city: "Москва",
+      createdBy: ZHENYA_ID,
+    },
+    {
+      id: "le_ag_beeline",
+      workspaceId: AGENCY_WS,
+      trackId: "trk_ag_beeline",
+      type: "ul",
+      orgForm: "ПАО",
+      name: "ВымпелКом",
+      inn: "7713076301",
+      city: "Москва",
+      createdBy: ZHENYA_ID,
+    },
+  ])
+  .onConflictDoNothing({ target: legalEntities.id });
 
 await db
   .insert(projects)

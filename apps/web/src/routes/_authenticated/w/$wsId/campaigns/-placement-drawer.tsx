@@ -1017,7 +1017,6 @@ type ProdDraft = {
   creativeRound: number;
   scheduledDate: string; // YYYY-MM-DD
   erid: string;
-  eridAdvertiserData: string;
   actReceived: boolean;
 };
 
@@ -1028,7 +1027,6 @@ function toProd(p: Placement): ProdDraft {
     creativeRound: p.creativeRound,
     scheduledDate: p.scheduledAt ? p.scheduledAt.slice(0, 10) : "",
     erid: p.erid ?? "",
-    eridAdvertiserData: p.eridAdvertiserData ?? "",
     actReceived: !!p.actReceivedAt,
   };
 }
@@ -1114,7 +1112,8 @@ export function ProductionPane({
               ? new Date(draft.scheduledDate).toISOString()
               : null,
             erid: draft.erid || null,
-            eridAdvertiserData: draft.eridAdvertiserData || null,
+            // eridAdvertiserData НЕ трогаем в общем save — это снимок строки
+            // рекламодателя, его пишет только eridSend при отправке в чат.
             // postUrl/publishedAt владеет capture-post (резолв+снапшот), не save.
             actReceivedAt: draft.actReceived
               ? (placement.actReceivedAt ?? new Date().toISOString())
@@ -1474,7 +1473,12 @@ export function ProductionPane({
               type="button"
               onClick={() => eridSend.mutate()}
               disabled={
-                !draft.erid || !adminContactId || !sendAccountId || eridSend.isPending
+                !draft.erid ||
+                !advLine || // без рекламодателя маркировка юридически невалидна
+                !adminContactId ||
+                !sendAccountId ||
+                advertiserQ.isLoading ||
+                eridSend.isPending
               }
               className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
             >
