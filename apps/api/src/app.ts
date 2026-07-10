@@ -31,6 +31,7 @@ import shares from "./routes/shares.ts";
 import stageTemplates from "./routes/stage-templates.ts";
 import stickers from "./routes/stickers.ts";
 import tracks from "./routes/tracks.ts";
+import legalEntities from "./routes/legal-entities.ts";
 import properties from "./routes/properties.ts";
 import workspaces from "./routes/workspaces.ts";
 
@@ -79,6 +80,7 @@ wsApp.route("/", shares);
 wsApp.route("/", quickSend);
 wsApp.route("/", stickers);
 wsApp.route("/", tracks);
+wsApp.route("/", legalEntities);
 wsApp.route("/", stageTemplates);
 wsApp.route("/", outreachSchedule);
 wsApp.route("/", outreachDunning);
