@@ -650,8 +650,9 @@ export const legalEntities = pgTable(
     }),
     type: legalEntityType("type").notNull().default("ul"),
     inn: text("inn"), // валидируем в @repo/core (checksum + длина по type)
-    orgForm: text("org_form"), // «ООО»/«АО»/«ИП» — только для строки маркировки
-    name: text("name"), // «Инстамарт Сервис» (без формы — форма в orgForm)
+    // Наименование целиком, как в ОРД: «ООО «Ромашка»» / «ИП Вася Пупкин».
+    // Форму НЕ разносим отдельным полем — ОРД тоже держит всё в name.
+    name: text("name"),
     kpp: text("kpp"), // ОРД: юрлица РФ
     ogrn: text("ogrn"), // только для строки маркировки (ОРД не просит)
     city: text("city"), // только для строки маркировки

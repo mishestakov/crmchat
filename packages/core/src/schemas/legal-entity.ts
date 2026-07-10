@@ -33,26 +33,24 @@ export function isValidInn(inn: string): boolean {
 // колонками legal_entities (только те, что нужны для текста).
 export type AdvertiserRequisites = {
   type?: LegalEntityType;
-  orgForm?: string | null; // «ООО»/«АО»/«ИП»
-  name?: string | null; // «Инстамарт Сервис» (без формы)
+  name?: string | null; // целиком: «ООО «Инстамарт Сервис»» / «ИП Вася Пупкин»
   city?: string | null;
   ogrn?: string | null;
   inn?: string | null;
 };
 
 // «Рекламодатель ООО «Инстамарт Сервис», Москва, ОГРН 1187746494980».
-// Пустые части опускаем. ОГРН приоритетнее ИНН (как в требованиях маркировки);
-// нет ни того ни другого — блок опускаем. Пусто на выходе, если нет названия.
+// name уже содержит форму (как в ОРД) — ничего не достраиваем. Пустые части
+// опускаем; ОГРН приоритетнее ИНН. Пусто на выходе, если нет названия.
 export function advertiserLine(e: AdvertiserRequisites): string {
   const nm = e.name?.trim();
   if (!nm) return "";
-  const titled = e.orgForm?.trim() ? `${e.orgForm.trim()} «${nm}»` : nm;
   const id = e.ogrn?.trim()
     ? `ОГРН ${e.ogrn.trim()}`
     : e.inn?.trim()
       ? `ИНН ${e.inn.trim()}`
       : null;
-  const parts = [titled, e.city?.trim() || null, id].filter(Boolean);
+  const parts = [nm, e.city?.trim() || null, id].filter(Boolean);
   return `Рекламодатель ${parts.join(", ")}`;
 }
 

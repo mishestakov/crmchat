@@ -113,7 +113,6 @@ function ClientPage() {
 // одно юрлицо. Из этих полей собирается строка маркировки в ЕРИД-шаге.
 type LegalEntityDraft = {
   type: LegalEntityType;
-  orgForm: string;
   name: string;
   inn: string;
   kpp: string;
@@ -124,7 +123,6 @@ type LegalEntityDraft = {
 };
 const EMPTY_ENTITY: LegalEntityDraft = {
   type: "ul",
-  orgForm: "",
   name: "",
   inn: "",
   kpp: "",
@@ -134,7 +132,7 @@ const EMPTY_ENTITY: LegalEntityDraft = {
   phone: "",
 };
 const ENTITY_TYPES: { value: LegalEntityType; label: string }[] = [
-  { value: "ul", label: "Юрлицо (ООО/АО)" },
+  { value: "ul", label: "Юрлицо" },
   { value: "ip", label: "ИП" },
   { value: "fl", label: "Физлицо / самозанятый" },
   { value: "ful", label: "Иностранное юрлицо" },
@@ -183,7 +181,6 @@ function LegalEntityCard({ wsId, clientId }: { wsId: string; clientId: string })
           params: { path: { wsId, trackId: clientId } },
           body: {
             type: cur.type,
-            orgForm: cur.orgForm.trim() || null,
             name: cur.name.trim() || null,
             inn: cur.inn.trim() || null,
             kpp: cur.kpp.trim() || null,
@@ -237,8 +234,12 @@ function LegalEntityCard({ wsId, clientId }: { wsId: string; clientId: string })
             ))}
           </select>
         </label>
-        <Field label="Форма (ООО/АО/ИП)" value={cur.orgForm} onChange={(v) => set("orgForm", v)} />
-        <Field label="Название" value={cur.name} onChange={(v) => set("name", v)} placeholder="Инстамарт Сервис" />
+        <Field
+          label="Наименование"
+          value={cur.name}
+          onChange={(v) => set("name", v)}
+          placeholder="ООО «Ромашка» / ИП Вася Пупкин"
+        />
         <div>
           <Field
             label={`ИНН${innLen ? ` (${innLen} цифр)` : ""}`}

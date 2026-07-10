@@ -24,7 +24,6 @@ const LegalEntitySchema = z
     contactId: z.string().nullable(),
     type: TypeSchema,
     inn: z.string().nullable(),
-    orgForm: z.string().nullable(),
     name: z.string().nullable(),
     kpp: z.string().nullable(),
     ogrn: z.string().nullable(),
@@ -42,7 +41,6 @@ const LegalEntityInputSchema = z
   .object({
     type: TypeSchema,
     inn: z.string().trim().max(12).nullable().optional(),
-    orgForm: z.string().trim().max(50).nullable().optional(),
     name: z.string().trim().max(255).nullable().optional(),
     kpp: z.string().trim().max(9).nullable().optional(),
     ogrn: z.string().trim().max(15).nullable().optional(),
@@ -89,7 +87,6 @@ function serialize(row: typeof legalEntities.$inferSelect) {
     contactId: row.contactId,
     type: row.type,
     inn: row.inn,
-    orgForm: row.orgForm,
     name: row.name,
     kpp: row.kpp,
     ogrn: row.ogrn,
@@ -177,7 +174,6 @@ app.openapi(
     const fields = {
       type: body.type,
       inn: body.inn ?? null,
-      orgForm: body.orgForm ?? null,
       name: body.name ?? null,
       kpp: body.kpp ?? null,
       ogrn: body.ogrn ?? null,
