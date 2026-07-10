@@ -19,13 +19,9 @@ export const Route = createFileRoute(
   component: ClientPage,
 });
 
-// Прочие (не-ЕРИД) реквизиты клиента живут в tracks.properties (jsonb). Юрлицо
-// (ИНН/ОГРН/…) вынесено в отдельную таблицу legal_entities (форма ОРД) —
-// см. LegalEntityCard.
-const PROPS_FIELDS = [
-  { key: "accountant_contact", label: "Контакт бухгалтерии" },
-  { key: "notes", label: "Заметки" },
-] as const;
+// Реквизиты клиента = юрлицо (структурно, форма ОРД) в таблице legal_entities,
+// см. LegalEntityCard. Старый free-text в tracks.properties (inn/legal_entity/
+// бухгалтерия/заметки) убран — единый источник теперь один.
 
 function ClientPage() {
   const { wsId, clientId } = Route.useParams();
@@ -71,12 +67,6 @@ function ClientPage() {
       </div>
 
       <LegalEntityCard wsId={wsId} clientId={clientId} />
-
-      <PropertiesCard
-        wsId={wsId}
-        clientId={clientId}
-        properties={client.properties as Record<string, unknown>}
-      />
 
       <div className="rounded-2xl bg-white p-5 shadow-sm">
         <div className="mb-3 flex items-center justify-between">
@@ -319,69 +309,5 @@ function Field({
         }
       />
     </label>
-  );
-}
-
-// Прочие реквизиты клиента (бухгалтерия, заметки) — свободный текст в properties.
-function PropertiesCard({
-  wsId,
-  clientId,
-  properties,
-}: {
-  wsId: string;
-  clientId: string;
-  properties: Record<string, unknown>;
-}) {
-  const qc = useQueryClient();
-  const server = Object.fromEntries(
-    PROPS_FIELDS.map((f) => [
-      f.key,
-      (properties[f.key] as string | undefined) ?? "",
-    ]),
-  );
-  const [draft, setDraft] = useState<Record<string, string>>(server);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(server);
-
-  const save = useMutation({
-    mutationFn: async () => {
-      const { error } = await api.PATCH(
-        "/v1/workspaces/{wsId}/tracks/{trackId}",
-        {
-          params: { path: { wsId, trackId: clientId } },
-          body: { properties: { ...properties, ...draft } },
-        },
-      );
-      if (error) throw error;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["tracks", wsId] }),
-  });
-
-  return (
-    <div className="rounded-2xl bg-white p-5 shadow-sm space-y-3">
-      <h2 className="text-sm font-semibold text-zinc-900">Прочее</h2>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {PROPS_FIELDS.map((f) => (
-          <Field
-            key={f.key}
-            label={f.label}
-            value={draft[f.key] ?? ""}
-            onChange={(v) => setDraft((d) => ({ ...d, [f.key]: v }))}
-          />
-        ))}
-      </div>
-      {dirty && (
-        <button
-          type="button"
-          onClick={() => save.mutate()}
-          disabled={save.isPending}
-          className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-        >
-          {save.isPending ? "Сохраняем…" : "Сохранить"}
-        </button>
-      )}
-      {save.error && (
-        <p className="text-sm text-red-600">{errorMessage(save.error)}</p>
-      )}
-    </div>
   );
 }

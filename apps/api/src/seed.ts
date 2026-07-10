@@ -512,25 +512,65 @@ await db
       id: "trk_cpp_cocacola",
       workspaceId: CPP_WS,
       name: "Coca-Cola",
-      properties: { inn: "7707049388", contract: "CC-2026-001" },
+      properties: {},
       createdBy: ZHENYA_ID,
     },
     {
       id: "trk_cpp_beeline",
       workspaceId: CPP_WS,
       name: "Beeline",
-      properties: { inn: "7713076301", contract: "BL-2026-014" },
+      properties: {},
       createdBy: ZHENYA_ID,
     },
     {
       id: "trk_cpp_skyeng",
       workspaceId: CPP_WS,
       name: "Skyeng",
-      properties: { inn: "7724831594", contract: "SK-2026-007" },
+      properties: {},
       createdBy: ZHENYA_ID,
     },
   ])
   .onConflictDoNothing({ target: tracks.id });
+
+// Юрлица клиентов CPP-воркспейса (реквизиты для ЕРИД — legal_entities, канон).
+await db
+  .insert(legalEntities)
+  .values([
+    {
+      id: "le_cpp_coke",
+      workspaceId: CPP_WS,
+      trackId: "trk_cpp_cocacola",
+      type: "ul",
+      orgForm: "ООО",
+      name: "Кока-Кола",
+      inn: "7707049388",
+      city: "Москва",
+      createdBy: ZHENYA_ID,
+    },
+    {
+      id: "le_cpp_beeline",
+      workspaceId: CPP_WS,
+      trackId: "trk_cpp_beeline",
+      type: "ul",
+      orgForm: "ПАО",
+      name: "ВымпелКом",
+      inn: "7713076301",
+      city: "Москва",
+      createdBy: ZHENYA_ID,
+    },
+    {
+      id: "le_cpp_skyeng",
+      workspaceId: CPP_WS,
+      trackId: "trk_cpp_skyeng",
+      type: "ul",
+      orgForm: "ООО",
+      name: "Скайенг",
+      inn: "7724831594",
+      city: "Москва",
+      createdBy: ZHENYA_ID,
+    },
+  ])
+  .onConflictDoNothing({ target: legalEntities.id });
 
 // Stage template "Размещение в TG" — 8 стадий из agency-pivot.md (от подбора
 // канала до закрытия). Один template на всё агентство — у 99% клиентов
@@ -890,26 +930,21 @@ await db
       id: "trk_ag_coke",
       workspaceId: AGENCY_WS,
       name: "Coca-Cola",
-      properties: {
-        legal_entity: "ООО «Кока-Кола»",
-        inn: "7707049388",
-        accountant_contact: "buh@coca-cola.example",
-      },
+      properties: {},
       createdBy: ZHENYA_ID,
     },
     {
       id: "trk_ag_beeline",
       workspaceId: AGENCY_WS,
       name: "Beeline",
-      properties: { inn: "7713076301" },
+      properties: {},
       createdBy: ZHENYA_ID,
     },
   ])
   .onConflictDoNothing({ target: tracks.id });
 
-// Юрлица рекламодателей — структурные реквизиты для ЕРИД (раньше жили free-text
-// в properties.inn/legal_entity; теперь отдельная таблица, ОРД-канон). Прод-
-// backfill старых properties → apps/api/src/db/backfill-legal-entities.sql.
+// Юрлица рекламодателей — структурные реквизиты для ЕРИД (legal_entities, ОРД-
+// канон). Раньше жили free-text в properties/кампании — переехали сюда целиком.
 await db
   .insert(legalEntities)
   .values([

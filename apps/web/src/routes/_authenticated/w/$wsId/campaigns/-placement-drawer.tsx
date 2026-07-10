@@ -1035,16 +1035,12 @@ export function ProductionPane({
   wsId,
   projectId,
   placement,
-  advertiserData,
   siblings,
   onSelectPlacement,
 }: {
   wsId: string;
   projectId: string;
   placement: Placement;
-  // Реквизиты рекламодателя с кампании (бриф) — дефолт для ЕРИД-шага, если у
-  // размещения свои не заданы.
-  advertiserData: string | null;
   // Размещения того же админа в кампании (для чипов-переключателя, как в
   // лонглисте). <2 → чипы скрыты. Пусто = нет переключения.
   siblings: Placement[];
@@ -1071,8 +1067,8 @@ export function ProductionPane({
   const set = <K extends keyof ProdDraft>(k: K, v: ProdDraft[K]) =>
     setDraft((d) => ({ ...d, [k]: v }));
   // Реквизиты рекламодателя для ЕРИД: единый источник — юрлицо клиента
-  // (project → track → legal_entity). Fallback на старый free-text брифа
-  // (advertiserData), пока юрлицо не заведено — не ломаем существующие кампании.
+  // (project → track → legal_entity). Нет юрлица (или без названия) → маркировку
+  // не собрать, шаг подсказывает завести реквизиты в карточке клиента.
   const advertiserQ = useQuery({
     queryKey: ["advertiser", wsId, projectId] as const,
     queryFn: async () => {
@@ -1084,11 +1080,9 @@ export function ProductionPane({
       return (data ?? null) as AdvertiserRequisites | null;
     },
   });
-  const advReqs: AdvertiserRequisites = advertiserQ.data?.name
-    ? advertiserQ.data
-    : { name: advertiserData || null };
-  const advLine = advertiserLine(advReqs); // строка «Рекламодатель …» для превью/снимка
-  const markingText = markingMessage(advReqs, draft.erid);
+  const advReqs = advertiserQ.data?.name ? advertiserQ.data : null;
+  const advLine = advReqs ? advertiserLine(advReqs) : ""; // «Рекламодатель …» для превью/снимка
+  const markingText = advReqs ? markingMessage(advReqs, draft.erid) : "";
   // Прыжок к помеченному сообщению в чате справа (клик «открыть в чате»). nonce
   // растёт на каждый клик — повторный прыжок к тому же id срабатывает снова.
   const [jumpTo, setJumpTo] = useState<{

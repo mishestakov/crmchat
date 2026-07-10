@@ -304,7 +304,6 @@ function BriefPhase({
     periodEnd: toDateInput(campaign.periodEnd),
     tov: campaign.tov ?? "",
     constraints: campaign.constraints ?? "",
-    advertiserData: campaign.advertiserData ?? "",
     // Ценовые настройки кампании (срез 3).
     akPercent: campaign.akPercent.toString(),
     vatEnabled: campaign.vatEnabled,
@@ -335,7 +334,6 @@ function BriefPhase({
               : null,
             tov: draft.tov || null,
             constraints: draft.constraints || null,
-            advertiserData: draft.advertiserData || null,
             akPercent: parsePct(draft.akPercent, 0),
             vatEnabled: draft.vatEnabled,
             vatRate: parsePct(draft.vatRate, 22),
@@ -423,19 +421,8 @@ function BriefPhase({
             className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
           />
         </BriefField>
-        <BriefField label="Рекламодатель (ИНН + название)">
-          <input
-            value={draft.advertiserData}
-            onChange={(e) =>
-              setDraft((d) => ({ ...d, advertiserData: e.target.value }))
-            }
-            placeholder="ИНН 7700000000, ООО «Рекламодатель»"
-            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
-          />
-          <p className="mt-1 text-xs text-zinc-400">
-            Подставится в ЕРИД-шаг всех размещений кампании.
-          </p>
-        </BriefField>
+        {/* Реквизиты рекламодателя больше не на кампании — заводятся в карточке
+            клиента (юрлицо), единый источник для ЕРИД всех её кампаний. */}
 
         <div className="border-t border-zinc-100 pt-4">
           <div className="mb-1 text-xs font-medium uppercase tracking-wide text-zinc-400">
@@ -2141,7 +2128,6 @@ function ProductionPhase({
                 wsId={wsId}
                 projectId={projectId}
                 placement={p}
-                advertiserData={campaign.advertiserData}
                 siblings={
                   p.adminContactId
                     ? (adminGroups.get(p.adminContactId) ?? [])
