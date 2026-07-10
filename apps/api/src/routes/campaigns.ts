@@ -25,6 +25,7 @@ import {
   resolveProjectAccountIds,
   resolveSenderNames,
   scheduleLeads,
+  channelIdentifier,
   FINAL_OFFER_MSG_IDX,
 } from "../lib/project-scheduling.ts";
 import { substituteVariables } from "../lib/substitute-variables.ts";
@@ -902,8 +903,15 @@ app.openapi(
         tgUserId: projectItems.tgUserId,
         contactId: projectItems.contactId,
         properties: projectItems.properties,
+        // Для {{каналы}} в оффере: идентификатор канала (тот же helper, что в
+        // опенере — TG → @username, провайдер → ссылка, иначе title).
+        platform: channels.platform,
+        channelUsername: channels.username,
+        channelLink: channels.link,
+        channelTitle: channels.title,
       })
       .from(projectItems)
+      .leftJoin(channels, eq(channels.id, projectItems.channelId))
       .where(
         and(
           eq(projectItems.projectId, projectId),
@@ -911,7 +919,10 @@ app.openapi(
           isNotNull(projectItems.shortlistedAt),
           sql`(${projectItems.username} IS NOT NULL OR ${projectItems.tgUserId} IS NOT NULL)`,
         ),
-      );
+      )
+      // Детерминированный порядок каналов в {{каналы}} (как в опенере) —
+      // «первый» канал не зависит от плана Postgres.
+      .orderBy(asc(projectItems.createdAt));
 
     // Один DM на ПОЛУЧАТЕЛЯ, а не на канал. Идентичность получателя может быть
     // РАЗМАЗАНА по разным полям у сиблинг-каналов одного человека: у одного канала
@@ -1007,9 +1018,19 @@ app.openapi(
     }
     // Представитель группы — с tg_user_id (чтобы сохранить sticky-аккаунт того,
     // кто вёл переписку), иначе первый. Реальный DM — по одному на представителя.
-    const targets = [...byRoot.values()].map(
-      (g) => g.find((r) => r.tgUserId) ?? g[0]!,
-    );
+    // idents — все каналы получателя в проекте (для {{каналы}} в тексте оффера);
+    // порядок — как выбрал ORDER BY created_at выше.
+    const targets = [...byRoot.values()].map((g) => ({
+      rep: g.find((r) => r.tgUserId) ?? g[0]!,
+      idents: g.map((r) =>
+        channelIdentifier({
+          platform: r.platform,
+          username: r.channelUsername,
+          title: r.channelTitle,
+          link: r.channelLink,
+        }).ident,
+      ),
+    }));
 
     // active-аккаунты проекта (round-robin) + sticky-continuity.
     const accountIds = await resolveProjectAccountIds(wsId, project);
@@ -1019,7 +1040,7 @@ app.openapi(
       });
     }
     const tgUserIds = targets
-      .map((r) => r.tgUserId)
+      .map((t) => t.rep.tgUserId)
       .filter((x): x is string => x !== null);
     const sticky = await resolveStickyByTgUserIds(wsId, tgUserIds);
     // Имена отправителей пула — чтобы {{отправитель}} в оффере резолвился, а не
@@ -1028,8 +1049,8 @@ app.openapi(
 
     let rr = 0;
     const now = new Date();
-    const scheduled = targets.map((pl) => {
-      const stickyAcc = pl.tgUserId ? sticky.get(pl.tgUserId) : undefined;
+    const scheduled = targets.map(({ rep, idents }) => {
+      const stickyAcc = rep.tgUserId ? sticky.get(rep.tgUserId) : undefined;
       // sticky берём только если аккаунт ещё активен; иначе round-robin.
       const accountId =
         stickyAcc && accountIds.includes(stickyAcc)
@@ -1038,12 +1059,17 @@ app.openapi(
       return {
         workspaceId: wsId,
         projectId,
-        itemId: pl.id,
+        itemId: rep.id,
         accountId,
         messageIdx: FINAL_OFFER_MSG_IDX,
         text: substituteVariables(text, {
-          username: pl.username,
-          properties: pl.properties as Record<string, string>,
+          username: rep.username,
+          // {{каналы}} = список всех каналов получателя (как в опенере). Кладём
+          // поверх properties, чтобы плейсхолдер резолвился, а не уезжал литералом.
+          properties: {
+            ...(rep.properties as Record<string, string>),
+            каналы: idents.join(", "),
+          },
           senderName: senderNames.get(accountId) ?? null,
         }),
         sendAt: now,
@@ -1067,7 +1093,7 @@ app.openapi(
         .where(
           inArray(
             projectItems.id,
-            targets.map((t) => t.id),
+            targets.map((t) => t.rep.id),
           ),
         );
       // Worker берёт pending только при project.status='active'.

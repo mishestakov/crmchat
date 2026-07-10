@@ -1737,6 +1737,14 @@ function ShortlistPhase({
           onChange={(e) => setText(e.target.value)}
           className="w-full rounded-xl border border-zinc-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
         />
+        <p className="text-xs text-zinc-500">
+          Подстановка:{" "}
+          <code className="rounded bg-zinc-100 px-1">{"{{каналы}}"}</code> —
+          каналы получателя через запятую (TG — @username, YouTube/TikTok/Дзен —
+          ссылкой);{" "}
+          <code className="rounded bg-zinc-100 px-1">{"{{отправитель}}"}</code> —
+          имя вашего аккаунта.
+        </p>
         <div className="flex items-center gap-3">
           <button
             type="button"
