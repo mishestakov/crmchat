@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
 import { api } from "../lib/api";
 import { errorMessage } from "../lib/errors";
 import { useEventSourceEvent } from "../lib/hooks";
+import { useChatDraft } from "../lib/use-chat-draft";
 import { ChatComposer } from "./chat-composer";
 
 // Переписка MAX-контакта (#5): история через max-сессию (лёгкий поллинг для
@@ -14,7 +14,9 @@ export function MaxChatBody(props: {
   displayName: string;
 }) {
   const qc = useQueryClient();
-  const [text, setText] = useState("");
+  const { text, setText, clear } = useChatDraft(
+    `max:${props.wsId}:${props.contactId}`,
+  );
 
   const historyQ = useQuery({
     queryKey: ["max-history", props.wsId, props.contactId] as const,
@@ -59,7 +61,7 @@ export function MaxChatBody(props: {
       return data!;
     },
     onSuccess: () => {
-      setText("");
+      clear();
       qc.invalidateQueries({
         queryKey: ["max-history", props.wsId, props.contactId],
       });

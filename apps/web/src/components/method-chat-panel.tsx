@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
 import { api } from "../lib/api";
 import { errorMessage } from "../lib/errors";
+import { useChatDraft } from "../lib/use-chat-draft";
 import { ChatComposer } from "./chat-composer";
 
 // Чат «способа связи через чат» (этап 16.9): группа обсуждения ИЛИ личка канала.
@@ -23,7 +23,10 @@ export function MethodChatPanel({
   starCost?: number | null;
 }) {
   const qc = useQueryClient();
-  const [text, setText] = useState("");
+  // target в ключе черновика: у одного канала группа и личка — разные треды.
+  const { text, setText, clear } = useChatDraft(
+    `method:${wsId}:${channelId}:${target}`,
+  );
   // queryKey включает target: один канал может быть и группой (плейсмент), и
   // личкой (каталог) — кэши не должны смешиваться.
   const historyKey = ["method-history", wsId, channelId, target] as const;
@@ -54,7 +57,7 @@ export function MethodChatPanel({
       if (error) throw error;
     },
     onSuccess: () => {
-      setText("");
+      clear();
       qc.invalidateQueries({ queryKey: historyKey });
     },
   });

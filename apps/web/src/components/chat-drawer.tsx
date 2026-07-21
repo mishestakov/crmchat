@@ -51,6 +51,7 @@ import {
 import { errorMessage } from "../lib/errors";
 import { formatFileSize } from "../lib/format";
 import { useEscapeKey, useEventSourceEvent } from "../lib/hooks";
+import { useChatDraft } from "../lib/use-chat-draft";
 import { ChannelDrawer } from "./channel-drawer";
 import { ChatComposer } from "./chat-composer";
 import {
@@ -263,13 +264,29 @@ export function ChatPanel(props: {
     },
   });
 
-  const [composeText, setComposeText] = useState("");
+  // Черновик по контакту (не по аккаунту — переживает смену отправляющего
+  // аккаунта). Кастом-эмодзи (draftEmojiRef) и режим правки в localStorage не
+  // кладём: при восстановлении кастом-эмодзи деградируют в юникод, а текст
+  // правки в редких случаях (закрыли дровер прямо в режиме edit) осел бы
+  // черновиком — оба edge для MVP приемлемы.
+  const {
+    text: composeText,
+    setText: setComposeText,
+    clear: clearDraft,
+  } = useChatDraft(`tg:${props.wsId}:${props.contact.id}`);
   // Кастом-эмодзи, вставленные в черновик из пикера: символ → custom_emoji_id.
   // Офсеты при редактировании текста не трекаем — перед отправкой находим
   // вхождения этих символов (по УЖЕ обрезанному тексту — он и уходит) и
   // вешаем entity на каждое. Допущение MVP: одинаковый символ в черновике =
   // один и тот же кастом-эмодзи.
   const draftEmojiRef = useRef(new Map<string, string>());
+  // Смена контакта перезагружает черновик (ключ в useChatDraft) — сбрасываем и
+  // карту кастом-эмодзи. Иначе её записи от прежнего контакта налипли бы на
+  // одноимённые символы в восстановленном черновике (чужой custom_emoji_id).
+  // Согласуется с тем, что восстановленный черновик и так plain-text.
+  useEffect(() => {
+    draftEmojiRef.current = new Map();
+  }, [props.contact.id]);
   const draftEntities = (text: string) => {
     const ents: { offset: number; length: number; customEmojiId: string }[] =
       [];
@@ -304,13 +321,16 @@ export function ChatPanel(props: {
     y: number;
   } | null>(null);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
-  // Режим редактирования своего сообщения: текст оригинала уходит в композер,
-  // prevDraft — недописанный черновик, вернём его после отправки/отмены.
+  // Режим редактирования своего сообщения. Текст правки живёт в отдельном
+  // editText, НЕ в composeText: иначе он затирал бы персистентный черновик в
+  // localStorage (и при закрытии посреди правки черновик терялся бы, а его
+  // место занимал текст правки). Композер показывает editText, когда editTarget
+  // задан. original — для плашки «редактируем: …».
   const [editTarget, setEditTarget] = useState<{
     id: string;
     original: string;
-    prevDraft: string;
   } | null>(null);
+  const [editText, setEditText] = useState("");
   // Ошибки действий (загрузка файла, удаление, пометка) — одной красной
   // полосой под шапкой; каждая мутация чистит её на старте успеха.
   const [actionError, setActionError] = useState<string | null>(null);
@@ -351,7 +371,7 @@ export function ChatPanel(props: {
     },
     onSuccess: (_data, args) => {
       if (args.clearDraft) {
-        setComposeText("");
+        clearDraft();
         draftEmojiRef.current = new Map();
       }
       if (args.replyToMessageId) setReplyTo(null);
@@ -365,13 +385,7 @@ export function ChatPanel(props: {
   });
 
   const editMut = useMutation({
-    // prevDraft едет в args, а не читается из state: за время запроса режим
-    // могли отменить или начать править другое сообщение.
-    mutationFn: async (args: {
-      messageId: string;
-      text: string;
-      prevDraft: string;
-    }) => {
+    mutationFn: async (args: { messageId: string; text: string }) => {
       const { error } = await api.POST(
         "/v1/workspaces/{wsId}/contacts/{id}/chat/edit-message",
         {
@@ -386,9 +400,11 @@ export function ChatPanel(props: {
       if (error) throw error;
     },
     onSuccess: (_data, args) => {
+      // Правку завершили — выходим из режима. Черновик (composeText) всё это
+      // время лежал нетронутым, восстанавливать нечего.
       if (editTarget?.id === args.messageId) {
-        setComposeText(args.prevDraft);
         setEditTarget(null);
+        setEditText("");
       }
       // Сообщения старых страниц живут в локальном olderPages и инвалидацией
       // не перечитываются — патчим текст точечно, иначе правка «не видна».
@@ -495,8 +511,8 @@ export function ChatPanel(props: {
       setReplyTo((prev) => (prev?.id === messageId ? null : prev));
       // То же с режимом правки: сохранение в удалённый id — мёртвый путь.
       if (editTarget?.id === messageId) {
-        setComposeText(editTarget.prevDraft);
         setEditTarget(null);
+        setEditText("");
         editMut.reset();
       }
       qc.invalidateQueries({
@@ -540,7 +556,7 @@ export function ChatPanel(props: {
     onSuccess: () => {
       setPendingFiles([]);
       setSendAsFile(false);
-      setComposeText("");
+      clearDraft();
       setReplyTo(null);
       qc.invalidateQueries({
         queryKey: [
@@ -1295,6 +1311,12 @@ export function ChatPanel(props: {
             })
           }
           onPickCustomEmoji={(id, emoji) => {
+            // В режиме правки эмодзи идёт в editText и уходит юникодом (edit
+            // шлёт plain text, entities не поддерживает) — id не трекаем.
+            if (editTarget) {
+              setEditText((t) => t + emoji);
+              return;
+            }
             setComposeText((t) => t + emoji);
             draftEmojiRef.current.set(emoji, id);
           }}
@@ -1303,20 +1325,17 @@ export function ChatPanel(props: {
             sendingAccount ? formatAccount(sendingAccount) : props.accountId
           }
           health={accountHealth(sendingAccount)}
-          text={composeText}
-          onTextChange={setComposeText}
+          text={editTarget ? editText : composeText}
+          onTextChange={editTarget ? setEditText : setComposeText}
           onSend={() => {
-            const text = composeText.trim();
             if (editTarget) {
-              if (text) {
-                editMut.mutate({
-                  messageId: editTarget.id,
-                  text,
-                  prevDraft: editTarget.prevDraft,
-                });
+              const edited = editText.trim();
+              if (edited) {
+                editMut.mutate({ messageId: editTarget.id, text: edited });
               }
               return;
             }
+            const text = composeText.trim();
             // Есть вложения — уходят медиа-роутом (подпись = текст черновика).
             // asFile учитываем только когда всё картинки (в миксе галочки нет).
             if (pendingFiles.length) {
@@ -1358,8 +1377,8 @@ export function ChatPanel(props: {
           })()}
           editTo={editTarget ? { text: editTarget.original } : null}
           onCancelEdit={() => {
-            setComposeText(editTarget?.prevDraft ?? "");
             setEditTarget(null);
+            setEditText("");
             editMut.reset();
           }}
           replyTo={
@@ -1413,8 +1432,8 @@ export function ChatPanel(props: {
               // Reply и edit взаимоисключающие в обе стороны — иначе reply
               // живёт невидимым под edit-плашкой и всплывает позже.
               if (editTarget) {
-                setComposeText(editTarget.prevDraft);
                 setEditTarget(null);
+                setEditText("");
                 editMut.reset();
               }
               setMsgMenu(null);
@@ -1427,12 +1446,9 @@ export function ChatPanel(props: {
               const m = msgMenu.m;
               setMsgMenu(null);
               editMut.reset();
-              setEditTarget({
-                id: m.id,
-                original: m.text,
-                prevDraft: composeText,
-              });
-              setComposeText(m.text);
+              // Черновик (composeText) НЕ трогаем — правка живёт в editText.
+              setEditTarget({ id: m.id, original: m.text });
+              setEditText(m.text);
               setReplyTo(null);
             }}
             onDelete={() => {
