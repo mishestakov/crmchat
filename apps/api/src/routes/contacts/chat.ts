@@ -20,7 +20,7 @@ import {
   assertAccountAccess,
   assertAccountInWorkspace,
 } from "../../lib/outreach-access.ts";
-import { ensureContactTgUserId } from "../../lib/ensure-tg-user-id.ts";
+import { ensureContactTgUserIdViaPool } from "../../lib/ensure-tg-user-id.ts";
 import { errMsg } from "../../lib/errors.ts";
 import { getOutreachWorkerClient } from "../../lib/outreach-account-client.ts";
 import { sendMedia, downloadToBytes } from "../../lib/td-files.ts";
@@ -179,11 +179,13 @@ app.openapi(
     // Lazy-резолв tg_user_id для контактов, импортированных по @ без
     // последующих отправок — один раз через searchPublicChat, сохраняем в
     // properties. Без id ни tg_chats, ни history открыть не можем.
-    const tgUserId = await ensureContactTgUserId({
+    // Через ПУЛ: searchPublicChat лимитирован, выбранный аккаунт во флуде →
+    // ищем другим живым (id — глобальный факт, кто нашёл — неважно).
+    const tgUserId = await ensureContactTgUserIdViaPool({
       workspaceId: wsId,
       contactId: id,
       properties: props,
-      client,
+      preferred: { client, accountId },
     });
     if (!tgUserId) {
       throw new HTTPException(400, {
@@ -684,11 +686,11 @@ app.openapi(
     if (!client) {
       throw new HTTPException(503, { message: "tg client unavailable" });
     }
-    const tgUserId = await ensureContactTgUserId({
+    const tgUserId = await ensureContactTgUserIdViaPool({
       workspaceId: wsId,
       contactId: id,
       properties: contact.properties as Record<string, unknown>,
-      client,
+      preferred: { client, accountId },
     });
     if (!tgUserId) {
       throw new HTTPException(400, { message: "не нашли бота в Telegram" });
