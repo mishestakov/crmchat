@@ -21,7 +21,7 @@ import outreachAccountDelegations from "./routes/outreach-account-delegations.ts
 import outreachAccounts from "./routes/outreach-accounts.ts";
 import outreachSchedule from "./routes/outreach-schedule.ts";
 import outreachDunning from "./routes/outreach-dunning.ts";
-import projects from "./routes/projects.ts";
+import projects from "./routes/projects/index.ts";
 import platformActive from "./routes/platform-active.ts";
 import quickSend from "./routes/quick-send.ts";
 import rkn from "./routes/rkn.ts";

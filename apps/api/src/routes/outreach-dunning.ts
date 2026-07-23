@@ -3,7 +3,7 @@ import { HTTPException } from "hono/http-exception";
 import { eq } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import { EMPTY_DUNNING, workspaces } from "../db/schema.ts";
-import { DunningSchema } from "./projects.ts";
+import { DunningSchema } from "./projects/shared.ts";
 import type { WorkspaceVars } from "../middleware/assert-member.ts";
 
 // Пиналка (догон) — одна на воркспейс (§1.3 bd-autodogon): фразы + котики +
