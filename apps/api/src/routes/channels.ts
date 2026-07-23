@@ -725,7 +725,10 @@ app.openapi(
       await db
         .update(channels)
         .set({
-          meta: sql`${channels.meta} || ${JSON.stringify({
+          // suggested_admin снимаем, как person/external-ветки: осознанный выбор
+          // способа разрешает расхождение — иначе бейдж-предложение висит вечно,
+          // а его «принять» молча стирает выбор «группа» (дрейф веток, аудит №4).
+          meta: sql`(${channels.meta} - 'suggested_admin') || ${JSON.stringify({
             contact_method: {
               kind: "group",
               chat_id: body.group.chatId,
@@ -747,7 +750,8 @@ app.openapi(
       await db
         .update(channels)
         .set({
-          meta: sql`${channels.meta} || ${JSON.stringify({
+          // suggested_admin — как в group-ветке выше.
+          meta: sql`(${channels.meta} - 'suggested_admin') || ${JSON.stringify({
             contact_method: { kind: "channel_dm" },
           })}::jsonb`,
         })
