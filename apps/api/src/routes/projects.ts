@@ -51,7 +51,7 @@ import {
 } from "../lib/project-scheduling.ts";
 import { canFillDunning, ChannelRelationStatusSchema } from "@repo/core";
 import { type WorkspaceVars } from "../middleware/assert-member.ts";
-import { nextStepSql } from "./contacts.ts";
+import { nextStepSql } from "./contacts/index.ts";
 
 // Outreach-проект: рассылка по одному списку с N сообщениями и задержками.
 // Активация = pre-schedule всех scheduled_messages с round-robin аккаунтом и

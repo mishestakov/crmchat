@@ -21,7 +21,7 @@ import { assertAccountAccess } from "../lib/outreach-access.ts";
 import { recordAccountEvent } from "../lib/account-events.ts";
 import { emitProjectChanged } from "../lib/events.ts";
 import { FINAL_OFFER_MSG_IDX } from "../lib/project-scheduling.ts";
-import { readOnTelegram } from "./contacts.ts";
+import { readOnTelegram } from "./contacts/chat.ts";
 import type { WorkspaceVars } from "../middleware/assert-member.ts";
 
 // Quick send — ручная одиночная отправка из drawer'а контакта/лида (12.4+).

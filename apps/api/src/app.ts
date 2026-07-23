@@ -13,7 +13,7 @@ import activities from "./routes/activities.ts";
 import auth from "./routes/auth.ts";
 import campaigns from "./routes/campaigns.ts";
 import channels from "./routes/channels.ts";
-import contacts from "./routes/contacts.ts";
+import contacts from "./routes/contacts/index.ts";
 import { memberOps, publicInvites, wsInvites } from "./routes/invites.ts";
 import me from "./routes/me.ts";
 import membersDismiss from "./routes/members-dismiss.ts";
