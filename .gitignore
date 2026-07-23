@@ -83,3 +83,7 @@ specs/*.txt
 
 # service-account ключи (Google Docs API и пр.) — секреты, не в git
 apps/api/.secrets/
+
+# локальный агент-конфиг и одноразовые диагностические отчёты — вне git
+AGENTS.md
+diagnostics/
