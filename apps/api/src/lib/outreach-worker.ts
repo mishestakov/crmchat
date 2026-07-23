@@ -2,6 +2,7 @@ import { and, asc, eq, gte, inArray, isNull, lt, lte, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
   contacts,
+  outreachAccountEvents,
   outreachAccounts,
   projectItems,
   projects,
@@ -310,7 +311,6 @@ async function processAccount(accountId: string, items: DueItem[]) {
   let newLeadsRemaining = account.newLeadsDailyLimit;
   if (hasColdFirstMessage) {
     const coldSentToday = await countColdFirstMessagesToday(
-      account.workspaceId,
       accountId,
       outreachSchedule.timezone,
     );
@@ -1026,35 +1026,34 @@ function classifyKilled(msg: string): "unauthorized" | "banned" | null {
   return null;
 }
 
-// Дневной лимит «новых контактов» — про cold-peer'ов. Warm (которые нам
-// когда-либо отвечали) не съедают слот: реальный менеджер с уже знакомым
-// собеседником общается без оглядки на счётчик. Считаем msg_idx=0 sent
-// сегодня для peer'ов, которым ни один аккаунт воркспейса ещё не получал
-// inbound (tg_chats.has_inbound=false / запись отсутствует).
+// Дневной лимит «новых контактов» = число ХОЛОДНЫХ первых касаний, отправленных
+// сегодня. Читаем из журнала account_events (type='cold_send') — тот же источник,
+// что и счётчик «новым N/лимит» на экране аккаунтов (см. coldCountSql в
+// routes/outreach-accounts.ts), поэтому гейт и показатель всегда сходятся.
+//
+// Coldness ЗАМОРОЖЕНА на момент отправки (cold_send пишется по факту, worker ниже).
+// Раньше здесь пересчитывалась «тёплость» на чтении — и блогер, ответивший в
+// течение дня, выпадал из счётчика, освобождая слот под ЕЩЁ одно холодное касание;
+// так аккаунт перескакивал лимит (11–14 при лимите 10) и рисковал PEER_FLOOD.
+// Отвеченный сегодня контакт — всё равно сегодняшнее холодное касание, слот ест.
+// Тёплые касания (в уже существующий диалог) слот не тратят и так — они cold_send
+// не пишут.
 async function countColdFirstMessagesToday(
-  workspaceId: string,
   accountId: string,
   tz: string,
 ): Promise<number> {
   const startIso = startOfDayInTz(new Date(), tz).toISOString();
-  const rows = await db
-    .select({ tgUserId: projectItems.tgUserId })
-    .from(scheduledMessages)
-    .innerJoin(projectItems, eq(projectItems.id, scheduledMessages.itemId))
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(outreachAccountEvents)
     .where(
       and(
-        eq(scheduledMessages.accountId, accountId),
-        eq(scheduledMessages.status, "sent"),
-        eq(scheduledMessages.messageIdx, 0),
-        gte(scheduledMessages.sentAt, sql`${startIso}::timestamptz`),
+        eq(outreachAccountEvents.accountId, accountId),
+        eq(outreachAccountEvents.type, "cold_send"),
+        gte(outreachAccountEvents.at, sql`${startIso}::timestamptz`),
       ),
     );
-  const peerIds = rows
-    .map((r) => r.tgUserId)
-    .filter((x): x is string => x !== null);
-  if (peerIds.length === 0) return 0;
-  const warm = await resolveWarmTgUserIds(workspaceId, peerIds);
-  return peerIds.filter((id) => !warm.has(id)).length;
+  return row?.n ?? 0;
 }
 
 function sleep(ms: number) {
