@@ -821,7 +821,17 @@ function LeadsPage() {
         <LeadChatDrawer
           wsId={wsId}
           lead={drawerLead}
-          accounts={accountsQ.data ?? []}
+          // Аккаунты проекта — вперёд: у драфт-лида без sticky дровер дефолтится
+          // в accounts[0], и без сортировки это первый аккаунт ВОРКСПЕЙСА (мог
+          // быть dev/чужой, не подключённый к проекту). Полный список сохраняем —
+          // пикер в шапке дровера позволяет смотреть историю с любого аккаунта.
+          accounts={[...(accountsQ.data ?? [])].sort((a, b) => {
+            const inPool = (x: { id: string }) =>
+              seq.data?.accountsMode === "selected"
+                ? seq.data.accountsSelected.includes(x.id)
+                : true;
+            return Number(inPool(b)) - Number(inPool(a));
+          })}
           onClose={() => setDrawerLeadId(null)}
           stageControl={{
             stages: [...(seq.data?.stages ?? [])].sort(
