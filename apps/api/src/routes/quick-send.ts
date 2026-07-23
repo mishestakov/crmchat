@@ -17,6 +17,7 @@ import {
   parseFloodWaitSeconds,
   setAccountCooldown,
 } from "../lib/outreach-account-client.ts";
+import { assertAccountAccess } from "../lib/outreach-access.ts";
 import { recordAccountEvent } from "../lib/account-events.ts";
 import { emitProjectChanged } from "../lib/events.ts";
 import { FINAL_OFFER_MSG_IDX } from "../lib/project-scheduling.ts";
@@ -202,17 +203,14 @@ app.openapi(
     const wsId = c.get("workspaceId");
     const body = c.req.valid("json");
 
-    const [acc] = await db
-      .select()
-      .from(outreachAccounts)
-      .where(
-        and(
-          eq(outreachAccounts.id, body.accountId),
-          eq(outreachAccounts.workspaceId, wsId),
-        ),
-      )
-      .limit(1);
-    if (!acc) throw new HTTPException(404, { message: "account not found" });
+    // Отправка — действие от имени аккаунта: полный доступ (owner/делегация),
+    // не только принадлежность воркспейсу. Возвращает row — статус ниже.
+    const acc = await assertAccountAccess(
+      body.accountId,
+      wsId,
+      c.get("userId"),
+      c.get("workspaceRole"),
+    );
     if (acc.status !== "active") {
       throw new HTTPException(400, {
         message: `Account is ${acc.status} — нельзя отправить`,

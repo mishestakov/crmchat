@@ -46,6 +46,10 @@ import {
   enforceRequiredProperties,
   validateEntityProperties,
 } from "../lib/entity-properties.ts";
+import {
+  assertAccountAccess,
+  assertAccountInWorkspace,
+} from "../lib/outreach-access.ts";
 import { ensureContactTgUserId } from "../lib/ensure-tg-user-id.ts";
 import { errMsg } from "../lib/errors.ts";
 import { getOutreachWorkerClient } from "../lib/outreach-account-client.ts";
@@ -64,7 +68,11 @@ import {
   parseInlineEntities,
 } from "../lib/td-message.ts";
 import { respondWithCreativeMedia } from "../lib/creative-media-response.ts";
-import { assertRole, type WorkspaceVars } from "../middleware/assert-member.ts";
+import {
+  assertRole,
+  type WorkspaceRole,
+  type WorkspaceVars,
+} from "../middleware/assert-member.ts";
 
 // Subquery: ближайший открытый reminder для контакта. Тащим в каждый GET — чтобы
 // kanban-карточки могли показывать NextStep без N+1 запросов. Возвращает null,
@@ -377,17 +385,14 @@ app.openapi(
     const { id } = c.req.valid("param");
     const { accountId } = c.req.valid("json");
     await assertContactAccess(id, wsId);
-    const [acc] = await db
-      .select({ id: outreachAccounts.id })
-      .from(outreachAccounts)
-      .where(
-        and(
-          eq(outreachAccounts.id, accountId),
-          eq(outreachAccounts.workspaceId, wsId),
-        ),
-      )
-      .limit(1);
-    if (!acc) throw new HTTPException(404, { message: "account not found" });
+    // Sticky влияет на будущие ОТПРАВКИ с аккаунта (планировщик закрепляет
+    // peer'а) — полный доступ (owner/делегация), не только воркспейс.
+    await assertAccountAccess(
+      accountId,
+      wsId,
+      c.get("userId"),
+      c.get("workspaceRole"),
+    );
     await db
       .update(contacts)
       .set({ primaryAccountId: accountId, updatedAt: new Date() })
@@ -759,19 +764,9 @@ app.openapi(
     const contact = await assertContactAccess(id, wsId);
     const props = contact.properties as Record<string, unknown>;
 
-    const [acc] = await db
-      .select({ id: outreachAccounts.id })
-      .from(outreachAccounts)
-      .where(
-        and(
-          eq(outreachAccounts.id, accountId),
-          eq(outreachAccounts.workspaceId, wsId),
-        ),
-      )
-      .limit(1);
-    if (!acc) throw new HTTPException(404, { message: "account not found" });
+    await assertAccountInWorkspace(accountId, wsId);
 
-    const client = await getOutreachWorkerClient({ id: acc.id, workspaceId: wsId });
+    const client = await getOutreachWorkerClient({ id: accountId, workspaceId: wsId });
     if (!client) {
       throw new HTTPException(503, { message: "tg client unavailable" });
     }
@@ -804,7 +799,7 @@ app.openapi(
         })
         .from(tgChats)
         .where(
-          and(eq(tgChats.accountId, acc.id), eq(tgChats.peerUserId, tgUserId)),
+          and(eq(tgChats.accountId, accountId), eq(tgChats.peerUserId, tgUserId)),
         )
         .limit(1),
       db
@@ -845,7 +840,7 @@ app.openapi(
         only_local,
       } as never) as Promise<{ messages: TdMessage[] }>;
 
-    const cacheKey = historyKey(acc.id, chatRow.chatId);
+    const cacheKey = historyKey(accountId, chatRow.chatId);
     const onlyLocal = historyFetched.has(cacheKey);
 
     // openChat: TG-сервер начинает push'ить апдейты (read-receipts, deletes,
@@ -892,7 +887,7 @@ app.openapi(
 
     // Backfill last_inbound_at / last_outbound_at точными датами.
     void backfillInboundOutbound(
-      acc.id,
+      accountId,
       chatRow.chatId,
       tgUserId,
       wsId,
@@ -985,17 +980,10 @@ async function resolveContactChat(
   if (!tgUserId) {
     throw new HTTPException(400, { message: "У контакта нет TG ID" });
   }
-  const [acc] = await db
-    .select({ id: outreachAccounts.id })
-    .from(outreachAccounts)
-    .where(
-      and(
-        eq(outreachAccounts.id, accountId),
-        eq(outreachAccounts.workspaceId, wsId),
-      ),
-    )
-    .limit(1);
-  if (!acc) throw new HTTPException(404, { message: "account not found" });
+  // Слабый чек (просмотр-UX: mark-read/unread при чтении чужой переписки —
+  // read-исключение §3). Write-потребители (delete/edit-messages) обязаны
+  // САМИ звать assertAccountAccess до этого резолвера.
+  await assertAccountInWorkspace(accountId, wsId);
   const [chatRow] = await db
     .select({ chatId: tgChats.chatId })
     .from(tgChats)
@@ -1160,6 +1148,14 @@ app.openapi(
     const wsId = c.get("workspaceId");
     const { id } = c.req.valid("param");
     const { accountId, messageIds } = c.req.valid("json");
+    // Удаление — действие от имени аккаунта: полный доступ (owner/делегация),
+    // read-исключение §3 сюда не распространяется.
+    await assertAccountAccess(
+      accountId,
+      wsId,
+      c.get("userId"),
+      c.get("workspaceRole"),
+    );
     const { chatId, client } = await resolveContactChat(wsId, id, accountId);
     try {
       await client.invoke({
@@ -1216,6 +1212,13 @@ app.openapi(
     const wsId = c.get("workspaceId");
     const { id } = c.req.valid("param");
     const { accountId, messageId, text } = c.req.valid("json");
+    // Правка сообщения — действие от имени аккаунта: полный доступ.
+    await assertAccountAccess(
+      accountId,
+      wsId,
+      c.get("userId"),
+      c.get("workspaceRole"),
+    );
     const { chatId, client } = await resolveContactChat(wsId, id, accountId);
     try {
       const fmt = parseInlineEntities(text);
@@ -1264,19 +1267,15 @@ app.openapi(
     const { accountId } = c.req.valid("json");
     const contact = await assertContactAccess(id, wsId);
 
-    const [acc] = await db
-      .select({ id: outreachAccounts.id })
-      .from(outreachAccounts)
-      .where(
-        and(
-          eq(outreachAccounts.id, accountId),
-          eq(outreachAccounts.workspaceId, wsId),
-        ),
-      )
-      .limit(1);
-    if (!acc) throw new HTTPException(404, { message: "account not found" });
+    // Запуск бота — действие от имени аккаунта: полный доступ.
+    await assertAccountAccess(
+      accountId,
+      wsId,
+      c.get("userId"),
+      c.get("workspaceRole"),
+    );
 
-    const client = await getOutreachWorkerClient({ id: acc.id, workspaceId: wsId });
+    const client = await getOutreachWorkerClient({ id: accountId, workspaceId: wsId });
     if (!client) {
       throw new HTTPException(503, { message: "tg client unavailable" });
     }
@@ -1430,15 +1429,12 @@ async function resolveChatTarget(
   wsId: string,
   contactId: string,
   accountId: string,
+  userId: string,
+  role: WorkspaceRole,
 ): Promise<{ client: TdClient; tgUserId: string }> {
-  const [acc] = await db
-    .select({ id: outreachAccounts.id })
-    .from(outreachAccounts)
-    .where(
-      and(eq(outreachAccounts.id, accountId), eq(outreachAccounts.workspaceId, wsId)),
-    )
-    .limit(1);
-  if (!acc) throw new HTTPException(404, { message: "account not found" });
+  // Единственный потребитель — send-media (отправка от имени аккаунта):
+  // полный доступ, не только принадлежность воркспейсу.
+  await assertAccountAccess(accountId, wsId, userId, role);
   const [contact] = await db
     .select({ properties: contacts.properties })
     .from(contacts)
@@ -1491,7 +1487,13 @@ app.post("/v1/workspaces/:wsId/contacts/:id/send-media", async (c) => {
   if (files.reduce((sum, f) => sum + f.size, 0) > MAX_BATCH_BYTES) {
     throw new HTTPException(413, { message: "Суммарно файлы больше 50 МБ" });
   }
-  const { client, tgUserId } = await resolveChatTarget(wsId, contactId, accountId);
+  const { client, tgUserId } = await resolveChatTarget(
+    wsId,
+    contactId,
+    accountId,
+    c.get("userId"),
+    c.get("workspaceRole"),
+  );
   const outgoing: OutgoingFile[] = await Promise.all(
     files.map(async (f) => ({
       bytes: new Uint8Array(await f.arrayBuffer()),
@@ -1523,15 +1525,8 @@ app.get("/v1/workspaces/:wsId/contacts/:id/chat-file", async (c) => {
   if (typeof accountId !== "string" || !Number.isFinite(fileId)) {
     throw new HTTPException(400, { message: "accountId & fileId required" });
   }
-  // accountId из query → проверяем принадлежность воркспейсу (как в send-media).
-  const [acc] = await db
-    .select({ id: outreachAccounts.id })
-    .from(outreachAccounts)
-    .where(
-      and(eq(outreachAccounts.id, accountId), eq(outreachAccounts.workspaceId, wsId)),
-    )
-    .limit(1);
-  if (!acc) throw new HTTPException(404, { message: "account not found" });
+  // Read-исключение §3: скачивание файла — часть просмотра переписки.
+  await assertAccountInWorkspace(accountId, wsId);
   const client = await getOutreachWorkerClient({ id: accountId, workspaceId: wsId });
   if (!client) throw new HTTPException(503, { message: "tg client unavailable" });
   const bytes = await downloadToBytes(client, fileId);
@@ -1561,14 +1556,8 @@ app.get("/v1/workspaces/:wsId/contacts/:id/chat-media/:messageId", async (c) => 
   if (typeof accountId !== "string") {
     throw new HTTPException(400, { message: "accountId required" });
   }
-  const [acc] = await db
-    .select({ id: outreachAccounts.id })
-    .from(outreachAccounts)
-    .where(
-      and(eq(outreachAccounts.id, accountId), eq(outreachAccounts.workspaceId, wsId)),
-    )
-    .limit(1);
-  if (!acc) throw new HTTPException(404, { message: "account not found" });
+  // Read-исключение §3: медиа — часть просмотра переписки.
+  await assertAccountInWorkspace(accountId, wsId);
   const [contact] = await db
     .select({ properties: contacts.properties })
     .from(contacts)
@@ -1630,18 +1619,9 @@ app.openapi(
     const { id } = c.req.valid("param");
     const { accountId } = c.req.valid("json");
     await assertContactAccess(id, wsId);
-    // Аккаунт должен принадлежать воркспейсу (accountId приходит с фронта).
-    const [acc] = await db
-      .select({ id: outreachAccounts.id })
-      .from(outreachAccounts)
-      .where(
-        and(
-          eq(outreachAccounts.id, accountId),
-          eq(outreachAccounts.workspaceId, wsId),
-        ),
-      )
-      .limit(1);
-    if (!acc) throw new HTTPException(404, { message: "account not found" });
+    // Публикация переписки наружу (magic-link) — действие от имени аккаунта:
+    // полный доступ (owner/делегация), не только принадлежность воркспейсу.
+    await assertAccountAccess(accountId, wsId, userId, c.get("workspaceRole"));
 
     // Идемпотентность: одна активная ссылка на (contact, account).
     const [existing] = await db

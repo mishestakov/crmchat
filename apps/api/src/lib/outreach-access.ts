@@ -66,6 +66,29 @@ export function accountAccessClause(
 // Проверка доступа к конкретному аккаунту. Бросает 404 если нет (одинаково
 // для «не существует» и «не доступен» — чтобы member не мог разведать
 // существование чужих аккаунтов). Возвращает row (раз уж SELECT всё равно нужен).
+// СЛАБЫЙ чек «аккаунт принадлежит воркспейсу» — БЕЗ owner/делегации. Только
+// для документированного read-исключения (specs/permissions.md §3): просмотр
+// переписки коллеги — chat-history и обслуживающие просмотр медиа/файлы/
+// mark-флаги. Любое ДЕЙСТВИЕ от имени аккаунта (send/edit/delete/bot-start/
+// sticky/share-link) обязано идти через assertAccountAccess ниже — иначе
+// member действует через чужой неделегированный аккаунт, зная его id из UI.
+export async function assertAccountInWorkspace(
+  accountId: string,
+  workspaceId: string,
+): Promise<void> {
+  const [row] = await db
+    .select({ id: outreachAccounts.id })
+    .from(outreachAccounts)
+    .where(
+      and(
+        eq(outreachAccounts.id, accountId),
+        eq(outreachAccounts.workspaceId, workspaceId),
+      ),
+    )
+    .limit(1);
+  if (!row) throw new HTTPException(404, { message: "account not found" });
+}
+
 export async function assertAccountAccess(
   accountId: string,
   workspaceId: string,
