@@ -8,7 +8,7 @@ import {
 import type { TdClient } from "./tdlib/client.ts";
 
 // Парсинг ленты канала (TDLib Message → плоский элемент для UI) + бережное
-// чтение из кэша. Вынесено из routes/channels.ts, чтобы переиспользовать в
+// чтение из кэша. Вынесено из routes/channels/ (бывш. channels.ts), чтобы переиспользовать в
 // предпросмотре канала (менеджер + клиентская ссылка).
 
 type TdReaction = { type: { _: string; emoji?: string }; total_count: number };

@@ -16,7 +16,7 @@ import { extractActiveUsername, extractFullName } from "./tdlib/td-user.ts";
 //   updateSupergroup → JSONB-merge nice-to-have полей в channels.meta
 //                      (boost_level, verification, has_dm, … — приходят как
 //                      побочный эффект searchPublicChat в sync/history flow,
-//                      см. routes/channels.ts)
+//                      см. routes/channels/)
 //
 // Буферизация: TDLib на ready пушит 500–2000 update'ов «знакомлю с чатами».
 // Накапливаем в Map'ы, flush раз в FLUSH_MS батчем.
