@@ -250,6 +250,7 @@ const OUTREACH_STATES = [
   "no_contact", // нет годного контакта → нужно действие (резолвер)
   "bot_manual", // админ-бот → нужно действие (открыть + Запустить бота)
   "not_private", // контакт — канал/группа, не private user → нужно действие (заменить)
+  "manual_method", // способ = личка канала/группа: авто-опенера нет, слать вручную
   "not_scheduled", // годен, но scheduled-строк нет → нужно действие (Дослать)
   "in_flight", // система работает: ушло/ждём, догон в очереди (без фейлов)
   "needs_review", // всё прочее (фейл доставки/непредвиденное) → нужно действие (разобраться)
@@ -262,12 +263,19 @@ function deriveOutreachState(l: {
   contactReady: boolean | null;
   channelRknBlocked: boolean | null;
   adminIsBot: boolean | null;
+  contactMethodKind: string | null;
   messages: { status: string; error: string | null }[];
 }): OutreachState {
   if (l.repliedAt) return "replied";
   if (l.skippedAt) return "excluded";
   if (l.channelRknBlocked) return "blocked_rkn";
   if (!l.contactReady) return "no_contact";
+  // Способ связи — личка канала/группа: получателя-человека нет (обнулён в
+  // set-admin → clearPlacementRecipients), авто-опенер по нему не уходит.
+  // Отдельное состояние, чтобы не маскировалось под not_scheduled/in_flight
+  // («в работе», хотя система сама не пошлёт) — слать вручную через панель.
+  if (l.contactMethodKind === "channel_dm" || l.contactMethodKind === "group")
+    return "manual_method";
 
   const failedErrors = l.messages
     .filter((m) => m.status === "failed")
@@ -1212,6 +1220,11 @@ app.openapi(
           // Админ-получатель — бот: авторитетный сигнал tg_users.is_bot
           // (userTypeBot), для гейта «ручной способ» в триаже списка.
           adminIsBot: sql<boolean>`coalesce(${tgUsers.isBot}, false)`,
+          // Явно выбранный способ связи (set-admin): channel_dm/group → ручная
+          // отправка (см. deriveOutreachState → manual_method).
+          contactMethodKind: sql<
+            string | null
+          >`${channels.meta}->'contact_method'->>'kind'`,
           total: sql<number>`count(*) OVER ()::int`,
         })
         .from(projectItems)
@@ -1362,6 +1375,7 @@ app.openapi(
             contactReady: l.contactReady,
             channelRknBlocked: l.channelRknBlocked,
             adminIsBot: l.adminIsBot,
+            contactMethodKind: l.contactMethodKind,
             messages,
           }),
           channel: l.channelId

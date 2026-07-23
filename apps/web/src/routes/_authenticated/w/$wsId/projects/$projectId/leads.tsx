@@ -23,6 +23,7 @@ import { AdminSuggestionBadge } from "../../../../../../components/admin-suggest
 import { RelationBadge } from "../../../../../../lib/channel-relation";
 import { UnreadBadge } from "../../../../../../components/unread-badge";
 import { LeadChatDrawer } from "../../../../../../components/lead-chat-drawer";
+import { ChannelDrawer } from "../../../../../../components/channel-drawer";
 import { LeadPrepPane } from "../../../../../../components/lead-prep-pane";
 import { TruncationBanner } from "../../../../../../components/truncation-banner";
 import { AddChannelsModal } from "../../../../../../components/add-channels-modal";
@@ -44,15 +45,16 @@ export const Route = createFileRoute(
   "/_authenticated/w/$wsId/projects/$projectId/leads",
 )({
   component: LeadsPage,
-  // ?filter — корзина триажа (active/paused): action (нужно действие) /
-  // flight (в работе) / wont (не отправляем). Пусто = все. Из LaunchPanel
-  // приходит ?filter=wont (отложенные = РКН/уже работает/исключены).
+  // ?filter — сегмент триажа (общий для draft + active): flight (готовы/в
+  // работе) / find_contact (инбокс поиска контакта) / manual (написать вручную)
+  // / wont (отбраковано). Пусто = все. Из LaunchPanel приходит find_contact/wont.
   validateSearch: (
     search: Record<string, unknown>,
-  ): { filter?: "action" | "flight" | "wont" } => ({
+  ): { filter?: "flight" | "find_contact" | "manual" | "wont" } => ({
     filter:
-      search.filter === "action" ||
       search.filter === "flight" ||
+      search.filter === "find_contact" ||
+      search.filter === "manual" ||
       search.filter === "wont"
         ? search.filter
         : undefined,
@@ -67,42 +69,45 @@ type Lead = LeadsResponse["leads"][number];
 type LeadMessage = Lead["messages"][number];
 type OutreachState = Lead["outreachState"];
 
-// Триаж списка (active/paused): per-lead outreachState (бэк) → корзина «кто
-// делает следующий ход». action — менеджер, flight — система, wont — никто
-// (терминал). replied живёт на канбане, в триаж не попадает (null).
-type Bucket = "action" | "flight" | "wont";
-const STATE_BUCKET: Record<OutreachState, Bucket | null> = {
-  replied: null,
-  excluded: "wont",
-  blocked_rkn: "wont",
-  no_contact: "action",
-  bot_manual: "action",
-  not_private: "action",
-  // not_scheduled — НЕ «нужно действие» (model A: добавил → опенер планируется
-  // сам). Это либо охваченный сиблинг (его поглощает in_flight-канал при
-  // группировке по админу), либо лид без аккаунтов на старте — оба «в работе».
+// Триаж списка — ЕДИНАЯ ось на весь жизненный цикл (draft + active/paused):
+// per-lead outreachState (бэк) → корзина «что с ним делать». Вью выбирается
+// фильтром (сегментом), а не статусом проекта.
+//   • flight        — система работает / уйдёт сам (draft: «Готовы», после: «В работе»)
+//   • find_contact  — нет годного получателя → инбокс-резолвер («Найти контакт»)
+//   • manual        — получатель известен, но авто-отправки нет → «Написать вручную»
+//   • wont          — терминал (РКН/исключён) → «Отбраковано»
+// replied → канбан (в триаж не попадает). Ключ — string (не Record<OutreachState>),
+// чтобы новые состояния бэка (manual_method) не роняли билд до регена api-client.
+type Bucket = "flight" | "find_contact" | "manual" | "wont";
+// Value-тип с undefined: незамапленное состояние (replied / будущее из бэка) →
+// undefined, а не «как бы Bucket» — чтобы `if (b)`-гарды были типо-обоснованы.
+const STATE_BUCKET: Record<string, Bucket | undefined> = {
   not_scheduled: "flight",
   in_flight: "flight",
-  needs_review: "action",
+  no_contact: "find_contact",
+  not_private: "find_contact",
+  bot_manual: "manual",
+  needs_review: "manual",
+  manual_method: "manual", // личка канала/группа — слать вручную
+  blocked_rkn: "wont",
+  excluded: "wont",
 };
+const bucketOf = (s: OutreachState): Bucket | undefined => STATE_BUCKET[s];
+// Активный сегмент = корзина или «Все» (undefined). Совпадает с ?filter.
+type Filter = Bucket | undefined;
 
-// Под-группы внутри «Нужно действие» — порядок = порядок показа. Каждая со
-// своим действием (рендер ниже определяет кнопку по state).
-const ACTION_GROUPS: { state: OutreachState; title: string; hint: string }[] = [
-  {
-    state: "no_contact",
-    title: "Нет контакта",
-    hint: "Найдите контакт — опенер уйдёт автоматически.",
-  },
+// Под-группы «Написать вручную» — получатель/способ известен, но авто-опенера
+// нет. Порядок = порядок показа; действие под каждую (рендер ниже — по state).
+const MANUAL_GROUPS: { state: string; title: string; hint: string }[] = [
   {
     state: "bot_manual",
     title: "Админ — бот",
     hint: "Откройте чат и запустите бота вручную.",
   },
   {
-    state: "not_private",
-    title: "Контакт — канал или группа",
-    hint: "Нужен личный аккаунт админа.",
+    state: "manual_method",
+    title: "Личка канала / группа",
+    hint: "Авто-отправки нет — напишите вручную в карточке канала.",
   },
   {
     state: "needs_review",
@@ -111,10 +116,9 @@ const ACTION_GROUPS: { state: OutreachState; title: string; hint: string }[] = [
   },
 ];
 
-// Менеджер чинит ПОЛУЧАТЕЛЯ (а не контент/цепочку): контакт не найден ИЛИ
-// найденный контакт оказался каналом/группой, нужен личный аккаунт админа.
-// Обе корзины ведут в один резолвер-инбокс (карточка канала + выбор контакта).
-// set-admin глобально перенаведёт график (repointPlacementSchedule).
+// «Найти контакт» — нет годного получателя: контакт не найден ИЛИ найденный
+// оказался каналом/группой. Обе ведут в один резолвер-инбокс (выбор контакта/
+// способа). set-admin глобально перенаведёт график (repointPlacementSchedule).
 const isRecipientFix = (s: OutreachState) =>
   s === "no_contact" || s === "not_private";
 
@@ -179,6 +183,9 @@ function LeadsPage() {
   const navigate = Route.useNavigate();
   const [showAddChannels, setShowAddChannels] = useState(false);
   const [drawerLeadId, setDrawerLeadId] = useState<string | null>(null);
+  // Карточка канала — для «Написать вручную» → личка канала/группа (там панель
+  // способа связи; person-чат-дровер для них не подходит — получателя-человека нет).
+  const [channelView, setChannelView] = useState<string | null>(null);
   // Инспект исключённого/терминального лида без контакта: открыть карточку
   // канала + резолвер в модалке, чтобы проверить/найти контакт не возвращая
   // лид в рассылку.
@@ -261,9 +268,7 @@ function LeadsPage() {
   const visibleGroups = useMemo(
     () =>
       filter
-        ? allGroups.filter(
-            (g) => STATE_BUCKET[g.primary.outreachState] === filter,
-          )
+        ? allGroups.filter((g) => bucketOf(g.primary.outreachState) === filter)
         : allGroups,
     [allGroups, filter],
   );
@@ -271,9 +276,14 @@ function LeadsPage() {
   // Счётчики корзин (для сегмент-контрола) — по группам. Page-scoped; при
   // обрезке страницы есть TruncationBanner.
   const counts = useMemo(() => {
-    const c = { action: 0, flight: 0, wont: 0 };
+    const c: Record<Bucket, number> = {
+      flight: 0,
+      find_contact: 0,
+      manual: 0,
+      wont: 0,
+    };
     for (const g of allGroups) {
-      const b = STATE_BUCKET[g.primary.outreachState];
+      const b = bucketOf(g.primary.outreachState);
       if (b) c[b] += 1;
     }
     return c;
@@ -294,30 +304,33 @@ function LeadsPage() {
   const drawerLead = leadsQ.data?.leads.find((l) => l.id === drawerLeadId);
   const inspectLead = leadsQ.data?.leads.find((l) => l.id === inspectLeadId);
 
-  // Инбокс подготовки: в draft — все каналы проекта, в active/paused —
-  // «доливка», т.е. лиды, где менеджер чинит получателя (нет контакта или
-  // контакт оказался каналом/группой). От него зависят prepLead, курсор и
-  // условие выхода из prepMode — мемоизируем под общий паттерн страницы.
+  // Инбокс поиска контакта = вью сегмента «Найти контакт» (find_contact):
+  // лиды без годного получателя (нет контакта / контакт — канал-группа). Одна
+  // и та же вью в draft и active — без переключателя-режима.
   const inboxItems = useMemo(
     () =>
-      isDraft
-        ? (leadsQ.data?.leads ?? [])
-        : (leadsQ.data?.leads ?? []).filter((l) =>
-            isRecipientFix(l.outreachState),
-          ),
-    [isDraft, leadsQ.data],
+      (leadsQ.data?.leads ?? []).filter(
+        (l) => bucketOf(l.outreachState) === "find_contact",
+      ),
+    [leadsQ.data],
   );
 
-  const [prepMode, setPrepMode] = useState(false);
+  // Вью определяется фильтром: «Найти контакт» → инбокс, остальные → список.
+  const showPrepInbox = filter === "find_contact";
+  // В черновике по умолчанию открываем инбокс (основная работа до запуска).
+  // Разово: если оператор потом выберет «Все», силой не возвращаем.
+  const defaultedRef = useRef(false);
   useEffect(() => {
-    // Чинить больше нечего (получателей разобрали) или проект уже не
-    // active/paused — выходим из инбокса. В draft canPrep=false → закрытие
-    // идёт по смене статуса, а не по опустевшему списку.
-    if (prepMode && (!canPrep || inboxItems.length === 0)) setPrepMode(false);
-  }, [prepMode, canPrep, inboxItems]);
-  // Резолвер-инбокс: в draft всегда, в active/paused — когда менеджер вошёл в
-  // него через «Найти контакт» (prepMode). Триаж-корзины — поверх таблицы.
-  const showPrepInbox = isDraft || (canPrep && prepMode);
+    if (
+      !defaultedRef.current &&
+      isDraft &&
+      filter === undefined &&
+      counts.find_contact > 0
+    ) {
+      defaultedRef.current = true;
+      navigate({ search: { filter: "find_contact" }, replace: true });
+    }
+  }, [isDraft, filter, counts.find_contact, navigate]);
   // Позиционный курсор: обработал/удалил лида — он уходит из инбокса, и
   // активным становится тот, кто встал на его место (по запомненному индексу),
   // а не первый в списке. Очередь едет под фиксированным курсором, без прыжка.
@@ -358,26 +371,26 @@ function LeadsPage() {
     onSuccess: () => invalidateProject(qc, wsId, projectId, { leads: true }),
   });
 
-  // Триаж по корзинам «кто делает следующий ход» — только пост-запуск
-  // (active/paused). В draft рассылки ещё не было, там prep-инбокс, сегментов
-  // нет.
-  const segments: { key: "action" | "flight" | "wont" | undefined; label: string }[] =
-    isDraft
-      ? []
-      : [
-          { key: undefined, label: "Все" },
-          { key: "action" as const, label: `Нужно действие · ${counts.action}` },
-          { key: "flight" as const, label: `В работе · ${counts.flight}` },
-          { key: "wont" as const, label: `Не отправляем · ${counts.wont}` },
-        ];
-  const setFilter = (key: "action" | "flight" | "wont" | undefined) =>
+  // Единая ось сегментов на весь цикл. «Готовы к отправке» (draft) читается как
+  // «В работе» после запуска — та же корзина flight. Пустые прячем (кроме «Все»),
+  // чтобы draft не пестрил «Написать вручную · 0».
+  const flightLabel = isDraft ? "Готовы к отправке" : "В работе";
+  const segments = (
+    [
+      { key: undefined, label: "Все", count: allGroups.length },
+      { key: "flight", label: flightLabel, count: counts.flight },
+      { key: "find_contact", label: "Найти контакт", count: counts.find_contact },
+      { key: "manual", label: "Написать вручную", count: counts.manual },
+      { key: "wont", label: "Отбраковано", count: counts.wont },
+    ] as { key: Filter; label: string; count: number }[]
+  ).filter((s) => s.key === undefined || s.count > 0);
+  const setFilter = (key: Filter) =>
     navigate({ search: { filter: key }, replace: true });
-  // Резолвер контактов: в active/paused вход из группы «Нет контакта»
-  // (prepMode). Корзину (filter) не сбрасываем — после резолва вернёмся в неё.
+  // Открыть резолвер на конкретном лиде (клик по строке в «Все»/«В работе») —
+  // это просто переход на сегмент «Найти контакт», без смены вьюхи по кнопке.
   const openResolver = (leadId?: string) => {
-    if (!canPrep) return;
     if (leadId) setPrepLeadId(leadId);
-    setPrepMode(true);
+    navigate({ search: { filter: "find_contact" }, replace: true });
   };
 
   return (
@@ -396,47 +409,42 @@ function LeadsPage() {
               Добавить каналы
             </button>
           )}
-          {prepMode ? (
-            <button
-              type="button"
-              onClick={() => setPrepMode(false)}
-              className="text-sm font-medium text-emerald-700 hover:text-emerald-800"
-            >
-              ← к таблице рассылки
-            </button>
-          ) : (
-            segments.length > 1 && (
-              <div className="inline-flex rounded-lg bg-zinc-100 p-0.5 text-sm">
-                {segments.map((s) => {
-                  const active = filter === s.key;
-                  return (
-                    <button
-                      key={s.label}
-                      type="button"
-                      onClick={() => setFilter(s.key)}
-                      className={
-                        "rounded-md px-3 py-1 font-medium transition-colors " +
-                        (active
-                          ? "bg-white text-zinc-900 shadow-sm"
-                          : "text-zinc-500 hover:text-zinc-800")
-                      }
-                    >
-                      {s.label}
-                    </button>
-                  );
-                })}
-              </div>
-            )
+          {segments.length > 1 && (
+            <div className="inline-flex rounded-lg bg-zinc-100 p-0.5 text-sm">
+              {segments.map((s) => {
+                const active = filter === s.key;
+                return (
+                  <button
+                    key={s.label}
+                    type="button"
+                    onClick={() => setFilter(s.key)}
+                    className={
+                      "rounded-md px-3 py-1 font-medium transition-colors " +
+                      (active
+                        ? "bg-white text-zinc-900 shadow-sm"
+                        : "text-zinc-500 hover:text-zinc-800")
+                    }
+                  >
+                    {s.label}
+                    {s.key !== undefined && (
+                      <span className="ml-1 text-zinc-400">{s.count}</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           )}
         </div>
 
         <div className="text-xs text-zinc-500">
-          {filter === "action" ? (
-            <>Нужно действие: {counts.action} из {allGroups.length}</>
-          ) : filter === "flight" ? (
-            <>В работе: {counts.flight} из {allGroups.length}</>
+          {filter === "flight" ? (
+            <>{flightLabel}: {counts.flight} из {allGroups.length}</>
+          ) : filter === "find_contact" ? (
+            <>Найти контакт: {counts.find_contact} из {allGroups.length}</>
+          ) : filter === "manual" ? (
+            <>Написать вручную: {counts.manual} из {allGroups.length}</>
           ) : filter === "wont" ? (
-            <>Не отправляем: {counts.wont} из {allGroups.length}</>
+            <>Отбраковано: {counts.wont} из {allGroups.length}</>
           ) : (
             <>
               Всего {total} {pluralize(total, "канал", "канала", "каналов")}
@@ -482,6 +490,21 @@ function LeadsPage() {
               {filter ? "В этой корзине пусто." : "Список пуст."}
             </div>
           )}
+        {leadsQ.data &&
+          leadsQ.data.leads.length > 0 &&
+          showPrepInbox &&
+          inboxItems.length === 0 && (
+            <div className="rounded-2xl bg-white p-6 text-sm text-zinc-500 shadow-sm">
+              Искать некого — получатели заданы у всех каналов.{" "}
+              <button
+                type="button"
+                onClick={() => setFilter(undefined)}
+                className="font-medium text-emerald-700 hover:underline"
+              >
+                ко всем каналам
+              </button>
+            </div>
+          )}
         {leadsQ.data && leadsQ.data.leads.length === LEADS_PAGE_LIMIT && (
           <TruncationBanner
             shown={LEADS_PAGE_LIMIT}
@@ -489,14 +512,13 @@ function LeadsPage() {
             entity="каналов"
           />
         )}
-        {/* 🔴 Нужно действие — сгруппировано по под-состоянию, у каждой группы
-            своё действие. Резолвер (Нет контакта) уводит в prep-инбокс. */}
+        {/* «Написать вручную» — сгруппировано по причине, у каждой своё
+            действие (открыть чат / открыть карточку канала). */}
         {leadsQ.data &&
-          !showPrepInbox &&
-          filter === "action" &&
+          filter === "manual" &&
           visibleGroups.length > 0 && (
             <div className="space-y-4">
-              {ACTION_GROUPS.map((g) => {
+              {MANUAL_GROUPS.map((g) => {
                 const groupLeads = visibleGroups.filter(
                   (grp) => grp.primary.outreachState === g.state,
                 );
@@ -550,18 +572,17 @@ function LeadsPage() {
                             )}
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
-                            {g.state === "no_contact" ||
-                            g.state === "not_private" ? (
+                            {g.state === "manual_method" ? (
                               <button
                                 type="button"
-                                onClick={() => openResolver(l.id)}
+                                onClick={() =>
+                                  l.channel && setChannelView(l.channel.id)
+                                }
                                 className="rounded-lg px-2.5 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-50"
                               >
-                                {g.state === "no_contact"
-                                  ? "Найти контакт"
-                                  : "Заменить контакт"}
+                                Открыть канал
                               </button>
-                            ) : g.state === "not_scheduled" ? null : (
+                            ) : (
                               <button
                                 type="button"
                                 onClick={() => setDrawerLeadId(l.id)}
@@ -655,12 +676,12 @@ function LeadsPage() {
             </div>
           </div>
         )}
-        {/* Таблица-диагностика: Все / В работе / Не отправляем (action — выше
-            сгруппированным видом). */}
+        {/* Таблица-диагностика: Все / В работе / Отбраковано. «Найти контакт»
+            рисуется инбоксом, «Написать вручную» — сгруппированным видом выше. */}
         {leadsQ.data &&
           visibleGroups.length > 0 &&
           !showPrepInbox &&
-          filter !== "action" && (
+          filter !== "manual" && (
           <div className="overflow-x-auto rounded-2xl bg-white shadow-sm">
             <table className="w-full text-sm">
               <thead className="bg-zinc-50 text-xs text-zinc-500">
@@ -685,12 +706,14 @@ function LeadsPage() {
                     key={grp.key}
                     onClick={() => {
                       // Нет рабочего получателя (нет контакта / контакт — канал/
-                      // группа) → резолвер-инбокс, а не чат. Есть контакт → чат.
-                      // Иначе (исключённый/терминальный без контакта) → инспект-
-                      // модалка: проверить/найти контакт, не возвращая лид.
-                      if (isRecipientFix(l.outreachState) && canPrep)
-                        openResolver(l.id);
+                      // группа) → сегмент «Найти контакт» (инбокс), работает и в
+                      // draft. Есть контакт → чат. Личка канала/группа (manual, без
+                      // контакта-человека) → карточка канала. Иначе (терминальный
+                      // без контакта) → инспект-модалка: проверить, не возвращая лид.
+                      if (isRecipientFix(l.outreachState)) openResolver(l.id);
                       else if (l.contactId) setDrawerLeadId(l.id);
+                      else if (bucketOf(l.outreachState) === "manual" && l.channel)
+                        setChannelView(l.channel.id);
                       else if (canPrep) setInspectLeadId(l.id);
                     }}
                     className={
@@ -750,6 +773,16 @@ function LeadsPage() {
           lead={drawerLead}
           accounts={accountsQ.data ?? []}
           onClose={() => setDrawerLeadId(null)}
+        />
+      )}
+      {channelView && (
+        <ChannelDrawer
+          wsId={wsId}
+          channelId={channelView}
+          onClose={() => setChannelView(null)}
+          onResolved={() =>
+            invalidateProject(qc, wsId, projectId, { leads: true })
+          }
         />
       )}
       {inspectLead && (
