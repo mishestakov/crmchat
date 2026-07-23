@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import { db } from "../db/client.ts";
-import { contacts, outreachAccounts } from "../db/schema.ts";
+import { contacts, outreachAccounts, tgUsers } from "../db/schema.ts";
 import { errMsg } from "./errors.ts";
 import {
   getOutreachWorkerClient,
@@ -46,6 +46,34 @@ export async function ensureContactTgUserId(args: {
   if (!usernameRaw) return null;
   const username = usernameRaw.replace(/^@/, "").trim();
   if (!username) return null;
+
+  // Сначала — БЕСПЛАТНЫЙ резолв из реплики tg_users (снапшот юзеров, которых
+  // видел любой аккаунт воркспейса): id по нику — глобальный факт, TDLib для
+  // него не нужен. searchPublicChat (лимитированный!) остаётся только для
+  // настоящих незнакомцев, которых ни один аккаунт ещё не встречал.
+  const [known] = await db
+    .select({ userId: tgUsers.userId })
+    .from(tgUsers)
+    .where(sql`lower(${tgUsers.username}) = ${username.toLowerCase()}`)
+    .limit(1);
+  if (known) {
+    await db
+      .update(contacts)
+      .set({
+        properties: sql`${contacts.properties} || ${JSON.stringify({ tg_user_id: known.userId })}::jsonb`,
+        updatedAt: new Date(),
+      })
+      .where(eq(contacts.id, args.contactId));
+    // Восстановление unread — как в TDLib-ветке ниже (контакт только что стал
+    // находимым по id; см. коммент там).
+    void applyChatUnread(
+      args.client,
+      args.workspaceId,
+      args.contactId,
+      Number(known.userId),
+    );
+    return known.userId;
+  }
 
   // Кулдаун активен → не дёргаем TG (повторные запросы продлевают пенальти).
   const flooded = searchFloodUntil.get(args.client);
