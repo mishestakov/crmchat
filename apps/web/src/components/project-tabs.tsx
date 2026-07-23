@@ -142,8 +142,7 @@ function LaunchPanel(props: { wsId: string; projectId: string }) {
 
   const r = readinessQ.data;
   if (!r) return null;
-  // Каст: leadsManual свежее сгенерённого api-client-типа (реген на хосте).
-  const manualCount = (r as { leadsManual?: number }).leadsManual ?? 0;
+  const manualCount = r.leadsManual;
 
   // Гейт квалификации: отбракованные (без контакта / без РКН) НЕ блокируют
   // запуск — их откладываем, шлём годным. Запуск возможен, если есть ≥1

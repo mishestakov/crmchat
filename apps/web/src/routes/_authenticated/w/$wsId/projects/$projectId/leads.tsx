@@ -567,18 +567,7 @@ function LeadsPage() {
                     <ul className="divide-y divide-zinc-100">
                       {groupLeads.map((grp) => {
                         const l = grp.primary;
-                        // Каст: contactMethod свежее сгенерённого api-client
-                        // (schema.ts регенерится на хосте).
-                        const cm =
-                          (
-                            l as {
-                              contactMethod?: {
-                                kind: string;
-                                label: string | null;
-                                link: string | null;
-                              } | null;
-                            }
-                          ).contactMethod ?? null;
+                        const cm = l.contactMethod;
                         return (
                         <li
                           key={grp.key}
