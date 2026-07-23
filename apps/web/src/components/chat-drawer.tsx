@@ -62,6 +62,7 @@ import {
 import { formatAccount } from "../lib/account-label";
 import { Drawer } from "./drawer";
 import { MaxChatBody } from "./max-chat-body";
+import { ActivitySection } from "./activities-section";
 import { NoteStrip } from "./note-strip";
 import { StickerPicker } from "./sticker-picker";
 import {
@@ -224,6 +225,17 @@ export function ChatPanel(props: {
   const cprops = props.contact.properties as Record<string, unknown> | null;
   const isMax =
     !!(cprops?.max_link || cprops?.max_user_id) && !cprops?.tg_user_id;
+  // Контакт без единого ключа адресации (ни TG, ни MAX) — external-stub
+  // (Instagram/почта/…) или недорезолвленный: чатиться нечем, TG-запросы дали
+  // бы 400 «нет ни TG ID, ни @username». Вместо переписки — заметки контакта
+  // (activities): менеджер общается вне CRM, результат фиксирует здесь же,
+  // не покидая дровер (карточка контакта — тупиковый UX, менеджеры туда не ходят).
+  const keyless =
+    !cprops?.tg_user_id &&
+    !cprops?.telegram_username &&
+    !cprops?.max_link &&
+    !cprops?.max_user_id;
+  const noTgChat = isMax || keyless;
 
   // Preview активных проектов: бэк находит project_items.tg_user_id и считает
   // pending'и. Если у peer'а есть pending'и → warning перед отправкой.
@@ -241,7 +253,7 @@ export function ChatPanel(props: {
       return data!.activeProjects;
     },
     staleTime: 30_000,
-    enabled: !isMax,
+    enabled: !noTgChat,
   });
 
   const stickyMut = useMutation({
@@ -611,7 +623,7 @@ export function ChatPanel(props: {
       return data!;
     },
     staleTime: 60_000,
-    enabled: !isMax,
+    enabled: !noTgChat,
   });
 
   // closeChat: TDLib держит чат «открытым» с момента первого fetch
@@ -623,7 +635,7 @@ export function ChatPanel(props: {
   useEffect(() => {
     // MAX-контакт TDLib-чат не открывал — closeChat не шлём (иначе спурный
     // POST с TG-accountId на размонтировании MAX-переписки).
-    if (isMax) return;
+    if (noTgChat) return;
     const wsId = props.wsId;
     const accountId = props.accountId;
     return () => {
@@ -636,13 +648,13 @@ export function ChatPanel(props: {
           console.error("[chat-drawer] closeChat:", e),
         );
     };
-  }, [props.wsId, props.accountId, targetContactId, isMax]);
+  }, [props.wsId, props.accountId, targetContactId, noTgChat]);
 
   // Перетягиваем chat-history на любое contact event (новое сообщение,
   // read-receipt, удаление) — listener конвертит TDLib updates в SSE. Для MAX
   // эту подписку не открываем (MaxChatBody держит свою).
   useEventSourceEvent<{ contactId: string }>(
-    isMax ? null : `/v1/workspaces/${props.wsId}/contact-stream`,
+    noTgChat ? null : `/v1/workspaces/${props.wsId}/contact-stream`,
     "contact",
     (ev) => {
       if (ev.contactId === props.contact.id) {
@@ -829,6 +841,20 @@ export function ChatPanel(props: {
         return acc ? formatAccount(acc) : fresherColleague.accountId;
       })()
     : null;
+
+  if (keyless) {
+    return (
+      <div className="flex h-full flex-col bg-white">
+        <div className="border-b border-amber-100 bg-amber-50/60 px-4 py-2 text-xs text-amber-800">
+          Переписки в CRM нет — общение идёт вне неё (внешний способ связи).
+          Фиксируйте результат заметками, ставьте напоминания.
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+          <ActivitySection wsId={props.wsId} contactId={props.contact.id} />
+        </div>
+      </div>
+    );
+  }
 
   if (isMax) {
     return (

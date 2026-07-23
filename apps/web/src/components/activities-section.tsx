@@ -2,10 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { Bell, Check, MoreHorizontal, StickyNote } from "lucide-react";
 import type { Activity, ActivityRepeat } from "@repo/core";
-import { api } from "../../../../../lib/api";
-import { errorMessage } from "../../../../../lib/errors";
-import { useClickOutside } from "../../../../../lib/hooks";
-import { Modal } from "../../../../../components/modal";
+import { api } from "../lib/api";
+import { errorMessage } from "../lib/errors";
+import { useClickOutside } from "../lib/hooks";
+import { Modal } from "./modal";
 
 const REPEAT_LABELS: Record<ActivityRepeat, string> = {
   none: "Без повтора",

@@ -14,6 +14,7 @@ import {
 import type { paths } from "@repo/api-client";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
+import { externalHref } from "../../../../../../lib/external-href";
 import { getLeadHealth } from "../../../../../../lib/lead-health";
 import { formatViews } from "../../../../../../lib/format";
 import { ProjectTabs } from "../../../../../../components/project-tabs";
@@ -106,8 +107,11 @@ const MANUAL_GROUPS: { state: string; title: string; hint: string }[] = [
   },
   {
     state: "manual_method",
-    title: "Личка канала / группа",
-    hint: "Авто-отправки нет — напишите вручную в карточке канала.",
+    title: "Ручной способ связи",
+    hint:
+      "Авто-отправки нет. Личка канала/группа — пишите в карточке канала " +
+      "(«Открыть канал»); внешний способ (Instagram, почта…) — результат " +
+      "фиксируйте в заметках («Открыть заметки»).",
   },
   {
     state: "needs_review",
@@ -133,16 +137,21 @@ function channelLabel(channel: Lead["channel"]): string {
   return channel?.title || (channel?.username ? `@${channel.username}` : "—");
 }
 
+
 type LeadGroup = { key: string; primary: Lead; channels: Lead[] };
 
 // Состояние строки = самый продвинутый канал админа. not_scheduled — ниже всех
 // «живых»: охваченный сиблинг поглощается in_flight-каналом. Терминалы каналов
 // (РКН/уже-работает) — ниже, чтобы не перебивать живой разговор; они всплывут,
 // только если ВСЕ каналы админа терминальны.
-const STATE_PRIORITY: Record<OutreachState, number> = {
+// Ключ — string (как STATE_BUCKET): сгенерённый api-client-тип отстаёт от
+// бэка до регена на хосте; Record<OutreachState> с новым состоянием ронял бы
+// билд. Неизвестное состояние → 0 (?? в reduce ниже), не undefined-сравнение.
+const STATE_PRIORITY: Record<string, number> = {
   replied: 100,
   needs_review: 90,
   bot_manual: 80,
+  manual_method: 75,
   not_private: 70,
   no_contact: 60,
   in_flight: 50,
@@ -171,7 +180,10 @@ function groupLeadsByAdmin(leads: Lead[]): LeadGroup[] {
   return [...map.entries()].map(([key, channels]) => ({
     key,
     primary: channels.reduce((a, b) =>
-      STATE_PRIORITY[b.outreachState] > STATE_PRIORITY[a.outreachState] ? b : a,
+      (STATE_PRIORITY[b.outreachState] ?? 0) >
+      (STATE_PRIORITY[a.outreachState] ?? 0)
+        ? b
+        : a,
     ),
     channels,
   }));
@@ -371,6 +383,24 @@ function LeadsPage() {
     onSuccess: () => invalidateProject(qc, wsId, projectId, { leads: true }),
   });
 
+  // Стадия из дровера (StageStrip). Для external-лида это ЕДИНСТВЕННЫЙ вход на
+  // канбан: repliedAt у него не появится (нет адаптера), карточка попадает на
+  // доску по заданной стадии. Без оптимистики (в отличие от канбана): здесь нет
+  // drag-drop, инвалидация успевает.
+  const setStage = useMutation({
+    mutationFn: async (vars: { itemId: string; stageId: string | null }) => {
+      const { error } = await api.PATCH(
+        "/v1/workspaces/{wsId}/projects/{projectId}/items/{itemId}",
+        {
+          params: { path: { wsId, projectId, itemId: vars.itemId } },
+          body: { stageId: vars.stageId },
+        },
+      );
+      if (error) throw error;
+    },
+    onSuccess: () => invalidateProject(qc, wsId, projectId, { leads: true }),
+  });
+
   // Единая ось сегментов на весь цикл. «Готовы к отправке» (draft) читается как
   // «В работе» после запуска — та же корзина flight. Пустые прячем (кроме «Все»),
   // чтобы draft не пестрил «Написать вручную · 0».
@@ -537,6 +567,18 @@ function LeadsPage() {
                     <ul className="divide-y divide-zinc-100">
                       {groupLeads.map((grp) => {
                         const l = grp.primary;
+                        // Каст: contactMethod свежее сгенерённого api-client
+                        // (schema.ts регенерится на хосте).
+                        const cm =
+                          (
+                            l as {
+                              contactMethod?: {
+                                kind: string;
+                                label: string | null;
+                                link: string | null;
+                              } | null;
+                            }
+                          ).contactMethod ?? null;
                         return (
                         <li
                           key={grp.key}
@@ -561,6 +603,24 @@ function LeadsPage() {
                                 админ @{l.username}
                               </div>
                             )}
+                            {cm?.kind === "external" && (
+                              <div className="mt-0.5 flex items-center gap-1.5 text-xs">
+                                <span className="inline-flex items-center rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700 ring-1 ring-violet-200">
+                                  Внешний: {cm.label ?? "способ связи"}
+                                </span>
+                                {cm.link && (
+                                  <a
+                                    href={externalHref(cm.link)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="text-violet-600 hover:underline"
+                                  >
+                                    открыть ↗
+                                  </a>
+                                )}
+                              </div>
+                            )}
                             <SiblingChannels group={grp} />
                             {g.state === "needs_review" && (
                               <div className="text-xs text-red-600">
@@ -572,25 +632,24 @@ function LeadsPage() {
                             )}
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
-                            {g.state === "manual_method" ? (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  l.channel && setChannelView(l.channel.id)
-                                }
-                                className="rounded-lg px-2.5 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-50"
-                              >
-                                Открыть канал
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => setDrawerLeadId(l.id)}
-                                className="rounded-lg px-2.5 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-50"
-                              >
-                                Открыть чат
-                              </button>
-                            )}
+                            {/* external → дровер (заметки), личка/группа →
+                                карточка канала, остальное → чат. */}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                g.state === "manual_method" &&
+                                cm?.kind !== "external"
+                                  ? l.channel && setChannelView(l.channel.id)
+                                  : setDrawerLeadId(l.id)
+                              }
+                              className="rounded-lg px-2.5 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-50"
+                            >
+                              {g.state !== "manual_method"
+                                ? "Открыть чат"
+                                : cm?.kind === "external"
+                                  ? "Открыть заметки"
+                                  : "Открыть канал"}
+                            </button>
                             {g.state === "needs_review" && (
                               <button
                                 type="button"
@@ -707,9 +766,11 @@ function LeadsPage() {
                     onClick={() => {
                       // Нет рабочего получателя (нет контакта / контакт — канал/
                       // группа) → сегмент «Найти контакт» (инбокс), работает и в
-                      // draft. Есть контакт → чат. Личка канала/группа (manual, без
-                      // контакта-человека) → карточка канала. Иначе (терминальный
-                      // без контакта) → инспект-модалка: проверить, не возвращая лид.
+                      // draft. Есть контакт → дровер (для external-stub'а без
+                      // tg/max-ключей он сам показывает заметки вместо TG-чата).
+                      // Личка канала/группа (manual, без контакта-человека) →
+                      // карточка канала. Иначе (терминальный без контакта) →
+                      // инспект-модалка: проверить, не возвращая лид.
                       if (isRecipientFix(l.outreachState)) openResolver(l.id);
                       else if (l.contactId) setDrawerLeadId(l.id);
                       else if (bucketOf(l.outreachState) === "manual" && l.channel)
@@ -773,6 +834,22 @@ function LeadsPage() {
           lead={drawerLead}
           accounts={accountsQ.data ?? []}
           onClose={() => setDrawerLeadId(null)}
+          stageControl={{
+            stages: [...(seq.data?.stages ?? [])].sort(
+              (a, b) => a.order - b.order,
+            ),
+            currentStageId: drawerLead.stageId ?? null,
+            onSetStage: (stageId) =>
+              setStage.mutate({ itemId: drawerLead.id, stageId }),
+            onOpenFullCard: () => {
+              if (drawerLead.contactId)
+                navigate({
+                  to: "/w/$wsId/contacts/$id",
+                  params: { wsId, id: drawerLead.contactId },
+                });
+            },
+            disabled: seq.data?.status === "done",
+          }}
         />
       )}
       {channelView && (

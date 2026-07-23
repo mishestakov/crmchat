@@ -40,6 +40,7 @@ export function ContactResolver({
       maxLink?: string;
       dm?: boolean;
       group?: { chatId: string; accountId: string };
+      external?: { label: string; link?: string };
     }) => {
       const { error } = await api.POST(
         "/v1/workspaces/{wsId}/channels/{id}/set-admin",
@@ -159,6 +160,22 @@ export function ContactResolver({
           />
         </div>
 
+        {/* Внешний способ — нет адаптера (Instagram/VK/WhatsApp/почта/…).
+            Авторассылки нет, ведём стадиями + заметками контакта. */}
+        <div>
+          <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
+            Внешний способ (нет адаптера)
+          </div>
+          <ExternalPicker
+            loading={setAdmin.isPending}
+            onSet={(label, link) =>
+              setAdmin.mutate({
+                external: { label, ...(link ? { link } : {}) },
+              })
+            }
+          />
+        </div>
+
         {suggestions.length > 0 && (
           <div>
             <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
@@ -205,6 +222,47 @@ export function ContactResolver({
         )}
       </div>
       )}
+    </div>
+  );
+}
+
+// Внешний способ связи (нет адаптера): свободный лейбл + опц. ссылка. Пишет
+// contact_method.kind='external' — авторассылки нет, лид в «Написать вручную»,
+// прогресс ведётся стадиями канбана + заметками контакта (activities).
+function ExternalPicker({
+  onSet,
+  loading,
+}: {
+  onSet: (label: string, link: string) => void;
+  loading: boolean;
+}) {
+  const [label, setLabel] = useState("");
+  const [link, setLink] = useState("");
+  const ok = label.trim().length > 0;
+  return (
+    <div className="space-y-1.5 rounded-md border border-zinc-200 bg-zinc-50/40 p-2">
+      <input
+        value={label}
+        onChange={(e) => setLabel(e.target.value)}
+        maxLength={80}
+        placeholder="Напр.: Instagram @blogger, почта a@b.ru"
+        className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm focus:border-emerald-500 focus:outline-none"
+      />
+      <input
+        value={link}
+        onChange={(e) => setLink(e.target.value)}
+        maxLength={256}
+        placeholder="Ссылка (необязательно): https://…"
+        className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm focus:border-emerald-500 focus:outline-none"
+      />
+      <button
+        type="button"
+        disabled={!ok || loading}
+        onClick={() => onSet(label.trim(), link.trim())}
+        className="rounded-md bg-zinc-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+      >
+        Задать внешний способ
+      </button>
     </div>
   );
 }

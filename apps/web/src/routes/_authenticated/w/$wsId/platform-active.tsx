@@ -4,6 +4,7 @@ import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { api } from "../../../../lib/api";
 import { errorMessage } from "../../../../lib/errors";
 import { formatRelative } from "../../../../lib/date-utils";
+import { externalHref } from "../../../../lib/external-href";
 import { SearchInput } from "../../../../components/search-input";
 import { PLATFORMS, type Platform } from "../../../../lib/platforms";
 import { FilterChip } from "../../../../components/filter-chip";
@@ -296,10 +297,7 @@ function channelHref(r: {
     const built = platformInfo(r.platform)?.url(r.username);
     if (built) return built;
   }
-  if (r.link) {
-    const u = r.link.trim().replace(/^(https?):\/+/i, "$1://");
-    return /^https?:\/\//i.test(u) ? u : `https://${u.replace(/^[/@:]+/, "")}`;
-  }
+  if (r.link) return externalHref(r.link);
   return null;
 }
 

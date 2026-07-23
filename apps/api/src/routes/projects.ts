@@ -32,7 +32,7 @@ import {
   fetchPlatformActivity,
   PlatformActivitySchema,
 } from "../lib/platform-active.ts";
-import { contactReadySql } from "../lib/contact-sql.ts";
+import { autoAddressableSql, contactReadySql } from "../lib/contact-sql.ts";
 import {
   assertProjectAccess,
   projectAccessClause,
@@ -280,7 +280,12 @@ function deriveOutreachState(l: {
   // set-admin → clearPlacementRecipients), авто-опенер по нему не уходит.
   // Отдельное состояние, чтобы не маскировалось под not_scheduled/in_flight
   // («в работе», хотя система сама не пошлёт) — слать вручную через панель.
-  if (l.contactMethodKind === "channel_dm" || l.contactMethodKind === "group")
+  if (
+    l.contactMethodKind === "channel_dm" ||
+    l.contactMethodKind === "group" ||
+    // Внешний способ (нет адаптера): авто-опенера нет, ведём вручную.
+    l.contactMethodKind === "external"
+  )
     return "manual_method";
 
   const failedErrors = l.messages
@@ -400,6 +405,16 @@ const LeadProgressSchema = z
         // размещения. Не null → маркер «админ сменился → перевести на @X»
         // (клик = set-admin по этому @). Гасится при осознанном set-admin.
         suggestedAdmin: z.string().nullable(),
+      })
+      .nullable(),
+    // Явно выбранный способ связи (set-admin). Для external — свободный label +
+    // опц. ссылка: карточка рисует бейдж «нет адаптера», клик по ссылке. null —
+    // способ не задан (обычный человек-получатель).
+    contactMethod: z
+      .object({
+        kind: z.string(),
+        label: z.string().nullable(),
+        link: z.string().nullable(),
       })
       .nullable(),
   })
@@ -709,6 +724,7 @@ async function longlistContactReadiness(projectId: string): Promise<{
   total: number;
   noContact: number;
   noRkn: number;
+  manual: number;
   eligible: number;
 }> {
   const [row] = await db
@@ -717,6 +733,11 @@ async function longlistContactReadiness(projectId: string): Promise<{
       noContact: sql<number>`(count(*) filter (where not ${contactReadySql}))::int`,
       // «Уже работает» больше не отбраковка (бейдж, не гейт) — из воронки убрано.
       noRkn: sql<number>`(count(*) filter (where ${contactReadySql} and ${channelRknBlockedSql}))::int`,
+      // «Вручную» — готов (способ задан), но авто-опенер не уйдёт: личка
+      // канала/группа/внешний способ без @username и max-пира. Отдельно от
+      // eligible, чтобы «Готовы к отправке» не обещал отправку тем, кого
+      // планировщик молча пропустит (prepareLeads гейтит по адресуемости).
+      manual: sql<number>`(count(*) filter (where ${contactReadySql} and ${channelRknBlockedSql} is not true and not ${autoAddressableSql}))::int`,
     })
     .from(projectItems)
     .leftJoin(channels, eq(channels.id, projectItems.channelId))
@@ -730,13 +751,15 @@ async function longlistContactReadiness(projectId: string): Promise<{
   const total = row?.total ?? 0;
   const noContact = row?.noContact ?? 0;
   const noRkn = row?.noRkn ?? 0;
+  const manual = row?.manual ?? 0;
   // eligible = остаток партиции (корзины взаимоисключающие) — не отдельный
   // count-фильтр, чтобы не гонять EXISTS-предикаты лишний раз.
   return {
     total,
     noContact,
     noRkn,
-    eligible: total - noContact - noRkn,
+    manual,
+    eligible: total - noContact - noRkn - manual,
   };
 }
 
@@ -758,6 +781,9 @@ app.openapi(
               leadsEligible: z.number().int(),
               leadsNoContact: z.number().int(),
               leadsNoRkn: z.number().int(),
+              // «Вручную» (личка канала/группа/внешний способ): готовы, но
+              // авто-опенер им не уйдёт — менеджер пишет сам.
+              leadsManual: z.number().int(),
               // Активные аккаунты, доступные проекту (резолв общий с /activate).
               accountsCount: z.number().int(),
               // Готовность опенера тем же гейтом, что /activate (opener.text
@@ -792,6 +818,7 @@ app.openapi(
         : readiness.eligible,
       leadsNoContact: readiness.noContact,
       leadsNoRkn: rknProbe ? 0 : readiness.noRkn,
+      leadsManual: readiness.manual,
       accountsCount: accountIds.length,
       chainReady: project.opener.text.trim().length > 0,
     });
@@ -1237,6 +1264,14 @@ app.openapi(
           contactMethodKind: sql<
             string | null
           >`${channels.meta}->'contact_method'->>'kind'`,
+          // Внешний способ (kind=external): свободный label + опц. ссылка для
+          // бейджа на карточке.
+          contactMethodLabel: sql<
+            string | null
+          >`${channels.meta}->'contact_method'->>'label'`,
+          contactMethodLink: sql<
+            string | null
+          >`${channels.meta}->'contact_method'->>'link'`,
           total: sql<number>`count(*) OVER ()::int`,
         })
         .from(projectItems)
@@ -1407,6 +1442,13 @@ app.openapi(
                 platformActivity: activityByChannel.get(l.channelId) ?? null,
                 relationStatus: l.channelRelationStatus ?? "none",
                 suggestedAdmin: l.suggestedAdmin ?? null,
+              }
+            : null,
+          contactMethod: l.contactMethodKind
+            ? {
+                kind: l.contactMethodKind,
+                label: l.contactMethodLabel,
+                link: l.contactMethodLink,
               }
             : null,
         };

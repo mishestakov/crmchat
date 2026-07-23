@@ -38,3 +38,18 @@ export const contactReadySql = sql<boolean>`(
       and (cr.properties ->> 'max_user_id' <> '' or cr.properties ->> 'max_link' <> '')
   )
 )`;
+
+// «Авто-адресуем» — планировщик реально может отправить: есть @username админа
+// (TG-путь prepareLeads) либо max-пир у контакта (MAX-путь attachMaxPeer).
+// Готовый (contactReadySql), но НЕ авто-адресуемый лид — «ручной» (личка
+// канала/группа/внешний способ): опенер сам не уйдёт. Используется корзиной
+// «Вручную» в readiness — счётчик «Готовы к отправке» не должен обещать
+// отправку тем, кого планировщик молча пропустит.
+export const autoAddressableSql = sql<boolean>`(
+  ${projectItems.username} is not null
+  or exists (
+    select 1 from contacts ca
+    where ca.id = ${projectItems.contactId}
+      and (ca.properties ->> 'max_user_id' <> '' or ca.properties ->> 'max_link' <> '')
+  )
+)`;

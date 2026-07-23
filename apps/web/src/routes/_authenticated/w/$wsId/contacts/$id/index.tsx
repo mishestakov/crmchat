@@ -17,11 +17,12 @@ import type { Contact } from "@repo/core";
 import { api } from "../../../../../../lib/api";
 import { errorMessage } from "../../../../../../lib/errors";
 import { formatRelative } from "../../../../../../lib/date-utils";
+import { externalHref } from "../../../../../../lib/external-href";
 import { useClickOutside } from "../../../../../../lib/hooks";
 import { BackButton } from "../../../../../../components/back-button";
 import { ChannelBadges } from "../../../../../../components/channel-badges";
 import { ContactNote } from "../../../../../../components/chat-drawer";
-import { ActivitySection } from "../-activities-section";
+import { ActivitySection } from "../../../../../../components/activities-section";
 import { ChatDrawer } from "../../../../../../components/chat-drawer";
 import { useOutreachAccounts } from "../../../../../../lib/outreach-queries";
 import { ChannelDrawer } from "../../../../../../components/channel-drawer";
@@ -294,7 +295,7 @@ function ContactReachSection(props: {
   }
   const url = stringValue(values.url);
   if (url) {
-    const href = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+    const href = externalHref(url);
     rows.push({
       kind: "url",
       icon: Globe,

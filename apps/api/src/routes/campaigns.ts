@@ -680,11 +680,15 @@ app.openapi(
         continue;
       }
 
-      // У провайдер-каналов нет TG-админа (общение по DM/почте — отдельно).
+      // TG-канал — полный получатель (авто-опенер по @username). Провайдер-канал
+      // (youtube/…): авто-рассылки нет, но contactId переносим — иначе канал с
+      // привязанным контактом (напр. external-stub с заметками), добавленный во
+      // второй проект, терял бы связь с контактом («Открыть контакт» пропадал).
+      const resolved = await resolveAdminRecipient(ch.id);
       const admin =
         a.platform === "telegram"
-          ? await resolveAdminRecipient(ch.id)
-          : { contactId: null, username: null, tgUserId: null };
+          ? resolved
+          : { contactId: resolved.contactId, username: null, tgUserId: null };
       const [ins] = await db
         .insert(projectItems)
         .values({

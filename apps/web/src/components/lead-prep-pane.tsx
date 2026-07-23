@@ -142,13 +142,18 @@ export function LeadPrepPane(props: {
     typeof cProps.max_link === "string";
   const maxName =
     typeof cProps.full_name === "string" ? cProps.full_name : "контакт MAX";
+  // external — свободный лейбл из meta («Instagram @x», «почта a@b.ru»).
+  const externalLabel =
+    (meta.contact_method as { label?: string } | null)?.label ?? null;
   const contactLabel = lead.username
     ? `админ @${lead.username}`
     : isMaxContact
       ? `${maxName} (MAX)`
-      : methodKind === "group"
-        ? "группа обсуждения"
-        : "личка канала";
+      : methodKind === "external"
+        ? `внешний: ${externalLabel ?? "способ связи"}`
+        : methodKind === "group"
+          ? "группа обсуждения"
+          : "личка канала";
 
   return (
     <div className="flex h-full min-h-0">
@@ -188,8 +193,11 @@ export function LeadPrepPane(props: {
                 </button>
               </div>
               <p className="px-4 py-3 text-xs text-zinc-400">
-                Опенер уйдёт этому контакту при запуске. Переписка появится
-                здесь после старта рассылки.
+                {methodKind === "external"
+                  ? "Авто-рассылки по внешнему способу нет — пишите сами, " +
+                    "результат фиксируйте в заметках контакта."
+                  : "Опенер уйдёт этому контакту при запуске. Переписка " +
+                    "появится здесь после старта рассылки."}
               </p>
             </>
           ) : (

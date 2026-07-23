@@ -252,15 +252,18 @@ function KanbanPage() {
   );
 
   const stages = projectQ.data?.stages ?? [];
-  // Канбан показывает лидов после ответа peer'а (project_items.repliedAt).
-  // Контакт заводится на входящем (см. outreach-listener), карточка на канбане
-  // появляется тогда же; до ответа лид виден только в табличке /leads.
+  // Канбан показывает лидов после ответа peer'а (project_items.repliedAt) ИЛИ
+  // с явно заданной стадией. Второе — вход для external-лидов (Instagram/почта):
+  // repliedAt у них не появится никогда (нет адаптера-листенера), менеджер
+  // ставит стадию из дровера (StageStrip в списке лидов) — и карточка на доске.
   // Группировка по админу — O(n) построение Map, зависит ТОЛЬКО от лидов.
   // Держим в отдельном memo, чтобы ввод в поиск/тоггл фильтра не пересобирал
   // группы на каждую букву (на 1000 лидов это заметный лаг).
   const allGroups = useMemo(() => {
-    const replied = (leadsQ.data?.leads ?? []).filter((l) => !!l.repliedAt);
-    return groupLeads(replied);
+    const onBoard = (leadsQ.data?.leads ?? []).filter(
+      (l) => !!l.repliedAt || l.stageId != null,
+    );
+    return groupLeads(onBoard);
   }, [leadsQ.data?.leads]);
 
   const groups = useMemo(() => {

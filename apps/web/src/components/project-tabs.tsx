@@ -142,6 +142,8 @@ function LaunchPanel(props: { wsId: string; projectId: string }) {
 
   const r = readinessQ.data;
   if (!r) return null;
+  // Каст: leadsManual свежее сгенерённого api-client-типа (реген на хосте).
+  const manualCount = (r as { leadsManual?: number }).leadsManual ?? 0;
 
   // Гейт квалификации: отбракованные (без контакта / без РКН) НЕ блокируют
   // запуск — их откладываем, шлём годным. Запуск возможен, если есть ≥1
@@ -196,6 +198,18 @@ function LaunchPanel(props: { wsId: string; projectId: string }) {
           Найти контакт: {r.leadsNoContact} — показать
         </Link>
       )}
+      {/* «Вручную» — не проблема (нейтральный тон): способ задан, но авто-опенер
+          не уйдёт (личка/группа/внешний) — менеджер пишет сам. */}
+      {manualCount > 0 && (
+        <Link
+          to="/w/$wsId/projects/$projectId/leads"
+          params={{ wsId, projectId }}
+          search={{ filter: "manual" }}
+          className="inline-flex items-center gap-1 text-zinc-500 hover:underline"
+        >
+          Вручную: {manualCount}
+        </Link>
+      )}
       <Link
         to="/w/$wsId/projects/$projectId/accounts"
         params={{ wsId, projectId }}
@@ -240,11 +254,12 @@ function LaunchPanel(props: { wsId: string; projectId: string }) {
           title={`Запустить ${r.leadsEligible} из ${r.leadsTotal}?`}
         >
           <p className="text-xs text-zinc-500">
-            Отбракованные не получат опенер. Они останутся в списке и вернутся
-            в работу автоматически (нашёлся контакт / зарегали РКН).
+            Часть лидов авто-опенер не получит: отбракованные вернутся в работу
+            автоматически (нашёлся контакт / зарегали РКН), «вручную» — пишете
+            сами (личка канала/группа/внешний способ).
           </p>
           <ul className="mt-3 space-y-1 text-sm text-zinc-700">
-            <li>Отложено: {deferred}</li>
+            <li>Без авто-опенера: {deferred}</li>
             {r.leadsNoContact > 0 && (
               <li className="text-zinc-500">
                 • без контакта: {r.leadsNoContact}
@@ -252,6 +267,9 @@ function LaunchPanel(props: { wsId: string; projectId: string }) {
             )}
             {r.leadsNoRkn > 0 && (
               <li className="text-zinc-500">• без РКН: {r.leadsNoRkn}</li>
+            )}
+            {manualCount > 0 && (
+              <li className="text-zinc-500">• вручную: {manualCount}</li>
             )}
           </ul>
           <div className="mt-4 flex justify-end gap-2">
