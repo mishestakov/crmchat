@@ -11,6 +11,9 @@
     },
     "typecheck": {
       "dependsOn": ["^build"]
+    },
+    "generate": {
+      "cache": false
     }
   }
 }

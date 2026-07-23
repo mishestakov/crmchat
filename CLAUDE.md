@@ -34,5 +34,5 @@ pnpm dev         # turbo: api:3000 + web:5173
 
 - Auth: пока mock-session (см. `apps/api/src/routes/auth.ts`, dev-only `_dev/login` под `NODE_ENV !== production`). Боевой Яндекс OAuth втыкается через тот же `createSession` helper — точка входа `apps/api/src/lib/sessions.ts`.
 - Tenancy: workspace-scoped ручки под `assertMember` middleware. Сейчас правило — `workspaces.createdBy = userId`; заменится на `workspace_members` join вместе с auth-ролями.
-- Single source of truth: Zod-схемы в `@repo/core` → валидация в API + OpenAPI doc + typed client (`@repo/api-client`, генерится `pnpm -F @repo/api-client generate` после изменений в API).
+- Single source of truth: Zod-схемы в `@repo/core` → валидация в API + OpenAPI doc + typed client (`@repo/api-client`). После изменения API-роутов: `pnpm -F @repo/api-client generate` (оффлайн, сервер/БД не нужны) и **закоммитить обновлённый `src/schema.ts`** — он в git, диффы контракта видны в ревью; протухшая схема = красный typecheck у web.
 - Drizzle: `db:push` в dev (без миграционных файлов). Перед prod-деплоем — переключиться на `generate` + `migrate`.

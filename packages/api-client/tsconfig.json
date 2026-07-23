@@ -3,5 +3,8 @@
   "compilerOptions": {
     "types": ["node"]
   },
-  "include": ["src", "scripts"]
+  // scripts/ не типизируем отсюда: generate.ts импортирует apps/api-граф
+  // (свой tsconfig, свои ambient-декларации типа lz4js.d.ts) — его проверяет
+  // typecheck самого api. Здесь только клиент.
+  "include": ["src"]
 }
