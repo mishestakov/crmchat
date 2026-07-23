@@ -13,6 +13,7 @@ import {
   EMPTY_DUNNING,
   type MessageVariant,
   type ProjectDunning,
+  type ProjectOpener,
 } from "../db/schema.ts";
 import { contactTgUserIdSql } from "./contact-sql.ts";
 import { maxPeerRef } from "./max-account-client.ts";
@@ -25,6 +26,14 @@ import { nextAllowedSendAt } from "./outreach-schedule.ts";
 // проект (placements/bulk при status=active|paused). Общая логика:
 // разрешить sticky → warm-set → построить scheduled_messages row'ы со
 // смещениями от baseTime, с round-robin для лидов без sticky.
+
+// Проверочная РКН-рассылка включена = задан непустой opener.rknText. Единый
+// предикат для планирования (prepareLeads/scheduleUnscheduledLeads) и
+// отображения (readiness/kanban) — чтобы «что показываем» и «что реально
+// планируем» не разъезжались.
+export function isRknProbeEnabled(opener: ProjectOpener): boolean {
+  return !!opener.rknText?.trim();
+}
 
 export function delayToMs(delay: { period: string; value: number }): number {
   const v = delay.value;
@@ -138,6 +147,9 @@ export type SchedulingLead = {
   // MAX-пир получателя — резолвится attachMaxPeer для лидов без @username по их
   // контакту. Присутствие = «это MAX-лид»: ведём MAX-аккаунтом, котики выключены.
   maxPeer?: string | null;
+  // Все каналы админа отбракованы по РКН, но у проекта задан проверочный опенер
+  // (opener.rknText) → шлём rknText вместо холодного text. Ставит prepareLeads.
+  isRknProbe?: boolean;
 };
 
 // Размещение → лид для планировщика. Общий для всех точек планирования
@@ -298,9 +310,17 @@ function buildScheduledRows(opts: {
     };
 
     const rows: ScheduledRow[] = [];
-    // Опенер — idx 0, уходит сразу. warmText только для «тёплых».
+    // Опенер — idx 0, уходит сразу. Приоритет: проверочный РКН-вопрос (сегмент
+    // «нет РКН», prepareLeads пометил isRknProbe) → warmText для «тёплых» →
+    // холодный text. rknProbe важнее warm: цель контакта — уточнить РКН.
     const openerWarm = opener.warmText?.trim();
-    const openerText = isWarm && openerWarm ? openerWarm : opener.text;
+    const openerRkn = opener.rknText?.trim();
+    const openerText =
+      lead.isRknProbe && openerRkn
+        ? openerRkn
+        : isWarm && openerWarm
+          ? openerWarm
+          : opener.text;
     rows.push({
       ...base,
       messageIdx: 0,
@@ -366,6 +386,10 @@ async function prepareLeads(opts: {
   projectId: string;
   leads: SchedulingLead[];
   skipContacted: boolean;
+  // На проекте задан проверочный опенер (opener.rknText) → админы, у кого ВСЕ
+  // каналы отбракованы по РКН, не выкидываются, а помечаются isRknProbe и
+  // получают rknText вместо отбраковки.
+  rknProbeEnabled: boolean;
 }): Promise<SchedulingLead[]> {
   const channelRows = await db
     .select({
@@ -488,15 +512,24 @@ async function prepareLeads(opts: {
       if (botUsernames.has(l.username.replace(/^@/, "").toLowerCase())) continue;
       if (l.tgUserId && botTgIds.has(l.tgUserId)) continue;
     }
-    // РКН-отбраковка: каналу, обязанному регистрироваться и не в реестре,
-    // опенер не шлём (гейт квалификации).
-    if (!sendableKeys.has(key)) continue;
+    // isRknProbe = админ ЕСТЬ в каналах проекта (canals), но НЕ имеет ни одного
+    // канала вне реестра (все обязаны регистрироваться и не зареганы). Именно
+    // `canals.has(key)`, а не просто `!sendableKeys.has(key)`: ключ, вовсе
+    // отсутствующий в channelRows (лид shortlisted / available=false — их
+    // фильтр channelRows отсекает, но dolivka/repoint такие пропускают), НЕ
+    // probe — его дропаем, как и раньше, а не шлём проверочный текст отказнику.
+    const isRknProbe = canals.has(key) && !sendableKeys.has(key);
+    // Опенер не шлём, если у админа нет годного канала И это не probe-кейс при
+    // включённом rknText. По умолчанию (rknText пуст) — отбраковка как раньше;
+    // probe даёт rknText («точно нет РКН?») вместо холодного питча.
+    if (!sendableKeys.has(key) && !(isRknProbe && opts.rknProbeEnabled)) continue;
     if (seen.has(key)) continue;
     seen.add(key);
     if (opts.skipContacted && contacted.has(key)) continue;
     const entry = canals.get(key);
     out.push({
       ...l,
+      isRknProbe,
       properties: entry
         ? {
             ...l.properties,
@@ -630,6 +663,8 @@ export async function scheduleLeads(opts: {
     projectId: opts.project.id,
     leads: withMax,
     skipContacted: opts.skipContacted,
+    // Проверочный РКН-опенер задан → пускаем no-РКН сегмент в рассылку (rknText).
+    rknProbeEnabled: isRknProbeEnabled(opts.project.opener),
   });
   if (prepared.length === 0) return [];
   const tgUserIds = prepared
@@ -709,6 +744,7 @@ export async function scheduleUnscheduledLeads(opts: {
   itemId?: string;
 }): Promise<number> {
   const { project } = opts;
+  const rknProbeEnabled = isRknProbeEnabled(project.opener);
   const accountIds = await resolveProjectAccountIds(
     project.workspaceId,
     project,
@@ -733,9 +769,12 @@ export async function scheduleUnscheduledLeads(opts: {
         sql`${projectItems.available} is distinct from false`,
         // Отбракованных по РКН не планируем и здесь (мирроринг гейта в
         // prepareLeads) — счётчик и действие должны совпадать. `is not true`,
-        // а не `not (...)`: NULL (неизвестный размер) = годен (см.
-        // countUnscheduledLeads).
-        sql`${channelRknBlockedSql} is not true`,
+        // а не `not (...)`: NULL (неизвестный размер) = годен. НО при
+        // проверочном опенере (rknText) сегмент «нет РКН» — цель рассылки,
+        // clause снимаем (prepareLeads пометит их isRknProbe и пошлёт rknText).
+        ...(rknProbeEnabled
+          ? []
+          : [sql`${channelRknBlockedSql} is not true`]),
         unscheduledLeadSql,
       ),
     )

@@ -22,6 +22,7 @@ import { Modal } from "../../../../../components/modal";
 import { AddChannelsModal } from "../../../../../components/add-channels-modal";
 import {
   OpenerEditor,
+  openerKey,
   type Opener,
 } from "../../../../../components/opener-editor";
 import { api } from "../../../../../lib/api";
@@ -908,7 +909,9 @@ function LaunchModal({
   const projectId = campaign.id;
   const baseOpener: Opener = campaign.opener;
   const [opener, setOpener] = useState<Opener>(baseOpener);
-  const openerDirty = JSON.stringify(opener) !== JSON.stringify(baseOpener);
+  // openerKey нормализует порядок/null: jsonb не хранит порядок ключей, иначе
+  // кнопка мигала бы после save (CLAUDE.md #6).
+  const openerDirty = openerKey(opener) !== openerKey(baseOpener);
   const openerEmpty = !opener.text.trim();
 
   const launch = useMutation({

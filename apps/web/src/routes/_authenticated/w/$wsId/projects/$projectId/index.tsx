@@ -17,6 +17,7 @@ import { BackButton } from "../../../../../../components/back-button";
 import { ProjectTabs } from "../../../../../../components/project-tabs";
 import {
   OpenerEditor,
+  openerKey,
   type Opener,
 } from "../../../../../../components/opener-editor";
 import { Modal } from "../../../../../../components/modal";
@@ -226,9 +227,8 @@ function SequenceDetailPage() {
   const accountsSummary = buildAccountsSummary(data, accountsQ.data ?? []);
 
   // Кнопка «Сохранить» — только при unsaved-изменениях опенера (CLAUDE.md #6).
-  const dirty =
-    JSON.stringify(opener) !==
-    JSON.stringify(data.opener ?? { text: "", warmText: null });
+  // openerKey нормализует порядок/null (jsonb не хранит порядок ключей).
+  const dirty = openerKey(opener) !== openerKey(data.opener ?? { text: "" });
 
   const confirmComplete = () => {
     if (

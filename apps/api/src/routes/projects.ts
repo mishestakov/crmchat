@@ -42,6 +42,7 @@ import {
   channelIdentifier,
   countMaxLeadsAmong,
   disarmLeadDunning,
+  isRknProbeEnabled,
   resolveProjectAccountIds,
   resolveProjectMaxAccountIds,
   resolveStickyByTgUserIds,
@@ -81,6 +82,8 @@ const OpenerSchema = z.object({
   // Пустой text допустим (draft без опенера); непустоту требует гейт /activate.
   text: z.string().max(4000),
   warmText: z.string().max(4000).nullable().optional(),
+  // Проверочный опенер для сегмента «нет РКН» (см. ProjectOpener.rknText).
+  rknText: z.string().max(4000).nullable().optional(),
 });
 // Экспортируется для workspaces.ts — пиналка живёт на воркспейсе (одна на все
 // проекты). В проекте остаётся только опенер.
@@ -262,13 +265,16 @@ function deriveOutreachState(l: {
   skippedAt: Date | null;
   contactReady: boolean | null;
   channelRknBlocked: boolean | null;
+  // Проект-уровень: задан проверочный опенер (opener.rknText) → сегмент «нет РКН»
+  // перестаёт быть терминалом, лид течёт по обычной оси (планируется/in_flight).
+  rknProbe: boolean;
   adminIsBot: boolean | null;
   contactMethodKind: string | null;
   messages: { status: string; error: string | null }[];
 }): OutreachState {
   if (l.repliedAt) return "replied";
   if (l.skippedAt) return "excluded";
-  if (l.channelRknBlocked) return "blocked_rkn";
+  if (l.channelRknBlocked && !l.rknProbe) return "blocked_rkn";
   if (!l.contactReady) return "no_contact";
   // Способ связи — личка канала/группа: получателя-человека нет (обнулён в
   // set-admin → clearPlacementRecipients), авто-опенер по нему не уходит.
@@ -775,11 +781,17 @@ app.openapi(
       longlistContactReadiness(project.id),
       resolveProjectAccountIds(wsId, project),
     ]);
+    // Проверочный РКН-опенер задан → сегмент «нет РКН» уходит в рассылку (проб-
+    // вопрос), а не откладывается: сворачиваем noRkn в eligible, иначе проект
+    // только из no-РКН каналов был бы незапускаем (eligible=0).
+    const rknProbe = isRknProbeEnabled(project.opener);
     return c.json({
       leadsTotal: readiness.total,
-      leadsEligible: readiness.eligible,
+      leadsEligible: rknProbe
+        ? readiness.eligible + readiness.noRkn
+        : readiness.eligible,
       leadsNoContact: readiness.noContact,
-      leadsNoRkn: readiness.noRkn,
+      leadsNoRkn: rknProbe ? 0 : readiness.noRkn,
       accountsCount: accountIds.length,
       chainReady: project.opener.text.trim().length > 0,
     });
@@ -1317,6 +1329,10 @@ app.openapi(
       : [];
     const accountById = new Map(accountRows.map((a) => [a.id, a]));
 
+    // Проверочная РКН-рассылка включена на проекте → сегмент «нет РКН» не
+    // терминал (см. deriveOutreachState / opener.rknText).
+    const rknProbe = isRknProbeEnabled(project.opener);
+
     return c.json({
       total: leadRows[0]?.total ?? 0,
       repliedCount,
@@ -1374,6 +1390,7 @@ app.openapi(
             skippedAt: l.skippedAt,
             contactReady: l.contactReady,
             channelRknBlocked: l.channelRknBlocked,
+            rknProbe,
             adminIsBot: l.adminIsBot,
             contactMethodKind: l.contactMethodKind,
             messages,
