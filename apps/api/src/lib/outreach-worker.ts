@@ -69,8 +69,13 @@ const MAX_PER_ACCOUNT_PER_TICK = 1;
 // POST_SEND ≥ 60s заменяет старый NEW_LEAD_MIN_INTERVAL_MS-гейт.
 const TYPING_MIN_MS = 15_000;
 const TYPING_MAX_MS = 40_000;
+// Пауза после отправки — per-account анти-флуд флор (≥60с заменяет старый
+// NEW_LEAD_MIN_INTERVAL). Основной разброс интервала несёт ACCOUNT_SPREAD ниже:
+// длина раунда = max(spread + typing + post-send) ≈ 5..10 мин при 15 аккаунтах.
 const POST_SEND_MIN_MS = 60_000;
-const POST_SEND_MAX_MS = 150_000;
+const POST_SEND_MAX_MS = 180_000;
+// Пер-аккаунтный разброс старта отправки в раунде (антизалп при N аккаунтах).
+const ACCOUNT_SPREAD_MS = 300_000;
 // Бэкофф для неизвестной ошибки отправки: сдвигаем send_at вперёд, чтобы
 // битая «голова» очереди аккаунта не блокировала остальные его сообщения
 // (worker берёт 1 msg/аккаунт/tick по самому старому send_at).
@@ -332,6 +337,14 @@ async function processAccount(accountId: string, items: DueItem[]) {
     );
     return;
   }
+
+  // Пер-аккаунтный случайный разброс старта. runTick шлёт все аккаунты одним
+  // Promise.all — без этого их отправки кучкуются в окне typing-джиттера (~30с)
+  // каждый раунд: синхронный залп, тем заметнее чем больше аккаунтов. Спим
+  // random(0..SPREAD) ДО send'а → отправки раунда размазываются, ordering
+  // каждый раунд новый. Точного десинка (общий барьер Promise.all остаётся) не
+  // даёт, но убирает одновременный залп.
+  await sleep(randomMs(0, ACCOUNT_SPREAD_MS));
 
   for (const item of items) {
     const lead = leadById.get(item.leadId);
