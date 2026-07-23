@@ -182,9 +182,9 @@ function LaunchPanel(props: { wsId: string; projectId: string }) {
           ? "Список пуст — добавьте каналы"
           : `Готовы к отправке: ${r.leadsEligible} из ${r.leadsTotal}`}
       </Link>
-      {/* Отбраковка не блокирует запуск — два честных информера с дип-линком
-          в нужный сегмент списка. «Нет контакта» чинибельно (инбокс),
-          «отбраковано» терминально (РКН). */}
+      {/* Отбраковка не блокирует запуск. Показываем только call-to-action
+          «нет контакта» (чинибельно через инбокс). Терминальную отбраковку
+          (РКН) не дублируем — сегмент и так всегда виден в списке. */}
       {r.leadsNoContact > 0 && (
         <Link
           to="/w/$wsId/projects/$projectId/leads"
@@ -194,17 +194,6 @@ function LaunchPanel(props: { wsId: string; projectId: string }) {
         >
           <CircleAlert size={13} className="text-amber-600" />
           Найти контакт: {r.leadsNoContact} — показать
-        </Link>
-      )}
-      {r.leadsNoRkn > 0 && (
-        <Link
-          to="/w/$wsId/projects/$projectId/leads"
-          params={{ wsId, projectId }}
-          search={{ filter: "wont" }}
-          className="inline-flex items-center gap-1 text-amber-700 hover:underline"
-        >
-          <CircleAlert size={13} className="text-amber-600" />
-          Отбраковано: {r.leadsNoRkn} — показать
         </Link>
       )}
       <Link
