@@ -400,6 +400,11 @@ async function prepareLeads(opts: {
       link: channels.link,
       title: channels.title,
       rknBlocked: channelRknBlockedSql,
+      // Явно выбранный ручной способ связи (external/группа/личка) — гейт
+      // «не авто-слать» по смыслу решения, а не по пустоте username-снапшота.
+      contactMethodKind: sql<
+        string | null
+      >`${channels.meta}->'contact_method'->>'kind'`,
     })
     .from(projectItems)
     .leftJoin(channels, eq(channels.id, projectItems.channelId))
@@ -428,12 +433,28 @@ async function prepareLeads(opts: {
   // «Уже работает на платформе» НЕ исключаем из sendable (CPC/CPA-сигнал
   // ненадёжен — бейдж на лиде, менеджер решает сам). Гейтит только РКН.
   const sendableKeys = new Set<string>();
+  // Два вспомогательных сета для probe-детекта (isRknProbe ниже):
+  //  • rknOkKeys — есть канал не под РКН-блоком (probe = ВСЕ блокированы);
+  //  • autoKindKeys — есть канал БЕЗ ручного способа: чисто-ручной админ
+  //    (external/группа/личка) probe-вопрос тоже не получает — «вручную»
+  //    главнее РКН-перепроверки.
+  const rknOkKeys = new Set<string>();
+  const autoKindKeys = new Set<string>();
   for (const r of channelRows) {
     // MAX-админ без @username ключуется по contactId (adminKey) — иначе выпал бы
     // из синтеза {{каналы}}/{{ссылка}}, как раньше любой no-@username.
     const key = adminKey(r.adminUsername, r.adminContactId);
     if (!key) continue;
-    if (!r.rknBlocked) sendableKeys.add(key);
+    if (r.contactMethodKind == null) autoKindKeys.add(key);
+    if (!r.rknBlocked) {
+      rknOkKeys.add(key);
+      // Канал с ручным способом (contact_method.kind: external/group/
+      // channel_dm) НЕ делает админа авто-адресуемым. Раньше гейт держался
+      // на случайной пустоте username-снапшота: стоило дописать @ в карточку
+      // контакта (или bulk-add снапшотил живой @ во второй проект) — и
+      // авто-опенер уходил лиду, для которого явно выбрано «вести вручную».
+      if (r.contactMethodKind == null) sendableKeys.add(key);
+    }
     const entry = canals.get(key) ?? { idents: [], title: null, link: null };
     const { ident, link } = channelIdentifier({
       platform: r.platform,
@@ -518,7 +539,8 @@ async function prepareLeads(opts: {
     // отсутствующий в channelRows (лид shortlisted / available=false — их
     // фильтр channelRows отсекает, но dolivka/repoint такие пропускают), НЕ
     // probe — его дропаем, как и раньше, а не шлём проверочный текст отказнику.
-    const isRknProbe = canals.has(key) && !sendableKeys.has(key);
+    const isRknProbe =
+      canals.has(key) && !rknOkKeys.has(key) && autoKindKeys.has(key);
     // Опенер не шлём, если у админа нет годного канала И это не probe-кейс при
     // включённом rknText. По умолчанию (rknText пуст) — отбраковка как раньше;
     // probe даёт rknText («точно нет РКН?») вместо холодного питча.
@@ -775,6 +797,10 @@ export async function scheduleUnscheduledLeads(opts: {
         ...(rknProbeEnabled
           ? []
           : [sql`${channelRknBlockedSql} is not true`]),
+        // Ручной способ связи (external/группа/личка) — не планируем по
+        // смыслу решения, а не по пустоте username (мирроринг гейта в
+        // prepareLeads: снапшот мог получить @ из карточки контакта).
+        sql`${channels.meta}->'contact_method'->>'kind' is null`,
         unscheduledLeadSql,
       ),
     )
