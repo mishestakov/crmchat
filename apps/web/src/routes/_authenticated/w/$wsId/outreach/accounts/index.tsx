@@ -119,6 +119,16 @@ function OutreachAccountsList() {
                           cooldown
                         </span>
                       )}
+                    {/* Ограничение ПОИСКА (searchPublicChat) — отправкам не
+                        мешает, лукапы юзернеймов идут другими аккаунтами. */}
+                    {acc.searchFloodedUntil && (
+                      <span
+                        className="shrink-0 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-violet-800"
+                        title={`TG ограничил поиск юзернеймов до ${new Date(acc.searchFloodedUntil).toLocaleString("ru")}. Отправки работают.`}
+                      >
+                        поиск огр.
+                      </span>
+                    )}
                   </div>
                   <div className="truncate text-xs text-zinc-500">
                     {acc.phoneNumber ?? null}

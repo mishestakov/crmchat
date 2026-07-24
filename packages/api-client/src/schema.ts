@@ -6091,6 +6091,8 @@ export interface components {
         OutreachAccountListItem: components["schemas"]["OutreachAccount"] & {
             coldSentToday: number;
             coldSent30d: number;
+            /** Format: date-time */
+            searchFloodedUntil: string | null;
         };
         OutreachAccount: {
             id: string;

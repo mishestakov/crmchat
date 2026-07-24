@@ -46,6 +46,7 @@ import {
   type AuthState,
 } from "../lib/tdlib/index.ts";
 import { assertRole, type WorkspaceVars } from "../middleware/assert-member.ts";
+import { getSearchFloodUntil } from "../lib/ensure-tg-user-id.ts";
 
 // Outreach-аккаунты: ОТПРАВЛЯЮЩИЕ TG-аккаунты для холодных рассылок (multi per
 // workspace). Auth-флоу через TDLib state-machine: HTTP-ручки вызывают
@@ -90,6 +91,10 @@ const AccountListItemSchema = AccountSchema.extend({
   // близости к дневному лимиту.
   coldSentToday: z.number().int(),
   coldSent30d: z.number().int(),
+  // TG ограничил ПОИСК юзернеймов с аккаунта (FLOOD_WAIT на searchPublicChat).
+  // Отправок НЕ блокирует (лимиты раздельные) — потому не cooldownUntil, а
+  // отдельный бейдж. In-memory (см. getSearchFloodUntil): рестарт api сбрасывает.
+  searchFloodedUntil: z.iso.datetime().nullable(),
 }).openapi("OutreachAccountListItem");
 
 // Активность аккаунта по дням (в tz воркспейса) для сворачиваемой «Истории» на
@@ -238,11 +243,15 @@ app.openapi(
       .orderBy(outreachAccounts.createdAt);
 
     return c.json(
-      rows.map((r) => ({
-        ...serializeAccount(r.row),
-        coldSentToday: r.coldSentToday,
-        coldSent30d: r.coldSent30d,
-      })),
+      rows.map((r) => {
+        const flooded = getSearchFloodUntil(r.row.id);
+        return {
+          ...serializeAccount(r.row),
+          coldSentToday: r.coldSentToday,
+          coldSent30d: r.coldSent30d,
+          searchFloodedUntil: flooded ? new Date(flooded).toISOString() : null,
+        };
+      }),
     );
   },
 );
