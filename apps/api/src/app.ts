@@ -11,7 +11,7 @@ import {
 } from "./middleware/assert-member.ts";
 import activities from "./routes/activities.ts";
 import auth from "./routes/auth.ts";
-import campaigns from "./routes/campaigns.ts";
+import campaigns from "./routes/campaigns/index.ts";
 import channels from "./routes/channels/index.ts";
 import contacts from "./routes/contacts/index.ts";
 import { memberOps, publicInvites, wsInvites } from "./routes/invites.ts";
