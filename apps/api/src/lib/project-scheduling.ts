@@ -258,6 +258,9 @@ function buildScheduledRows(opts: {
   warmTgUserIds: Set<string>;
   // accountId → имя отправителя (outreach_name ?? first_name) для {{отправитель}}.
   senderNameByAccountId: Map<string, string>;
+  // accountId → текущие pending-опенеры аккаунта в проекте (стартовая нагрузка
+  // для балансировки; отсутствие в карте = 0).
+  loadByAccountId: Map<string, number>;
 }): ScheduledRow[] {
   // Опенер — проектный (одно холодное касание). Пиналка — workspace-уровень.
   const opener = opts.project.opener;
@@ -265,8 +268,23 @@ function buildScheduledRows(opts: {
   // Котики — только TG: в MAX пинги текстовые (scheduler не кладёт стикер-снимок).
   const textOnlyPings = dunning.pings.filter((p) => p.kind === "text");
 
-  let rrIdx = 0; // round-robin TG-пула
-  let rrMaxIdx = 0; // round-robin MAX-пула
+  // Балансировка по НАГРУЗКЕ вместо позиционного round-robin. Счётчик rr жил
+  // внутри одного вызова и всегда стартовал с 0 → одиночная доливка (обычный
+  // паттерн: каналы добавляют по одному) каждый раз отдавала лида pool[0] —
+  // прод-кейс 23.07: активация поделила 14/13, а 42 одиночные доливки легли
+  // 41:1 на первый аккаунт пула. Берём наименее загруженный аккаунт (pending-
+  // опенеры в проекте, передаётся снаружи) и инкрементируем локально —
+  // самовыравнивается при любом размере батча и чинит накопленный перекос.
+  // Sticky по-прежнему главнее баланса (одно контактное лицо на блогера).
+  const load = new Map(opts.loadByAccountId);
+  const pickLeastLoaded = (pool: string[]): string => {
+    let best = pool[0]!;
+    for (const id of pool) {
+      if ((load.get(id) ?? 0) < (load.get(best) ?? 0)) best = id;
+    }
+    load.set(best, (load.get(best) ?? 0) + 1);
+    return best;
+  };
   return opts.leads.flatMap((lead) => {
     // Платформа лида = из контакта (maxPeer присутствует → MAX). MAX-лид тянет
     // аккаунт из MAX-пула, TG-лид — из TG-пула. Пул нужной платформы пуст
@@ -278,20 +296,24 @@ function buildScheduledRows(opts: {
 
     let accountId: string;
     if (isMax) {
-      // MAX-стики для холодного опенера не делаем (MVP) — round-robin. Ручной
-      // догон (armLeadDunning) берёт sticky-аккаунт из истории отправок.
-      accountId = pool[rrMaxIdx % pool.length]!;
-      rrMaxIdx++;
+      // MAX-стики для холодного опенера не делаем (MVP). Ручной догон
+      // (armLeadDunning) берёт sticky-аккаунт из истории отправок.
+      accountId = pickLeastLoaded(pool);
     } else {
       const priorRaw = lead.tgUserId
         ? opts.priorByTgUserId.get(lead.tgUserId)
         : undefined;
       // Sticky-аккаунт валиден только если он в наборе проекта (active ∩
       // accountsSelected). Иначе (peer общался с paused/не-выбранным аккаунтом)
-      // — round-robin, а не отправка с аккаунта, которого в кампании нет.
+      // — балансировка, а не отправка с аккаунта, которого в кампании нет.
       const prior = priorRaw && pool.includes(priorRaw) ? priorRaw : undefined;
-      accountId = prior ?? pool[rrIdx % pool.length]!;
-      if (!prior) rrIdx++;
+      if (prior) {
+        accountId = prior;
+        // Sticky-лид тоже ест ёмкость аккаунта — учитываем в балансе.
+        load.set(prior, (load.get(prior) ?? 0) + 1);
+      } else {
+        accountId = pickLeastLoaded(pool);
+      }
     }
     const isWarm =
       !isMax && !!lead.tgUserId && opts.warmTgUserIds.has(lead.tgUserId);
@@ -693,13 +715,30 @@ export async function scheduleLeads(opts: {
     .map((l) => l.tgUserId)
     .filter((x): x is string => x !== null);
   // sticky и warm независимы (общий вход tgUserIds) — параллелим.
-  const [priorByTgUserId, warmTgUserIds, dunning, maxAccountIds] =
+  const [priorByTgUserId, warmTgUserIds, dunning, maxAccountIds, loadRows] =
     await Promise.all([
       resolveStickyByTgUserIds(opts.wsId, tgUserIds),
       resolveWarmTgUserIds(opts.wsId, tgUserIds),
       resolveWorkspaceDunning(opts.wsId),
       resolveProjectMaxAccountIds(opts.wsId, opts.project),
+      // Стартовая нагрузка балансировщика: pending-опенеры аккаунта в проекте
+      // (именно опенеры — они едят дневной cold-лимит; пинги не в счёт).
+      db
+        .select({
+          accountId: scheduledMessages.accountId,
+          n: sql<number>`count(*)::int`,
+        })
+        .from(scheduledMessages)
+        .where(
+          and(
+            eq(scheduledMessages.projectId, opts.project.id),
+            eq(scheduledMessages.status, "pending"),
+            eq(scheduledMessages.messageIdx, 0),
+          ),
+        )
+        .groupBy(scheduledMessages.accountId),
     ]);
+  const loadByAccountId = new Map(loadRows.map((r) => [r.accountId, r.n]));
   // Имена отправителей по всем аккаунтам в игре (TG ∪ MAX) — для {{отправитель}}.
   // Дубли id безвредны: SQL IN и Map-ключ их схлопывают.
   const senderNameByAccountId = await resolveSenderNames([
@@ -717,6 +756,7 @@ export async function scheduleLeads(opts: {
     priorByTgUserId,
     warmTgUserIds,
     senderNameByAccountId,
+    loadByAccountId,
   });
 }
 
