@@ -43,7 +43,12 @@ import { assertChannelAccess } from "../../lib/channels-access.ts";
 import {
   findSubscribedReaderAccount,
   getOutreachWorkerClient,
+  parseFloodWaitSeconds,
 } from "../../lib/outreach-account-client.ts";
+import {
+  getSearchFloodUntil,
+  markSearchFlooded,
+} from "../../lib/ensure-tg-user-id.ts";
 import { recordChannelRelation } from "../../lib/channel-relation.ts";
 import { accountAccessClause } from "../../lib/outreach-access.ts";
 import {
@@ -134,7 +139,11 @@ async function pickOutreachClient(
   userId: string,
   role: WorkspaceRole,
 ): Promise<{ client: TdClient; accountId: string } | null> {
-  const [acc] = await db
+  // ВСЕ активные, а не LIMIT 1: старый «самый ранний аккаунт» собирал ВЕСЬ
+  // канальный поиск воркспейса на себя (прод 24.07: 150 добавленных каналов →
+  // FLOOD_WAIT ~5ч у синкера при пяти простаивающих соседях). Пропускаем
+  // известно-флуднутых (общий реестр с контакт-резолвом) и мёртвых клиентов.
+  const accs = await db
     .select({ id: outreachAccounts.id, workspaceId: outreachAccounts.workspaceId })
     .from(outreachAccounts)
     .where(
@@ -144,12 +153,13 @@ async function pickOutreachClient(
         eq(outreachAccounts.status, "active"),
       ),
     )
-    .orderBy(outreachAccounts.createdAt)
-    .limit(1);
-  if (!acc) return null;
-  const client = await getOutreachWorkerClient(acc);
-  if (!client) return null;
-  return { client, accountId: acc.id };
+    .orderBy(outreachAccounts.createdAt);
+  for (const acc of accs) {
+    if (getSearchFloodUntil(acc.id)) continue;
+    const client = await getOutreachWorkerClient(acc);
+    if (client) return { client, accountId: acc.id };
+  }
+  return null;
 }
 
 // Выбор аккаунта для чтения канала. Приоритет: любой подписанный аккаунт
@@ -374,6 +384,8 @@ function metricsFromMessages(
 async function syncChannelFromTg(
   channel: typeof channels.$inferSelect,
   tdClient: TdClient,
+  // Для пометки search-флуда в общий реестр (бейдж «поиск огр.» + пикеры).
+  accountId: string,
 ): Promise<typeof channels.$inferSelect> {
   const id = channel.id;
   type TdChat = {
@@ -410,6 +422,8 @@ async function syncChannelFromTg(
   } catch (e) {
     const cls = classifyResolveError(e);
     if (cls.permanent) await markChannelUnavailable(id, cls.reason);
+    const waitSec = parseFloodWaitSeconds(errMsg(e));
+    if (waitSec) markSearchFlooded(accountId, waitSec);
     throw new HTTPException(404, {
       message: `Telegram lookup failed: ${errMsg(e)}`,
     });
@@ -444,6 +458,8 @@ async function syncChannelFromTg(
   } catch (e) {
     const cls = classifyResolveError(e);
     if (cls.permanent) await markChannelUnavailable(id, cls.reason);
+    const waitSec = parseFloodWaitSeconds(errMsg(e));
+    if (waitSec) markSearchFlooded(accountId, waitSec);
     throw new HTTPException(404, {
       message: `Telegram lookup failed: ${errMsg(e)}`,
     });
@@ -590,7 +606,7 @@ app.openapi(
     }
     const tdClient = picked.client;
 
-    const updated = await syncChannelFromTg(channel, tdClient);
+    const updated = await syncChannelFromTg(channel, tdClient, picked.accountId);
     const [serialized] = await joinAdmins([updated]);
     return c.json(serialized!);
   },
@@ -1107,6 +1123,8 @@ app.openapi(
       } catch (e) {
         const cls = classifyResolveError(e);
         if (cls.permanent) await markChannelUnavailable(id, cls.reason);
+        const waitSec = parseFloodWaitSeconds(errMsg(e));
+        if (waitSec) markSearchFlooded(picked.accountId, waitSec);
         throw new HTTPException(404, {
           message: `Telegram lookup failed: ${errMsg(e)}`,
         });
