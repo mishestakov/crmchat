@@ -457,7 +457,15 @@ function KanbanPage() {
         <LeadChatDrawer
           wsId={wsId}
           lead={drawerLead}
-          accounts={accountsQ.data ?? []}
+          // Пул проекта — вперёд (зеркало leads.tsx): лид без отправок/sticky
+          // (external через стадию) дефолтился бы в первый аккаунт ВОРКСПЕЙСА.
+          accounts={[...(accountsQ.data ?? [])].sort((a, b) => {
+            const inPool = (x: { id: string }) =>
+              projectQ.data?.accountsMode === "selected"
+                ? projectQ.data.accountsSelected.includes(x.id)
+                : true;
+            return Number(inPool(b)) - Number(inPool(a));
+          })}
           onClose={() => setDrawerLead(null)}
           stageControl={{
             stages: sortedStages,
