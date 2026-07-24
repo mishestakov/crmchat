@@ -20,7 +20,10 @@ import {
   assertAccountAccess,
   assertAccountInWorkspace,
 } from "../../lib/outreach-access.ts";
-import { ensureContactTgUserIdViaPool } from "../../lib/ensure-tg-user-id.ts";
+import {
+  acquaintWithPeer,
+  ensureContactTgUserIdViaPool,
+} from "../../lib/ensure-tg-user-id.ts";
 import { errMsg } from "../../lib/errors.ts";
 import { getOutreachWorkerClient } from "../../lib/outreach-account-client.ts";
 import { sendMedia, downloadToBytes } from "../../lib/td-files.ts";
@@ -695,15 +698,36 @@ app.openapi(
     if (!tgUserId) {
       throw new HTTPException(400, { message: "не нашли бота в Telegram" });
     }
-    try {
-      await client.invoke({
+    const doStart = () =>
+      client.invoke({
         _: "sendBotStartMessage",
         bot_user_id: Number(tgUserId),
         chat_id: Number(tgUserId),
         parameter: "",
       } as never);
+    try {
+      await doStart();
     } catch (e) {
-      throw new HTTPException(400, { message: errMsg(e) });
+      // id из реплики (DB-first) → аккаунт не знаком с ботом → «Chat not
+      // found». Знакомимся по @ и повторяем один раз (зеркало quick-send).
+      const uname =
+        typeof (contact.properties as Record<string, unknown>)
+          .telegram_username === "string"
+          ? ((contact.properties as Record<string, unknown>)
+              .telegram_username as string)
+          : null;
+      if (
+        !/Chat not found|USER_ID_INVALID/i.test(errMsg(e)) ||
+        !uname ||
+        !(await acquaintWithPeer(client, accountId, uname))
+      ) {
+        throw new HTTPException(400, { message: errMsg(e) });
+      }
+      try {
+        await doStart();
+      } catch (e2) {
+        throw new HTTPException(400, { message: errMsg(e2) });
+      }
     }
     return c.json({ ok: true });
   },

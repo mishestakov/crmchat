@@ -21,15 +21,62 @@ import type { TdClient } from "./tdlib/index.ts";
 const searchFloodUntil = new Map<string, number>();
 
 // Для UI (список аккаунтов): активный search-кулдаун аккаунта или null.
+// Истёкшие записи попутно чистим (Map иначе копил бы их вечно).
 export function getSearchFloodUntil(accountId: string): number | null {
   const until = searchFloodUntil.get(accountId);
-  return until && Date.now() < until ? until : null;
+  if (until === undefined) return null;
+  if (Date.now() >= until) {
+    searchFloodUntil.delete(accountId);
+    return null;
+  }
+  return until;
+}
+
+// Общий реестр search-флуда для ЛЮБЫХ searchPublicChat-путей (контакты здесь,
+// канальный sync в routes/channels/telegram.ts): один аккаунт — один бюджет
+// поиска, где бы он ни тратился. Запись сюда зажигает и бейдж «поиск огр.».
+export function markSearchFlooded(accountId: string, waitSec: number): number {
+  const until = Date.now() + waitSec * 1000;
+  searchFloodUntil.set(accountId, until);
+  return until;
+}
+
+// «Знакомство» аккаунта с пиром по @username (flood-aware searchPublicChat).
+// Нужно send-путям после DB-first резолва: id известен из реплики, но TDLib
+// ИМЕННО ЭТОГО аккаунта не имеет access_hash пира — sendMessage падает
+// «Chat not found». Один успешный вызов чинит навсегда (access_hash оседает
+// в локальной базе аккаунта). false — не смогли (флуд/не найден): вызывающий
+// пробрасывает исходную ошибку.
+export async function acquaintWithPeer(
+  client: TdClient,
+  accountId: string,
+  username: string,
+): Promise<boolean> {
+  const u = username.replace(/^@/, "").trim();
+  if (!u) return false;
+  if (getSearchFloodUntil(accountId)) return false;
+  try {
+    await client.invoke({ _: "searchPublicChat", username: u } as never);
+    return true;
+  } catch (e) {
+    const msg = errMsg(e);
+    const waitSec = parseFloodWaitSeconds(msg);
+    if (waitSec) markSearchFlooded(accountId, waitSec);
+    console.error(`[ensure-tg-user-id] acquaint ${u}:`, msg);
+    return false;
+  }
 }
 
 function throwSearchFlooded(untilMs: number): never {
-  const hours = Math.max(1, Math.round((untilMs - Date.now()) / 3_600_000));
+  // Честная оценка: короткие пенальти (частый случай у searchPublicChat) — в
+  // минутах, длинные — в часах; «~1ч» при реальных 60с гнал юзера прочь зря.
+  const ms = untilMs - Date.now();
+  const human =
+    ms < 3_600_000
+      ? `~${Math.max(1, Math.round(ms / 60_000))} мин`
+      : `~${Math.round(ms / 3_600_000)} ч`;
   throw new HTTPException(429, {
-    message: `TG ограничил поиск юзернеймов с этого аккаунта (~${hours}ч) — откройте чат позже или с другого аккаунта`,
+    message: `TG ограничил поиск юзернеймов с этого аккаунта (${human}) — откройте чат позже или с другого аккаунта`,
   });
 }
 
@@ -64,7 +111,14 @@ export async function ensureContactTgUserId(args: {
   const [known] = await db
     .select({ userId: tgUsers.userId })
     .from(tgUsers)
-    .where(sql`lower(${tgUsers.username}) = ${username.toLowerCase()}`)
+    .where(
+      and(
+        sql`lower(${tgUsers.username}) = ${username.toLowerCase()}`,
+        // Конвенция схемы: lookup'ы отсеивают удалённых. Иначе освобождённый
+        // ник мог бы навсегда прописать контакту id МЁРТВОГО юзера.
+        eq(tgUsers.isDeleted, false),
+      ),
+    )
     .limit(1);
   if (known) {
     await db
@@ -74,14 +128,10 @@ export async function ensureContactTgUserId(args: {
         updatedAt: new Date(),
       })
       .where(eq(contacts.id, args.contactId));
-    // Восстановление unread — как в TDLib-ветке ниже (контакт только что стал
-    // находимым по id; см. коммент там).
-    void applyChatUnread(
-      args.client,
-      args.workspaceId,
-      args.contactId,
-      Number(known.userId),
-    );
+    // applyChatUnread здесь НЕ зовём (в отличие от TDLib-ветки): клиент с этим
+    // юзером не знаком (иначе tgChats дал бы резолв раньше), getChat упал бы
+    // «Chat not found» — только лог-шум без восстановления. Unread догонится
+    // обычным путём (listener) после первого знакомства аккаунта с пиром.
     return known.userId;
   }
 
@@ -100,8 +150,7 @@ export async function ensureContactTgUserId(args: {
     console.error(`[ensure-tg-user-id] searchPublicChat ${username}:`, msg);
     const waitSec = parseFloodWaitSeconds(msg);
     if (waitSec) {
-      const until = Date.now() + waitSec * 1000;
-      searchFloodUntil.set(args.accountId, until);
+      const until = markSearchFlooded(args.accountId, waitSec);
       // Честная ошибка вместо null: null каллеры показывают как «@username
       // не найден в Telegram» — враньё, ник существует, флудит аккаунт.
       throwSearchFlooded(until);
@@ -167,15 +216,13 @@ export async function ensureContactTgUserIdViaPool(args: {
     return args.properties.tg_user_id;
   }
   let soonest: number | null = null;
+  // ВАЖНО: флуд-кулдаун здесь заранее НЕ проверяем — внутри ensure он стоит
+  // ПОСЛЕ бесплатного DB-резолва из реплики (флуднутый аккаунт всё ещё может
+  // ответить SELECT'ом; ранний чек тут перепрыгивал реплику и зря отдавал 429).
   const tryOne = async (
     client: TdClient,
     accountId: string,
   ): Promise<string | null | "next"> => {
-    const until = getSearchFloodUntil(accountId);
-    if (until) {
-      soonest = soonest === null ? until : Math.min(soonest, until);
-      return "next";
-    }
     try {
       return await ensureContactTgUserId({
         workspaceId: args.workspaceId,
@@ -209,6 +256,15 @@ export async function ensureContactTgUserIdViaPool(args: {
     );
   for (const r of rows) {
     if (r.id === args.preferred.accountId) continue;
+    // Заведомо-флуднутый кандидат: клиента НЕ спавним (getOutreachWorkerClient
+    // может поднимать TDLib секундами; DB-ветку уже отработал preferred —
+    // резолва из реплики нет, кандидат нужен только ради searchPublicChat,
+    // который у него всё равно в кулдауне).
+    const flooded = getSearchFloodUntil(r.id);
+    if (flooded) {
+      soonest = soonest === null ? flooded : Math.min(soonest, flooded);
+      continue;
+    }
     const client = await getOutreachWorkerClient({
       id: r.id,
       workspaceId: args.workspaceId,

@@ -9,7 +9,7 @@ import {
   projects,
   scheduledMessages,
 } from "../db/schema.ts";
-import { contactTgUserIdSql } from "../lib/contact-sql.ts";
+import { contactTgUserIdSql, contactUsernameSql } from "../lib/contact-sql.ts";
 import { inputMessageText, parseInlineEntities } from "../lib/td-message.ts";
 import { errMsg } from "../lib/errors.ts";
 import {
@@ -18,6 +18,7 @@ import {
   setAccountCooldown,
 } from "../lib/outreach-account-client.ts";
 import { assertAccountAccess } from "../lib/outreach-access.ts";
+import { acquaintWithPeer } from "../lib/ensure-tg-user-id.ts";
 import { recordAccountEvent } from "../lib/account-events.ts";
 import { emitProjectChanged } from "../lib/events.ts";
 import { FINAL_OFFER_MSG_IDX } from "../lib/project-scheduling.ts";
@@ -310,8 +311,8 @@ app.openapi(
       const fmt = parseInlineEntities(body.text!);
       inputContent = inputMessageText(fmt.text, fmt.entities);
     }
-    try {
-      await client.invoke({
+    const doSend = () =>
+      client.invoke({
         _: "sendMessage",
         chat_id: Number(tgUserId),
         // td_api.tl: reply_to:InputMessageReplyTo, для same-chat ответа —
@@ -326,6 +327,27 @@ app.openapi(
           : {}),
         input_message_content: inputContent,
       } as never);
+    try {
+      try {
+        await doSend();
+      } catch (e) {
+        // id мог прийти из реплики tg_users (DB-first резолв) — аккаунт с
+        // пиром не знаком (нет access_hash) → «Chat not found». Знакомимся по
+        // @username контакта и повторяем ОДИН раз; не вышло — исходная ошибка.
+        const unknownChat = /Chat not found|USER_ID_INVALID/i.test(errMsg(e));
+        if (!unknownChat || !body.contactId) throw e;
+        const [ct] = await db
+          .select({ username: contactUsernameSql })
+          .from(contacts)
+          .where(
+            and(eq(contacts.id, body.contactId), eq(contacts.workspaceId, wsId)),
+          )
+          .limit(1);
+        if (!ct?.username || !(await acquaintWithPeer(client, acc.id, ct.username))) {
+          throw e;
+        }
+        await doSend();
+      }
 
       // Privacy-policy: помечаем прочитанным только при отправке ответа, не
       // при просмотре. Fire-and-forget — TG потом пришлёт updateChatReadInbox
