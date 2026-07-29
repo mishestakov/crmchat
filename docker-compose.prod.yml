@@ -82,6 +82,11 @@ services:
       TDLIB_DATA_DIR: /data/td
       # YouTube Data API v3 key — синк/метрики YouTube-каналов (TikTok без ключа).
       YOUTUBE_KEY: ${YOUTUBE_KEY:-}
+      # Корпоративная CRM Яндекса — зеркалирование вердиктов квалификации в
+      # тикеты. Пусто = интеграция выключена (isCrmEnabled в lib/crm-client.ts):
+      # вердикт сохраняется локально, ручки не падают.
+      CRM_TOKEN: ${CRM_TOKEN:-}
+      CRM_HOST: ${CRM_HOST:-crm.yandex-team.ru}
     sysctls:
       # enable_ipv6:false на bridge оставляет ::1 loopback в контейнере, и
       # glibc AI_ADDRCONFIG всё равно возвращает AAAA → fetch висит.
