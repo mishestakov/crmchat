@@ -12,7 +12,11 @@ import {
 } from "../../db/schema.ts";
 import { emitProjectChanged } from "../../lib/events.ts";
 import { channelRknBlockedSql } from "../../lib/rkn-registry.ts";
-import { autoAddressableSql, contactReadySql } from "../../lib/contact-sql.ts";
+import {
+  autoAddressableSql,
+  contactReadySql,
+  qualifiedSql,
+} from "../../lib/contact-sql.ts";
 import { assertProjectAccess } from "../../lib/projects-access.ts";
 import {
   countMaxLeadsAmong,
@@ -48,19 +52,23 @@ async function longlistContactReadiness(projectId: string): Promise<{
   noContact: number;
   noRkn: number;
   manual: number;
+  pendingQualification: number;
   eligible: number;
 }> {
   const [row] = await db
     .select({
       total: sql<number>`count(*)::int`,
-      noContact: sql<number>`(count(*) filter (where not ${contactReadySql}))::int`,
+      // Не прошли квалификацию — приоритетнее прочих причин: пока вердикта нет,
+      // остальные корзины про этот лид ничего не решают.
+      pendingQualification: sql<number>`(count(*) filter (where not ${qualifiedSql}))::int`,
+      noContact: sql<number>`(count(*) filter (where ${qualifiedSql} and not ${contactReadySql}))::int`,
       // «Уже работает» больше не отбраковка (бейдж, не гейт) — из воронки убрано.
-      noRkn: sql<number>`(count(*) filter (where ${contactReadySql} and ${channelRknBlockedSql}))::int`,
+      noRkn: sql<number>`(count(*) filter (where ${qualifiedSql} and ${contactReadySql} and ${channelRknBlockedSql}))::int`,
       // «Вручную» — готов (способ задан), но авто-опенер не уйдёт: личка
       // канала/группа/внешний способ без @username и max-пира. Отдельно от
       // eligible, чтобы «Готовы к отправке» не обещал отправку тем, кого
       // планировщик молча пропустит (prepareLeads гейтит по адресуемости).
-      manual: sql<number>`(count(*) filter (where ${contactReadySql} and ${channelRknBlockedSql} is not true and not ${autoAddressableSql}))::int`,
+      manual: sql<number>`(count(*) filter (where ${qualifiedSql} and ${contactReadySql} and ${channelRknBlockedSql} is not true and not ${autoAddressableSql}))::int`,
     })
     .from(projectItems)
     .leftJoin(channels, eq(channels.id, projectItems.channelId))
@@ -72,6 +80,7 @@ async function longlistContactReadiness(projectId: string): Promise<{
       ),
     );
   const total = row?.total ?? 0;
+  const pendingQualification = row?.pendingQualification ?? 0;
   const noContact = row?.noContact ?? 0;
   const noRkn = row?.noRkn ?? 0;
   const manual = row?.manual ?? 0;
@@ -79,10 +88,11 @@ async function longlistContactReadiness(projectId: string): Promise<{
   // count-фильтр, чтобы не гонять EXISTS-предикаты лишний раз.
   return {
     total,
+    pendingQualification,
     noContact,
     noRkn,
     manual,
-    eligible: total - noContact - noRkn - manual,
+    eligible: total - pendingQualification - noContact - noRkn - manual,
   };
 }
 
@@ -102,6 +112,9 @@ app.openapi(
               // Корзины квалификации (взаимоисключающие, в сумме = leadsTotal).
               // eligible реально уйдёт в рассылку; noContact/noRkn — отбраковка.
               leadsEligible: z.number().int(),
+              // Ждут вердикта квалификации либо отбракованы на ней. Пока лид
+              // тут — опенер ему не уйдёт, это первый по приоритету гейт.
+              leadsPendingQualification: z.number().int(),
               leadsNoContact: z.number().int(),
               leadsNoRkn: z.number().int(),
               // «Вручную» (личка канала/группа/внешний способ): готовы, но
@@ -139,6 +152,7 @@ app.openapi(
       leadsEligible: rknProbe
         ? readiness.eligible + readiness.noRkn
         : readiness.eligible,
+      leadsPendingQualification: readiness.pendingQualification,
       leadsNoContact: readiness.noContact,
       leadsNoRkn: rknProbe ? 0 : readiness.noRkn,
       leadsManual: readiness.manual,

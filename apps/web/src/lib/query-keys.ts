@@ -9,6 +9,10 @@ export const OUTREACH_QK = {
     ["project", wsId, projectId] as const,
   // limit/offset опциональны: producer'ы передают полный ключ,
   // invalidate'ы — без них (prefix-match накроет все страницы).
+  // Живые кнопки статуса CRM по одному размещению (тянутся из CRM при открытии
+  // карточки, поэтому свой ключ, а не часть projectLeads).
+  crmTransitions: (wsId: string, projectId: string, itemId: string) =>
+    ["crm-transitions", wsId, projectId, itemId] as const,
   projectLeads: (
     wsId: string,
     projectId: string,

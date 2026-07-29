@@ -83,6 +83,8 @@ const LeadAccountSchema = z
 // менеджер решает сам (channel.platformActivity).
 const OUTREACH_STATES = [
   "replied", // ответил — живёт на канбане, не в триаже списка
+  "disqualified", // отбракован на квалификации (терминал) → не отправляем
+  "needs_qualification", // вердикта нет → опенер не уйдёт, нужен просмотр
   "excluded", // менеджер исключил вручную (терминал) → не отправляем
   "blocked_rkn", // >10k и не в реестре РКН (авто-терминал) → не отправляем
   "no_contact", // нет годного контакта → нужно действие (резолвер)
@@ -98,6 +100,7 @@ type OutreachState = (typeof OUTREACH_STATES)[number];
 function deriveOutreachState(l: {
   repliedAt: Date | null;
   skippedAt: Date | null;
+  qualification: "pending" | "qualified" | "disqualified";
   contactReady: boolean | null;
   channelRknBlocked: boolean | null;
   // Проект-уровень: задан проверочный опенер (opener.rknText) → сегмент «нет РКН»
@@ -108,6 +111,12 @@ function deriveOutreachState(l: {
   messages: { status: string; error: string | null }[];
 }): OutreachState {
   if (l.repliedAt) return "replied";
+  // Квалификация — первый гейт: пока вердикта нет, лид не поедет независимо от
+  // РКН и контакта. Раньше остальных проверок, иначе неотсмотренный канал
+  // маскировался бы под not_scheduled и попадал в «Готовы к отправке», обещая
+  // отправку, которой не будет (тот же шов, что у manual_method ниже).
+  if (l.qualification === "disqualified") return "disqualified";
+  if (l.qualification === "pending") return "needs_qualification";
   if (l.skippedAt) return "excluded";
   if (l.channelRknBlocked && !l.rknProbe) return "blocked_rkn";
   if (!l.contactReady) return "no_contact";
@@ -211,6 +220,16 @@ const LeadProgressSchema = z
     // Готов ли канал к рассылке — тот же предикат, что гейт /activate
     // (contactReadySql). Фильтр/подсветка «без контакта» в draft-списке.
     contactReady: z.boolean(),
+    // Вердикт квалификации — гейт рассылки (qualifiedSql). pending = ещё не
+    // смотрели, опенер не уйдёт. qualReason при disqualified — id перехода
+    // CRM ('703_578'), имя причины фронт берёт из @repo/core.
+    qualification: z.enum(["pending", "qualified", "disqualified"]),
+    qualReason: z.string().nullable(),
+    // Зеркало тикета в корп-CRM. crmSyncError непустой = вердикт сохранён
+    // локально, но в CRM не уехал → на карточке кнопка «повторить».
+    crmIssueId: z.number().int().nullable(),
+    crmStateId: z.number().int().nullable(),
+    crmSyncError: z.string().nullable(),
     // Исключён из авто-рассылки (POST /items/{id}/skip). Бейдж + «Вернуть».
     skippedAt: z.iso.datetime().nullable(),
     // Состояние для триажа списка (см. deriveOutreachState). Фронт группирует
@@ -371,6 +390,11 @@ app.openapi(
           nextStep: nextStepSql,
           stageId: projectItems.stageId,
           skippedAt: projectItems.skippedAt,
+          qualification: projectItems.qualification,
+          qualReason: projectItems.qualReason,
+          crmIssueId: projectItems.crmIssueId,
+          crmStateId: projectItems.crmStateId,
+          crmSyncError: projectItems.crmSyncError,
           channelId: channels.id,
           channelTitle: channels.title,
           channelUsername: channels.username,
@@ -548,10 +572,16 @@ app.openapi(
           nextStep: l.nextStep,
           stageId: l.stageId,
           contactReady: l.contactReady,
+          qualification: l.qualification,
+          qualReason: l.qualReason,
+          crmIssueId: l.crmIssueId,
+          crmStateId: l.crmStateId,
+          crmSyncError: l.crmSyncError,
           skippedAt: l.skippedAt?.toISOString() ?? null,
           outreachState: deriveOutreachState({
             repliedAt: l.repliedAt,
             skippedAt: l.skippedAt,
+            qualification: l.qualification,
             contactReady: l.contactReady,
             channelRknBlocked: l.channelRknBlocked,
             rknProbe,

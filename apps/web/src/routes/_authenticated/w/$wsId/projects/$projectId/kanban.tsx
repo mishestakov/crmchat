@@ -476,6 +476,9 @@ function KanbanPage() {
               null,
             onSetStage: (stageId) =>
               move.mutate({ itemId: drawerLead.id, stageId }),
+            // Вторая ось карточки — статус канала в корп-CRM. Стадия остаётся
+            // про разговор с админом, статус — про процесс по каналу.
+            crm: { projectId, hasIssue: drawerLead.crmIssueId != null },
             onOpenFullCard: () => openFullCard(drawerLead),
             disabled: isDone,
           }}

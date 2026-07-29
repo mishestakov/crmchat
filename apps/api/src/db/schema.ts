@@ -29,6 +29,12 @@ export const users = pgTable("users", {
   tgUserId: text("tg_user_id").notNull().unique(),
   name: text("name"),
   username: text("username"),
+  // Логин в корп-CRM Яндекса — им подписывается владелец тикета
+  // (`owner: {Login}`, Uid CRM резолвит сама). Справочника сотрудников в их API
+  // нет (`manager/bylogin` — 403), поэтому просто строка, которую менеджер
+  // указывает про себя в профиле. Пустой = вердикт квалификации недоступен.
+  // Прод: ALTER TABLE users ADD COLUMN crm_login text;
+  crmLogin: text("crm_login"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -576,6 +582,16 @@ export const placementMetricsStatus = pgEnum("placement_metrics_status", [
   "error",
 ]);
 
+// Квалификация лида — явный шаг перед рассылкой: оценка качества канала
+// (накрутки, тематика, фрод, живость). До вердикта опенер не уходит.
+// Часть вердиктов ставит машина (нет контакта / канал мёртв / дубль), они
+// обратимы — менеджер может переоткрыть. pending = ещё не смотрели.
+export const qualificationStatus = pgEnum("qualification_status", [
+  "pending",
+  "qualified",
+  "disqualified",
+]);
+
 // Track — родительская «папка» проектов. У BD-команды: «Привлечение»,
 // «Удержание», «Отток», «Ad-hoc». У агентства: «Coca-Cola», «Beeline».
 // Спец-поля типа ИНН/договора (для клиента-агентства) живут в `properties`.
@@ -1029,6 +1045,44 @@ export const projectItems = pgTable(
     // менеджером по ответу (null = ещё не знаем, true/false = готов/отказ).
     // По нему рекл шортлистит на согласовании.
     available: boolean("available"),
+
+    // === квалификация (гейт рассылки) ======================================
+    // qual_reason — id перехода CRM вида '703_578' (статус_резолюция), а не наш
+    // словарь: причины отбраковки принадлежат CRM, свой код здесь сразу стал бы
+    // расхождением отчётности. Список — CRM_DISQUALIFY_REASONS в @repo/core.
+    // qualified_by null при автовердикте машины — так отличаем его от ручного.
+    // Прод (аддитивно):
+    //   ALTER TABLE project_items
+    //     ADD COLUMN qualification qualification_status NOT NULL DEFAULT 'pending',
+    //     ADD COLUMN qual_reason text,
+    //     ADD COLUMN qual_note text,
+    //     ADD COLUMN qualified_by text REFERENCES users(id),
+    //     ADD COLUMN qualified_at timestamptz;
+    qualification: qualificationStatus("qualification")
+      .notNull()
+      .default("pending"),
+    qualReason: text("qual_reason"),
+    qualNote: text("qual_note"),
+    qualifiedBy: text("qualified_by").references(() => users.id),
+    qualifiedAt: timestamp("qualified_at", { withTimezone: true }),
+
+    // === зеркало тикета в корп-CRM =========================================
+    // Одно размещение (канал) = один тикет. Имена статуса и резолюции НЕ храним
+    // — граф зашит константой в @repo/core, имена берутся оттуда по id.
+    // crm_sync_error — текст последней неудачи; непустой = на карточке висит
+    // кнопка «повторить» (очереди и авторетраев в MVP нет, шлём синхронно).
+    // Прод (аддитивно):
+    //   ALTER TABLE project_items
+    //     ADD COLUMN crm_issue_id integer,
+    //     ADD COLUMN crm_state_id integer,
+    //     ADD COLUMN crm_resolution_id integer,
+    //     ADD COLUMN crm_synced_at timestamptz,
+    //     ADD COLUMN crm_sync_error text;
+    crmIssueId: integer("crm_issue_id"),
+    crmStateId: integer("crm_state_id"),
+    crmResolutionId: integer("crm_resolution_id"),
+    crmSyncedAt: timestamp("crm_synced_at", { withTimezone: true }),
+    crmSyncError: text("crm_sync_error"),
     priceAmount: numeric("price_amount", { precision: 12, scale: 2 }),
     // Цена для клиента (наценка). null = «совпадает с priceAmount» — клиент
     // видит ту же сумму. Менеджер задаёт иную, если в клиентской ссылке нужна
@@ -1167,6 +1221,14 @@ export const projectItems = pgTable(
     // Уникальности по (project, username) НЕТ: один админ может вести
     // несколько каналов → несколько размещений с тем же @username. Дедуп
     // размещений — по channelId в самом placements/bulk (ручная проверка).
+    //
+    // А вот тикет CRM — строго один на размещение: страховка от дублей, если
+    // ручка вердикта отвалилась по таймауту, успев создать тикет, и менеджер
+    // нажал «повторить». Partial: у неотсинканных размещений колонка пустая,
+    // а NULL в уникальном индексе не конфликтуют.
+    uniqueIndex("project_items_crm_issue_id_key")
+      .on(t.crmIssueId)
+      .where(sql`${t.crmIssueId} is not null`),
   ],
 );
 

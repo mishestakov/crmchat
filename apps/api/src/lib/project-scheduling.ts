@@ -15,7 +15,7 @@ import {
   type ProjectDunning,
   type ProjectOpener,
 } from "../db/schema.ts";
-import { contactTgUserIdSql } from "./contact-sql.ts";
+import { contactTgUserIdSql, qualifiedSql } from "./contact-sql.ts";
 import { maxPeerRef } from "./max-account-client.ts";
 import { channelRknBlockedSql } from "./rkn-registry.ts";
 import { resolveStickyByPeerIds } from "./sticky.ts";
@@ -421,6 +421,7 @@ async function prepareLeads(opts: {
       channelUsername: channels.username,
       link: channels.link,
       title: channels.title,
+      qualification: projectItems.qualification,
       rknBlocked: channelRknBlockedSql,
       // Явно выбранный ручной способ связи (external/группа/личка) — гейт
       // «не авто-слать» по смыслу решения, а не по пустоте username-снапшота.
@@ -462,12 +463,25 @@ async function prepareLeads(opts: {
   //    главнее РКН-перепроверки.
   const rknOkKeys = new Set<string>();
   const autoKindKeys = new Set<string>();
+  // Гейт квалификации. Живёт ЗДЕСЬ, а не у вызывающих: prepareLeads — единый
+  // чокпоинт активации, доливки, позднего резолва контакта и repoint'а, и
+  // фильтр в паре call site'ов оставлял три пути без гейта (канал, добавленный
+  // в идущий проект, получал опенер без вердикта). Лояльный OR, как у РКН:
+  // админ годен, если хоть один его канал прошёл квалификацию — опенер один на
+  // админа и адресован именно годному каналу.
+  const qualifiedKeys = new Set<string>();
+  // …но лояльность не должна пропускать НЕОТСМОТРЕННЫЕ каналы: пока у админа
+  // есть канал без вердикта, опенер ждёт — иначе счётчик «ждут квалификации»
+  // и факт отправки расходятся ровно там, где спека обещает совпадение.
+  const pendingKeys = new Set<string>();
   for (const r of channelRows) {
     // MAX-админ без @username ключуется по contactId (adminKey) — иначе выпал бы
     // из синтеза {{каналы}}/{{ссылка}}, как раньше любой no-@username.
     const key = adminKey(r.adminUsername, r.adminContactId);
     if (!key) continue;
     if (r.contactMethodKind == null) autoKindKeys.add(key);
+    if (r.qualification === "qualified") qualifiedKeys.add(key);
+    if (r.qualification === "pending") pendingKeys.add(key);
     if (!r.rknBlocked) {
       rknOkKeys.add(key);
       // Канал с ручным способом (contact_method.kind: external/group/
@@ -566,6 +580,9 @@ async function prepareLeads(opts: {
     // Опенер не шлём, если у админа нет годного канала И это не probe-кейс при
     // включённом rknText. По умолчанию (rknText пуст) — отбраковка как раньше;
     // probe даёт rknText («точно нет РКН?») вместо холодного питча.
+    // Квалификация — гейт над всеми остальными: probe-исключение по РКН её не
+    // снимает, неотсмотренный лид не получает даже проверочный вопрос.
+    if (!qualifiedKeys.has(key) || pendingKeys.has(key)) continue;
     if (!sendableKeys.has(key) && !(isRknProbe && opts.rknProbeEnabled)) continue;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -829,6 +846,11 @@ export async function scheduleUnscheduledLeads(opts: {
         isNull(projectItems.shortlistedAt),
         isNull(projectItems.skippedAt),
         sql`${projectItems.available} is distinct from false`,
+        // Гейт квалификации зеркалим и здесь — как соседние гейты РКН и
+        // contact_method: prepareLeads всё равно отбросит неотсмотренных, но
+        // без этого условия выборка тянула бы весь pending-лонглист (у свежего
+        // проекта это 100% строк) только чтобы выбросить его в конце.
+        qualifiedSql,
         // Отбракованных по РКН не планируем и здесь (мирроринг гейта в
         // prepareLeads) — счётчик и действие должны совпадать. `is not true`,
         // а не `not (...)`: NULL (неизвестный размер) = годен. НО при

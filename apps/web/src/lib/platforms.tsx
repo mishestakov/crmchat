@@ -1,6 +1,6 @@
 import { Flame, Music2, PlaySquare, Send } from "lucide-react";
 import type { ComponentType } from "react";
-import type { Channel } from "@repo/core";
+import { CHANNEL_PLATFORM_LABEL, type Channel } from "@repo/core";
 
 // Конфиг площадок (этап 17): значок, метка, цвет, шаблон ссылки на профиль.
 // Общий для списка «Площадки» (channels.tsx) и карточки канала (channel-card).
@@ -12,12 +12,12 @@ export const PLATFORMS: Record<
   Platform,
   { label: string; Icon: PlatformIcon; color: string; url: (handle: string) => string }
 > = {
-  telegram: { label: "Telegram", Icon: Send, color: "text-sky-600", url: (u) => `https://t.me/${u}` },
-  youtube: { label: "YouTube", Icon: PlaySquare, color: "text-red-600", url: (u) => `https://www.youtube.com/@${u}` },
-  tiktok: { label: "TikTok", Icon: Music2, color: "text-zinc-900", url: (u) => `https://www.tiktok.com/@${u}` },
-  dzen: { label: "Дзен", Icon: Flame, color: "text-amber-500", url: (u) => `https://dzen.ru/${u}` },
+  telegram: { label: CHANNEL_PLATFORM_LABEL.telegram, Icon: Send, color: "text-sky-600", url: (u) => `https://t.me/${u}` },
+  youtube: { label: CHANNEL_PLATFORM_LABEL.youtube, Icon: PlaySquare, color: "text-red-600", url: (u) => `https://www.youtube.com/@${u}` },
+  tiktok: { label: CHANNEL_PLATFORM_LABEL.tiktok, Icon: Music2, color: "text-zinc-900", url: (u) => `https://www.tiktok.com/@${u}` },
+  dzen: { label: CHANNEL_PLATFORM_LABEL.dzen, Icon: Flame, color: "text-amber-500", url: (u) => `https://dzen.ru/${u}` },
   // MAX — настоящий лого (lucide-иконки нет); MaxLogo lucide-совместим (size).
-  max: { label: "MAX", Icon: MaxLogo, color: "text-violet-600", url: (u) => `https://max.ru/${u}` },
+  max: { label: CHANNEL_PLATFORM_LABEL.max, Icon: MaxLogo, color: "text-violet-600", url: (u) => `https://max.ru/${u}` },
 };
 
 // Площадки, которые умеем добавлять по ссылке (внешний провайдер). Telegram

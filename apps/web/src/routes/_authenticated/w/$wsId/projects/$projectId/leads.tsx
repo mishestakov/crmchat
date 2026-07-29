@@ -26,6 +26,7 @@ import { UnreadBadge } from "../../../../../../components/unread-badge";
 import { LeadChatDrawer } from "../../../../../../components/lead-chat-drawer";
 import { ChannelDrawer } from "../../../../../../components/channel-drawer";
 import { LeadPrepPane } from "../../../../../../components/lead-prep-pane";
+import { QualifyPanel } from "../../../../../../components/qualify-panel";
 import { TruncationBanner } from "../../../../../../components/truncation-banner";
 import { AddChannelsModal } from "../../../../../../components/add-channels-modal";
 import { Modal } from "../../../../../../components/modal";
@@ -40,7 +41,7 @@ import {
   useProject,
 } from "../../../../../../lib/outreach-queries";
 import { OUTREACH_QK, invalidateProject } from "../../../../../../lib/query-keys";
-import { useEventSourceEvent } from "../../../../../../lib/hooks";
+import { useEventSourceEvent, useMe } from "../../../../../../lib/hooks";
 
 export const Route = createFileRoute(
   "/_authenticated/w/$wsId/projects/$projectId/leads",
@@ -51,8 +52,11 @@ export const Route = createFileRoute(
   // / wont (отбраковано). Пусто = все. Из LaunchPanel приходит find_contact/wont.
   validateSearch: (
     search: Record<string, unknown>,
-  ): { filter?: "flight" | "find_contact" | "manual" | "wont" } => ({
+  ): {
+    filter?: "qualify" | "flight" | "find_contact" | "manual" | "wont";
+  } => ({
     filter:
+      search.filter === "qualify" ||
       search.filter === "flight" ||
       search.filter === "find_contact" ||
       search.filter === "manual" ||
@@ -83,6 +87,9 @@ type Bucket = "flight" | "find_contact" | "manual" | "wont";
 // Value-тип с undefined: незамапленное состояние (replied / будущее из бэка) →
 // undefined, а не «как бы Bucket» — чтобы `if (b)`-гарды были типо-обоснованы.
 const STATE_BUCKET: Record<string, Bucket | undefined> = {
+  // needs_qualification в корзины не мапим: у сегмента «Квалификация» своя
+  // единица — канал, а не админ-группа, и счёт идёт по лидам (pendingQualification).
+  disqualified: "wont",
   not_scheduled: "flight",
   in_flight: "flight",
   no_contact: "find_contact",
@@ -94,8 +101,11 @@ const STATE_BUCKET: Record<string, Bucket | undefined> = {
   excluded: "wont",
 };
 const bucketOf = (s: OutreachState): Bucket | undefined => STATE_BUCKET[s];
-// Активный сегмент = корзина или «Все» (undefined). Совпадает с ?filter.
-type Filter = Bucket | undefined;
+// Активный сегмент = корзина, «Квалификация» или «Все» (undefined). Совпадает
+// с ?filter. «qualify» стоит особняком: это не корзина outreachState, а срез по
+// вердикту (project_items.qualification) — и по КАНАЛАМ, а не по админам,
+// поэтому у него своя вью (QualifyPanel), а не общая таблица.
+type Filter = Bucket | "qualify" | undefined;
 
 // Под-группы «Написать вручную» — получатель/способ известен, но авто-опенера
 // нет. Порядок = порядок показа; действие под каждую (рендер ниже — по state).
@@ -251,6 +261,10 @@ function LeadsPage() {
     },
   );
 
+  // Логин в CRM нужен табу «Квалификация»: без него вердикт вынести нельзя
+  // (владельца тикета не проставить). Кэш `me` общий с useMyRole.
+  const meQ = useMe();
+
   const leadsQ = useQuery({
     queryKey: OUTREACH_QK.projectLeads(wsId, projectId, LEADS_PAGE_LIMIT, 0),
     queryFn: async () => {
@@ -279,10 +293,17 @@ function LeadsPage() {
   );
   const visibleGroups = useMemo(
     () =>
-      filter
+      filter && filter !== "qualify"
         ? allGroups.filter((g) => bucketOf(g.primary.outreachState) === filter)
         : allGroups,
     [allGroups, filter],
+  );
+  // Счётчик квалификации — по КАНАЛАМ (вердикт на размещении), не по админам.
+  const pendingQualification = useMemo(
+    () =>
+      (leadsQ.data?.leads ?? []).filter((l) => l.qualification === "pending")
+        .length,
+    [leadsQ.data],
   );
 
   // Счётчики корзин (для сегмент-контрола) — по группам. Page-scoped; при
@@ -408,6 +429,8 @@ function LeadsPage() {
   const segments = (
     [
       { key: undefined, label: "Все", count: allGroups.length },
+      // Первый сегмент по порядку работы: пока вердикта нет, лид никуда не едет.
+      { key: "qualify", label: "Квалификация", count: pendingQualification },
       { key: "flight", label: flightLabel, count: counts.flight },
       { key: "find_contact", label: "Найти контакт", count: counts.find_contact },
       { key: "manual", label: "Написать вручную", count: counts.manual },
@@ -724,11 +747,23 @@ function LeadsPage() {
             </div>
           </div>
         )}
+        {/* Квалификация — своя вью: строка = канал (вердикт на размещении),
+            а не админ-группа, как в остальных сегментах. */}
+        {leadsQ.data && filter === "qualify" && (
+          <QualifyPanel
+            wsId={wsId}
+            projectId={projectId}
+            leads={leadsQ.data.leads}
+            crmLogin={meQ.data?.crmLogin ?? null}
+            readOnly={seq.data?.status === "done"}
+          />
+        )}
         {/* Таблица-диагностика: Все / В работе / Отбраковано. «Найти контакт»
             рисуется инбоксом, «Написать вручную» — сгруппированным видом выше. */}
         {leadsQ.data &&
           visibleGroups.length > 0 &&
           !showPrepInbox &&
+          filter !== "qualify" &&
           filter !== "manual" && (
           <div className="overflow-x-auto rounded-2xl bg-white shadow-sm">
             <table className="w-full text-sm">

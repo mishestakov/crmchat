@@ -52,10 +52,10 @@ export function useClickOutside(
   }, [elRef]);
 }
 
-// Роль текущего юзера в workspace'е. Возвращает 'admin' | 'member' | undefined
-// (пока запросы грузятся). Кэш `me` и `members` шарится с другими местами.
-export function useMyRole(wsId: string): "admin" | "member" | undefined {
-  const me = useQuery({
+// Текущий юзер. Один источник на все экраны: запрос дословно повторялся в
+// пяти местах, и каждая копия сама решала, что делать с 401.
+export function useMe() {
+  return useQuery({
     queryKey: ["me"],
     queryFn: async () => {
       const { data, error, response } = await api.GET("/v1/auth/me");
@@ -64,6 +64,12 @@ export function useMyRole(wsId: string): "admin" | "member" | undefined {
       return data;
     },
   });
+}
+
+// Роль текущего юзера в workspace'е. Возвращает 'admin' | 'member' | undefined
+// (пока запросы грузятся). Кэш `me` и `members` шарится с другими местами.
+export function useMyRole(wsId: string): "admin" | "member" | undefined {
+  const me = useMe();
   const members = useQuery({
     queryKey: WS_QK.members(wsId),
     queryFn: async () => {
