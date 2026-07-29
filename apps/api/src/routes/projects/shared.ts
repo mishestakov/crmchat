@@ -14,6 +14,12 @@ export const WsProjectParam = z.object({
   projectId: z.string().min(1).max(64),
 });
 
+// Роуты по одному размещению (`/items/{itemId}`) — их уже с полдюжины в
+// leads.ts и qualification.ts, каждый инлайнил этот extend заново.
+export const WsProjectItemParam = WsProjectParam.extend({
+  itemId: z.string().min(1).max(64),
+});
+
 const DelaySchema = z.object({
   period: z.enum(["minutes", "hours", "days"]),
   value: z.number().int().min(0).max(365),

@@ -22,6 +22,17 @@ export const ChannelPlatformSchema = z.enum([
 ]);
 export type ChannelPlatform = z.infer<typeof ChannelPlatformSchema>;
 
+// Человекочитаемые названия площадок — здесь, рядом с самим enum, а не у
+// каждого потребителя. Веб добавляет к ним иконку и цвет (lib/platforms.tsx),
+// API подставляет в текст тикета CRM; строка должна быть одна на всех.
+export const CHANNEL_PLATFORM_LABEL: Record<ChannelPlatform, string> = {
+  telegram: "Telegram",
+  youtube: "YouTube",
+  tiktok: "TikTok",
+  dzen: "Дзен",
+  max: "MAX",
+};
+
 // Памятка-предупреждение (канал/контакт): текст + кто/когда оставил.
 export const EntityNoteSchema = z.object({
   text: z.string(),
@@ -49,6 +60,19 @@ export const ChannelRelationStatusSchema = z.enum([
   "declined",
 ]);
 export type ChannelRelationStatus = z.infer<typeof ChannelRelationStatusSchema>;
+
+// Подписи статуса отношений — единый источник для бейджа в UI
+// (lib/channel-relation.tsx добавляет цвет) и для текста тикета в CRM.
+// Разъехавшиеся формулировки означали бы, что менеджер и тикет описывают
+// один канал разными словами.
+export const CHANNEL_RELATION_LABEL: Record<ChannelRelationStatus, string> = {
+  none: "Не оценён",
+  pending: "Ждём ответа",
+  working: "Работает",
+  paused: "Перестал",
+  unsuitable: "Не подходит",
+  declined: "Отказ",
+};
 
 // Запись в истории взаимодействия по каналу: смена статуса + причина + кто/
 // когда. Форма повторяет EntityNote (денормализованный byName на момент

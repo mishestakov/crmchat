@@ -410,7 +410,28 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["UpdateMe"];
+                };
+            };
+            responses: {
+                /** @description Saved */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
         trace?: never;
     };
     "/v1/workspaces": {
@@ -3429,6 +3450,7 @@ export interface paths {
                         "application/json": {
                             leadsTotal: number;
                             leadsEligible: number;
+                            leadsPendingQualification: number;
                             leadsNoContact: number;
                             leadsNoRkn: number;
                             leadsManual: number;
@@ -3975,6 +3997,170 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["OutreachSampleLead"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{wsId}/projects/{projectId}/items/{itemId}/qualify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    wsId: string;
+                    projectId: string;
+                    itemId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["QualifyLead"];
+                };
+            };
+            responses: {
+                /** @description Вердикт сохранён (crm.syncError непустой = в CRM не ушло) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LeadCrmState"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{wsId}/projects/{projectId}/items/{itemId}/crm-retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    wsId: string;
+                    projectId: string;
+                    itemId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Повторная отправка вердикта в CRM */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LeadCrmState"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{wsId}/projects/{projectId}/items/{itemId}/crm-transition": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    wsId: string;
+                    projectId: string;
+                    itemId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CrmTransition"];
+                };
+            };
+            responses: {
+                /** @description Статус в CRM изменён */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LeadCrmState"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{wsId}/projects/{projectId}/items/{itemId}/crm-transitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    wsId: string;
+                    projectId: string;
+                    itemId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Доступные переходы тикета */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CrmButtons"];
                     };
                 };
             };
@@ -5753,6 +5939,10 @@ export interface components {
             name: string | null;
             username: string | null;
             hasAdminRole: boolean;
+            crmLogin: string | null;
+        };
+        UpdateMe: {
+            crmLogin: string | null;
         };
         Workspace: {
             id: string;
@@ -6284,10 +6474,16 @@ export interface components {
             } | null;
             stageId: string | null;
             contactReady: boolean;
+            /** @enum {string} */
+            qualification: "pending" | "qualified" | "disqualified";
+            qualReason: string | null;
+            crmIssueId: number | null;
+            crmStateId: number | null;
+            crmSyncError: string | null;
             /** Format: date-time */
             skippedAt: string | null;
             /** @enum {string} */
-            outreachState: "replied" | "excluded" | "blocked_rkn" | "no_contact" | "bot_manual" | "not_private" | "manual_method" | "not_scheduled" | "in_flight" | "needs_review";
+            outreachState: "replied" | "disqualified" | "needs_qualification" | "excluded" | "blocked_rkn" | "no_contact" | "bot_manual" | "not_private" | "manual_method" | "not_scheduled" | "in_flight" | "needs_review";
             channel: {
                 id: string;
                 title: string;
@@ -6356,6 +6552,32 @@ export interface components {
                 [key: string]: string;
             };
         } | null;
+        LeadCrmState: {
+            issueId: number | null;
+            stateId: number | null;
+            stateName: string | null;
+            resolutionName: string | null;
+            /** Format: date-time */
+            syncedAt: string | null;
+            syncError: string | null;
+        };
+        QualifyLead: {
+            /** @enum {string} */
+            verdict: "qualified" | "disqualified";
+            reason?: string | null;
+            note?: string | null;
+        };
+        CrmTransition: {
+            transitionId: string;
+        };
+        CrmButtons: {
+            stateId: number | null;
+            stateName: string | null;
+            options: {
+                transitionId: string;
+                label: string;
+            }[];
+        };
         Placement: {
             id: string;
             channel: {

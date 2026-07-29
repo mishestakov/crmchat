@@ -5,5 +5,6 @@ export * from "./schemas/activity.ts";
 export * from "./schemas/channel.ts";
 export * from "./schemas/legal-entity.ts";
 export * from "./parse-channel-input.ts";
+export * from "./crm.ts";
 export * from "./dunning.ts";
 export * from "./pricing.ts";

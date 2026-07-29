@@ -63,7 +63,7 @@ function SettingsIndex() {
             className="flex flex-1 items-center"
           >
             <SectionItemTitle>Интеграции</SectionItemTitle>
-            <SectionItemValue>скоро</SectionItemValue>
+            <SectionItemValue>CRM Яндекса</SectionItemValue>
           </Link>
         </SectionItem>
       </Section>

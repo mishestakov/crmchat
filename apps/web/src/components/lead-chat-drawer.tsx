@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Bell, BellOff } from "lucide-react";
 import type { Contact } from "@repo/core";
 import { api } from "../lib/api";
+import { CrmStatusSelect } from "./crm-status-select";
 import {
   type AccountRow,
   ChatDrawer,
@@ -71,6 +72,9 @@ export function LeadChatDrawer(props: {
     onSetStage: (stageId: string | null) => void;
     onOpenFullCard: () => void;
     disabled?: boolean;
+    // Статус канала в корп-CRM — вторая, независимая ось (стадия про разговор
+    // с админом, статус про процесс по каналу). Не передан → блока нет.
+    crm?: { projectId: string; hasIssue: boolean };
   };
   // Ручная пиналка (этап C): вкл/выкл серию догона прямо из переписки. active —
   // идёт ли заход сейчас (кнопка показывает «выключить»). Логика POST — на
@@ -90,6 +94,8 @@ export function LeadChatDrawer(props: {
   const headerExtra = props.stageControl ? (
     <StageStrip
       {...props.stageControl}
+      wsId={props.wsId}
+      itemId={props.lead.id}
       dunningControl={props.dunningControl}
     />
   ) : undefined;
@@ -115,6 +121,9 @@ function StageStrip(props: {
   onSetStage: (stageId: string | null) => void;
   onOpenFullCard: () => void;
   disabled?: boolean;
+  wsId: string;
+  itemId: string;
+  crm?: { projectId: string; hasIssue: boolean };
   dunningControl?: {
     active: boolean;
     onToggle: (enabled: boolean) => void;
@@ -141,6 +150,15 @@ function StageStrip(props: {
           ))}
         </select>
       </label>
+      {props.crm && (
+        <CrmStatusSelect
+          wsId={props.wsId}
+          projectId={props.crm.projectId}
+          itemId={props.itemId}
+          hasIssue={props.crm.hasIssue}
+          disabled={props.disabled}
+        />
+      )}
       <div className="flex shrink-0 items-center gap-3">
         {dc && (
           <button

@@ -31,6 +31,7 @@ import {
 import lifecycleApp from "./lifecycle.ts";
 import leadsApp from "./leads.ts";
 import analyticsApp from "./analytics.ts";
+import qualificationApp from "./qualification.ts";
 
 // Outreach-проект: рассылка по одному списку с N сообщениями и задержками.
 // Активация = pre-schedule всех scheduled_messages с round-robin аккаунтом и
@@ -371,5 +372,6 @@ app.openapi(
 app.route("/", lifecycleApp);
 app.route("/", leadsApp);
 app.route("/", analyticsApp);
+app.route("/", qualificationApp);
 
 export default app;

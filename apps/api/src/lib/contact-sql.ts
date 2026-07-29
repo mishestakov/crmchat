@@ -9,6 +9,19 @@ import { channels, contacts, projectItems } from "../db/schema.ts";
 
 export const contactTgUserIdSql: SQL<string | null> = sql<string | null>`${contacts.properties}->>'tg_user_id'`;
 
+// Гейт квалификации: опенер уходит только тем, по кому вынесен вердикт «годен».
+// Второй гейт — наличие контакта (contactReadySql ниже); всё остальное,
+// включая отсутствие РКН, рассылку не блокирует (там свой опенер-проб).
+// Общий предикат для активации (lifecycle) и доливки (scheduleUnscheduledLeads):
+// счётчик и действие обязаны совпадать, иначе кнопка обещает отправку-no-op.
+//
+// ВАЖНО при выкатке: дефолт колонки — 'pending', то есть без бэкфилла живые
+// кампании встанут. Разово перед деплоем:
+//   UPDATE project_items SET qualification = 'qualified' WHERE created_at < now();
+// (всё, что уже в работе, прошло старый гейт «контакт + РКН» — это и есть
+// вердикт, вынесенный прежним процессом).
+export const qualifiedSql: SQL<boolean> = sql<boolean>`${projectItems.qualification} = 'qualified'`;
+
 export const contactUsernameLowerSql: SQL<string | null> = sql<string | null>`lower(${contacts.properties}->>'telegram_username')`;
 
 export const contactUsernameSql: SQL<string | null> = sql<string | null>`${contacts.properties}->>'telegram_username'`;
