@@ -54,6 +54,7 @@ export const Route = createFileRoute(
     search: Record<string, unknown>,
   ): {
     filter?: "qualify" | "flight" | "find_contact" | "manual" | "wont";
+    lead?: string;
   } => ({
     filter:
       search.filter === "qualify" ||
@@ -63,6 +64,9 @@ export const Route = createFileRoute(
       search.filter === "wont"
         ? search.filter
         : undefined,
+    // ?lead=<itemId> — дип-линк на карточку лида (такие ссылки лежат в текстах
+    // CRM-тикетов). Разово открывает карточку, как клик по строке, и стирается.
+    lead: typeof search.lead === "string" ? search.lead : undefined,
   }),
 });
 
@@ -201,7 +205,7 @@ function groupLeadsByAdmin(leads: Lead[]): LeadGroup[] {
 
 function LeadsPage() {
   const { wsId, projectId } = Route.useParams();
-  const { filter } = Route.useSearch();
+  const { filter, lead: leadParam } = Route.useSearch();
   const navigate = Route.useNavigate();
   const [showAddChannels, setShowAddChannels] = useState(false);
   const [drawerLeadId, setDrawerLeadId] = useState<string | null>(null);
@@ -358,12 +362,15 @@ function LeadsPage() {
       !defaultedRef.current &&
       isDraft &&
       filter === undefined &&
+      // Дип-линк на лида важнее дефолтного сегмента — не затираем ?lead=
+      // редиректом до того, как эффект дип-линка успел его обработать.
+      leadParam === undefined &&
       counts.find_contact > 0
     ) {
       defaultedRef.current = true;
       navigate({ search: { filter: "find_contact" }, replace: true });
     }
-  }, [isDraft, filter, counts.find_contact, navigate]);
+  }, [isDraft, filter, leadParam, counts.find_contact, navigate]);
   // Позиционный курсор: обработал/удалил лида — он уходит из инбокса, и
   // активным становится тот, кто встал на его место (по запомненному индексу),
   // а не первый в списке. Очередь едет под фиксированным курсором, без прыжка.
@@ -445,6 +452,28 @@ function LeadsPage() {
     if (leadId) setPrepLeadId(leadId);
     navigate({ search: { filter: "find_contact" }, replace: true });
   };
+
+  // Дип-линк ?lead=<itemId> (из текста CRM-тикета): когда список загрузился,
+  // разово открываем карточку той же логикой, что клик по строке, и стираем
+  // параметр из URL (иначе refresh переоткрывал бы карточку после закрытия).
+  const deepLinkDoneRef = useRef(false);
+  useEffect(() => {
+    if (!leadParam || deepLinkDoneRef.current || !leadsQ.data) return;
+    deepLinkDoneRef.current = true;
+    const l = leadsQ.data.leads.find((x) => x.id === leadParam);
+    if (l) {
+      if (isRecipientFix(l.outreachState)) {
+        setPrepLeadId(l.id);
+        navigate({ search: { filter: "find_contact" }, replace: true });
+        return;
+      }
+      if (l.contactId) setDrawerLeadId(l.id);
+      else if (bucketOf(l.outreachState) === "manual" && l.channel)
+        setChannelView(l.channel.id);
+      else setInspectLeadId(l.id);
+    }
+    navigate({ search: { filter }, replace: true });
+  }, [leadParam, leadsQ.data, filter, navigate]);
 
   return (
     <div className="space-y-3">
