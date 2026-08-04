@@ -754,7 +754,6 @@ function LeadsPage() {
             wsId={wsId}
             projectId={projectId}
             leads={leadsQ.data.leads}
-            crmLogin={meQ.data?.crmLogin ?? null}
             meId={meQ.data?.id ?? null}
             readOnly={seq.data?.status === "done"}
           />

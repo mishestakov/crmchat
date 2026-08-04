@@ -4294,6 +4294,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{wsId}/projects/{projectId}/crm-pull": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    wsId: string;
+                    projectId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Дельта тикетов CRM с последней сверки подтянута в проект */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CrmPullResult"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{wsId}/projects/{projectId}/placements": {
         parameters: {
             query?: never;
@@ -6710,6 +6748,13 @@ export interface components {
         ClaimNextBody: {
             /** @default 1 */
             count: number;
+        };
+        CrmPullResult: {
+            seen: number;
+            created: number;
+            updated: number;
+            skippedNoLink: number;
+            failed: number;
         };
         Placement: {
             id: string;

@@ -15,7 +15,10 @@ import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../../db/client.ts";
-import { projectItems, users } from "../../db/schema.ts";
+import { projectItems, projects, users } from "../../db/schema.ts";
+import { userDisplayNameSql } from "../../lib/contact-sql.ts";
+import { isCrmEnabled } from "../../lib/crm-client.ts";
+import { pullCrmDelta } from "../../lib/crm-pull.ts";
 import { emitProjectChanged } from "../../lib/events.ts";
 import { assertProjectAccess } from "../../lib/projects-access.ts";
 import { type WorkspaceVars } from "../../middleware/assert-member.ts";
@@ -141,12 +144,11 @@ app.openapi(
     const [row] = await db
       .select({
         qualification: projectItems.qualification,
-        // NULL — строка свободна (значит, не взялась из-за skipped). Имя — с
-        // фолбэком: users.name у TG-юзера без имени NULL, «занимается null»
-        // не показываем.
+        // NULL — строка свободна (значит, не взялась из-за skipped). Имя — по
+        // общему правилу userDisplayNameSql; «занимается null» не показываем.
         holder: sql<string | null>`CASE
           WHEN ${projectItems.assignedTo} IS NULL THEN NULL
-          ELSE coalesce(${users.name}, ${users.username}, 'другой менеджер')
+          ELSE coalesce(${userDisplayNameSql}, 'другой менеджер')
         END`,
       })
       .from(projectItems)
@@ -222,6 +224,71 @@ app.openapi(
           ? "Лид уже разобран — закрепление остаётся за автором вердикта"
           : "Лид уже не за вами",
     });
+  },
+);
+
+// --- пулл лидов из корп-CRM -------------------------------------------------
+
+const CrmPullResponse = z
+  .object({
+    seen: z.number().int(),
+    created: z.number().int(),
+    updated: z.number().int(),
+    skippedNoLink: z.number().int(),
+    failed: z.number().int(),
+  })
+  .openapi("CrmPullResult");
+
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/crm-pull",
+    tags: ["outreach"],
+    request: { params: WsProjectParam },
+    responses: {
+      200: {
+        content: { "application/json": { schema: CrmPullResponse } },
+        description:
+          "Дельта тикетов CRM с последней сверки подтянута в проект",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const { projectId } = c.req.valid("param");
+    const project = await assertProjectAccess(
+      projectId,
+      wsId,
+      userId,
+      c.get("workspaceRole"),
+    );
+    if (!isCrmEnabled()) {
+      throw new HTTPException(412, { message: "CRM не настроена (нет токена)" });
+    }
+
+    // Курсор двигаем на время НАЧАЛА пулла: изменения, случившиеся во время
+    // прогона, попадут в следующую дельту (перекрытие безопасно — пулл
+    // идемпотентен: известные тикеты обновляются, дубли не создаются).
+    // При частичном провале (failed > 0: полный GET тикета упал) курсор НЕ
+    // двигаем — иначе недочитанный тикет выпадает из дельты навсегда, а так
+    // следующий клик перечитает то же окно (лишняя работа — только апдейты).
+    const startedAt = new Date();
+    const result = await pullCrmDelta({
+      wsId,
+      projectId,
+      userId,
+      since: project.crmPulledAt,
+    });
+    if (result.failed === 0) {
+      await db
+        .update(projects)
+        .set({ crmPulledAt: startedAt, updatedAt: new Date() })
+        .where(eq(projects.id, projectId));
+    }
+
+    if (result.created > 0 || result.updated > 0) emitProjectChanged(projectId);
+    return c.json(result);
   },
 );
 

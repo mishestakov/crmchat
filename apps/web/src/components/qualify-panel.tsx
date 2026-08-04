@@ -10,20 +10,19 @@ import { RknBadge } from "./channel-badges";
 import { formatMembers } from "./channel-card";
 import { ChannelDrawer } from "./channel-drawer";
 import { externalHref } from "../lib/external-href";
+import { pluralize } from "../lib/date-utils";
 import { PlatformBadge, type Platform } from "../lib/platforms";
 
 type LeadsResponse =
   paths["/v1/workspaces/{wsId}/projects/{projectId}/leads"]["get"]["responses"][200]["content"]["application/json"];
 type Lead = LeadsResponse["leads"][number];
 
-// «1 канал / 3 канала / 15 каналов» — русские числительные.
-function channelsWord(n: number): string {
-  const d10 = n % 10;
-  const d100 = n % 100;
-  if (d10 === 1 && d100 !== 11) return "канал";
-  if (d10 >= 2 && d10 <= 4 && (d100 < 12 || d100 > 14)) return "канала";
-  return "каналов";
-}
+// «Требует внимания» = очередь этого экрана: неотсмотренные ЛИБО строки, чей
+// вердикт не доехал до CRM. Один предикат на оба списка («Все» со страницы и
+// «Мои» с серверного фильтра) — они вычитаются друг из друга, и дрейф правила
+// давал бы дубли/пропажи строк.
+const needsAttention = (l: Lead): boolean =>
+  l.qualification === "pending" || !!l.crmSyncError;
 
 // Экран квалификации. Строка = КАНАЛ, а не админ: вердикт выносится по каналу
 // (накрутки, тематика, живость — свойства площадки), и в CRM тикет тоже заводится
@@ -35,9 +34,6 @@ export function QualifyPanel(props: {
   wsId: string;
   projectId: string;
   leads: Lead[];
-  /** Логин менеджера в CRM. Пустой — вердикт вынести нельзя (владельца тикета
-   *  не проставить), показываем баннер со ссылкой в настройки. */
-  crmLogin: string | null;
   /** id текущего юзера — для фильтра «Мои» и плашек «за X». */
   meId: string | null;
   readOnly?: boolean;
@@ -67,14 +63,27 @@ export function QualifyPanel(props: {
     },
   });
 
+  // Пулл дельты из корп-CRM: новые тикеты приземляются неразобранными лидами,
+  // у известных обновляется зеркало статуса/владельца.
+  const crmPull = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await api.POST(
+        "/v1/workspaces/{wsId}/projects/{projectId}/crm-pull",
+        { params: { path: { wsId: props.wsId, projectId: props.projectId } } },
+      );
+      if (error) throw error;
+      return data!;
+    },
+    onSuccess: () =>
+      invalidateProject(qc, props.wsId, props.projectId, { leads: true }),
+  });
+
   // Панель — очередь «требуют внимания», а не только неотсмотренные. Лид, чей
   // вердикт не доехал до CRM, вердикт уже имеет и в pending не попадает — а
   // именно он и нуждается в действии: тикета в CRM нет, отчётность врёт.
   // Раньше кнопка «повторить» рендерилась только внутри pending-строк, то есть
   // была недостижима вообще.
-  const queue = props.leads.filter(
-    (l) => l.qualification === "pending" || l.crmSyncError,
-  );
+  const queue = props.leads.filter(needsAttention);
 
   // «Мои» — отдельным запросом с серверным фильтром, а не выцеживанием из
   // props.leads: страница лидов — окно первых 1000 строк, и на большом
@@ -104,9 +113,7 @@ export function QualifyPanel(props: {
   // вердикт у них уже есть, «взять» их нельзя, и спрятанные за фильтром «Мои»
   // они потерялись бы навсегда (автор в отпуске — чинить некому). Ошибки
   // редки, поэтому показываем их всем поверх своих.
-  const mineRows = (mineQ.data?.leads ?? []).filter(
-    (l) => l.qualification === "pending" || l.crmSyncError,
-  );
+  const mineRows = (mineQ.data?.leads ?? []).filter(needsAttention);
   const mineIds = new Set(mineRows.map((l) => l.id));
   const strayErrors = queue.filter(
     (l) => l.crmSyncError && !mineIds.has(l.id),
@@ -131,18 +138,10 @@ export function QualifyPanel(props: {
     }
   }
 
-  if (!props.crmLogin) {
-    return (
-      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-        <div className="font-medium">Укажите свой логин в CRM</div>
-        <p className="mt-1 text-xs">
-          Вердикт квалификации заводит тикет в CRM Яндекса, и владельцем ставится
-          тот, кто его вынес. Без логина этого не сделать — заполните его в
-          разделе «Настройки → Интеграции».
-        </p>
-      </div>
-    );
-  }
+  // Гейта «укажите CRM-логин» больше нет: тикеты мы не создаём (владельца при
+  // создании не проставляем), а переходы по существующим владельца не требуют.
+  // Логин остался нужен только для маппинга «владелец тикета → менеджер» при
+  // пулле — это забота пулла, вердикты им не блокируем.
 
   // Ранний return'а «всё отсмотрено» здесь нет сознательно: очередь на экране
   // — окно первой страницы, и её пустота НЕ значит, что свободных нет на
@@ -180,6 +179,32 @@ export function QualifyPanel(props: {
             Все ({queue.length})
           </button>
         </div>
+        <button
+          type="button"
+          disabled={crmPull.isPending || props.readOnly}
+          onClick={() => crmPull.mutate()}
+          className="rounded-lg border border-zinc-200 px-3 py-1 text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
+        >
+          {crmPull.isPending ? "Тянем…" : "Подтянуть из CRM"}
+        </button>
+        {crmPull.data && (
+          <span className="text-xs text-zinc-500">
+            +{crmPull.data.created} новых, {crmPull.data.updated} обновлено
+            {crmPull.data.skippedNoLink > 0 &&
+              `, ${crmPull.data.skippedNoLink} без ссылки`}
+            {crmPull.data.failed > 0 && (
+              <span className="text-red-600">
+                {" "}
+                ({crmPull.data.failed} с ошибкой)
+              </span>
+            )}
+          </span>
+        )}
+        {crmPull.error && (
+          <span className="text-xs text-red-600">
+            {errorMessage(crmPull.error)}
+          </span>
+        )}
         {/* Счётчик «свободных» тут не рисуем сознательно: страница лидов
             ограничена лимитом, и на большом проекте цифра со страницы врала
             бы. Правду о доступности говорит сам сервер результатом забора. */}
@@ -207,7 +232,8 @@ export function QualifyPanel(props: {
           {claimNext.data &&
             (claimNext.data.claimed > 0 ? (
               <span className="text-xs text-zinc-500">
-                +{claimNext.data.claimed} {channelsWord(claimNext.data.claimed)}
+                +{claimNext.data.claimed}{" "}
+                {pluralize(claimNext.data.claimed, "канал", "канала", "каналов")}
               </span>
             ) : (
               <span className="text-xs text-amber-700">

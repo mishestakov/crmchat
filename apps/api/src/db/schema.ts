@@ -967,6 +967,13 @@ export const projects = pgTable(
     activatedAt: timestamp("activated_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
 
+    // Курсор пулла лидов из корп-CRM («подтянуть» тянет изменённое начиная с
+    // этой точки, specs/crm-integration.md §3.5). null = ещё ни разу не
+    // тянули. Курсор на проекте, а не на воркспейсе: живой разбор идёт в
+    // одном проекте, и тикеты приземляются именно в него. Прод (аддитивно):
+    //   ALTER TABLE projects ADD COLUMN crm_pulled_at timestamptz;
+    crmPulledAt: timestamp("crm_pulled_at", { withTimezone: true }),
+
     createdBy: text("created_by")
       .notNull()
       .references(() => users.id),

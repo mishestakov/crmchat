@@ -26,7 +26,7 @@ import {
   fetchPlatformActivity,
   PlatformActivitySchema,
 } from "../../lib/platform-active.ts";
-import { contactReadySql } from "../../lib/contact-sql.ts";
+import { contactReadySql, userDisplayNameSql } from "../../lib/contact-sql.ts";
 import { assertProjectAccess } from "../../lib/projects-access.ts";
 import {
   armLeadDunning,
@@ -400,11 +400,7 @@ app.openapi(
           qualification: projectItems.qualification,
           qualReason: projectItems.qualReason,
           assignedToId: projectItems.assignedTo,
-          // name у TG-юзера без имени NULL — фолбэк на username, чтобы плашка
-          // «за X» не рисовалась пустой.
-          assignedToName: sql<
-            string | null
-          >`coalesce(${users.name}, ${users.username})`,
+          assignedToName: userDisplayNameSql,
           crmIssueId: projectItems.crmIssueId,
           crmStateId: projectItems.crmStateId,
           crmSyncError: projectItems.crmSyncError,
