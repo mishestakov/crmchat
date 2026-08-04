@@ -1,0 +1,228 @@
+// Закрепление лидов за менеджером (разбор неразобранных).
+//
+// Продуктовый смысл: база проекта разбирается поштучно, каждый менеджер со
+// своей скоростью — раздачи поровну на старте нет, «хвостов» у отстающих не
+// копится. Единица закрепления — КАНАЛ (строка проекта), как и вердикт
+// квалификации: контакт на этапе разбора часто ещё не резолвнут, группировать
+// по нему нельзя (у половины строк contact_id NULL). Защита от «двое пишут
+// одному админу» — не жёсткая связка, а подсветка: бейджи «уже писали» и
+// «админ у X» в очереди.
+//
+// Гонка «двое взяли верхнего» решается на уровне БД: пачка забирается одним
+// UPDATE по подзапросу с FOR UPDATE SKIP LOCKED — конкурирующие клики
+// разбирают очередь без дублей и без ожидания чужих локов.
+import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
+import { HTTPException } from "hono/http-exception";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { db } from "../../db/client.ts";
+import { projectItems, users } from "../../db/schema.ts";
+import { emitProjectChanged } from "../../lib/events.ts";
+import { assertProjectAccess } from "../../lib/projects-access.ts";
+import { type WorkspaceVars } from "../../middleware/assert-member.ts";
+import { WsProjectParam, WsProjectItemParam } from "./shared.ts";
+
+const app = new OpenAPIHono<{ Variables: WorkspaceVars }>();
+
+const ClaimResultSchema = z
+  .object({
+    // Сколько каналов закрепили. 0 у claim-next = свободных больше нет.
+    claimed: z.number().int(),
+    itemIds: z.array(z.string()),
+  })
+  .openapi("LeadClaimResult");
+
+// «Отщипнуть объём на день»: забор пачкой каналов.
+const ClaimNextBody = z
+  .object({ count: z.number().int().min(1).max(100).default(1) })
+  .openapi("ClaimNextBody");
+
+// Per-role видимости здесь сознательно НЕТ: разбор — общий пул проекта,
+// доступный всем его участникам. Фильтр по scheduled_messages (как memberFilter
+// в /leads) для pending-лидов противоречив по построению — до вердикта
+// отправок не существует, member не смог бы забрать ничего. Роли в разборе
+// определим вместе с tenancy-реворком (workspace_members / owner-based RBAC).
+
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/claim-next",
+    tags: ["outreach"],
+    request: {
+      params: WsProjectParam,
+      body: {
+        content: { "application/json": { schema: ClaimNextBody } },
+        required: true,
+      },
+    },
+    responses: {
+      200: {
+        content: { "application/json": { schema: ClaimResultSchema } },
+        description: "Следующие свободные каналы закреплены за вызывающим",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const { projectId } = c.req.valid("param");
+    const { count } = c.req.valid("json");
+    await assertProjectAccess(projectId, wsId, userId, c.get("workspaceRole"));
+
+    // Один set-based UPDATE: подзапрос выбирает первые по порядку заливки
+    // свободные неразобранные строки (created_at — батч заливки; внутри батча
+    // id — стабильный, но произвольный). Исключённые из рассылки (skipped)
+    // не раздаём — разбирать канал, которому не напишем, трата времени.
+    // SKIP LOCKED: параллельный клик другого менеджера не ждёт и не
+    // дублирует — просто берёт следующие.
+    const picked = db
+      .select({ id: projectItems.id })
+      .from(projectItems)
+      .where(
+        and(
+          eq(projectItems.projectId, projectId),
+          eq(projectItems.qualification, "pending"),
+          isNull(projectItems.assignedTo),
+          isNull(projectItems.skippedAt),
+        ),
+      )
+      .orderBy(asc(projectItems.createdAt), asc(projectItems.id))
+      .limit(count)
+      .for("update", { skipLocked: true });
+
+    const rows = await db
+      .update(projectItems)
+      .set({ assignedTo: userId, assignedAt: new Date() })
+      .where(inArray(projectItems.id, picked))
+      .returning({ id: projectItems.id });
+
+    if (rows.length > 0) emitProjectChanged(projectId);
+    return c.json({ claimed: rows.length, itemIds: rows.map((r) => r.id) });
+  },
+);
+
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/items/{itemId}/claim",
+    tags: ["outreach"],
+    request: { params: WsProjectItemParam },
+    responses: {
+      200: {
+        content: { "application/json": { schema: ClaimResultSchema } },
+        description: "Канал закреплён за вызывающим",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const { projectId, itemId } = c.req.valid("param");
+    await assertProjectAccess(projectId, wsId, userId, c.get("workspaceRole"));
+
+    const rows = await db
+      .update(projectItems)
+      .set({ assignedTo: userId, assignedAt: new Date() })
+      .where(
+        and(
+          eq(projectItems.id, itemId),
+          eq(projectItems.projectId, projectId),
+          eq(projectItems.qualification, "pending"),
+          isNull(projectItems.assignedTo),
+          isNull(projectItems.skippedAt),
+        ),
+      )
+      .returning({ id: projectItems.id });
+    if (rows.length > 0) {
+      emitProjectChanged(projectId);
+      return c.json({ claimed: 1, itemIds: [itemId] });
+    }
+
+    // Не забрали — говорим честно почему: занят (кем) / уже разобран / нет.
+    const [row] = await db
+      .select({
+        qualification: projectItems.qualification,
+        // NULL — строка свободна (значит, не взялась из-за skipped). Имя — с
+        // фолбэком: users.name у TG-юзера без имени NULL, «занимается null»
+        // не показываем.
+        holder: sql<string | null>`CASE
+          WHEN ${projectItems.assignedTo} IS NULL THEN NULL
+          ELSE coalesce(${users.name}, ${users.username}, 'другой менеджер')
+        END`,
+      })
+      .from(projectItems)
+      .leftJoin(users, eq(users.id, projectItems.assignedTo))
+      .where(
+        and(eq(projectItems.id, itemId), eq(projectItems.projectId, projectId)),
+      )
+      .limit(1);
+    if (!row) throw new HTTPException(404, { message: "item not found" });
+    throw new HTTPException(409, {
+      message:
+        row.qualification !== "pending"
+          ? "Лид уже разобран"
+          : row.holder
+            ? `Только что забрал ${row.holder}`
+            : "Канал исключён из рассылки",
+    });
+  },
+);
+
+app.openapi(
+  createRoute({
+    method: "post",
+    path: "/v1/workspaces/{wsId}/projects/{projectId}/items/{itemId}/unclaim",
+    tags: ["outreach"],
+    request: { params: WsProjectItemParam },
+    responses: {
+      200: {
+        content: { "application/json": { schema: ClaimResultSchema } },
+        description: "Своё закрепление снято (только с неразобранного)",
+      },
+    },
+  }),
+  async (c) => {
+    const wsId = c.get("workspaceId");
+    const userId = c.get("userId");
+    const { projectId, itemId } = c.req.valid("param");
+    await assertProjectAccess(projectId, wsId, userId, c.get("workspaceRole"));
+
+    // Отпустить можно только СВОЁ и только неразобранное: по вынесенному
+    // вердикту закрепление — уже факт «кто ведёт», его не снимаем.
+    const rows = await db
+      .update(projectItems)
+      .set({ assignedTo: null, assignedAt: null })
+      .where(
+        and(
+          eq(projectItems.id, itemId),
+          eq(projectItems.projectId, projectId),
+          eq(projectItems.assignedTo, userId),
+          eq(projectItems.qualification, "pending"),
+        ),
+      )
+      .returning({ id: projectItems.id });
+    if (rows.length > 0) {
+      emitProjectChanged(projectId);
+      return c.json({ claimed: 1, itemIds: [itemId] });
+    }
+
+    // Ничего не сняли — объясняем почему, а не молчим 200-кой: пока менеджер
+    // тянулся к «отпустить», коллега мог вынести вердикт (закрепление
+    // переехало на него) — кнопка без объяснения выглядела бы сломанной.
+    const [row] = await db
+      .select({ qualification: projectItems.qualification })
+      .from(projectItems)
+      .where(
+        and(eq(projectItems.id, itemId), eq(projectItems.projectId, projectId)),
+      )
+      .limit(1);
+    if (!row) throw new HTTPException(404, { message: "item not found" });
+    throw new HTTPException(409, {
+      message:
+        row.qualification !== "pending"
+          ? "Лид уже разобран — закрепление остаётся за автором вердикта"
+          : "Лид уже не за вами",
+    });
+  },
+);
+
+export default app;

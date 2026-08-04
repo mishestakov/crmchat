@@ -3709,6 +3709,7 @@ export interface paths {
                 query?: {
                     limit?: number;
                     offset?: number | null;
+                    assigned?: "me";
                 };
                 header?: never;
                 path: {
@@ -4167,6 +4168,126 @@ export interface paths {
         };
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{wsId}/projects/{projectId}/claim-next": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    wsId: string;
+                    projectId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ClaimNextBody"];
+                };
+            };
+            responses: {
+                /** @description Следующие свободные каналы закреплены за вызывающим */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LeadClaimResult"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{wsId}/projects/{projectId}/items/{itemId}/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    wsId: string;
+                    projectId: string;
+                    itemId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Канал закреплён за вызывающим */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LeadClaimResult"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{wsId}/projects/{projectId}/items/{itemId}/unclaim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    wsId: string;
+                    projectId: string;
+                    itemId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Своё закрепление снято (только с неразобранного) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LeadClaimResult"];
+                    };
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -6477,6 +6598,10 @@ export interface components {
             /** @enum {string} */
             qualification: "pending" | "qualified" | "disqualified";
             qualReason: string | null;
+            assignedTo: {
+                id: string;
+                name: string;
+            } | null;
             crmIssueId: number | null;
             crmStateId: number | null;
             crmSyncError: string | null;
@@ -6577,6 +6702,14 @@ export interface components {
                 transitionId: string;
                 label: string;
             }[];
+        };
+        LeadClaimResult: {
+            claimed: number;
+            itemIds: string[];
+        };
+        ClaimNextBody: {
+            /** @default 1 */
+            count: number;
         };
         Placement: {
             id: string;

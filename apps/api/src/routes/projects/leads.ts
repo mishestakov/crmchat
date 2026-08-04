@@ -13,6 +13,7 @@ import {
   scheduledMessageStatus,
   tgChats,
   tgUsers,
+  users,
   type ProjectStage,
 } from "../../db/schema.ts";
 import { emitProjectChanged } from "../../lib/events.ts";
@@ -225,6 +226,9 @@ const LeadProgressSchema = z
     // CRM ('703_578'), имя причины фронт берёт из @repo/core.
     qualification: z.enum(["pending", "qualified", "disqualified"]),
     qualReason: z.string().nullable(),
+    // Закрепление за менеджером (разбор/ведение). null — свободен. Имя — для
+    // плашки «за Юлей» и фильтра «Мои» в очереди квалификации.
+    assignedTo: z.object({ id: z.string(), name: z.string() }).nullable(),
     // Зеркало тикета в корп-CRM. crmSyncError непустой = вердикт сохранён
     // локально, но в CRM не уехал → на карточке кнопка «повторить».
     crmIssueId: z.number().int().nullable(),
@@ -286,6 +290,10 @@ app.openapi(
       query: z.object({
         limit: z.coerce.number().int().min(1).max(1000).default(100),
         offset: z.coerce.number().int().min(0).default(0),
+        // «Мои» на вкладке квалификации: страница лидов — окно первых N строк,
+        // и закреплённые за менеджером могут лежать за его пределами. Этот
+        // фильтр даёт точный ответ сервера вместо выцеживания из окна.
+        assigned: z.enum(["me"]).optional(),
       }),
     },
     responses: {
@@ -308,7 +316,7 @@ app.openapi(
     const userId = c.get("userId");
     const role = c.get("workspaceRole");
     const { projectId } = c.req.valid("param");
-    const { limit, offset } = c.req.valid("query");
+    const { limit, offset, assigned } = c.req.valid("query");
     const project = await assertProjectAccess(projectId, wsId, userId, role);
 
     // Фильтр лидов внутри проекта: admin видит всё, member — только лиды,
@@ -391,6 +399,12 @@ app.openapi(
           skippedAt: projectItems.skippedAt,
           qualification: projectItems.qualification,
           qualReason: projectItems.qualReason,
+          assignedToId: projectItems.assignedTo,
+          // name у TG-юзера без имени NULL — фолбэк на username, чтобы плашка
+          // «за X» не рисовалась пустой.
+          assignedToName: sql<
+            string | null
+          >`coalesce(${users.name}, ${users.username})`,
           crmIssueId: projectItems.crmIssueId,
           crmStateId: projectItems.crmStateId,
           crmSyncError: projectItems.crmSyncError,
@@ -430,7 +444,14 @@ app.openapi(
         .leftJoin(contacts, eq(contacts.id, projectItems.contactId))
         .leftJoin(channels, eq(channels.id, projectItems.channelId))
         .leftJoin(tgUsers, eq(tgUsers.userId, projectItems.tgUserId))
-        .where(and(eq(projectItems.projectId, project.id), memberFilter))
+        .leftJoin(users, eq(users.id, projectItems.assignedTo))
+        .where(
+          and(
+            eq(projectItems.projectId, project.id),
+            memberFilter,
+            assigned === "me" ? eq(projectItems.assignedTo, userId) : undefined,
+          ),
+        )
         .orderBy(asc(projectItems.createdAt))
         .limit(limit)
         .offset(offset),
@@ -573,6 +594,9 @@ app.openapi(
           contactReady: l.contactReady,
           qualification: l.qualification,
           qualReason: l.qualReason,
+          assignedTo: l.assignedToId
+            ? { id: l.assignedToId, name: l.assignedToName ?? "без имени" }
+            : null,
           crmIssueId: l.crmIssueId,
           crmStateId: l.crmStateId,
           crmSyncError: l.crmSyncError,

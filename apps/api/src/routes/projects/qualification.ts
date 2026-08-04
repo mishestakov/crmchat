@@ -306,6 +306,11 @@ app.openapi(
         qualNote: note ?? null,
         qualifiedBy: userId,
         qualifiedAt: new Date(),
+        // «Кто разобрал, тот и ведёт»: вердикт из вида «Все» по чужому/
+        // свободному лиду переносит закрепление на автора вердикта — иначе
+        // бейдж «за X» навсегда указывал бы не на того, кто реально ведёт.
+        assignedTo: userId,
+        assignedAt: new Date(),
       })
       .where(
         and(eq(projectItems.id, itemId), eq(projectItems.projectId, projectId)),
