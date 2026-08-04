@@ -50,6 +50,10 @@ export function ChannelDrawer(props: {
         </span>
       }
     >
+      {/* Слот — ДО веток загрузки/ошибки: дровер закрывает собой контролы
+          строки, из которой открыт, и пока превью грузится (или упало),
+          действовать (напр. вынести вердикт) всё равно должно быть можно. */}
+      {!props.contactChange && props.topSlot}
       {channelQ.isLoading && (
         <p className="px-6 py-4 text-sm text-zinc-500">Загрузка канала…</p>
       )}
@@ -68,15 +72,12 @@ export function ChannelDrawer(props: {
             onClose={props.onClose}
           />
         ) : (
-          <>
-            {props.topSlot}
-            <ChannelCard
-              key={props.channelId}
-              wsId={props.wsId}
-              channel={channelQ.data}
-              initialDmOpen={props.initialDmOpen}
-            />
-          </>
+          <ChannelCard
+            key={props.channelId}
+            wsId={props.wsId}
+            channel={channelQ.data}
+            initialDmOpen={props.initialDmOpen}
+          />
         ))}
     </Drawer>
   );

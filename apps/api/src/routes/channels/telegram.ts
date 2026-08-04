@@ -8,6 +8,7 @@ import { ChannelRelationStatusSchema } from "@repo/core";
 import { db } from "../../db/client.ts";
 import { median } from "../../lib/median.ts";
 import { errMsg } from "../../lib/errors.ts";
+import { withTimeout } from "../../lib/with-timeout.ts";
 import {
   TdMediaThumbSchema,
   TdMessageEntitySchema,
@@ -511,12 +512,39 @@ async function syncChannelFromTg(
   return updated!;
 }
 
+// Дедуп одновременных синков одного канала. Типовой сценарий «открыл дровер
+// (авто-синк) → сразу нажал Годен (ленивый догон)» без этого отправляет два
+// searchPublicChat по одному @username подряд — а поиск у нас самый
+// флуд-чувствительный вызов (см. markSearchFlooded). Опоздавший присоединяется
+// к уже летящему запросу вместо запуска своего.
+const inflightChannelSyncs = new Map<
+  string,
+  Promise<typeof channels.$inferSelect>
+>();
+
+function syncChannelFromTgDeduped(
+  channel: typeof channels.$inferSelect,
+  tdClient: TdClient,
+  accountId: string,
+): Promise<typeof channels.$inferSelect> {
+  const existing = inflightChannelSyncs.get(channel.id);
+  if (existing) return existing;
+  const p = syncChannelFromTg(channel, tdClient, accountId).finally(() => {
+    inflightChannelSyncs.delete(channel.id);
+  });
+  inflightChannelSyncs.set(channel.id, p);
+  return p;
+}
+
 const LAZY_SYNC_TIMEOUT_MS = 5_000;
 
 /** Ленивый догон метаданных для канала, которого TG ещё ни разу не отдавал
  *  (импортировали списком и не открывали). Зовётся из квалификации: тикет в CRM
  *  собирается снимком из БД, и без этого туда уезжает болванка — без
  *  подписчиков, ссылки и chat_id, с названием-заглушкой вида «@handle».
+ *
+ *  Только Telegram: на других площадках пустых тикетов пока не наблюдали, и
+ *  плодить ветки под ненаблюдаемое незачем.
  *
  *  Best-effort: аккаунтов может не быть, поиск — флуднут, канал — удалён.
  *  Вердикт менеджера важнее полноты описания, поэтому наверх не бросаем. */
@@ -532,39 +560,25 @@ export async function syncChannelIfNeverSynced(
     .where(eq(channels.id, channelId))
     .limit(1);
   if (!ch || ch.syncedAt) return;
+  if (ch.platform !== "telegram") return;
+  if (!ch.externalId && !ch.username) return;
+  if (isInUnavailableCooldown(ch)) return;
 
-  const run = async (): Promise<void> => {
-    if (isProviderPlatform(ch.platform)) {
-      await syncChannelFromProvider(ch);
-      return;
-    }
-    if (ch.platform !== "telegram") return;
-    if (!ch.externalId && !ch.username) return;
-    if (isInUnavailableCooldown(ch)) return;
-    const picked = await pickOutreachClient(wsId, userId, role);
-    if (!picked) return;
-    await syncChannelFromTg(ch, picked.client, picked.accountId);
-  };
-
-  // Жёсткий потолок: вызов сидит в критическом пути клика «Годен», а под ним
-  // спавн TDLib-клиента и searchPublicChat — операции без собственного дедлайна.
-  // Не успели — вердикт уходит с тем, что есть; сам синк при этом продолжится и
-  // допишет запись позже (гонки нет: пишем разные поля из одного апдейта).
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  // Потолок обязателен: вызов сидит в критическом пути клика «Годен», а под ним
+  // спавн TDLib-клиента и searchPublicChat — без собственного дедлайна. Не
+  // успели — вердикт уходит с тем, что есть, синк дописывает запись позже.
   try {
-    await Promise.race([
-      run(),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error(`lazy sync timeout ${LAZY_SYNC_TIMEOUT_MS}ms`)),
-          LAZY_SYNC_TIMEOUT_MS,
-        );
-      }),
-    ]);
+    await withTimeout(
+      (async () => {
+        const picked = await pickOutreachClient(wsId, userId, role);
+        if (!picked) return;
+        await syncChannelFromTgDeduped(ch, picked.client, picked.accountId);
+      })(),
+      "lazy channel sync",
+      LAZY_SYNC_TIMEOUT_MS,
+    );
   } catch (e) {
     console.warn(`[qualify] lazy sync ${channelId} failed: ${errMsg(e)}`);
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -663,7 +677,11 @@ app.openapi(
     }
     const tdClient = picked.client;
 
-    const updated = await syncChannelFromTg(channel, tdClient, picked.accountId);
+    const updated = await syncChannelFromTgDeduped(
+      channel,
+      tdClient,
+      picked.accountId,
+    );
     const [serialized] = await joinAdmins([updated]);
     return c.json(serialized!);
   },

@@ -178,7 +178,11 @@ function QualifyRow(props: {
             onClick={() => setChannelOpen(true)}
             className="font-medium hover:underline"
           >
-            {lead.channel.title || lead.username || "—"}
+            {/* Фолбэк — @username САМОГО КАНАЛА (как channelLabel в
+                leads.tsx), не lead.username: там ник админа — другая
+                сущность. У несинканного канала title пуст, а username есть. */}
+            {lead.channel.title ||
+              (lead.channel.username ? `@${lead.channel.username}` : "—")}
           </button>
         ) : (
           <span className="font-medium">{lead.username ?? "—"}</span>

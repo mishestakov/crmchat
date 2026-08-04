@@ -2,6 +2,7 @@ import { and, asc, eq, inArray, isNotNull, isNull, lte, or } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import { channels, outreachAccounts, projectItems } from "../db/schema.ts";
 import { errMsg } from "./errors.ts";
+import { withTimeout } from "./with-timeout.ts";
 import {
   findSubscribedReaderAccount,
   getOutreachWorkerClient,
@@ -37,21 +38,10 @@ const HOURLY_CAP = 100; // не больше 100 снятий в час (защ�
 const UPDATE_WAIT_MS = 8_000; // сколько ждём push updateMessageInteractionInfo
 const INVOKE_TIMEOUT_MS = 15_000; // потолок на один TDLib-invoke
 
-// tdl.invoke без таймаута: если TDLib завис (network / cold handshake), await
-// никогда не settle'ится — tickRunning остаётся true и весь воркер мёртв до
-// рестарта. Оборачиваем каждый invoke в гонку с таймаутом → reject уйдёт в
-// catch runOne, row помечается error, tick освобождается.
-function withTimeout<T>(p: Promise<T>, label: string): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<never>((_, reject) =>
-      setTimeout(
-        () => reject(new Error(`TDLib ${label} timeout`)),
-        INVOKE_TIMEOUT_MS,
-      ),
-    ),
-  ]);
-}
+// Без таймаута зависший invoke оставил бы tickRunning=true и весь воркер мёртв
+// до рестарта. Общий хелпер, ms передаём свой — см. lib/with-timeout.ts.
+const invokeWithTimeout = <T,>(p: Promise<T>, label: string): Promise<T> =>
+  withTimeout(p, `TDLib ${label}`, INVOKE_TIMEOUT_MS);
 
 // State через globalThis — те же причины, что у outreach-worker'а (HMR в dev
 // не должен плодить второй setInterval). hourly — таймстемпы обработанных
@@ -257,7 +247,7 @@ async function runTgMetrics(row: MetricsRow) {
     if (!client) throw new Error("TDLib-клиент аккаунта недоступен");
 
     // Шаг 1: резолв ссылки → chat_id + message (контент + baseline-метрики).
-    const link = (await withTimeout(
+    const link = (await invokeWithTimeout(
       client.invoke({ _: "getMessageLinkInfo", url: row.postUrl } as never),
       "getMessageLinkInfo",
     )) as {
@@ -350,7 +340,7 @@ async function collectFresh(
   chatId: number,
   msgId: number,
 ): Promise<InteractionInfo> {
-  await withTimeout(
+  await invokeWithTimeout(
     client.invoke({ _: "openChat", chat_id: chatId } as never),
     "openChat",
   );
@@ -381,7 +371,7 @@ async function collectFresh(
       };
       const timer = setTimeout(() => finish(null), UPDATE_WAIT_MS);
       client.on("update", handler);
-      void withTimeout(
+      void invokeWithTimeout(
         client.invoke({
           _: "viewMessages",
           chat_id: chatId,
@@ -393,7 +383,7 @@ async function collectFresh(
       ).catch(() => {});
     });
   } finally {
-    await withTimeout(
+    await invokeWithTimeout(
       client.invoke({ _: "closeChat", chat_id: chatId } as never),
       "closeChat",
     ).catch(() => {});
