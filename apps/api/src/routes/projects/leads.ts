@@ -351,12 +351,12 @@ app.openapi(
           // входящем (его семантику менять нельзя — scheduling берёт его как
           // «последний ответ»), поэтому наше исходящее (включая РУЧНОЕ из чата)
           // подмешиваем из tg_chats: max(last_message_at, last_outbound_at) по
-          // всем нашим аккаунтам, общавшимся с этим пиром. greatest игнорит NULL.
-          // TODO(multi-member): входящее тут воркспейс-глобальное, а исходящее
-          // скоупится к аккаунтам смотрящего (myAccountIdsSql). Пока tenancy
-          // single-owner — это одно и то же. Когда появятся роли/мемберы, админ,
-          // смотрящий лид мембера, не увидит исходящее мембера → ложное «затихло».
-          // Тогда скоупить субквери на аккаунты ВОРКСПЕЙСА, а не смотрящего.
+          // ВСЕМ аккаунтам воркспейса, общавшимся с этим пиром. greatest игнорит
+          // NULL. Скоуп именно воркспейс, а не myAccountIdsSql: «последнее
+          // сообщение в треде» — факт треда, а не смотрящего; при скоупе на
+          // смотрящего коллега, открывший канбан, не видит чужое исходящее и
+          // получает ложное «затихло» (прод 04.08: Юлино вчерашнее сообщение,
+          // бейдж «затихло 3 дня» у остальных шести членов воркспейса).
           // .mapWith(contacts.lastMessageAt): drizzle применяет timestamp-декодер
           // (строка драйвера → Date) только к КОЛОНКАМ, к сырому sql-выражению —
           // нет. Без этого greatest(...) приходит строкой и .toISOString() ниже
@@ -366,15 +366,14 @@ app.openapi(
             (select max(greatest(${tgChats.lastMessageAt}, ${tgChats.lastOutboundAt}))
              from ${tgChats}
              where ${tgChats.peerUserId} = ${projectItems.tgUserId}
-               and ${tgChats.accountId} in ${myAccountIdsSql(wsId, userId)})
+               and ${tgChats.accountId} in ${workspaceAccountIdsSql(wsId)})
           )`.mapWith(contacts.lastMessageAt),
           // «Уже общались» — cross-project сигнал по пиру (tg_chats). Скоуп —
-          // ВЕСЬ workspace (workspaceAccountIdsSql), а НЕ myAccountIdsSql как у
-          // lastMessageAt выше: это командный сигнал «кто-либо из нас уже писал
-          // этому контакту», совпадает с joinAdmins в channels.ts. При
-          // single-owner скоупы идентичны; расходятся при делегациях/мультиюзере,
-          // и тогда правильно видеть переписку коллег (иначе шлём второй холодный
-          // опенер уже прогретому контакту). talked/replied — раздельные exists,
+          // ВЕСЬ workspace (workspaceAccountIdsSql), как и у lastMessageAt выше:
+          // это командный сигнал «кто-либо из нас уже писал этому контакту»,
+          // совпадает с joinAdmins в channels.ts. Видеть переписку коллег тут
+          // правильно — иначе шлём второй холодный опенер уже прогретому
+          // контакту. talked/replied — раздельные exists,
           // чтобы различать тир «писали, тишина» и «был диалог» (joinAdmins берёт
           // только has_inbound).
           alreadyTalked: sql<boolean>`exists (

@@ -42,6 +42,14 @@ type Lead = LeadsResponse["leads"][number];
 
 const NO_STAGE = "__no_stage__"; // sentinel для колонки «Без стадии»
 
+// Поздняя из двух ISO-дат (null = даты нет). Для монотонных патчей кэша:
+// живое событие не должно откатывать значение назад.
+const maxIso = (a: string | null, b: string | null): string | null => {
+  if (!a) return b;
+  if (!b) return a;
+  return Date.parse(b) > Date.parse(a) ? b : a;
+};
+
 // Карточка доски = АДМИН (contactId), внутри — все его каналы-размещения в
 // проекте. Переписка/пиналка/стадия у админа одни (опенер дедупится по
 // админу), поэтому группа едет по воронке целиком.
@@ -211,23 +219,28 @@ function KanbanPage() {
         const nextLeads = prev.leads.map((l) => {
           if (l.contactId !== ev.contactId) return l;
           const markedUnread = ev.markedUnread ?? l.markedUnread;
-          if (
-            l.unreadCount === ev.unreadCount &&
-            l.markedUnread === markedUnread &&
-            l.lastMessageAt === ev.lastMessageAt
-          ) {
-            return l;
-          }
-          changed = true;
           // lastMessageAt тоже патчим: от него зависит подсветка застоя
           // (getLeadHealth) — иначе жёлтый/нейтраль отстаёт до рефетча, когда
           // уже-ответивший лид пишет снова (repliedAt/стадия не меняются →
           // project-stream «changed» не приходит, только этот contact-event).
+          // Но только ВПЕРЁД (max): событие несёт contacts.last_message_at
+          // (входящие), а серверный /leads подмешивает ещё и исходящие всех
+          // аккаунтов воркспейса из tg_chats. Слепая перезапись откатывала бы
+          // дату и возвращала ложное «затихло» до рефетча.
+          const lastMessageAt = maxIso(l.lastMessageAt, ev.lastMessageAt);
+          if (
+            l.unreadCount === ev.unreadCount &&
+            l.markedUnread === markedUnread &&
+            l.lastMessageAt === lastMessageAt
+          ) {
+            return l;
+          }
+          changed = true;
           return {
             ...l,
             unreadCount: ev.unreadCount,
             markedUnread,
-            lastMessageAt: ev.lastMessageAt,
+            lastMessageAt,
           };
         });
         return changed ? { ...prev, leads: nextLeads } : prev;
