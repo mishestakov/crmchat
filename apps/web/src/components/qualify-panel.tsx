@@ -8,6 +8,7 @@ import { errorMessage } from "../lib/errors";
 import { invalidateProject } from "../lib/query-keys";
 import { RknBadge } from "./channel-badges";
 import { formatMembers } from "./channel-card";
+import { ChannelDrawer } from "./channel-drawer";
 import { externalHref } from "../lib/external-href";
 import { PlatformBadge, type Platform } from "../lib/platforms";
 
@@ -84,6 +85,7 @@ function QualifyRow(props: {
   const { lead } = props;
   const qc = useQueryClient();
   const [reason, setReason] = useState("");
+  const [channelOpen, setChannelOpen] = useState(false);
 
   const qualify = useMutation({
     mutationFn: async (body: {
@@ -106,8 +108,13 @@ function QualifyRow(props: {
       if (error) throw error;
       return data!;
     },
-    onSuccess: () =>
-      invalidateProject(qc, props.wsId, props.projectId, { leads: true }),
+    onSuccess: () => {
+      // Вердикт вынесен — держать канал открытым незачем. Закрываем явно, а не
+      // полагаемся на то, что строка уйдёт из очереди и утащит дровер с собой:
+      // при недоставке в CRM строка остаётся, и дровер завис бы открытым.
+      setChannelOpen(false);
+      invalidateProject(qc, props.wsId, props.projectId, { leads: true });
+    },
     // Сброс выбора обязателен: иначе после сбоя причина остаётся выбранной, а
     // повторный выбор ТОГО ЖЕ пункта не даёт события change — менеджер не
     // сможет отправить вердикт заново, и это выглядит поломкой кнопки.
@@ -116,13 +123,66 @@ function QualifyRow(props: {
 
   const busy = qualify.isPending || props.readOnly;
 
+  // Один и тот же вердикт рендерится и в строке, и в дровере: часть каналов
+  // отбраковывается сходу по названию, часть требует посмотреть ленту. Мутация
+  // при этом одна на обе копии — busy и текст ошибки общие.
+  const verdictControls = lead.qualification === "pending" && (
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => qualify.mutate({ verdict: "qualified" })}
+        className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+      >
+        <Check size={14} />
+        Годен
+      </button>
+
+      {/* Причина обязательна: в CRM это резолюция, без неё переход не пройдёт. */}
+      <select
+        value={reason}
+        disabled={busy}
+        onChange={(e) => {
+          const next = e.target.value;
+          setReason(next);
+          if (next) qualify.mutate({ verdict: "disqualified", reason: next });
+        }}
+        className="rounded-lg border border-zinc-200 px-2 py-1 text-sm text-zinc-700 disabled:opacity-50"
+      >
+        <option value="">Дисквалификация…</option>
+        {CRM_DISQUALIFY_REASONS.map((r) => (
+          <option key={r.transitionId} value={r.transitionId}>
+            {r.name}
+          </option>
+        ))}
+      </select>
+
+      {qualify.error && (
+        <span className="text-xs text-red-600">
+          {errorMessage(qualify.error)}
+        </span>
+      )}
+    </div>
+  );
+
   return (
     <div className="rounded-xl bg-white p-3 shadow-sm">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <PlatformBadge platform={lead.channel?.platform as Platform} />
-        <span className="font-medium">
-          {lead.channel?.title ?? lead.username ?? "—"}
-        </span>
+        {/* Клик — единственный способ увидеть канал, у которого ещё нет ни
+            ссылки, ни подписчиков: карточка в дровере сама сходит в TG и
+            дозаполнит запись (auto-sync при synced_at IS NULL). */}
+        {lead.channel ? (
+          <button
+            type="button"
+            onClick={() => setChannelOpen(true)}
+            className="font-medium hover:underline"
+          >
+            {lead.channel.title || lead.username || "—"}
+          </button>
+        ) : (
+          <span className="font-medium">{lead.username ?? "—"}</span>
+        )}
         {lead.channel?.link && (
           <a
             href={externalHref(lead.channel.link)}
@@ -152,44 +212,7 @@ function QualifyRow(props: {
         )}
       </div>
 
-      {lead.qualification === "pending" && (
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => qualify.mutate({ verdict: "qualified" })}
-          className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-        >
-          <Check size={14} />
-          Годен
-        </button>
-
-        {/* Причина обязательна: в CRM это резолюция, без неё переход не пройдёт. */}
-        <select
-          value={reason}
-          disabled={busy}
-          onChange={(e) => {
-            const next = e.target.value;
-            setReason(next);
-            if (next) qualify.mutate({ verdict: "disqualified", reason: next });
-          }}
-          className="rounded-lg border border-zinc-200 px-2 py-1 text-sm text-zinc-700 disabled:opacity-50"
-        >
-          <option value="">Дисквалификация…</option>
-          {CRM_DISQUALIFY_REASONS.map((r) => (
-            <option key={r.transitionId} value={r.transitionId}>
-              {r.name}
-            </option>
-          ))}
-        </select>
-
-        {qualify.error && (
-          <span className="text-xs text-red-600">
-            {errorMessage(qualify.error)}
-          </span>
-        )}
-      </div>
-      )}
+      {verdictControls && <div className="mt-2">{verdictControls}</div>}
 
       {/* Вердикт сохранён, но в CRM не уехал — тикета нет, нужен повтор. */}
       {lead.crmSyncError && (
@@ -198,6 +221,21 @@ function QualifyRow(props: {
           projectId={props.projectId}
           itemId={lead.id}
           error={lead.crmSyncError}
+        />
+      )}
+
+      {channelOpen && lead.channel && (
+        <ChannelDrawer
+          wsId={props.wsId}
+          channelId={lead.channel.id}
+          onClose={() => setChannelOpen(false)}
+          topSlot={
+            verdictControls && (
+              <div className="border-b border-zinc-100 px-6 py-3">
+                {verdictControls}
+              </div>
+            )
+          }
         />
       )}
     </div>

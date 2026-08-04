@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { errorMessage } from "../lib/errors";
@@ -17,6 +18,10 @@ export function ChannelDrawer(props: {
   // карточку. После успешной смены onResolved (обновить переписку), затем close.
   contactChange?: boolean;
   onResolved?: () => void;
+  // Блок над карточкой: действия того экрана, откуда дровер открыли (вердикт
+  // квалификации). Держим слотом, а не импортом панели внутрь — иначе дровер
+  // каналов начнёт знать про проекты и CRM.
+  topSlot?: ReactNode;
 }) {
   const channelQ = useQuery({
     queryKey: ["channel", props.wsId, props.channelId] as const,
@@ -63,12 +68,15 @@ export function ChannelDrawer(props: {
             onClose={props.onClose}
           />
         ) : (
-          <ChannelCard
-            key={props.channelId}
-            wsId={props.wsId}
-            channel={channelQ.data}
-            initialDmOpen={props.initialDmOpen}
-          />
+          <>
+            {props.topSlot}
+            <ChannelCard
+              key={props.channelId}
+              wsId={props.wsId}
+              channel={channelQ.data}
+              initialDmOpen={props.initialDmOpen}
+            />
+          </>
         ))}
     </Drawer>
   );

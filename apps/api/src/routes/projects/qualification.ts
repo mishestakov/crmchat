@@ -29,6 +29,7 @@ import {
   users,
 } from "../../db/schema.ts";
 import { channelIsRknSql } from "../../lib/rkn-registry.ts";
+import { syncChannelIfNeverSynced } from "../channels/telegram.ts";
 import { assertProjectAccess } from "../../lib/projects-access.ts";
 import {
   createIssue,
@@ -309,9 +310,19 @@ app.openapi(
       .where(
         and(eq(projectItems.id, itemId), eq(projectItems.projectId, projectId)),
       )
-      .returning({ id: projectItems.id });
+      .returning({ id: projectItems.id, channelId: projectItems.channelId });
     if (updated.length === 0) {
       throw new HTTPException(404, { message: "item not found" });
+    }
+
+    // Текст тикета — снимок из БД на этот момент. Канал, залитый списком и ни
+    // разу не открытый, метаданных ещё не имеет: без догона в CRM уедет
+    // болванка (прод 30.07 — 39 тикетов из 52 создались раньше синка своего
+    // канала). Дёргаем ровно здесь, а не в фоне по всему проекту: один лид —
+    // один поиск в TG, иначе упрёмся в те же флуд-лимиты.
+    const channelId = updated[0]!.channelId;
+    if (channelId) {
+      await syncChannelIfNeverSynced(channelId, wsId, userId, role);
     }
 
     await syncVerdict(wsId, projectId, itemId, ownerLogin, verdict, reason);
@@ -390,6 +401,8 @@ app.openapi(
       .select({
         qualification: projectItems.qualification,
         qualReason: projectItems.qualReason,
+        channelId: projectItems.channelId,
+        crmIssueId: projectItems.crmIssueId,
       })
       .from(projectItems)
       .where(eq(projectItems.id, itemId))
@@ -397,6 +410,13 @@ app.openapi(
     if (!row) throw new HTTPException(404, { message: "item not found" });
     if (row.qualification === "pending") {
       throw new HTTPException(400, { message: "Вердикт ещё не вынесен" });
+    }
+
+    // Только если тикет ещё не заведён: тогда текст соберётся сейчас и догон
+    // имеет смысл. Повтор упавшего ПЕРЕХОДА идёт по готовому тикету, описание
+    // не пересобирается — тратить на него поиск в TG незачем.
+    if (row.channelId && row.crmIssueId === null) {
+      await syncChannelIfNeverSynced(row.channelId, wsId, userId, role);
     }
 
     await syncVerdict(

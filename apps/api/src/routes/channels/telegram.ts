@@ -511,6 +511,63 @@ async function syncChannelFromTg(
   return updated!;
 }
 
+const LAZY_SYNC_TIMEOUT_MS = 5_000;
+
+/** Ленивый догон метаданных для канала, которого TG ещё ни разу не отдавал
+ *  (импортировали списком и не открывали). Зовётся из квалификации: тикет в CRM
+ *  собирается снимком из БД, и без этого туда уезжает болванка — без
+ *  подписчиков, ссылки и chat_id, с названием-заглушкой вида «@handle».
+ *
+ *  Best-effort: аккаунтов может не быть, поиск — флуднут, канал — удалён.
+ *  Вердикт менеджера важнее полноты описания, поэтому наверх не бросаем. */
+export async function syncChannelIfNeverSynced(
+  channelId: string,
+  wsId: string,
+  userId: string,
+  role: WorkspaceRole,
+): Promise<void> {
+  const [ch] = await db
+    .select()
+    .from(channels)
+    .where(eq(channels.id, channelId))
+    .limit(1);
+  if (!ch || ch.syncedAt) return;
+
+  const run = async (): Promise<void> => {
+    if (isProviderPlatform(ch.platform)) {
+      await syncChannelFromProvider(ch);
+      return;
+    }
+    if (ch.platform !== "telegram") return;
+    if (!ch.externalId && !ch.username) return;
+    if (isInUnavailableCooldown(ch)) return;
+    const picked = await pickOutreachClient(wsId, userId, role);
+    if (!picked) return;
+    await syncChannelFromTg(ch, picked.client, picked.accountId);
+  };
+
+  // Жёсткий потолок: вызов сидит в критическом пути клика «Годен», а под ним
+  // спавн TDLib-клиента и searchPublicChat — операции без собственного дедлайна.
+  // Не успели — вердикт уходит с тем, что есть; сам синк при этом продолжится и
+  // допишет запись позже (гонки нет: пишем разные поля из одного апдейта).
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      run(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`lazy sync timeout ${LAZY_SYNC_TIMEOUT_MS}ms`)),
+          LAZY_SYNC_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } catch (e) {
+    console.warn(`[qualify] lazy sync ${channelId} failed: ${errMsg(e)}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Pull свежей карточки канала из TG. Lazy: фронт дёргает при открытии
 // drawer'а если synced_at IS NULL или > 24h.
 //
