@@ -11,6 +11,19 @@ export async function loadChannelPropertyDefs(wsId: string): Promise<FieldDef[]>
   return db.select().from(propsTable).where(eq(propsTable.workspaceId, wsId));
 }
 
+// Нормализация identity-ключей на записи. «@ник» и «ник» — один человек, но
+// дедуп-проверки и unique-индексы (contacts_workspace_username_unique) сравнивают
+// строки буквально: собачка из ручного ввода рождала вторую карточку того же
+// человека (оба прод-дубля на 05.08 — ровно этот случай, @SergeyTaskin vs
+// SergeyTaskin). Резолверы собачку срезают при чтении, поэтому дубль ещё и
+// дорезолвливался до занятого tg_user_id. Единая точка: сюда сходятся все
+// пользовательские записи properties (create/PATCH контакта, авто-контакт из
+// трафика, канальные кастом-поля).
+const KEY_NORMALIZERS: Record<string, (v: string) => string> = {
+  telegram_username: (v) => v.trim().replace(/^@+/, ""),
+  tg_user_id: (v) => v.trim(),
+};
+
 // Валидирует body.properties сущности против определений её каталога (FieldDef[]
 // — канальные из БД или контактная константа).
 // - неизвестный ключ → 400
@@ -18,6 +31,8 @@ export async function loadChannelPropertyDefs(wsId: string): Promise<FieldDef[]>
 // - single_select с id, которого нет в values → 400
 // - multi_select: каждое значение должно быть валидным option.id
 // - null/""/[] → пропускаем (вызывающий handler решает: skip для POST, delete для PATCH).
+// - identity-ключи нормализуем (см. KEY_NORMALIZERS); пустое после нормализации
+//   («@» без ника) пропускаем как пустое.
 export function validateEntityProperties(
   defs: FieldDef[],
   input: Record<string, unknown> | undefined | null,
@@ -37,7 +52,13 @@ export function validateEntityProperties(
     if (!def) {
       throw new HTTPException(400, { message: `unknown property: ${key}` });
     }
-    out[key] = validateValue(def, raw);
+    let value = validateValue(def, raw);
+    const normalize = KEY_NORMALIZERS[key];
+    if (normalize && typeof value === "string") {
+      value = normalize(value);
+      if (value === "") continue;
+    }
+    out[key] = value;
   }
   return out;
 }
