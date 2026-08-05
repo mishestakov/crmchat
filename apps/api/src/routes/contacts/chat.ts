@@ -23,6 +23,7 @@ import {
 import {
   acquaintWithPeer,
   ensureContactTgUserIdViaPool,
+  resolveContactTgUserIdCheap,
 } from "../../lib/ensure-tg-user-id.ts";
 import { errMsg } from "../../lib/errors.ts";
 import { getOutreachWorkerClient } from "../../lib/outreach-account-client.ts";
@@ -348,8 +349,13 @@ app.openapi(
     const { id } = c.req.valid("param");
     const { accountId } = c.req.valid("json");
     const contact = await assertContactAccess(id, wsId);
-    const tgUserId = (contact.properties as Record<string, unknown>).tg_user_id;
-    if (typeof tgUserId !== "string") return c.json({ ok: false });
+    // Дешёвый резолв (properties → кэш дублей → реплика): контакт-дубль без
+    // персистнутого id открывал чат через chat-history — закрывать надо тоже.
+    const tgUserId = await resolveContactTgUserIdCheap(
+      contact.id,
+      contact.properties as Record<string, unknown>,
+    );
+    if (!tgUserId) return c.json({ ok: false });
 
     const [chatRow] = await db
       .select({ chatId: tgChats.chatId })
@@ -386,7 +392,13 @@ async function resolveContactChat(
   accountId: string,
 ): Promise<{ chatId: string; client: TdClient }> {
   const contact = await assertContactAccess(contactId, wsId);
-  const tgUserId = tgUserIdOf(contact.properties);
+  // Дешёвый резолв вместо голого properties: у контакта-дубля id не персистнут
+  // (уникальный индекс держит его на канонической карточке), но переписка в
+  // дровере открыта — mark-read/unread/delete должны работать, не 400.
+  const tgUserId = await resolveContactTgUserIdCheap(
+    contact.id,
+    contact.properties as Record<string, unknown>,
+  );
   if (!tgUserId) {
     throw new HTTPException(400, { message: "У контакта нет TG ID" });
   }
@@ -841,13 +853,6 @@ app.get("/v1/workspaces/:wsId/contact-stream", (c) => {
   });
 });
 
-// tg_user_id контакта из properties (хранится строкой). null если нет/не строка.
-function tgUserIdOf(properties: unknown): string | null {
-  const v = (properties as Record<string, unknown> | null | undefined)
-    ?.tg_user_id;
-  return typeof v === "string" ? v : null;
-}
-
 // Резолв «аккаунт+контакт → клиент+tgUserId» для multipart-роутов (accountId
 // приходит из body, а getOutreachWorkerClient кэширует по account.id и сам по ws
 // НЕ скоупит — проверяем принадлежность воркспейсу здесь).
@@ -871,7 +876,14 @@ async function resolveChatTarget(
     .from(contacts)
     .where(and(eq(contacts.id, contactId), eq(contacts.workspaceId, wsId)))
     .limit(1);
-  const tgUserId = tgUserIdOf(contact?.properties);
+  // Дешёвый резолв: отправка файлов из дровера дубля (id не персистнут) должна
+  // работать так же, как текстовый quick-send.
+  const tgUserId = contact
+    ? await resolveContactTgUserIdCheap(
+        contactId,
+        contact.properties as Record<string, unknown>,
+      )
+    : null;
   if (!tgUserId) {
     throw new HTTPException(400, {
       message: "У контакта нет TG ID — откройте чат, чтобы резолвить",
@@ -994,7 +1006,13 @@ app.get("/v1/workspaces/:wsId/contacts/:id/chat-media/:messageId", async (c) => 
     .from(contacts)
     .where(and(eq(contacts.id, contactId), eq(contacts.workspaceId, wsId)))
     .limit(1);
-  const tgUserId = tgUserIdOf(contact?.properties);
+  // Дешёвый резолв: просмотр медиа в дровере дубля (id не персистнут).
+  const tgUserId = contact
+    ? await resolveContactTgUserIdCheap(
+        contactId,
+        contact.properties as Record<string, unknown>,
+      )
+    : null;
   if (!tgUserId) {
     throw new HTTPException(404, { message: "no tg id" });
   }

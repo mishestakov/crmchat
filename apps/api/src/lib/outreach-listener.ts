@@ -866,19 +866,28 @@ async function resolveContactByChat(
   }
   if (!username) return null;
 
-  const [row] = await db
-    .update(contacts)
-    .set({
-      properties: sql`${contacts.properties} || jsonb_build_object('tg_user_id', ${userIdStr}::text)`,
-    })
-    .where(
-      and(
-        eq(contacts.workspaceId, workspaceId),
-        sql`${contactUsernameSql} = ${username}`,
-        sql`${contactTgUserIdSql} IS NULL`,
-      ),
-    )
-    .returning({ id: contacts.id });
+  let row: { id: string } | undefined;
+  try {
+    [row] = await db
+      .update(contacts)
+      .set({
+        properties: sql`${contacts.properties} || jsonb_build_object('tg_user_id', ${userIdStr}::text)`,
+      })
+      .where(
+        and(
+          eq(contacts.workspaceId, workspaceId),
+          sql`${contactUsernameSql} = ${username}`,
+          sql`${contactTgUserIdSql} IS NULL`,
+        ),
+      )
+      .returning({ id: contacts.id });
+  } catch (e) {
+    // Гонка: между direct-промахом выше и этим UPDATE конкурент (persistTgUserId
+    // из chat-history / ensureContactFromTraffic) занял tg_user_id для ДРУГОГО
+    // контакта → contacts_workspace_tg_user_id_unique. Не роняем обработку
+    // сигнала — падаем в перечитку прямого матча ниже, как при 0 строк.
+    if (!isUniqueViolation(e)) throw e;
+  }
   if (row) return row.id;
 
   // 0 строк: либо username не наш контакт (незнакомец → null, наверх к

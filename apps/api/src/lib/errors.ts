@@ -13,3 +13,19 @@ export function isUniqueViolation(e: unknown): boolean {
   const err = e as { code?: string; cause?: { code?: string } } | null;
   return err?.code === "23505" || err?.cause?.code === "23505";
 }
+
+// Имя констрейнта unique_violation (null — не 23505). Для мест, где реакция
+// зависит от того, КАКОЙ индекс отбил запись (на contacts их два: tg_user_id
+// и username) — широкий isUniqueViolation там глотал бы чужие конфликты.
+export function uniqueViolationConstraint(e: unknown): string | null {
+  const err = e as
+    | {
+        code?: string;
+        constraint_name?: string;
+        cause?: { code?: string; constraint_name?: string };
+      }
+    | null;
+  if (err?.code === "23505") return err.constraint_name ?? null;
+  if (err?.cause?.code === "23505") return err.cause.constraint_name ?? null;
+  return null;
+}

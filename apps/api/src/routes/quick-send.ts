@@ -9,7 +9,7 @@ import {
   projects,
   scheduledMessages,
 } from "../db/schema.ts";
-import { contactTgUserIdSql, contactUsernameSql } from "../lib/contact-sql.ts";
+import { contactUsernameSql } from "../lib/contact-sql.ts";
 import { inputMessageText, parseInlineEntities } from "../lib/td-message.ts";
 import { errMsg } from "../lib/errors.ts";
 import {
@@ -18,7 +18,10 @@ import {
   setAccountCooldown,
 } from "../lib/outreach-account-client.ts";
 import { assertAccountAccess } from "../lib/outreach-access.ts";
-import { acquaintWithPeer } from "../lib/ensure-tg-user-id.ts";
+import {
+  acquaintWithPeer,
+  resolveContactTgUserIdCheap,
+} from "../lib/ensure-tg-user-id.ts";
 import { recordAccountEvent } from "../lib/account-events.ts";
 import { emitProjectChanged } from "../lib/events.ts";
 import { FINAL_OFFER_MSG_IDX } from "../lib/project-scheduling.ts";
@@ -109,21 +112,27 @@ const SendResponse = z
 const app = new OpenAPIHono<{ Variables: WorkspaceVars }>();
 
 // Resolve tg_user_id для peer'а. Возвращает null если у контакта только
-// @username без id — caller сам решает что делать. Lazy-резолва тут нет:
-// chat-history endpoint всё равно дёрнет ensureContactTgUserId на открытии
-// drawer'а и сохранит id в properties, после чего send уже найдёт его.
+// @username без id и дёшево (properties → кэш дублей → реплика tg_users) он
+// не резолвится — caller сам решает что делать. TDLib-lazy-резолва
+// (searchPublicChat) тут по-прежнему нет: он остаётся за chat-history на
+// открытии drawer'а. Дешёвый путь нужен контактам-дублям: их id не персистится
+// (уникальный индекс держит его на канонической карточке), раньше send для них
+// навсегда падал 400 «откройте чат» — при уже открытом чате.
 async function resolveTargetTgUserId(
   wsId: string,
   body: { contactId?: string; tgUserId?: string },
 ): Promise<string | null> {
   if (body.tgUserId) return body.tgUserId;
   const [row] = await db
-    .select({ tgUserId: contactTgUserIdSql })
+    .select({ id: contacts.id, properties: contacts.properties })
     .from(contacts)
     .where(and(eq(contacts.id, body.contactId!), eq(contacts.workspaceId, wsId)))
     .limit(1);
   if (!row) throw new HTTPException(404, { message: "contact not found" });
-  return row.tgUserId;
+  return resolveContactTgUserIdCheap(
+    row.id,
+    row.properties as Record<string, unknown>,
+  );
 }
 
 // Helper: список проектов где у peer'а есть pending scheduled (для warning'а

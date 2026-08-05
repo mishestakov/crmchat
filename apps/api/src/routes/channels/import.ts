@@ -8,7 +8,10 @@ import {
   ImportChannelsResultSchema as BaseImportResult,
 } from "@repo/core";
 import { db, sql as sqlClient } from "../../db/client.ts";
-import { contactUsernameLowerSql } from "../../lib/contact-sql.ts";
+import {
+  contactTgUserIdSql,
+  contactUsernameLowerSql,
+} from "../../lib/contact-sql.ts";
 import { errMsg } from "../../lib/errors.ts";
 import { loadChannelPropertyDefs } from "../../lib/entity-properties.ts";
 import { resolveChannelIdentifier } from "../../lib/channel-providers/index.ts";
@@ -415,6 +418,37 @@ app.openapi(
             );
           for (const r of reread) {
             if (r.username) usernameToContactId.set(r.username, r.id);
+          }
+        }
+        // Конфликт мог быть не по нику, а по tg_user_id: канонический контакт
+        // держит id админа под ДРУГИМ (старым) ником — username-дочитка выше
+        // промахивается, стаб не вставился (contacts_workspace_tg_user_id_unique
+        // проглочен bare onConflictDoNothing). Дочитываем владельцев id и
+        // привязываем их, иначе канал остался бы без админ-контакта при
+        // «успешном» импорте.
+        const idOrphans = missing
+          .map((u) => ({ u, k: knownByUsername.get(u) }))
+          .filter(
+            (x): x is { u: string; k: (typeof known)[number] } =>
+              !usernameToContactId.has(x.u) && !!x.k?.userId,
+          );
+        if (idOrphans.length > 0) {
+          const byId = await db
+            .select({ id: contacts.id, tgUserId: contactTgUserIdSql })
+            .from(contacts)
+            .where(
+              and(
+                eq(contacts.workspaceId, wsId),
+                inArray(
+                  contactTgUserIdSql,
+                  idOrphans.map((x) => x.k.userId),
+                ),
+              ),
+            );
+          const idToContactId = new Map(byId.map((r) => [r.tgUserId, r.id]));
+          for (const { u, k } of idOrphans) {
+            const cid = idToContactId.get(k.userId);
+            if (cid) usernameToContactId.set(u, cid);
           }
         }
       }

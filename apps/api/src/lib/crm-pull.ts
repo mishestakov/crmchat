@@ -28,7 +28,7 @@ import {
 } from "./crm-client.ts";
 import { resolveChannelIdentifier } from "./channel-providers/index.ts";
 import { resolveAdminRecipient } from "./placement-recipient.ts";
-import { contactUsernameLowerSql } from "./contact-sql.ts";
+import { contactTgUserIdSql, contactUsernameLowerSql } from "./contact-sql.ts";
 import { errMsg } from "./errors.ts";
 import { CRM_STATE } from "@repo/core";
 
@@ -384,34 +384,60 @@ async function createLeadFromIssue(
           ),
         )
         .limit(1);
-      const props: Record<string, unknown> = {
-        telegram_username: parsed.adminUsername,
-        full_name: knownTg?.fullName || `@${parsed.adminUsername}`,
-      };
-      if (knownTg?.userId) props.tg_user_id = knownTg.userId;
-      const [insContact] = await db
-        .insert(contacts)
-        .values({
-          workspaceId: args.wsId,
-          properties: props,
-          createdBy: args.userId,
-        })
-        .onConflictDoNothing()
-        .returning({ id: contacts.id });
-      contactId = insContact?.id ?? null;
-      if (!contactId) {
-        // Гонка со вторым пуллом: контакт уже вставили — дочитываем.
-        const [raced] = await db
+      // Канонический контакт мог держать этот id под ДРУГИМ ником (человек
+      // сменил @): проверка выше искала только по username. Прежде чем плодить
+      // стаб — ищем владельца id, иначе insert упрётся в
+      // contacts_workspace_tg_user_id_unique, onConflictDoNothing его молча
+      // проглотит, и канал остался бы без привязанного админа (и получателя).
+      if (knownTg?.userId) {
+        const [byId] = await db
           .select({ id: contacts.id })
           .from(contacts)
           .where(
             and(
               eq(contacts.workspaceId, args.wsId),
-              sql`${contactUsernameLowerSql} = ${parsed.adminUsername}`,
+              sql`${contactTgUserIdSql} = ${knownTg.userId}`,
             ),
           )
           .limit(1);
-        contactId = raced?.id ?? null;
+        contactId = byId?.id ?? null;
+      }
+      if (!contactId) {
+        const props: Record<string, unknown> = {
+          telegram_username: parsed.adminUsername,
+          full_name: knownTg?.fullName || `@${parsed.adminUsername}`,
+        };
+        if (knownTg?.userId) props.tg_user_id = knownTg.userId;
+        const [insContact] = await db
+          .insert(contacts)
+          .values({
+            workspaceId: args.wsId,
+            properties: props,
+            createdBy: args.userId,
+          })
+          .onConflictDoNothing()
+          .returning({ id: contacts.id });
+        contactId = insContact?.id ?? null;
+        if (!contactId) {
+          // Гонка со вторым пуллом: контакт уже вставили — дочитываем по нику,
+          // а при известном id — и по нему (гонка могла прийти tg_user_id-индексом).
+          const [raced] = await db
+            .select({ id: contacts.id })
+            .from(contacts)
+            .where(
+              and(
+                eq(contacts.workspaceId, args.wsId),
+                knownTg?.userId
+                  ? or(
+                      sql`${contactUsernameLowerSql} = ${parsed.adminUsername}`,
+                      sql`${contactTgUserIdSql} = ${knownTg.userId}`,
+                    )
+                  : sql`${contactUsernameLowerSql} = ${parsed.adminUsername}`,
+              ),
+            )
+            .limit(1);
+          contactId = raced?.id ?? null;
+        }
       }
     }
     if (contactId) {

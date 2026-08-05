@@ -33,7 +33,7 @@ import {
   validateEntityProperties,
 } from "../../lib/entity-properties.ts";
 import { assertAccountAccess } from "../../lib/outreach-access.ts";
-import { errMsg } from "../../lib/errors.ts";
+import { errMsg, uniqueViolationConstraint } from "../../lib/errors.ts";
 import { maxPeerRef, sendMaxMessage } from "../../lib/max-account-client.ts";
 import { fetchMaxDialog, pickMaxAccount } from "../../lib/max-conversation.ts";
 import {
@@ -307,10 +307,28 @@ app.openapi(
     Object.assign(merged, validated);
     enforceRequiredProperties(CONTACT_FIELD_DEFS, merged);
 
-    await db
-      .update(contacts)
-      .set({ properties: merged, updatedAt: new Date() })
-      .where(and(eq(contacts.id, id), eq(contacts.workspaceId, wsId)));
+    try {
+      await db
+        .update(contacts)
+        .set({ properties: merged, updatedAt: new Date() })
+        .where(and(eq(contacts.id, id), eq(contacts.workspaceId, wsId)));
+    } catch (e) {
+      // TG ID и @username — редактируемые поля карточки под уникальными
+      // индексами: конфликт — ошибка пользователя, ему нужен понятный 409, а
+      // не «internal error» (по имени констрейнта, как в properties.ts).
+      const constraint = uniqueViolationConstraint(e);
+      if (constraint === "contacts_workspace_tg_user_id_unique") {
+        throw new HTTPException(409, {
+          message: "TG ID уже занят другим контактом воркспейса",
+        });
+      }
+      if (constraint === "contacts_workspace_username_unique") {
+        throw new HTTPException(409, {
+          message: "@username уже занят другим контактом воркспейса",
+        });
+      }
+      throw e;
+    }
     const row = await selectOne(wsId, id);
     if (!row) throw new HTTPException(404, { message: "contact not found" });
     return c.json(serialize(row));
