@@ -26,6 +26,7 @@ import { projectItems } from "../../db/schema.ts";
 import { assertProjectAccess } from "../../lib/projects-access.ts";
 import {
   executeTransition,
+  getIssueFull,
   getTransitions,
   isCrmEnabled,
 } from "../../lib/crm-client.ts";
@@ -93,7 +94,15 @@ async function pushToCrm(args: {
   // Тикет из пулла мог лежать в «Открыт». Прыжок сразу в цель API примет
   // (граф не проверяется), но их воронка считает через «В работе» — проходим
   // промежуточный статус, как это делает менеджер в интерфейсе CRM.
-  if (row.crmStateId === CRM_STATE.open) {
+  // Решаем по ЖИВОМУ статусу, не по зеркалу: менеджер мог подвигать тикет в
+  // самой CRM, а зеркало обновляется только пуллом/успешным синком — по
+  // протухшему зеркалу лишний переход клинил бы вердикт навсегда («повторить»
+  // перечитывает то же зеркало). CRM недоступна → падаем на зеркало: ошибку
+  // всё равно словит целевой переход ниже.
+  const liveStateId = await getIssueFull(row.crmIssueId)
+    .then((f) => f.state_id)
+    .catch(() => row.crmStateId);
+  if (liveStateId === CRM_STATE.open) {
     await executeTransition(row.crmIssueId, String(CRM_STATE.inWork));
   }
   const done = await executeTransition(row.crmIssueId, args.targetTransitionId);

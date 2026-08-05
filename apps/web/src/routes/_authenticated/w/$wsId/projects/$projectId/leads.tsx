@@ -453,6 +453,18 @@ function LeadsPage() {
     navigate({ search: { filter: "find_contact" }, replace: true });
   };
 
+  // Единая точка «открыть карточку лида» — для клика по строке таблицы И для
+  // дип-линка ?lead=: две копии этой развилки уже успели разъехаться (дип-линк
+  // терял гейт canPrep). Нет рабочего получателя → резолвер; есть контакт →
+  // чат-дровер; ручной способ → карточка канала; иначе — инспект-модалка.
+  const openLead = (l: Lead) => {
+    if (isRecipientFix(l.outreachState)) openResolver(l.id);
+    else if (l.contactId) setDrawerLeadId(l.id);
+    else if (bucketOf(l.outreachState) === "manual" && l.channel)
+      setChannelView(l.channel.id);
+    else if (canPrep) setInspectLeadId(l.id);
+  };
+
   // Дип-линк ?lead=<itemId> (из текста CRM-тикета): когда список загрузился,
   // разово открываем карточку той же логикой, что клик по строке, и стираем
   // параметр из URL (иначе refresh переоткрывал бы карточку после закрытия).
@@ -461,18 +473,13 @@ function LeadsPage() {
     if (!leadParam || deepLinkDoneRef.current || !leadsQ.data) return;
     deepLinkDoneRef.current = true;
     const l = leadsQ.data.leads.find((x) => x.id === leadParam);
-    if (l) {
-      if (isRecipientFix(l.outreachState)) {
-        setPrepLeadId(l.id);
-        navigate({ search: { filter: "find_contact" }, replace: true });
-        return;
-      }
-      if (l.contactId) setDrawerLeadId(l.id);
-      else if (bucketOf(l.outreachState) === "manual" && l.channel)
-        setChannelView(l.channel.id);
-      else setInspectLeadId(l.id);
+    if (l) openLead(l);
+    // Резолвер сам заменил search (filter=find_contact без lead) — не перетираем.
+    if (!l || !isRecipientFix(l.outreachState)) {
+      navigate({ search: { filter }, replace: true });
     }
-    navigate({ search: { filter }, replace: true });
+    // openLead намеренно вне deps: эффект одноразовый (deepLinkDoneRef).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leadParam, leadsQ.data, filter, navigate]);
 
   return (
@@ -816,20 +823,7 @@ function LeadsPage() {
                   return (
                   <tr
                     key={grp.key}
-                    onClick={() => {
-                      // Нет рабочего получателя (нет контакта / контакт — канал/
-                      // группа) → сегмент «Найти контакт» (инбокс), работает и в
-                      // draft. Есть контакт → дровер (для external-stub'а без
-                      // tg/max-ключей он сам показывает заметки вместо TG-чата).
-                      // Личка канала/группа (manual, без контакта-человека) →
-                      // карточка канала. Иначе (терминальный без контакта) →
-                      // инспект-модалка: проверить, не возвращая лид.
-                      if (isRecipientFix(l.outreachState)) openResolver(l.id);
-                      else if (l.contactId) setDrawerLeadId(l.id);
-                      else if (bucketOf(l.outreachState) === "manual" && l.channel)
-                        setChannelView(l.channel.id);
-                      else if (canPrep) setInspectLeadId(l.id);
-                    }}
+                    onClick={() => openLead(l)}
                     className={
                       "group cursor-pointer border-t border-zinc-100 hover:bg-zinc-50 " +
                       (health.color === "red"

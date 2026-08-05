@@ -198,6 +198,12 @@ export function QualifyPanel(props: {
                 ({crmPull.data.failed} с ошибкой)
               </span>
             )}
+            {crmPull.data.truncated && (
+              <span className="text-amber-700">
+                {" "}
+                — CRM отдала первую тысячу, нажмите ещё раз, чтобы дочитать
+              </span>
+            )}
           </span>
         )}
         {crmPull.error && (

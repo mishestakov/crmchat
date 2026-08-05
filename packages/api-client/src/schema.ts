@@ -6755,6 +6755,7 @@ export interface components {
             updated: number;
             skippedNoLink: number;
             failed: number;
+            truncated: boolean;
         };
         Placement: {
             id: string;

@@ -10,7 +10,7 @@
 // Текст тикета — формат робота `robot-oobp-analytics` (14 строк «Ключ:
 // значение», разобран в specs/crm-integration.md). Парсим только то, что
 // нужно для карточки канала и получателя.
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "../db/client.ts";
 import {
   channelAdmins,
@@ -24,6 +24,7 @@ import {
   filterIssues,
   getIssueFull,
   type CrmFilteredIssue,
+  type CrmIssueFull,
 } from "./crm-client.ts";
 import { resolveChannelIdentifier } from "./channel-providers/index.ts";
 import { resolveAdminRecipient } from "./placement-recipient.ts";
@@ -42,6 +43,9 @@ export type CrmPullResult = {
   skippedNoLink: number;
   /** Пропущено: полный GET тикета упал (сеть/удалён). */
   failed: number;
+  /** Дельта упёрлась в лимит API (1000 без offset'а) — есть недочитанное,
+   *  нужен ещё один клик «Подтянуть». */
+  truncated: boolean;
 };
 
 // --- парсер текста робота ---------------------------------------------------
@@ -75,20 +79,37 @@ export function parseRobotTicket(text: string): ParsedTicket {
   };
 }
 
-// Статус тикета → наш вердикт. Тикет, уже прошедший квалификацию в CRM
-// (валидирован и всё, что дальше по воронке, либо исход), в очередь разбора
-// не попадает; «Открыт»/«В работе» — попадает (pending).
+// Статус тикета → наш вердикт. «Открыт»/«В работе» → очередь разбора (pending);
+// терминальные негативные исходы → дисквал; всё остальное (валидирован и дальше
+// по воронке) → годен. Негативы обязаны попадать в дисквал: «годен» — это
+// ворота планировщика опенеров (qualifiedSql), и тикет в «Отказе» с этим
+// вердиктом получил бы холодное письмо от нас повторно.
+const NEGATIVE_CRM_STATES = new Set<number>([
+  CRM_STATE.disqualified,
+  CRM_STATE.rejected,
+  CRM_STATE.noContact,
+  CRM_STATE.moderationRejected,
+]);
 function qualificationFromState(
   stateId: number,
 ): "pending" | "qualified" | "disqualified" {
   if (stateId === CRM_STATE.open || stateId === CRM_STATE.inWork) {
     return "pending";
   }
-  if (stateId === CRM_STATE.disqualified) return "disqualified";
+  if (NEGATIVE_CRM_STATES.has(stateId)) return "disqualified";
   return "qualified";
 }
 
 // --- сам пулл ---------------------------------------------------------------
+
+// Лимит API filterIssues: больше за один запрос CRM не отдаёт, offset'а нет —
+// базу вычитываем окнами по modified_on (см. курсор в роуте crm-pull).
+const CRM_PAGE_LIMIT = 1000;
+// Параллельность полных GET'ов тикетов: последовательно 1000 × ~300мс = ~5
+// минут в одном HTTP-запросе (браузер оборвёт раньше). Записи в БД остаются
+// последовательными — гонки «два тикета на один канал в одной пачке» не
+// плодят дублей строк (уникального индекса по (project, channel) нет).
+const FULL_GET_CONCURRENCY = 8;
 
 export async function pullCrmDelta(args: {
   wsId: string;
@@ -96,7 +117,7 @@ export async function pullCrmDelta(args: {
   /** Кто нажал «подтянуть» — created_by создаваемых каналов/контактов. */
   userId: string;
   since: Date | null;
-}): Promise<CrmPullResult> {
+}): Promise<CrmPullResult & { maxModifiedOn: Date | null }> {
   const delta = await filterIssues(args.since);
   // Невалидная дата фильтра молча отключает окно и отдаёт весь воркфлоу —
   // единственный детектор такой аварии здесь, по аномальному объёму.
@@ -104,12 +125,24 @@ export async function pullCrmDelta(args: {
     `[crm-pull] delta ${delta.length} issues (since=${args.since?.toISOString() ?? "start"})`,
   );
 
-  const result: CrmPullResult = {
+  // Правый край обработанного окна — курсор при обрезанной дельте: двигать его
+  // на «сейчас» нельзя, всё за пределами первой тысячи выпало бы навсегда.
+  let maxModifiedOn: Date | null = null;
+  for (const d of delta) {
+    const t = d.modified_On ? new Date(d.modified_On) : null;
+    if (t && !Number.isNaN(t.getTime()) && (!maxModifiedOn || t > maxModifiedOn)) {
+      maxModifiedOn = t;
+    }
+  }
+
+  const result: CrmPullResult & { maxModifiedOn: Date | null } = {
     seen: delta.length,
     created: 0,
     updated: 0,
     skippedNoLink: 0,
     failed: 0,
+    truncated: delta.length >= CRM_PAGE_LIMIT,
+    maxModifiedOn,
   };
   if (delta.length === 0) return result;
 
@@ -144,20 +177,53 @@ export async function pullCrmDelta(args: {
     managers.map((m) => [m.crmLogin!.toLowerCase(), m.id]),
   );
 
+  // Полный GET нужен новым тикетам (текст робота) и известным без закрепления
+  // с владельцем в CRM (Login только в полном ответе). Тянем заранее пачками —
+  // это единственная медленная часть пулла.
+  const needFull = delta.filter((d) => {
+    const k = knownByIssue.get(d.id);
+    return !k || (!k.assignedTo && d.owner_id !== 0);
+  });
+  const fullById = new Map<number, CrmIssueFull>();
+  for (let i = 0; i < needFull.length; i += FULL_GET_CONCURRENCY) {
+    await Promise.all(
+      needFull.slice(i, i + FULL_GET_CONCURRENCY).map(async (d) => {
+        try {
+          fullById.set(d.id, await getIssueFull(d.id));
+        } catch (e) {
+          // Ошибку не глотаем в null: тикет уйдёт в failed ниже, курсор не
+          // двинется — следующий пулл его перечитает. Молчаливый пропуск
+          // терял бы назначение менеджера из CRM навсегда.
+          console.error(`[crm-pull] full GET ${d.id}: ${errMsg(e)}`);
+        }
+      }),
+    );
+  }
+
   for (const issue of delta) {
     const existing = knownByIssue.get(issue.id);
-    if (existing) {
-      await updateKnown(existing, issue, userByCrmLogin);
-      result.updated++;
-      continue;
-    }
+    const full = fullById.get(issue.id) ?? null;
     try {
-      const created = await createLeadFromIssue(args, issue, userByCrmLogin);
-      if (created) result.created++;
-      else result.skippedNoLink++;
+      if (existing) {
+        const needsOwner = !existing.assignedTo && issue.owner_id !== 0;
+        if (needsOwner && !full) throw new Error("полный GET тикета упал");
+        await updateKnown(existing, issue, full, userByCrmLogin);
+        result.updated++;
+      } else {
+        if (!full) throw new Error("полный GET тикета упал");
+        const outcome = await createLeadFromIssue(
+          args,
+          issue,
+          full,
+          userByCrmLogin,
+        );
+        if (outcome === "created") result.created++;
+        else if (outcome === "attached") result.updated++;
+        else result.skippedNoLink++;
+      }
     } catch (e) {
-      // Один битый тикет не должен ронять весь пулл — курсор двинется, но
-      // failed в ответе покажет, что дельта прошла не целиком.
+      // Один битый тикет не должен ронять весь пулл; failed > 0 удерживает
+      // курсор — недочитанное окно перечитается следующим кликом.
       console.error(`[crm-pull] issue ${issue.id}: ${errMsg(e)}`);
       result.failed++;
     }
@@ -175,13 +241,12 @@ async function updateKnown(
     qualification: string;
   },
   issue: CrmFilteredIssue,
+  /** Полный тикет из префетча; нужен только ради owner.Login. */
+  full: CrmIssueFull | null,
   userByCrmLogin: Map<string, string>,
 ): Promise<void> {
   let assignedTo: string | undefined;
   if (!existing.assignedTo && issue.owner_id !== 0) {
-    // owner_id — внутренний id, Login есть только в полном GET. Дёргаем его
-    // лениво и лишь когда назначение вообще возможно.
-    const full = await getIssueFull(issue.id).catch(() => null);
     const login = full?.owner?.Login?.toLowerCase();
     const userId = login ? userByCrmLogin.get(login) : undefined;
     if (userId) assignedTo = userId;
@@ -217,23 +282,32 @@ async function updateKnown(
     .where(eq(projectItems.id, existing.id));
 }
 
-/** Новый тикет → канал (найти или создать) + лид проекта. false = в тикете
- *  нет адреса канала, лид не создан. */
+/** Новый тикет → канал (найти или создать) + лид проекта.
+ *  created — лид создан; attached — канал уже был строкой проекта, доклеили
+ *  зеркало тикета; no_link — в тикете нет адреса канала, лид не создан. */
 async function createLeadFromIssue(
   args: { wsId: string; projectId: string; userId: string },
   issue: CrmFilteredIssue,
+  full: CrmIssueFull,
   userByCrmLogin: Map<string, string>,
-): Promise<boolean> {
-  const full = await getIssueFull(issue.id);
+): Promise<"created" | "attached" | "no_link"> {
   const parsed = parseRobotTicket(full.text ?? "");
-  const address = parsed.link ?? parsed.title;
-  const resolved = address ? resolveChannelIdentifier(address) : null;
-  if (!resolved) return false;
+  // Адрес канала — только «Ссылка»: название в fallback нельзя — однословный
+  // латинский title («CryptoNews») прошёл бы как @username и приклеил тикет
+  // к чужому реальному каналу.
+  const resolved = parsed.link ? resolveChannelIdentifier(parsed.link) : null;
+  if (!resolved) return "no_link";
 
-  // Канал: матч по (платформа, @username | ссылка), как в CSV-импорте.
-  const matchCh = resolved.username
+  // Канал: матч по (платформа, @username | ссылка), как в CSV-импорте, ПЛЮС
+  // по Chat_id (external_id): канал мог сменить @username после заливки —
+  // без этого insert упирался бы в уникальный (ws, platform, external_id),
+  // а перечитка по username/link его не находила — тикет выпадал навсегда.
+  const matchAddr = resolved.username
     ? sql`lower(${channels.username}) = ${resolved.username.toLowerCase()}`
     : sql`lower(${channels.link}) = ${resolved.link!.toLowerCase()}`;
+  const matchCh = parsed.externalId
+    ? or(matchAddr, eq(channels.externalId, parsed.externalId))
+    : matchAddr;
   let [ch] = await db
     .select({ id: channels.id })
     .from(channels)
@@ -279,7 +353,9 @@ async function createLeadFromIssue(
         .limit(1);
     }
   }
-  if (!ch) return false;
+  // Не нашли и не создали (конфликт по уникальному индексу, который наш матч
+  // не покрывает) — честный failed: курсор удержится, тикет перечитается.
+  if (!ch) throw new Error("канал не создался и не нашёлся (конфликт индекса)");
 
   // Админ-контакт из «Контакт в ТГ/Макс» — smart-stub как в импорте: если ник
   // знаком реплике tg_users, контакт рождается сразу с tg_user_id.
@@ -374,7 +450,9 @@ async function createLeadFromIssue(
         crmSyncedAt: new Date(),
       })
       .where(and(eq(projectItems.id, dupe.id), isNull(projectItems.crmIssueId)));
-    return false;
+    // Не «без ссылки»: адрес в тикете был и склейка удалась — снаружи это
+    // «обновлено», иначе счётчик отправлял бы менеджера чинить целые тикеты.
+    return "attached";
   }
 
   const ownerLogin = full.owner?.Login?.toLowerCase();
@@ -399,5 +477,5 @@ async function createLeadFromIssue(
     crmSyncedAt: new Date(),
     ...(assignedTo ? { assignedTo, assignedAt: new Date() } : {}),
   });
-  return true;
+  return "created";
 }

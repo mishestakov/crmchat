@@ -236,6 +236,8 @@ const CrmPullResponse = z
     updated: z.number().int(),
     skippedNoLink: z.number().int(),
     failed: z.number().int(),
+    // Дельта упёрлась в лимит CRM (1000) — есть недочитанное, нужен ещё клик.
+    truncated: z.boolean(),
   })
   .openapi("CrmPullResult");
 
@@ -273,17 +275,21 @@ app.openapi(
     // При частичном провале (failed > 0: полный GET тикета упал) курсор НЕ
     // двигаем — иначе недочитанный тикет выпадает из дельты навсегда, а так
     // следующий клик перечитает то же окно (лишняя работа — только апдейты).
+    // Обрезанная дельта (лимит CRM 1000, offset'а нет) — курсор только до
+    // правого края ОБРАБОТАННОГО окна: прыжок на startedAt навсегда выкинул
+    // бы всё за первой тысячей; так база дочитывается окнами, клик за кликом.
     const startedAt = new Date();
-    const result = await pullCrmDelta({
+    const { maxModifiedOn, ...result } = await pullCrmDelta({
       wsId,
       projectId,
       userId,
       since: project.crmPulledAt,
     });
-    if (result.failed === 0) {
+    const cursor = result.truncated ? maxModifiedOn : startedAt;
+    if (result.failed === 0 && cursor) {
       await db
         .update(projects)
-        .set({ crmPulledAt: startedAt, updatedAt: new Date() })
+        .set({ crmPulledAt: cursor, updatedAt: new Date() })
         .where(eq(projects.id, projectId));
     }
 

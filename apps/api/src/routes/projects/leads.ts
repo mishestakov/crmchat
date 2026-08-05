@@ -323,8 +323,11 @@ app.openapi(
     // у которых scheduled_messages.account_id ∈ его аккаунтов. Draft-проекты
     // (без scheduled) member'у пустые — это OK: настройку ведёт admin, member
     // включается после активации, когда лиды распределены.
+    // assigned=me — исключение: это личная выборка закреплённых за вызывающим.
+    // У pending-лидов отправок ещё нет, и EXISTS-фильтр выдал бы member'у
+    // вечное «Мои (0)» сразу после «Взять в разбор» — он забирал бы ещё и ещё.
     const memberFilter =
-      role === "admin"
+      role === "admin" || assigned === "me"
         ? undefined
         : sql`EXISTS (
             SELECT 1 FROM scheduled_messages sm
