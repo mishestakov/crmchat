@@ -967,6 +967,13 @@ export const projects = pgTable(
     activatedAt: timestamp("activated_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
 
+    // Курсор пулла лидов из корп-CRM («подтянуть» тянет изменённое начиная с
+    // этой точки, specs/crm-integration.md §3.5). null = ещё ни разу не
+    // тянули. Курсор на проекте, а не на воркспейсе: живой разбор идёт в
+    // одном проекте, и тикеты приземляются именно в него. Прод (аддитивно):
+    //   ALTER TABLE projects ADD COLUMN crm_pulled_at timestamptz;
+    crmPulledAt: timestamp("crm_pulled_at", { withTimezone: true }),
+
     createdBy: text("created_by")
       .notNull()
       .references(() => users.id),
@@ -1045,6 +1052,20 @@ export const projectItems = pgTable(
     // менеджером по ответу (null = ещё не знаем, true/false = готов/отказ).
     // По нему рекл шортлистит на согласовании.
     available: boolean("available"),
+
+    // === закрепление за менеджером (разбор неразобранных) ==================
+    // «Взять в разбор» выдаёт менеджеру пачку свободных КАНАЛОВ (строк) в
+    // порядке заливки — единица разбора совпадает с единицей вердикта.
+    // По контакту не группируем: на этапе разбора он часто не резолвнут, а
+    // «двое пишут одному админу» ловится подсветкой в UI, не жёсткой связкой.
+    // Гонку решает БД: забор — UPDATE по подзапросу с FOR UPDATE SKIP LOCKED.
+    // Вердикт переносит закрепление на своего автора: кто разобрал, тот и
+    // ведёт. Прод (аддитивно):
+    //   ALTER TABLE project_items
+    //     ADD COLUMN assigned_to text REFERENCES users(id),
+    //     ADD COLUMN assigned_at timestamptz;
+    assignedTo: text("assigned_to").references(() => users.id),
+    assignedAt: timestamp("assigned_at", { withTimezone: true }),
 
     // === квалификация (гейт рассылки) ======================================
     // qual_reason — id перехода CRM вида '703_578' (статус_резолюция), а не наш

@@ -2,7 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import { db } from "../db/client.ts";
 import { contacts, outreachAccounts, tgUsers } from "../db/schema.ts";
-import { errMsg } from "./errors.ts";
+import { errMsg, uniqueViolationConstraint } from "./errors.ts";
 import {
   getOutreachWorkerClient,
   parseFloodWaitSeconds,
@@ -67,6 +67,98 @@ export async function acquaintWithPeer(
   }
 }
 
+// Подтверждённые контакты-дубли: contactId → tg_user_id, занятый ДРУГИМ
+// (каноническим) контактом воркспейса. Персист для них невозможен
+// (contacts_workspace_tg_user_id_unique), а без кэша каждое открытие дровера
+// повторяло бы обречённый UPDATE + warn (спам в лог, мёртвые tuples) и, при
+// холодной реплике, жгло бы searchPublicChat заново. In-memory, как
+// searchFloodUntil: рестарт теряет — одна лишняя попытка записи, и снова
+// закэшено. После удаления/слияния канонического контакта запись может пережить
+// до рестарта — резолв при этом остаётся корректным, просто id не персистнут.
+const duplicateTgUserId = new Map<string, string>();
+
+// Записывает резолвнутый tg_user_id в properties контакта (jsonb-merge).
+// false — контакт оказался ДУБЛЕМ: уникальный индекс отбил запись, id уже
+// занят каноническим контактом (лида завели по новому @, смена ника, импорт
+// другим путём). Дубль — не повод ронять запрос: id не персистим (индекс
+// честно защищает от второго владельца), но резолв отдаём — переписка должна
+// открываться. Ловим строго СВОЙ констрейнт: широкий 23505-матч глотал бы
+// будущие конфликты по username с враньём в warn'е.
+async function persistTgUserId(
+  contactId: string,
+  tgUserId: string,
+): Promise<boolean> {
+  try {
+    await db
+      .update(contacts)
+      .set({
+        properties: sql`${contacts.properties} || ${JSON.stringify({ tg_user_id: tgUserId })}::jsonb`,
+        updatedAt: new Date(),
+      })
+      .where(eq(contacts.id, contactId));
+    return true;
+  } catch (e) {
+    if (
+      uniqueViolationConstraint(e) !== "contacts_workspace_tg_user_id_unique"
+    ) {
+      throw e;
+    }
+    if (!duplicateTgUserId.has(contactId)) {
+      duplicateTgUserId.set(contactId, tgUserId);
+      console.warn(
+        `[ensure-tg-user-id] контакт ${contactId} — дубль: tg_user_id ${tgUserId} уже занят другим контактом воркспейса, id не сохраняем`,
+      );
+    }
+    return false;
+  }
+}
+
+// Дешёвый резолв tg_user_id БЕЗ TDLib: persisted properties → кэш дублей →
+// реплика tg_users по нику (с попыткой персиста). Для send- и chat-action-ручек
+// (quick-send, mark-read/unread, edit/delete, close), которым нельзя тратить
+// лимитированный searchPublicChat: закрывает контакты-дубли (persist
+// невозможен, id живёт в кэше) и username-стабы с тёплой репликой. null —
+// дёшево не резолвится; TDLib-путь остаётся за ensureContactTgUserId
+// (chat-history).
+export async function resolveContactTgUserIdCheap(
+  contactId: string,
+  properties: Record<string, unknown>,
+): Promise<string | null> {
+  if (typeof properties.tg_user_id === "string") return properties.tg_user_id;
+  const dup = duplicateTgUserId.get(contactId);
+  if (dup) return dup;
+
+  const usernameRaw =
+    typeof properties.telegram_username === "string"
+      ? properties.telegram_username
+      : null;
+  if (!usernameRaw) return null;
+  const username = usernameRaw.replace(/^@/, "").trim();
+  if (!username) return null;
+
+  // Бесплатный резолв из реплики tg_users (снапшот юзеров, которых видел любой
+  // аккаунт воркспейса): id по нику — глобальный факт, TDLib для него не нужен.
+  const [known] = await db
+    .select({ userId: tgUsers.userId })
+    .from(tgUsers)
+    .where(
+      and(
+        sql`lower(${tgUsers.username}) = ${username.toLowerCase()}`,
+        // Конвенция схемы: lookup'ы отсеивают удалённых. Иначе освобождённый
+        // ник мог бы навсегда прописать контакту id МЁРТВОГО юзера.
+        eq(tgUsers.isDeleted, false),
+      ),
+    )
+    .limit(1);
+  if (!known) return null;
+  await persistTgUserId(contactId, known.userId);
+  // applyChatUnread здесь НЕ зовём (в отличие от TDLib-ветки ensure): клиент с
+  // этим юзером не знаком (иначе tgChats дал бы резолв раньше), getChat упал бы
+  // «Chat not found» — только лог-шум без восстановления. Unread догонится
+  // обычным путём (listener) после первого знакомства аккаунта с пиром.
+  return known.userId;
+}
+
 function throwSearchFlooded(untilMs: number): never {
   // Честная оценка: короткие пенальти (частый случай у searchPublicChat) — в
   // минутах, длинные — в часах; «~1ч» при реальных 60с гнал юзера прочь зря.
@@ -96,44 +188,19 @@ export async function ensureContactTgUserId(args: {
   // Для флуд-кулдауна (ключ кэша) и бейджа на странице аккаунтов.
   accountId: string;
 }): Promise<string | null> {
-  const v = args.properties;
-  if (typeof v.tg_user_id === "string") return v.tg_user_id;
+  // Сначала — дешёвый путь (properties → кэш дублей → реплика tg_users):
+  // searchPublicChat (лимитированный!) остаётся только для настоящих
+  // незнакомцев, которых ни один аккаунт ещё не встречал.
+  const cheap = await resolveContactTgUserIdCheap(args.contactId, args.properties);
+  if (cheap) return cheap;
+
   const usernameRaw =
-    typeof v.telegram_username === "string" ? v.telegram_username : null;
+    typeof args.properties.telegram_username === "string"
+      ? args.properties.telegram_username
+      : null;
   if (!usernameRaw) return null;
   const username = usernameRaw.replace(/^@/, "").trim();
   if (!username) return null;
-
-  // Сначала — БЕСПЛАТНЫЙ резолв из реплики tg_users (снапшот юзеров, которых
-  // видел любой аккаунт воркспейса): id по нику — глобальный факт, TDLib для
-  // него не нужен. searchPublicChat (лимитированный!) остаётся только для
-  // настоящих незнакомцев, которых ни один аккаунт ещё не встречал.
-  const [known] = await db
-    .select({ userId: tgUsers.userId })
-    .from(tgUsers)
-    .where(
-      and(
-        sql`lower(${tgUsers.username}) = ${username.toLowerCase()}`,
-        // Конвенция схемы: lookup'ы отсеивают удалённых. Иначе освобождённый
-        // ник мог бы навсегда прописать контакту id МЁРТВОГО юзера.
-        eq(tgUsers.isDeleted, false),
-      ),
-    )
-    .limit(1);
-  if (known) {
-    await db
-      .update(contacts)
-      .set({
-        properties: sql`${contacts.properties} || ${JSON.stringify({ tg_user_id: known.userId })}::jsonb`,
-        updatedAt: new Date(),
-      })
-      .where(eq(contacts.id, args.contactId));
-    // applyChatUnread здесь НЕ зовём (в отличие от TDLib-ветки): клиент с этим
-    // юзером не знаком (иначе tgChats дал бы резолв раньше), getChat упал бы
-    // «Chat not found» — только лог-шум без восстановления. Unread догонится
-    // обычным путём (listener) после первого знакомства аккаунта с пиром.
-    return known.userId;
-  }
 
   // Кулдаун активен → не дёргаем TG (повторные запросы продлевают пенальти).
   const flooded = getSearchFloodUntil(args.accountId);
@@ -160,13 +227,7 @@ export async function ensureContactTgUserId(args: {
   if (chat.type._ !== "chatTypePrivate" || !chat.type.user_id) return null;
   const tgUserId = String(chat.type.user_id);
 
-  await db
-    .update(contacts)
-    .set({
-      properties: sql`${contacts.properties} || ${JSON.stringify({ tg_user_id: tgUserId })}::jsonb`,
-      updatedAt: new Date(),
-    })
-    .where(eq(contacts.id, args.contactId));
+  const persisted = await persistTgUserId(args.contactId, tgUserId);
 
   // Раз уж познакомились с юзером — сразу записываем его тип (бот/человек) в
   // tg_users синхронно. Иначе эту строку дописывает асинхронный репликатор
@@ -187,14 +248,20 @@ export async function ensureContactTgUserId(args: {
   // «Ждут ответа». searchPublicChat выше резолвит надёжнее getUser, так что этот
   // переход — последний шанс восстановить unread. Дочитываем из getChat один раз
   // (applyChatUnread идемпотентен: unread<=0 и совпадение — no-op). Не «лишний
-  // RPC на каждом резолве»: ветка достижима только когда tg_user_id ещё не было
-  // (ранний return выше), т.е. один раз на контакт.
-  void applyChatUnread(
-    args.client,
-    args.workspaceId,
-    args.contactId,
-    Number(tgUserId),
-  );
+  // RPC на каждом резолве»: после успешного персиста ветка недостижима (ранний
+  // return выше), т.е. один раз на контакт.
+  //
+  // Для ДУБЛЯ (persist не прошёл) — не зовём: бейдж лёг бы на карточку-дубль,
+  // а чистят unread только listener-события, которые резолвят по tg_user_id в
+  // КАНОНИЧЕСКУЮ карточку — дубль остался бы «Ждут ответа» навсегда.
+  if (persisted) {
+    void applyChatUnread(
+      args.client,
+      args.workspaceId,
+      args.contactId,
+      Number(tgUserId),
+    );
+  }
 
   return tgUserId;
 }

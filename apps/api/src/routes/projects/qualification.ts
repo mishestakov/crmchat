@@ -2,15 +2,17 @@
 //
 // Продуктовый смысл: до вердикта опенер не уходит. Раньше лид с найденным
 // контактом сразу прыгал в рассылку, минуя оценку качества (накрутки, тематика,
-// фрод) — этот шаг делает её явной. Вердикт же заводит тикет в CRM: «Годен» →
-// Валидирован, «Дисквалификация» → одноимённый статус с причиной.
+// фрод) — этот шаг делает её явной. Вердикт двигает статус СУЩЕСТВУЮЩЕГО
+// тикета CRM: «Годен» → Валидирован, «Дисквалификация» → одноимённый статус с
+// причиной. Тикеты мы НЕ создаём — их заводит робот/менеджеры в CRM, а к нам
+// они приезжают пуллом (lib/crm-pull.ts, решение команды привлечения 04.08).
 //
 // Пишем в CRM синхронно, без очереди и воркера (MVP, см. specs/crm-integration.md):
 // вызов ~300 мс, CRM внутренняя. Если не дошло — вердикт всё равно сохранён
 // локально, ошибка лежит в crm_sync_error, а UI показывает «повторить».
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
   CRM_DISQUALIFY_REASONS,
   CRM_STATE,
@@ -20,25 +22,15 @@ import {
   parseCrmTransitionId,
 } from "@repo/core";
 import { db } from "../../db/client.ts";
-import {
-  channelAdmins,
-  channels,
-  contacts,
-  projectItems,
-  projects,
-  users,
-} from "../../db/schema.ts";
-import { channelIsRknSql } from "../../lib/rkn-registry.ts";
-import { syncChannelIfNeverSynced } from "../channels/telegram.ts";
+import { projectItems } from "../../db/schema.ts";
 import { assertProjectAccess } from "../../lib/projects-access.ts";
 import {
-  createIssue,
   executeTransition,
+  getIssueFull,
   getTransitions,
   isCrmEnabled,
 } from "../../lib/crm-client.ts";
 import { errMsg } from "../../lib/errors.ts";
-import { buildIssueName, buildIssueText } from "../../lib/crm-issue-text.ts";
 import { type WorkspaceVars } from "../../middleware/assert-member.ts";
 import { WsProjectItemParam } from "./shared.ts";
 
@@ -55,128 +47,65 @@ const CrmStateSchema = z
   })
   .openapi("LeadCrmState");
 
-const WEB_ORIGIN = (process.env.WEB_ORIGIN ?? "").replace(/\/$/, "");
-
-// --- сбор данных для описания тикета ---------------------------------------
-
-async function loadIssueInput(wsId: string, projectId: string, itemId: string) {
-  const [row] = await db
-    .select({
-      itemId: projectItems.id,
-      createdAt: projectItems.createdAt,
-      crmIssueId: projectItems.crmIssueId,
-      contactId: projectItems.contactId,
-      channelId: projectItems.channelId,
-      projectName: projects.name,
-      channelTitle: channels.title,
-      channelMembers: channels.memberCount,
-      channelLink: channels.link,
-      channelExternalId: channels.externalId,
-      channelPlatform: channels.platform,
-      channelRelation: channels.relationStatus,
-      channelIsRkn: channelIsRknSql,
-      contactProps: contacts.properties,
-      contactNote: contacts.note,
-    })
-    .from(projectItems)
-    .innerJoin(projects, eq(projects.id, projectItems.projectId))
-    .leftJoin(channels, eq(channels.id, projectItems.channelId))
-    .leftJoin(contacts, eq(contacts.id, projectItems.contactId))
-    .where(
-      and(
-        eq(projectItems.id, itemId),
-        eq(projectItems.projectId, projectId),
-        eq(projectItems.workspaceId, wsId),
-      ),
-    )
-    .limit(1);
-  if (!row) throw new HTTPException(404, { message: "item not found" });
-  return row;
-}
-
-// Остальные каналы того же админа — в CRM тикет заведён на канал, и без этого
-// блока не видно, что за одним человеком их несколько.
-async function loadOtherChannels(
-  contactId: string | null,
-  exceptChannelId: string | null,
-): Promise<{ title: string; memberCount: number | null }[]> {
-  if (!contactId) return [];
-  return db
-    .select({ title: channels.title, memberCount: channels.memberCount })
-    .from(channelAdmins)
-    .innerJoin(channels, eq(channels.id, channelAdmins.channelId))
-    .where(
-      and(
-        eq(channelAdmins.contactId, contactId),
-        exceptChannelId ? ne(channels.id, exceptChannelId) : sql`true`,
-      ),
-    )
-    .limit(20);
-}
-
-const str = (v: unknown): string | null =>
-  typeof v === "string" && v.trim() ? v.trim() : null;
-
-/** Создаёт тикет и доводит его до целевого статуса.
- *
- *  Три вызова: create (тикет рождается в «Открыт») → «В работу» → цель. Прыгать
- *  сразу в цель API позволяет, но мы этого не делаем: интерфейс CRM так не
- *  умеет, а пропуск «В работе» ломает их счётчики воронки. */
+/** Доводит СУЩЕСТВУЮЩИЙ тикет до целевого статуса. Создание тикетов
+ *  остановлено (решение команды привлечения, 04.08): пайплайн развёрнут на
+ *  pull — тикеты заводят робот-заливщик и менеджеры в самой CRM, мы их
+ *  подтягиваем (lib/crm-pull.ts) и дальше только двигаем статусы. Лид без
+ *  тикета (добавлен не из CRM) — вердикт остаётся локальным, это не ошибка. */
 async function pushToCrm(args: {
   wsId: string;
   projectId: string;
   itemId: string;
-  ownerLogin: string;
   targetTransitionId: string;
 }): Promise<void> {
-  const row = await loadIssueInput(args.wsId, args.projectId, args.itemId);
-  const props = (row.contactProps ?? {}) as Record<string, unknown>;
-
-  let issueId = row.crmIssueId;
-  if (issueId === null) {
-    const others = await loadOtherChannels(row.contactId, row.channelId);
-    const text = buildIssueText({
-      loadedAt: row.createdAt,
-      channel: {
-        title: row.channelTitle ?? "",
-        memberCount: row.channelMembers,
-        link: row.channelLink,
-        externalId: row.channelExternalId,
-        platform: row.channelPlatform ?? "telegram",
-        relationStatus: row.channelRelation,
-        isRkn: row.channelIsRkn ?? null,
-      },
-      admin: row.contactId
-        ? {
-            fullName: str(props.full_name),
-            username: str(props.telegram_username),
-            phone: str(props.phone),
-            email: str(props.email),
-            note: row.contactNote?.text ?? null,
-          }
-        : null,
-      otherChannels: others,
-      project: { name: row.projectName },
-      leadUrl: WEB_ORIGIN
-        ? `${WEB_ORIGIN}/w/${args.wsId}/projects/${args.projectId}/leads?lead=${args.itemId}`
-        : null,
-    });
-    const created = await createIssue({
-      name: buildIssueName(row.channelTitle ?? ""),
-      text,
-      ownerLogin: args.ownerLogin,
-    });
-    issueId = created.id;
-    // Пишем id сразу, отдельным апдейтом: если следующий переход упадёт, тикет
-    // уже существует и повтор не должен создать второй.
-    await db
-      .update(projectItems)
-      .set({ crmIssueId: issueId, crmStateId: created.state_id })
-      .where(eq(projectItems.id, args.itemId));
-    await executeTransition(issueId, String(CRM_STATE.inWork));
+  // Скоуп wsId+projectId обязателен: itemId приходит из URL, и без него
+  // ручка двигала бы тикет ЧУЖОГО воркспейса по подобранному id (раньше это
+  // же делал loadIssueInput — при вырезании создания скоуп чуть не потерялся).
+  const [row] = await db
+    .select({
+      crmIssueId: projectItems.crmIssueId,
+      crmStateId: projectItems.crmStateId,
+      crmSyncError: projectItems.crmSyncError,
+    })
+    .from(projectItems)
+    .where(
+      and(
+        eq(projectItems.id, args.itemId),
+        eq(projectItems.projectId, args.projectId),
+        eq(projectItems.workspaceId, args.wsId),
+      ),
+    )
+    .limit(1);
+  if (!row) throw new HTTPException(404, { message: "item not found" });
+  if (!row.crmIssueId) {
+    // Лид не из CRM — синкать нечего. Ошибка эпохи создания тикетов (crm_
+    // sync_error от несозданного тикета) — навсегда протухшая: гасим её,
+    // иначе строка вечно висит в очереди «требуют внимания» и «повторить»
+    // молча возвращает 200, ничего не меняя.
+    if (row.crmSyncError) {
+      await db
+        .update(projectItems)
+        .set({ crmSyncError: null })
+        .where(eq(projectItems.id, args.itemId));
+    }
+    return;
   }
 
-  const done = await executeTransition(issueId, args.targetTransitionId);
+  // Тикет из пулла мог лежать в «Открыт». Прыжок сразу в цель API примет
+  // (граф не проверяется), но их воронка считает через «В работе» — проходим
+  // промежуточный статус, как это делает менеджер в интерфейсе CRM.
+  // Решаем по ЖИВОМУ статусу, не по зеркалу: менеджер мог подвигать тикет в
+  // самой CRM, а зеркало обновляется только пуллом/успешным синком — по
+  // протухшему зеркалу лишний переход клинил бы вердикт навсегда («повторить»
+  // перечитывает то же зеркало). CRM недоступна → падаем на зеркало: ошибку
+  // всё равно словит целевой переход ниже.
+  const liveStateId = await getIssueFull(row.crmIssueId)
+    .then((f) => f.state_id)
+    .catch(() => row.crmStateId);
+  if (liveStateId === CRM_STATE.open) {
+    await executeTransition(row.crmIssueId, String(CRM_STATE.inWork));
+  }
+  const done = await executeTransition(row.crmIssueId, args.targetTransitionId);
   await applyCrmState(args.itemId, done);
 }
 
@@ -209,26 +138,6 @@ async function recordSyncError(itemId: string, e: unknown): Promise<string> {
     .set({ crmSyncError: msg.slice(0, 500) })
     .where(eq(projectItems.id, itemId));
   return msg;
-}
-
-/** Логин менеджера в CRM. Без него владельца тикета не проставить, а тикет без
- *  владельца бесполезен для отчётности — поэтому вердикт блокируем. Но только
- *  при включённой интеграции: без токена вердикт остаётся локальным, и требовать
- *  логин было бы враньём (см. isCrmEnabled в crm-client). */
-async function requireCrmLogin(userId: string): Promise<string> {
-  if (!isCrmEnabled()) return "";
-  const [me] = await db
-    .select({ crmLogin: users.crmLogin })
-    .from(users)
-    .where(eq(users.id, userId))
-    .limit(1);
-  const login = me?.crmLogin?.trim();
-  if (!login) {
-    throw new HTTPException(400, {
-      message: "Укажите свой логин в CRM в настройках профиля",
-    });
-  }
-  return login;
 }
 
 async function readCrmState(itemId: string) {
@@ -296,8 +205,6 @@ app.openapi(
       }
     }
 
-    const ownerLogin = await requireCrmLogin(userId);
-
     const updated = await db
       .update(projectItems)
       .set({
@@ -306,28 +213,22 @@ app.openapi(
         qualNote: note ?? null,
         qualifiedBy: userId,
         qualifiedAt: new Date(),
+        // Вердикт по СВОБОДНОМУ лиду закрепляет его за автором («кто разобрал,
+        // тот и ведёт»). Уже закреплённый — не перехватываем: назначение могло
+        // приехать из CRM (владелец тикета) или из явного забора коллеги, и
+        // чужой вердикт из вида «Все» не должен молча красть ведение.
+        assignedTo: sql`coalesce(${projectItems.assignedTo}, ${userId})`,
+        assignedAt: sql`coalesce(${projectItems.assignedAt}, now())`,
       })
       .where(
         and(eq(projectItems.id, itemId), eq(projectItems.projectId, projectId)),
       )
-      .returning({ id: projectItems.id, channelId: projectItems.channelId });
+      .returning({ id: projectItems.id });
     if (updated.length === 0) {
       throw new HTTPException(404, { message: "item not found" });
     }
 
-    // Текст тикета — снимок из БД на этот момент. Канал, залитый списком и ни
-    // разу не открытый, метаданных ещё не имеет: без догона в CRM уедет
-    // болванка (прод 30.07 — 39 тикетов из 52 создались раньше синка своего
-    // канала). Дёргаем ровно здесь, а не в фоне по всему проекту: один лид —
-    // один поиск в TG, иначе упрёмся в те же флуд-лимиты. Догон обслуживает
-    // только текст тикета, поэтому при выключенной CRM (деплой без токена)
-    // не жжём TG-поиск впустую.
-    const channelId = updated[0]!.channelId;
-    if (channelId && isCrmEnabled()) {
-      await syncChannelIfNeverSynced(channelId, wsId, userId, role);
-    }
-
-    await syncVerdict(wsId, projectId, itemId, ownerLogin, verdict, reason);
+    await syncVerdict(wsId, projectId, itemId, verdict, reason);
     return c.json(await serializeCrm(itemId));
   },
 );
@@ -339,7 +240,6 @@ async function syncVerdict(
   wsId: string,
   projectId: string,
   itemId: string,
-  ownerLogin: string,
   verdict: "qualified" | "disqualified",
   reason: string | null | undefined,
 ): Promise<void> {
@@ -347,13 +247,7 @@ async function syncVerdict(
   const target =
     verdict === "qualified" ? String(CRM_STATE.validated) : (reason as string);
   try {
-    await pushToCrm({
-      wsId,
-      projectId,
-      itemId,
-      ownerLogin,
-      targetTransitionId: target,
-    });
+    await pushToCrm({ wsId, projectId, itemId, targetTransitionId: target });
   } catch (e) {
     await recordSyncError(itemId, e);
   }
@@ -397,39 +291,27 @@ app.openapi(
     const role = c.get("workspaceRole");
     const { projectId, itemId } = c.req.valid("param");
     await assertProjectAccess(projectId, wsId, userId, role);
-    const ownerLogin = await requireCrmLogin(userId);
 
     const [row] = await db
       .select({
         qualification: projectItems.qualification,
         qualReason: projectItems.qualReason,
-        channelId: projectItems.channelId,
-        crmIssueId: projectItems.crmIssueId,
       })
       .from(projectItems)
-      .where(eq(projectItems.id, itemId))
+      .where(
+        and(
+          eq(projectItems.id, itemId),
+          eq(projectItems.projectId, projectId),
+          eq(projectItems.workspaceId, wsId),
+        ),
+      )
       .limit(1);
     if (!row) throw new HTTPException(404, { message: "item not found" });
     if (row.qualification === "pending") {
       throw new HTTPException(400, { message: "Вердикт ещё не вынесен" });
     }
 
-    // Догон метаданных и на ретрае: на вердикте синк мог не пройти (не было
-    // живого аккаунта, таймаут), а текст тикета собирается один раз при
-    // создании. Пока тикета нет — это последний шанс не отправить болванку;
-    // созданный тикет не трогаем (crmIssueId != null → текст уже зафиксирован).
-    if (row.crmIssueId === null && row.channelId && isCrmEnabled()) {
-      await syncChannelIfNeverSynced(row.channelId, wsId, userId, role);
-    }
-
-    await syncVerdict(
-      wsId,
-      projectId,
-      itemId,
-      ownerLogin,
-      row.qualification,
-      row.qualReason,
-    );
+    await syncVerdict(wsId, projectId, itemId, row.qualification, row.qualReason);
     return c.json(await serializeCrm(itemId));
   },
 );

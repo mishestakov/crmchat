@@ -1,5 +1,5 @@
 import { sql, type SQL } from "drizzle-orm";
-import { channels, contacts, projectItems } from "../db/schema.ts";
+import { channels, contacts, projectItems, users } from "../db/schema.ts";
 
 // Identity-поля контакта (tg_user_id, telegram_username) хранятся
 // в `contacts.properties` jsonb — отдельных колонок нет, чтобы юзер мог
@@ -8,6 +8,15 @@ import { channels, contacts, projectItems } from "../db/schema.ts";
 // чтобы поменять имя ключа можно было одним правилом.
 
 export const contactTgUserIdSql: SQL<string | null> = sql<string | null>`${contacts.properties}->>'tg_user_id'`;
+
+// Отображаемое имя пользователя-менеджера: users.name у TG-юзера без имени
+// NULL → фолбэк на @username. Единое правило для плашек «за X» (leads) и
+// сообщений «занимается X» (claiming) — иначе один человек звался бы в двух
+// местах по-разному. NULL остаётся возможен (оба поля пустые) — контекстный
+// текст-заглушку выбирает вызывающий.
+export const userDisplayNameSql: SQL<string | null> = sql<
+  string | null
+>`coalesce(${users.name}, ${users.username})`;
 
 // Гейт квалификации: опенер уходит только тем, по кому вынесен вердикт «годен».
 // Второй гейт — наличие контакта (contactReadySql ниже); всё остальное,

@@ -8,7 +8,6 @@ import { ChannelRelationStatusSchema } from "@repo/core";
 import { db } from "../../db/client.ts";
 import { median } from "../../lib/median.ts";
 import { errMsg } from "../../lib/errors.ts";
-import { withTimeout } from "../../lib/with-timeout.ts";
 import {
   TdMediaThumbSchema,
   TdMessageEntitySchema,
@@ -534,52 +533,6 @@ function syncChannelFromTgDeduped(
   });
   inflightChannelSyncs.set(channel.id, p);
   return p;
-}
-
-const LAZY_SYNC_TIMEOUT_MS = 5_000;
-
-/** Ленивый догон метаданных для канала, которого TG ещё ни разу не отдавал
- *  (импортировали списком и не открывали). Зовётся из квалификации: тикет в CRM
- *  собирается снимком из БД, и без этого туда уезжает болванка — без
- *  подписчиков, ссылки и chat_id, с названием-заглушкой вида «@handle».
- *
- *  Только Telegram: на других площадках пустых тикетов пока не наблюдали, и
- *  плодить ветки под ненаблюдаемое незачем.
- *
- *  Best-effort: аккаунтов может не быть, поиск — флуднут, канал — удалён.
- *  Вердикт менеджера важнее полноты описания, поэтому наверх не бросаем. */
-export async function syncChannelIfNeverSynced(
-  channelId: string,
-  wsId: string,
-  userId: string,
-  role: WorkspaceRole,
-): Promise<void> {
-  const [ch] = await db
-    .select()
-    .from(channels)
-    .where(eq(channels.id, channelId))
-    .limit(1);
-  if (!ch || ch.syncedAt) return;
-  if (ch.platform !== "telegram") return;
-  if (!ch.externalId && !ch.username) return;
-  if (isInUnavailableCooldown(ch)) return;
-
-  // Потолок обязателен: вызов сидит в критическом пути клика «Годен», а под ним
-  // спавн TDLib-клиента и searchPublicChat — без собственного дедлайна. Не
-  // успели — вердикт уходит с тем, что есть, синк дописывает запись позже.
-  try {
-    await withTimeout(
-      (async () => {
-        const picked = await pickOutreachClient(wsId, userId, role);
-        if (!picked) return;
-        await syncChannelFromTgDeduped(ch, picked.client, picked.accountId);
-      })(),
-      "lazy channel sync",
-      LAZY_SYNC_TIMEOUT_MS,
-    );
-  } catch (e) {
-    console.warn(`[qualify] lazy sync ${channelId} failed: ${errMsg(e)}`);
-  }
 }
 
 // Pull свежей карточки канала из TG. Lazy: фронт дёргает при открытии
