@@ -36,6 +36,9 @@ export function QualifyPanel(props: {
   leads: Lead[];
   /** id текущего юзера — для фильтра «Мои» и плашек «за X». */
   meId: string | null;
+  /** CRM-синк привязан к одному проекту (env на сервере) — кнопку пулла
+   *  показываем только в нём, ручка другим отвечает 403. */
+  crmSyncEnabled: boolean;
   readOnly?: boolean;
 }) {
   const qc = useQueryClient();
@@ -179,37 +182,41 @@ export function QualifyPanel(props: {
             Все ({queue.length})
           </button>
         </div>
-        <button
-          type="button"
-          disabled={crmPull.isPending || props.readOnly}
-          onClick={() => crmPull.mutate()}
-          className="rounded-lg border border-zinc-200 px-3 py-1 text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
-        >
-          {crmPull.isPending ? "Тянем…" : "Подтянуть из CRM"}
-        </button>
-        {crmPull.data && (
-          <span className="text-xs text-zinc-500">
-            +{crmPull.data.created} новых, {crmPull.data.updated} обновлено
-            {crmPull.data.skippedNoLink > 0 &&
-              `, ${crmPull.data.skippedNoLink} без ссылки`}
-            {crmPull.data.failed > 0 && (
-              <span className="text-red-600">
-                {" "}
-                ({crmPull.data.failed} с ошибкой)
+        {props.crmSyncEnabled && (
+          <>
+            <button
+              type="button"
+              disabled={crmPull.isPending || props.readOnly}
+              onClick={() => crmPull.mutate()}
+              className="rounded-lg border border-zinc-200 px-3 py-1 text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
+            >
+              {crmPull.isPending ? "Тянем…" : "Подтянуть из CRM"}
+            </button>
+            {crmPull.data && (
+              <span className="text-xs text-zinc-500">
+                +{crmPull.data.created} новых, {crmPull.data.updated} обновлено
+                {crmPull.data.skippedNoLink > 0 &&
+                  `, ${crmPull.data.skippedNoLink} без ссылки`}
+                {crmPull.data.failed > 0 && (
+                  <span className="text-red-600">
+                    {" "}
+                    ({crmPull.data.failed} с ошибкой)
+                  </span>
+                )}
+                {crmPull.data.truncated && (
+                  <span className="text-amber-700">
+                    {" "}
+                    — CRM отдала первую тысячу, нажмите ещё раз, чтобы дочитать
+                  </span>
+                )}
               </span>
             )}
-            {crmPull.data.truncated && (
-              <span className="text-amber-700">
-                {" "}
-                — CRM отдала первую тысячу, нажмите ещё раз, чтобы дочитать
+            {crmPull.error && (
+              <span className="text-xs text-red-600">
+                {errorMessage(crmPull.error)}
               </span>
             )}
-          </span>
-        )}
-        {crmPull.error && (
-          <span className="text-xs text-red-600">
-            {errorMessage(crmPull.error)}
-          </span>
+          </>
         )}
         {/* Счётчик «свободных» тут не рисуем сознательно: страница лидов
             ограничена лимитом, и на большом проекте цифра со страницы врала

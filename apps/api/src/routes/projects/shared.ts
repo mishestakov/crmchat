@@ -113,6 +113,12 @@ export const ProjectSchema = z
     // (contacts.marked_unread) — точка в сайдбаре при unreadCount=0.
     // Та же семантика «только в list», что у unreadCount.
     hasMarkedUnread: z.boolean(),
+    // CRM-синк привязан к ОДНОМУ проекту воркспейса — env CRM_PROJECT_ID на
+    // сервере (см. .env.example). Кнопка «Подтянуть из CRM» и ручка crm-pull
+    // работают только в нём: интеграция заточена под один процесс привлечения
+    // (воркфлоу/очередь — константы в @repo/core), а свободная кнопка в каждом
+    // проекте — миссклик, высыпающий тысячу лидов в боевой канбан.
+    crmSyncEnabled: z.boolean(),
   })
   .openapi("Project");
 
@@ -148,5 +154,6 @@ export function serializeProject(
     createdAt: row.createdAt.toISOString(),
     unreadCount,
     hasMarkedUnread,
+    crmSyncEnabled: row.id === process.env.CRM_PROJECT_ID,
   };
 }

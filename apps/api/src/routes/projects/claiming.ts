@@ -268,6 +268,14 @@ app.openapi(
     if (!isCrmEnabled()) {
       throw new HTTPException(412, { message: "CRM не настроена (нет токена)" });
     }
+    // Пулл разрешён только назначенному проекту (env CRM_PROJECT_ID, см.
+    // ProjectSchema.crmSyncEnabled). Фронт кнопку другим не показывает; гард —
+    // от прямого вызова API и от рассинхрона после смены env.
+    if (projectId !== process.env.CRM_PROJECT_ID) {
+      throw new HTTPException(403, {
+        message: "CRM-синк привязан к другому проекту (env CRM_PROJECT_ID)",
+      });
+    }
 
     // Курсор двигаем на время НАЧАЛА пулла: изменения, случившиеся во время
     // прогона, попадут в следующую дельту (перекрытие безопасно — пулл

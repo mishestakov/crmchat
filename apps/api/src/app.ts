@@ -98,6 +98,13 @@ app.onError((err, c) => {
   if (err instanceof HTTPException) {
     return c.json({ message: err.message }, err.status);
   }
+  // Ошибки корп-CRM (протухший токен, 5xx, таймаут) — не наши баги: честный
+  // 502 с причиной вместо «internal error» со стек-трейсом в логе. Instanceof
+  // по имени класса, не импорту — чтобы app.ts не тянул crm-client в бут.
+  if (err instanceof Error && err.name === "CrmError") {
+    console.error(`[crm] ${err.message}`);
+    return c.json({ message: `CRM: ${err.message}` }, 502);
+  }
   console.error(err);
   return c.json({ message: "internal error" }, 500);
 });
