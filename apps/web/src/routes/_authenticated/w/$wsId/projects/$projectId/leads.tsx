@@ -791,6 +791,7 @@ function LeadsPage() {
             projectId={projectId}
             leads={leadsQ.data.leads}
             meId={meQ.data?.id ?? null}
+            crmSyncEnabled={seq.data?.crmSyncEnabled ?? false}
             readOnly={seq.data?.status === "done"}
           />
         )}

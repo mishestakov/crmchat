@@ -6557,6 +6557,7 @@ export interface components {
             createdAt: string;
             unreadCount: number;
             hasMarkedUnread: boolean;
+            crmSyncEnabled: boolean;
         };
         CreateProject: {
             trackId: string;
