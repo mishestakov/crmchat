@@ -443,7 +443,15 @@ function LeadsPage() {
       { key: "manual", label: "Написать вручную", count: counts.manual },
       { key: "wont", label: "Отбраковано", count: counts.wont },
     ] as { key: Filter; label: string; count: number }[]
-  ).filter((s) => s.key === undefined || s.count > 0);
+  ).filter(
+    (s) =>
+      s.key === undefined ||
+      s.count > 0 ||
+      // В CRM-проекте «Квалификация» видна и пустой: внутри неё живёт кнопка
+      // «Подтянуть из CRM» — единственный вход для первого наполнения, иначе
+      // курица-и-яйцо (пулл наполняет проект, а вход появляется у наполненного).
+      (s.key === "qualify" && (seq.data?.crmSyncEnabled ?? false)),
+  );
   const setFilter = (key: Filter) =>
     navigate({ search: { filter: key }, replace: true });
   // Открыть резолвер на конкретном лиде (клик по строке в «Все»/«В работе») —
