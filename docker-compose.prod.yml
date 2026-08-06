@@ -87,6 +87,9 @@ services:
       # вердикт сохраняется локально, ручки не падают.
       CRM_TOKEN: ${CRM_TOKEN:-}
       CRM_HOST: ${CRM_HOST:-crm.yandex-team.ru}
+      # Проект, к которому привязан CRM-синк (см. .env.example). Пусто = пулл
+      # выключен везде (кнопка не показывается, ручка отвечает 403).
+      CRM_PROJECT_ID: ${CRM_PROJECT_ID:-}
     sysctls:
       # enable_ipv6:false на bridge оставляет ::1 loopback в контейнере, и
       # glibc AI_ADDRCONFIG всё равно возвращает AAAA → fetch висит.
