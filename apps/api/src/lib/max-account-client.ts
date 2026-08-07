@@ -3,7 +3,9 @@ import { db } from "../db/client.ts";
 import { outreachAccounts } from "../db/schema.ts";
 import { shortId } from "../db/short-id.ts";
 import {
+  computeMode,
   connectSession,
+  MAX_USER_AGENT,
   MaxClient,
   MaxClientError,
   newDeviceId,
@@ -76,8 +78,15 @@ export async function maxSendCode(
   const deviceId = newDeviceId();
   const client = new MaxClient();
   await client.connect();
-  await sessionInit(client, deviceId);
-  const res = await client.authRequest(phone);
+  // callsSeed из SESSION_INIT → integrity-подпись mode. Без неё сервер с deviceType=ANDROID
+  // молча не шлёт SMS (см. compute-mode.ts). buildNumber должен совпадать с MAX_USER_AGENT.
+  const { callsSeed } = await sessionInit(client, deviceId);
+  if (!callsSeed) {
+    client.close();
+    throw new Error("SESSION_INIT не вернул callsSeed — нельзя посчитать mode");
+  }
+  const mode = computeMode(callsSeed, deviceId, MAX_USER_AGENT.buildNumber);
+  const res = await client.authRequest(phone, mode);
   const verifyToken = (res.payload as Record<string, unknown> | null)?.token;
   if (typeof verifyToken !== "string") {
     client.close();

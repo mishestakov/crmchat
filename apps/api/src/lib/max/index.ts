@@ -1,5 +1,6 @@
 export { MaxClient, MaxClientError, type MaxResponse, type MaxClientOptions } from "./client.ts";
 export { OPCODES, opcodeName } from "./opcodes.ts";
+export { computeMode, MODE_CONSTS } from "./compute-mode.ts";
 export {
   MAX_USER_AGENT,
   connectSession,

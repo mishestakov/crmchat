@@ -5,17 +5,16 @@
 import crypto from "node:crypto";
 import { MaxClient } from "./client.ts";
 
-// User-Agent одного из живых клиентов MAX. Версия важна — сервер может резать
-// устаревшие билды. Держим централизованно, чтобы обновлять в одном месте.
+// User-Agent живого клиента MAX. Версия важна вдвойне: сервер режет устаревшие билды,
+// а поле `mode` в AUTH_REQUEST (integrity-подпись, см. compute-mode.ts) считается из
+// файлов КОНКРЕТНОЙ сборки APK. Поэтому appVersion/buildNumber ОБЯЗАНЫ совпадать с версией,
+// из которой сняты mode-константы (MODE_CONSTS/DEFAULT_MODE_BUILD в compute-mode.ts) — 26.26.0 / 6797.
 //
-// Слепок снят с приложения 26.26.0 (base.apk от 2026-08-07, Pixel 9 Pro):
-// `~/max_binary/artifacts/base_apk_decoded_20260807/smali/cgf.smali` — список полей,
-// `smali/mei.smali` — как считается каждое значение:
+// Поля собираются как в приложении (smali/cgf.smali + mei.smali декомпиляции):
 //   osVersion  = String.format("Android %s", Build.VERSION.RELEASE)
 //   deviceName = Build.MANUFACTURER + " " + Build.MODEL
 //   screen     = "<densityBucket> <densityDpi>dpi <width>x<height>"
-//   locale / deviceLocale = язык без региона
-// Поле release приложение не отправляет — раньше мы слали его от себя.
+//   locale / deviceLocale = язык без региона; release приложение не отправляет.
 export const MAX_USER_AGENT = {
   deviceType: "ANDROID",
   pushDeviceType: "GCM",
@@ -66,12 +65,18 @@ export function pickPasswordChallenge(
   return { trackId, hint: hint.length > 0 ? hint : null };
 }
 
-export async function sessionInit(client: MaxClient, deviceId: string): Promise<void> {
-  await client.sessionInit({
+// callsSeed из ответа SESSION_INIT нужен для вычисления `mode` (см. compute-mode.ts).
+export async function sessionInit(
+  client: MaxClient,
+  deviceId: string,
+): Promise<{ callsSeed: string | null }> {
+  const res = await client.sessionInit({
     userAgent: MAX_USER_AGENT,
     deviceId,
     clientSessionId: BigInt(Date.now()),
   });
+  const seed = asRecord(res.payload)?.callsSeed;
+  return { callsSeed: seed == null ? null : String(seed) };
 }
 
 // Реконнект уже авторизованного аккаунта: новый сокет → SESSION_INIT → LOGIN.

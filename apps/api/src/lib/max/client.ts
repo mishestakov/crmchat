@@ -109,8 +109,12 @@ export class MaxClient extends EventEmitter {
     return this.sendRequest(OPCODES.SESSION_INIT, session);
   }
 
-  authRequest(phone: string) {
-    return this.sendRequest(OPCODES.AUTH_REQUEST, { phone, type: "START_AUTH" });
+  // mode — integrity-подпись (см. compute-mode.ts). Без неё сервер молча не шлёт SMS
+  // клиенту с deviceType=ANDROID. Кодируется msgpack'ом как bin (byte[]).
+  authRequest(phone: string, mode?: Buffer) {
+    const payload: Record<string, unknown> = { phone, type: "START_AUTH" };
+    if (mode) payload.mode = mode;
+    return this.sendRequest(OPCODES.AUTH_REQUEST, payload);
   }
 
   auth(verifyToken: string, verifyCode: string) {
