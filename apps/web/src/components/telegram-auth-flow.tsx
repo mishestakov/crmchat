@@ -13,7 +13,8 @@ import { MaxLogo } from "../lib/platforms";
 
 export type TgAuthSignInResult =
   | { status: "sign_in_complete"; accountId?: string }
-  | { status: "password_needed" }
+  // hint — подсказка к паролю, заданная владельцем аккаунта. Необязательна.
+  | { status: "password_needed"; hint?: string | null }
   | { status: "phone_code_invalid" }
   | { status: "user_not_found" };
 
@@ -41,7 +42,7 @@ const BRAND: Record<AuthPlatform, string> = {
 
 type QrState =
   | { status: "scan-qr-code"; token: string }
-  | { status: "password_needed" }
+  | { status: "password_needed"; hint?: string | null }
   | { status: "success"; accountId?: string };
 
 type AuthState =
@@ -53,7 +54,7 @@ type AuthState =
       isCodeViaApp: boolean;
       phoneCode: string;
     }
-  | { step: "enter-password" };
+  | { step: "enter-password"; hint?: string | null };
 
 export function TelegramAuthFlow(props: {
   api: TgAuthApi;
@@ -99,6 +100,7 @@ export function TelegramAuthFlow(props: {
         <PasswordStep
           api={props.api}
           platform={platform}
+          hint={state.hint}
           setState={setState}
           onComplete={props.onComplete}
         />
@@ -128,7 +130,7 @@ function ScanQrStep(props: {
       onComplete({ accountId: qrState.accountId });
     }
     if (qrState?.status === "password_needed") {
-      setState({ step: "enter-password" });
+      setState({ step: "enter-password", hint: qrState.hint });
     }
   }, [qrState, onComplete, setState]);
 
@@ -268,7 +270,7 @@ function CodeStep(props: {
       if (d.status === "sign_in_complete")
         props.onComplete({ accountId: d.accountId });
       else if (d.status === "password_needed")
-        props.setState({ step: "enter-password" });
+        props.setState({ step: "enter-password", hint: d.hint });
       else if (d.status === "phone_code_invalid")
         setError("Неверный код, попробуйте ещё раз");
       else if (d.status === "user_not_found")
@@ -339,6 +341,8 @@ function CodeStep(props: {
 function PasswordStep(props: {
   api: TgAuthApi;
   platform: AuthPlatform;
+  // Подсказка к паролю. Владелец аккаунта мог её не задавать — тогда null.
+  hint?: string | null;
   setState: (s: AuthState) => void;
   onComplete: (r: { accountId?: string }) => void;
 }) {
@@ -362,6 +366,11 @@ function PasswordStep(props: {
         <p className="text-center text-sm text-zinc-600">
           У этого аккаунта включён облачный пароль.
         </p>
+        {props.hint && (
+          <p className="text-center text-sm text-zinc-500">
+            Подсказка: <span className="text-zinc-700">{props.hint}</span>
+          </p>
+        )}
         <input
           autoFocus
           type="password"

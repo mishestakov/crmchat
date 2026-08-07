@@ -6,7 +6,7 @@ export {
   sessionInit,
   newDeviceId,
   pickLoginToken,
-  pickPasswordTrackId,
+  pickPasswordChallenge,
   selfIdFromLogin,
   type MaxSession,
 } from "./auth.ts";

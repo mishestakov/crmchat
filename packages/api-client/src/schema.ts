@@ -2970,6 +2970,7 @@ export interface paths {
                         } | {
                             /** @enum {string} */
                             status: "password_needed";
+                            hint: string | null;
                         } | {
                             /** @enum {string} */
                             status: "phone_code_invalid";

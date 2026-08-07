@@ -23,8 +23,9 @@ export type AuthState =
   | { kind: "wait_qr"; link: string }
   // td_api.tl:180 — SMS/TG-app код запрошен, ждём checkAuthenticationCode.
   | { kind: "wait_code"; isCodeViaApp: boolean }
-  // td_api.tl:194 — 2FA: ждём checkAuthenticationPassword.
-  | { kind: "wait_password" }
+  // td_api.tl:194 — 2FA: ждём checkAuthenticationPassword. password_hint —
+  // подсказка, которую юзер задал сам при включении 2FA; может быть пустой.
+  | { kind: "wait_password"; hint: string | null }
   // td_api.tl:186 — sign-up (новый юзер), мы не поддерживаем.
   | { kind: "wait_registration" }
   // td_api.tl:197.
@@ -53,8 +54,10 @@ function parseAuthState(raw: RawAuthState): AuthState {
         info.type?._ === "authenticationCodeTypeTelegramMessage";
       return { kind: "wait_code", isCodeViaApp };
     }
-    case "authorizationStateWaitPassword":
-      return { kind: "wait_password" };
+    case "authorizationStateWaitPassword": {
+      const hint = typeof raw.password_hint === "string" ? raw.password_hint : "";
+      return { kind: "wait_password", hint: hint.length > 0 ? hint : null };
+    }
     case "authorizationStateWaitRegistration":
       return { kind: "wait_registration" };
     case "authorizationStateReady":

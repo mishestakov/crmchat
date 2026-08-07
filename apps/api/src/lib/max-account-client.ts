@@ -8,7 +8,7 @@ import {
   MaxClientError,
   newDeviceId,
   pickLoginToken,
-  pickPasswordTrackId,
+  pickPasswordChallenge,
   selfIdFromLogin,
   sessionInit,
   type MaxResponse,
@@ -104,7 +104,7 @@ function getFreshPending(wsId: string): MaxPending {
 
 export type MaxSignInResult =
   | { kind: "complete" }
-  | { kind: "password_needed" }
+  | { kind: "password_needed"; hint: string | null }
   | { kind: "code_invalid" };
 
 // Шаг 2: подтвердить SMS-код. Либо сразу loginToken, либо запрос пароля (2FA).
@@ -127,10 +127,10 @@ export async function maxSignInCode(
     p.loginToken = loginToken;
     return { kind: "complete" };
   }
-  const trackId = pickPasswordTrackId(res.payload);
-  if (trackId) {
-    p.trackId = trackId;
-    return { kind: "password_needed" };
+  const challenge = pickPasswordChallenge(res.payload);
+  if (challenge) {
+    p.trackId = challenge.trackId;
+    return { kind: "password_needed", hint: challenge.hint };
   }
   return { kind: "code_invalid" };
 }

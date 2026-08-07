@@ -172,7 +172,12 @@ const SendCodeRespSchema = z.object({
 
 const SignInRespSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("sign_in_complete"), accountId: z.string() }),
-  z.object({ status: z.literal("password_needed") }),
+  // hint — подсказка к паролю 2FA, которую юзер задал сам. Может быть null:
+  // подсказка необязательна и в MAX, и в Telegram.
+  z.object({
+    status: z.literal("password_needed"),
+    hint: z.string().nullable(),
+  }),
   z.object({ status: z.literal("phone_code_invalid") }),
   z.object({ status: z.literal("user_not_found") }),
 ]);
@@ -513,7 +518,7 @@ app.openapi(
       if (platform === "max") {
         const r = await maxSignInCode(wsId, phoneCode);
         if (r.kind === "password_needed")
-          return c.json({ status: "password_needed" as const });
+          return c.json({ status: "password_needed" as const, hint: r.hint });
         if (r.kind === "code_invalid")
           return c.json({ status: "phone_code_invalid" as const });
         const acc = await persistMaxAccount(wsId, userId);
@@ -524,7 +529,7 @@ app.openapi(
       if (r.kind === "user_not_found")
         return c.json({ status: "user_not_found" as const });
       if (r.kind === "password_needed")
-        return c.json({ status: "password_needed" as const });
+        return c.json({ status: "password_needed" as const, hint: r.hint });
       if (r.kind === "phone_code_invalid")
         return c.json({ status: "phone_code_invalid" as const });
       const acc = await persistOutreachAccount(wsId, userId, pending);
@@ -612,7 +617,7 @@ app.get("/v1/workspaces/:wsId/outreach/accounts/auth/qr-stream", async (c) => {
 
   type QrState =
     | { status: "scan-qr-code"; token: string }
-    | { status: "password_needed" }
+    | { status: "password_needed"; hint: string | null }
     | { status: "success"; accountId: string }
     | { status: "error"; message: string };
 
@@ -625,7 +630,8 @@ app.get("/v1/workspaces/:wsId/outreach/accounts/auth/qr-stream", async (c) => {
     if (errored) return { status: "error", message: errored };
     const s: AuthState = pending.authBus.current();
     if (s.kind === "wait_qr") return { status: "scan-qr-code", token: s.link };
-    if (s.kind === "wait_password") return { status: "password_needed" };
+    if (s.kind === "wait_password")
+      return { status: "password_needed", hint: s.hint };
     if (s.kind === "ready") {
       try {
         persisted = await persistOutreachAccount(wsId, userId, pending);

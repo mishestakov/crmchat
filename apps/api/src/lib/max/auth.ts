@@ -51,11 +51,19 @@ export function pickLoginToken(payload: unknown): string | null {
   return typeof token === "string" ? token : null;
 }
 
-// passwordChallenge.trackId присутствует когда на аккаунте включён пароль (2FA).
-export function pickPasswordTrackId(payload: unknown): string | null {
+// Ответ AUTH при включённом на аккаунте пароле (2FA) вместо tokenAttrs.LOGIN
+// отдаёт passwordChallenge: { trackId, hint, email }. Разбор ответа —
+// smali_classes3/tc0.smali в декомпиле приложения 26.26.0.
+// hint задаёт сам пользователь при включении 2FA, поэтому он может отсутствовать
+// или быть пустым — тогда показывать в UI нечего.
+export function pickPasswordChallenge(
+  payload: unknown,
+): { trackId: string; hint: string | null } | null {
   const challenge = asRecord(asRecord(payload)?.passwordChallenge);
   const trackId = challenge?.trackId;
-  return typeof trackId === "string" ? trackId : null;
+  if (typeof trackId !== "string") return null;
+  const hint = typeof challenge?.hint === "string" ? challenge.hint : "";
+  return { trackId, hint: hint.length > 0 ? hint : null };
 }
 
 export async function sessionInit(client: MaxClient, deviceId: string): Promise<void> {

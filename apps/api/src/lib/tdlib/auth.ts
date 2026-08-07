@@ -41,7 +41,7 @@ export async function tdSendCode(
 
 export type SignInResult =
   | { kind: "ok" }
-  | { kind: "password_needed" }
+  | { kind: "password_needed"; hint: string | null }
   | { kind: "phone_code_invalid" }
   | { kind: "user_not_found" };
 
@@ -68,7 +68,8 @@ export async function tdSignInCode(
       s.kind === "wait_registration",
     STEP_TIMEOUT_MS,
   );
-  if (next.kind === "wait_password") return { kind: "password_needed" };
+  if (next.kind === "wait_password")
+    return { kind: "password_needed", hint: next.hint };
   if (next.kind === "wait_registration") return { kind: "user_not_found" };
   return { kind: "ok" };
 }
