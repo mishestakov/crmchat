@@ -57,6 +57,21 @@ export function resolveChannelIdentifier(raw: string): {
   const trimmed = raw.trim();
   if (!trimmed) return null;
   const platform = detectChannelPlatform(trimmed);
+  if (platform === "max") {
+    // Публичный vanity-слаг из max.ru/<имя> → username: без него канал
+    // хранится link-only, не дедупится по имени и в UI красится «Закрытым».
+    // Не username: max.ru/u/<токен> (юзер-ссылка), max.ru/join/<хэш> (инвайт) —
+    // оба двухсегментные и в паттерн не проходят; ch_<hex> — авто-алиас
+    // канала без vanity-имени, оставляем ссылкой.
+    const m = trimmed.match(
+      /^https?:\/\/(?:web\.)?max\.ru\/([a-z0-9_.]{3,64})\/?$/i,
+    );
+    const slug = m?.[1];
+    if (slug && !/^ch_[0-9a-f]{16,}$/i.test(slug)) {
+      return { platform, username: slug, link: `https://max.ru/${slug}` };
+    }
+    return { platform, username: null, link: trimmed };
+  }
   if (platform !== "telegram") {
     return { platform, username: null, link: trimmed };
   }

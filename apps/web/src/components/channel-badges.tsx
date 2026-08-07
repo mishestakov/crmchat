@@ -109,14 +109,18 @@ export function ChannelBadges(props: {
           Недоступен
         </span>
       )}
-      {!props.username && props.link && (
-        <span
-          title="Закрытый канал — доступен после вступления"
-          className={PILL + " bg-amber-50 text-amber-700 ring-amber-200"}
-        >
-          Закрытый
-        </span>
-      )}
+      {/* «Закрытый» — только по НАСТОЯЩЕЙ инвайт-ссылке (t.me/+, joinchat,
+          max.ru/join). Эвристика «нет @username, есть ссылка» врала на MAX:
+          публичные max.ru/<имя> хранились без username и красились закрытыми. */}
+      {props.link &&
+        /t\.me\/(\+|joinchat)|max\.ru\/join\//i.test(props.link) && (
+          <span
+            title="Закрытый канал — доступен после вступления"
+            className={PILL + " bg-amber-50 text-amber-700 ring-amber-200"}
+          >
+            Закрытый
+          </span>
+        )}
     </>
   );
 }
