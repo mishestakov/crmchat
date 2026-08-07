@@ -7,19 +7,27 @@ import { MaxClient } from "./client.ts";
 
 // User-Agent одного из живых клиентов MAX. Версия важна — сервер может резать
 // устаревшие билды. Держим централизованно, чтобы обновлять в одном месте.
+//
+// Слепок снят с приложения 26.26.0 (base.apk от 2026-08-07, Pixel 9 Pro):
+// `~/max_binary/artifacts/base_apk_decoded_20260807/smali/cgf.smali` — список полей,
+// `smali/mei.smali` — как считается каждое значение:
+//   osVersion  = String.format("Android %s", Build.VERSION.RELEASE)
+//   deviceName = Build.MANUFACTURER + " " + Build.MODEL
+//   screen     = "<densityBucket> <densityDpi>dpi <width>x<height>"
+//   locale / deviceLocale = язык без региона
+// Поле release приложение не отправляет — раньше мы слали его от себя.
 export const MAX_USER_AGENT = {
   deviceType: "ANDROID",
   pushDeviceType: "GCM",
-  appVersion: "26.7.1",
+  appVersion: "26.26.0",
   arch: "arm64-v8a",
-  buildNumber: 6583,
-  osVersion: "Android 14",
-  locale: "ru_RU",
-  deviceLocale: "ru_RU",
-  deviceName: "Pixel 8",
-  screen: "1080x2400",
+  buildNumber: 6797,
+  osVersion: "Android 17",
+  locale: "ru",
+  deviceLocale: "ru",
+  deviceName: "Google Pixel 9 Pro",
+  screen: "360dpi 360dpi 960x2142",
   timezone: "Europe/Moscow",
-  release: 1,
 } as const;
 
 export interface MaxSession {
