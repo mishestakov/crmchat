@@ -293,7 +293,11 @@ export async function deleteOutreachAccount(
   accountId: string,
 ): Promise<boolean> {
   const [row] = await db
-    .select({ id: outreachAccounts.id })
+    .select({
+      id: outreachAccounts.id,
+      status: outreachAccounts.status,
+      platform: outreachAccounts.platform,
+    })
     .from(outreachAccounts)
     .where(
       and(
@@ -305,9 +309,14 @@ export async function deleteOutreachAccount(
   if (!row) return false;
 
   // logOut worker'а отзывает session в TG. Если worker нет в кэше (api
-  // рестартанул и warmup упал) — поднимаем временно ради logOut.
+  // рестартанул и warmup упал) — поднимаем временно ради logOut. Но ТОЛЬКО
+  // для живого TG-аккаунта: у banned/unauthorized подъём висит до
+  // auth-таймаута (~минута) и отзывать всё равно нечего — сессия мертва;
+  // MAX — не TDLib, ему logOut не адресован. Кэшированному воркеру logOut
+  // шлём в любом статусе — это дёшево (try/catch ниже).
   let worker = workerClients.get(accountId);
-  if (!worker) {
+  const tryRemoteLogout = row.platform === "telegram" && row.status === "active";
+  if (!worker && tryRemoteLogout) {
     try {
       worker = await spawnWorker(accountId);
       workerClients.set(accountId, worker);
