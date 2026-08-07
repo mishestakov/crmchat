@@ -21,9 +21,9 @@
 
 import crypto from "node:crypto";
 
+// Ключ MODE_CONSTS — buildNumber (строкой). appVersion — только для читаемости/логов.
 interface ModeConsts {
   appVersion: string;
-  buildNumber: number;
   X0: Buffer;
   X1: Buffer;
   X2: Buffer;
@@ -35,7 +35,6 @@ export const MODE_CONSTS: Record<string, ModeConsts> = {
   // 26.26.0 — текущая рабочая версия. X посчитаны из APK (build 6797), проверены живой SMS.
   "6797": {
     appVersion: "26.26.0",
-    buildNumber: 6797,
     X0: hx("1684414033eb263e2c615f8b7df5ed8793850a07656304997fbf07e9e21e1e93"),
     X1: hx("2538a819fdcf2cf8afdcb1ab1476d0c08cc0e4d4bad86f1bf381408d081ec410"),
     X2: hx("634ecc42b246784d975f180b4fecf903df235cdf0476da47163a85630eb1a6a8"),
@@ -43,7 +42,6 @@ export const MODE_CONSTS: Record<string, ModeConsts> = {
   // 26.25.0 — предыдущая (снималась оракулом, эталон для восстановления формулы).
   "6790": {
     appVersion: "26.25.0",
-    buildNumber: 6790,
     X0: hx("1684414033eb263e2c615f8b7df5ed8793850a07656304997fbf07e9e21e1e93"),
     X1: hx("8db68fcc0e85e8f041fe4a875c0a9bcfe542a8f679603728c651ed81b64dd684"),
     X2: hx("634ecc42b246784d975f180b4fecf903df235cdf0476da47163a85630eb1a6a8"),

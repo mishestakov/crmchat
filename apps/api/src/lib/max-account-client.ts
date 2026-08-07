@@ -77,29 +77,34 @@ export async function maxSendCode(
   await clearPendingMaxClient(wsId);
   const deviceId = newDeviceId();
   const client = new MaxClient();
-  await client.connect();
-  // callsSeed из SESSION_INIT → integrity-подпись mode. Без неё сервер с deviceType=ANDROID
-  // молча не шлёт SMS (см. compute-mode.ts). buildNumber должен совпадать с MAX_USER_AGENT.
-  const { callsSeed } = await sessionInit(client, deviceId);
-  if (!callsSeed) {
+  // Любая ошибка до сохранения в pendingByWorkspace обязана закрыть сокет — иначе на каждую
+  // неудачную попытку (таймаут/сеть/сервер) остаётся висеть живое TLS-соединение к api.oneme.ru.
+  try {
+    await client.connect();
+    // callsSeed из SESSION_INIT → integrity-подпись mode. Без неё сервер с deviceType=ANDROID
+    // молча не шлёт SMS (см. compute-mode.ts). buildNumber должен совпадать с MAX_USER_AGENT.
+    const { callsSeed } = await sessionInit(client, deviceId);
+    if (callsSeed == null) {
+      throw new Error("SESSION_INIT не вернул callsSeed — нельзя посчитать mode");
+    }
+    const mode = computeMode(callsSeed, deviceId, MAX_USER_AGENT.buildNumber);
+    const res = await client.authRequest(phone, mode);
+    const verifyToken = (res.payload as Record<string, unknown> | null)?.token;
+    if (typeof verifyToken !== "string") {
+      throw new Error("AUTH_REQUEST не вернул token");
+    }
+    pendingByWorkspace.set(wsId, {
+      client,
+      deviceId,
+      phone,
+      verifyToken,
+      createdAt: Date.now(),
+    });
+    return { status: "code_sent" };
+  } catch (e) {
     client.close();
-    throw new Error("SESSION_INIT не вернул callsSeed — нельзя посчитать mode");
+    throw e;
   }
-  const mode = computeMode(callsSeed, deviceId, MAX_USER_AGENT.buildNumber);
-  const res = await client.authRequest(phone, mode);
-  const verifyToken = (res.payload as Record<string, unknown> | null)?.token;
-  if (typeof verifyToken !== "string") {
-    client.close();
-    throw new Error("AUTH_REQUEST не вернул token");
-  }
-  pendingByWorkspace.set(wsId, {
-    client,
-    deviceId,
-    phone,
-    verifyToken,
-    createdAt: Date.now(),
-  });
-  return { status: "code_sent" };
 }
 
 function getFreshPending(wsId: string): MaxPending {

@@ -5,7 +5,7 @@
 Рутовый телефон НЕ требуется: всё считается из файлов.
 
 Использование:
-    python3 derive-mode-consts.py <base.apk> <split_arm64.apk> [<split_xxhdpi.apk> ...]
+    python3 apps/api/src/lib/max/tools/derive-mode-consts.py <base.apk> <split_arm64.apk> [<split_xxhdpi.apk> ...]
 
 Печатает готовый блок для MODE_CONSTS в apps/api/src/lib/max/compute-mode.ts.
 Подробности — apps/api/src/lib/max/README-mode.md.
@@ -50,7 +50,7 @@ def main():
     X0 = sha256(cert_der(apks[0]))                    # SHA256(cert)
     X1 = calc_meta(apks, ".dex", 20, False)           # первые 20 байт каждого *.dex в base
     X2 = calc_meta(apks, ".so", -1, True)             # *.so из lib/arm64-v8a, base+splits
-    print("// сгенерировано scripts/max/derive-mode-consts.py — подставь buildNumber/appVersion")
+    print("// сгенерировано apps/api/src/lib/max/tools/derive-mode-consts.py — подставь buildNumber/appVersion")
     print('"<BUILD_NUMBER>": {')
     print('  appVersion: "<APP_VERSION>",')
     print("  buildNumber: <BUILD_NUMBER>,")
